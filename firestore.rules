@@ -1,0 +1,152 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: players
+    // Document ID: playerId (UUID)
+    // Fields:
+    //   - id: string (required)
+    //   - name: string (required, < 100 chars)
+    //   - gender: string (required, MALE/FEMALE)
+    //   - isOfficialSetter: bool (required)
+    //   - elo: int (required)
+    //   - matchesPlayed: int (required)
+    //   - dailyMatches: int (required)
+    //   - dailyWins: int (required)
+    //   - dailyEloGain: int (required)
+    //   - wins: int (required)
+    //   - losses: int (required)
+    //
+    // Collection: metadata
+    // Document ID: synergy | rivalry
+    // Fields:
+    //   - map of string pairs to int wins/losses
+    //
+    // Collection: payments
+    // Document ID: paymentId (UUID)
+    // Fields:
+    //   - id: string (required)
+    //   - playerId: string (required)
+    //   - playerName: string (required)
+    //   - amount: number (required)
+    //   - month: string (required, YYYY-MM)
+    //   - paymentDate: string (required, ISO)
+    //   - status: string (required, PAID/PENDING)
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (request.auth.token.get('email', '').toLower() == "rodneyes@gmail.com" ||
+         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'USER') == 'ADMIN'));
+    }
+
+    function isValidPlayer(data) {
+      return data.keys().hasAll(['id', 'name', 'gender', 'elo', 'isOfficialSetter', 'matchesPlayed', 'dailyMatches', 'dailyWins', 'dailyLosses', 'dailyEloGain', 'wins', 'losses']) &&
+             data.id is string &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.gender in ['MALE', 'FEMALE'] &&
+             data.elo is int &&
+             data.isOfficialSetter is bool &&
+             data.matchesPlayed is int &&
+             data.dailyMatches is int &&
+             data.dailyWins is int &&
+             data.dailyLosses is int &&
+             data.dailyEloGain is int &&
+             data.wins is int &&
+             data.losses is int &&
+             (!('email' in data) || data.email is string) &&
+             (!('isAdmin' in data) || data.isAdmin is bool) &&
+             (!('joinedAt' in data) || data.joinedAt is string) &&
+             (!('playedLastMatch' in data) || data.playedLastMatch is bool) &&
+             (!('birthDate' in data) || data.birthDate is string) &&
+             (!('updatedAt' in data) || data.updatedAt is int);
+    }
+
+    function isValidPayment(data) {
+      return data.keys().hasAll(['id', 'playerId', 'playerName', 'amount', 'month', 'paymentDate', 'status']) &&
+             data.id is string &&
+             data.playerId is string &&
+             data.playerName is string &&
+             data.amount is number &&
+             data.month is string &&
+             data.paymentDate is string &&
+             data.status in ['PAID', 'PENDING'];
+    }
+
+    function isValidMatch(data) {
+      return data.keys().hasAll(['id', 'timestamp', 'teamA', 'teamB', 'scoreA', 'scoreB', 'winner', 'duration', 'mode']) &&
+             data.id is string &&
+             data.timestamp is int &&
+             data.teamA is list &&
+             data.teamB is list &&
+             data.scoreA is int &&
+             data.scoreB is int &&
+             data.winner in ['A', 'B'] &&
+             data.duration is int &&
+             data.mode in ['QUICK', 'SCORE', 'SEQUENTIAL'];
+    }
+
+    match /users/{uid} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.auth.uid == uid;
+      allow update: if isAdmin() || (isAuthenticated() && request.auth.uid == uid);
+    }
+
+    match /players/{playerId} {
+      allow read: if true;
+      allow list: if true;
+      allow create: if isAdmin() && isValidPlayer(request.resource.data);
+      allow update: if isAdmin() && isValidPlayer(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /payments/{paymentId} {
+      allow read: if isAuthenticated();
+      allow list: if isAuthenticated();
+      allow create: if isAdmin() && isValidPayment(request.resource.data);
+      allow update: if isAdmin() && isValidPayment(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /metadata/{key} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /matches/{matchId} {
+      allow read: if true;
+      allow list: if true;
+      allow create: if isAdmin() && isValidMatch(request.resource.data);
+      allow update: if isAdmin() && isValidMatch(request.resource.data);
+      allow delete: if isAdmin();
+    }
+    
+    match /preConfirmations/{playerId} {
+      allow read, list: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && (resource.data.get('uid', '') == request.auth.uid && request.resource.data.get('uid', '') == request.auth.uid || isAdmin());
+      allow delete: if isAuthenticated() && (resource.data.get('uid', '') == request.auth.uid || isAdmin());
+    }
+
+    match /attendance/{date}/players/{playerId} {
+      allow read, list: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && (resource.data.get('uid', '') == request.auth.uid && request.resource.data.get('uid', '') == request.auth.uid || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    match /test/connection {
+      allow read: if true;
+    }
+  }
+}

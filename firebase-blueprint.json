@@ -1,0 +1,131 @@
+{
+  "entities": {
+    "Player": {
+      "title": "Player",
+      "description": "A volleyball player with stats and ELO",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "gender": { "type": "string", "enum": ["MALE", "FEMALE"] },
+        "isOfficialSetter": { "type": "boolean" },
+        "elo": { "type": "integer" },
+        "matchesPlayed": { "type": "integer" },
+        "dailyMatches": { "type": "integer" },
+        "dailyWins": { "type": "integer" },
+        "dailyEloGain": { "type": "integer" },
+        "wins": { "type": "integer" },
+        "losses": { "type": "integer" },
+        "eloHistory": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "date": { "type": "string", "format": "date" },
+              "elo": { "type": "integer" }
+            }
+          }
+        },
+        "isAdmin": { "type": "boolean" },
+        "joinedAt": { "type": "string", "format": "date" },
+        "playedLastMatch": { "type": "boolean" },
+        "birthDate": { "type": "string", "format": "date" }
+      },
+      "required": ["id", "name", "gender", "elo"]
+    },
+    "Payment": {
+      "title": "Payment",
+      "description": "A monthly membership payment record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "playerId": { "type": "string" },
+        "playerName": { "type": "string" },
+        "amount": { "type": "number" },
+        "month": { "type": "string" },
+        "paymentDate": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["PAID", "PENDING"] }
+      },
+      "required": ["id", "playerId", "playerName", "amount", "month", "paymentDate", "status"]
+    },
+    "AppMetadata": {
+      "title": "App Metadata",
+      "description": "Global settings like synergy and rivalry maps",
+      "type": "object",
+      "properties": {
+        "synergy": { "type": "object" },
+        "rivalry": { "type": "object" },
+        "lastResetDate": { "type": "string" },
+        "matchStartTime": { "type": "integer" },
+        "dailyMatchCount": { "type": "integer" },
+        "courtLocation": {
+          "type": "object",
+          "properties": {
+            "lat": { "type": "number" },
+            "lng": { "type": "number" }
+          }
+        },
+        "geofenceRadius": { "type": "integer" }
+      }
+    },
+    "Match": {
+      "title": "Match",
+      "description": "A recorded volleyball match result",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "timestamp": { "type": "integer" },
+        "teamA": { "type": "array", "items": { "type": "string" } },
+        "teamB": { "type": "array", "items": { "type": "string" } },
+        "scoreA": { "type": "integer" },
+        "scoreB": { "type": "integer" },
+        "winner": { "type": "string", "enum": ["A", "B"] },
+        "duration": { "type": "integer" },
+        "mode": { "type": "string", "enum": ["QUICK", "SCORE", "SEQUENTIAL"] }
+      },
+      "required": ["id", "timestamp", "teamA", "teamB", "winner"]
+    },
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "User role and preferences",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["ADMIN", "MEMBER"] }
+      },
+      "required": ["uid", "email", "role"]
+    }
+  },
+  "firestore": {
+    "/players/{playerId}": {
+      "schema": "Player",
+      "description": "Collection of all players"
+    },
+    "/metadata/{key}": {
+      "schema": "AppMetadata",
+      "description": "Global metadata like synergy and rivalry"
+    },
+    "/matches/{matchId}": {
+      "schema": "Match",
+      "description": "History of all matches played"
+    },
+    "/users/{uid}": {
+      "schema": "UserProfile",
+      "description": "User profiles with roles"
+    },
+    "/payments/{paymentId}": {
+      "schema": "Payment",
+      "description": "Membership payment records"
+    },
+    "/preConfirmations/{playerId}": {
+      "schema": "Player",
+      "description": "Players who intended to play in the upcoming session (Tue/Wed)"
+    },
+    "/attendance/{dateKey}/players/{playerId}": {
+      "schema": "Player",
+      "description": "Players who are physically present at the court on game day"
+    }
+  }
+}
