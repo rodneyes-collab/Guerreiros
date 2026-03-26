@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useStore } from '../store';
 import { TeamCard } from './TeamCard';
 import { formatTime } from '../utils/helpers';
+import { getFirestoreDateKey } from '../firebase';
 import { 
   Swords, 
   Trophy,
@@ -23,31 +24,31 @@ import {
 } from 'lucide-react';
 
 interface MatchViewProps {
-  handleGenerate: (onlyCurrentPlayers?: boolean) => void;
-  handleDiscard: () => void;
-  handleAnnounce: () => void;
-  handleSwapClick: (source: 'A' | 'B' | 'Bench', playerId: string) => void;
-  handleRemovePlayer: (pid: string) => void;
-  promoteToSetter: (team: 'teamA' | 'teamB', pid: string) => void;
-  setSwapSelection: (val: any) => void;
-  swapSelection: any;
-  elapsedTime: number;
-  handleFinishMatch: (winner: 'A' | 'B') => void;
-  handleVerifyRules: () => void;
+  onGenerate: (onlyCurrentPlayers?: boolean) => void;
+  onDiscard: () => void;
+  onFinishDay: () => void;
+  onFinishMatch: (winner: 'A' | 'B') => void;
+  onVerifyRules: () => void;
+  isVerifyingRules: boolean;
+  isNarratingSummary: boolean;
+  onAnnounce: () => void;
+  onSwapClick: (source: 'A' | 'B' | 'Bench', playerId: string) => void;
+  onRemovePlayer: (team: 'A' | 'B', playerId: string) => void;
+  onPromoteToSetter: (team: 'A' | 'B', playerId: string) => void;
 }
 
 export const MatchView: React.FC<MatchViewProps> = ({
-  handleGenerate,
-  handleDiscard,
-  handleAnnounce,
-  handleSwapClick,
-  handleRemovePlayer,
-  promoteToSetter,
-  setSwapSelection,
-  swapSelection,
-  elapsedTime,
-  handleFinishMatch,
-  handleVerifyRules
+  onGenerate,
+  onDiscard,
+  onFinishDay,
+  onFinishMatch,
+  onVerifyRules,
+  isVerifyingRules,
+  isNarratingSummary,
+  onAnnounce,
+  onSwapClick,
+  onRemovePlayer,
+  onPromoteToSetter
 }) => {
   const { 
     generationResult, 
@@ -69,12 +70,14 @@ export const MatchView: React.FC<MatchViewProps> = ({
     tempScoreB,
     setTempScoreB,
     ruleVerification,
-    isVerifyingRules
+    elapsedTime,
+    swapSelection,
+    setSwapSelection
   } = useStore();
 
   const [showAudit, setShowAudit] = useState(false);
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = getFirestoreDateKey();
   const todayMatches = (matches || [])
     .filter(m => m.date === today)
     .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
@@ -150,7 +153,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
           <div className="flex flex-col gap-4 w-full max-w-xs">
             {userRole === 'ADMIN' ? (
               <button 
-                onClick={handleGenerate} 
+                onClick={() => onGenerate()} 
                 disabled={attendance.length < 10}
                 className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 text-white font-black py-5 rounded-2xl shadow-xl shadow-indigo-100 transition-all flex items-center justify-center gap-3 uppercase tracking-widest text-xs"
               >
@@ -244,7 +247,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
                 <button 
                   onClick={() => {
                     if (!showAudit && !ruleVerification) {
-                      handleVerifyRules();
+                      onVerifyRules();
                     }
                     setShowAudit(!showAudit);
                   }} 
@@ -253,16 +256,16 @@ export const MatchView: React.FC<MatchViewProps> = ({
                   <Sparkles className={`w-3.5 h-3.5 ${showAudit ? 'text-indigo-500' : 'text-slate-400'}`} />
                   {showAudit ? 'Ocultar Auditoria' : 'Ver Auditoria IA'}
                 </button>
-                <button onClick={handleDiscard} className="text-[10px] font-black uppercase text-slate-400 hover:text-rose-600 px-4 py-2">Descartar</button>
+                <button onClick={onDiscard} className="text-[10px] font-black uppercase text-slate-400 hover:text-rose-600 px-4 py-2">Descartar</button>
                 <button 
-                  onClick={handleAnnounce} 
+                  onClick={onAnnounce} 
                   disabled={isNarrating}
                   className={`flex items-center gap-2 text-[10px] font-black uppercase px-6 py-2 rounded-xl shadow-sm transition-all ${isNarrating ? 'bg-amber-100 text-amber-600 animate-pulse' : 'bg-amber-500 text-white hover:bg-amber-600'}`}
                 >
                   {isNarrating ? <Volume2 className="w-3.5 h-3.5 animate-bounce" /> : <Megaphone className="w-3.5 h-3.5" />}
                   {isNarrating ? 'Anunciando...' : 'Anunciar Times'}
                 </button>
-                <button onClick={() => handleGenerate(true)} className="text-[10px] font-black uppercase bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 px-6 py-2 rounded-xl shadow-sm">Nova Escalação</button>
+                <button onClick={() => onGenerate(true)} className="text-[10px] font-black uppercase bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 px-6 py-2 rounded-xl shadow-sm">Nova Escalação</button>
               </div>
             )}
 
@@ -272,7 +275,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
                 <button 
                   onClick={() => {
                     if (!showAudit && !ruleVerification) {
-                      handleVerifyRules();
+                      onVerifyRules();
                     }
                     setShowAudit(!showAudit);
                   }} 
@@ -431,14 +434,14 @@ export const MatchView: React.FC<MatchViewProps> = ({
               {userRole === 'ADMIN' && (
                 <div className="flex gap-3 mt-6">
                   <button 
-                    onClick={() => handleFinishMatch('A')}
+                    onClick={() => onFinishMatch('A')}
                     className="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white font-black py-3 rounded-xl shadow-lg shadow-emerald-100 transition-all flex flex-col items-center justify-center group"
                   >
                     <span className="text-[8px] uppercase tracking-widest opacity-80 group-hover:scale-110 transition-transform">Vencedor</span>
                     <span className="text-sm uppercase tracking-tighter">Time A</span>
                   </button>
                   <button 
-                    onClick={() => handleFinishMatch('B')}
+                    onClick={() => onFinishMatch('B')}
                     className="flex-1 bg-indigo-500 hover:bg-indigo-600 text-white font-black py-3 rounded-xl shadow-lg shadow-indigo-100 transition-all flex flex-col items-center justify-center group"
                   >
                     <span className="text-[8px] uppercase tracking-widest opacity-80 group-hover:scale-110 transition-transform">Vencedor</span>
@@ -447,7 +450,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
                 </div>
               )}
               
-              <button onClick={handleDiscard} className="w-full mt-4 py-2 text-[9px] font-black text-slate-300 uppercase tracking-[0.3em] hover:text-rose-500 transition-colors">Descartar Partida</button>
+              <button onClick={onDiscard} className="w-full mt-4 py-2 text-[9px] font-black text-slate-300 uppercase tracking-[0.3em] hover:text-rose-500 transition-colors">Descartar Partida</button>
             </div>
           </div>
 
@@ -491,7 +494,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
                       </div>
                     </div>
                     <button 
-                      onClick={() => handleSwapClick('Bench', player.id)}
+                      onClick={() => onSwapClick('Bench', player.id)}
                       className={`p-1.5 sm:p-3 rounded-lg sm:rounded-xl transition-all ${swapSelection?.playerId === player.id ? 'bg-amber-500 text-white shadow-lg' : 'text-slate-300 hover:text-amber-500 hover:bg-amber-50'}`}
                       title="Trocar Jogador"
                     >
@@ -524,9 +527,9 @@ export const MatchView: React.FC<MatchViewProps> = ({
               color="indigo" 
               attendance={attendance}
               userRole={userRole}
-              onSwap={(pid) => handleSwapClick('A', pid)}
-              onRemove={handleRemovePlayer}
-              onPromote={(pid) => promoteToSetter('teamA', pid)}
+              onSwap={(pid) => onSwapClick('A', pid)}
+              onRemove={(pid) => onRemovePlayer('A', pid)}
+              onPromote={(pid) => onPromoteToSetter('A', pid)}
               activeSwapId={swapSelection?.playerId}
             />
             <TeamCard 
@@ -535,9 +538,9 @@ export const MatchView: React.FC<MatchViewProps> = ({
               color="rose" 
               attendance={attendance}
               userRole={userRole}
-              onSwap={(pid) => handleSwapClick('B', pid)}
-              onRemove={handleRemovePlayer}
-              onPromote={(pid) => promoteToSetter('teamB', pid)}
+              onSwap={(pid) => onSwapClick('B', pid)}
+              onRemove={(pid) => onRemovePlayer('B', pid)}
+              onPromote={(pid) => onPromoteToSetter('B', pid)}
               activeSwapId={swapSelection?.playerId}
             />
           </div>

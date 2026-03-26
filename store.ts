@@ -27,6 +27,8 @@ interface AppState {
   currentPlayer: Player | null;
   pendingRequests: any[];
   usageStats: UsageStats;
+  syncTrigger: number;
+  dateKey: string;
   
   // Generation Result
   generationResult: GenerationResult | null;
@@ -86,6 +88,7 @@ interface AppState {
   setPendingRequests: (requests: any[]) => void;
   setUsageStats: (stats: UsageStats) => void;
   setGenerationResult: (result: GenerationResult | null) => void;
+  triggerSync: () => void;
   
   setAnalysis: (analysis: string) => void;
   setRuleVerification: (verification: string) => void;
@@ -146,6 +149,8 @@ export const useStore = create<AppState>((set) => ({
   currentPlayer: null,
   pendingRequests: [],
   usageStats: { reads: 0, writes: 0, lastUpdate: '' },
+  syncTrigger: 0,
+  dateKey: '',
   generationResult: null,
   analysis: '',
   ruleVerification: '',
@@ -214,6 +219,7 @@ export const useStore = create<AppState>((set) => ({
   setPendingRequests: (pendingRequests) => set({ pendingRequests }),
   setUsageStats: (usageStats) => set({ usageStats }),
   setGenerationResult: (generationResult) => set({ generationResult }),
+  triggerSync: () => set((state) => ({ syncTrigger: state.syncTrigger + 1, isSyncing: true })),
   setAnalysis: (analysis) => set({ analysis }),
   setRuleVerification: (ruleVerification) => set({ ruleVerification }),
   

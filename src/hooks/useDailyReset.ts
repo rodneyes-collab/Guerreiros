@@ -55,7 +55,8 @@ export const useDailyReset = () => {
                 dailyLosses: 0,
                 dailyEloGain: 0,
                 dailyResults: [],
-                playedLastMatch: false
+                playedLastMatch: false,
+                reads: 0
               }, { merge: true });
               writeCount++;
             }

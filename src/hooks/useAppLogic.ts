@@ -16,7 +16,8 @@ import {
   getDocs,
   OperationType,
   handleFirestoreError,
-  trackUsage
+  trackUsage,
+  getFirestoreDateKey
 } from '../../firebase';
 import { useStore } from '../../store';
 import { cleanObject, generateUUID } from '../../utils/helpers';
@@ -113,7 +114,7 @@ export const useAppLogic = () => {
       const batch = writeBatch(db);
       const matchId = generateUUID();
       const timestamp = Date.now();
-      const date = new Date().toISOString().split('T')[0];
+      const date = getFirestoreDateKey();
       
       const getTeamIds = (team: Team) => {
         const ids = team.players.map(p => p.id);
@@ -145,18 +146,22 @@ export const useAppLogic = () => {
         const playerRef = doc(db, 'players', p.id);
         const attendanceRef = doc(db, 'attendance', date, 'players', p.id);
         
-          const updates = {
-            elo: newElo,
-            matchesPlayed: (p.matchesPlayed || 0) + 1,
-            wins: isWinner ? (p.wins || 0) + 1 : (p.wins || 0),
-            losses: !isWinner ? (p.losses || 0) + 1 : (p.losses || 0),
-            dailyMatches: (p.dailyMatches || 0) + 1,
-            dailyWins: isWinner ? (p.dailyWins || 0) + 1 : (p.dailyWins || 0),
-            dailyLosses: !isWinner ? (p.dailyLosses || 0) + 1 : (p.dailyLosses || 0),
-            dailyEloGain: (p.dailyEloGain || 0) + eloChange,
-            dailyResults: [...(p.dailyResults || []), (isWinner ? 'V' : 'D') as 'V' | 'D'],
-            playedLastMatch: true
-          };
+        const newHistoryEntry = { date: new Date().toISOString(), elo: newElo };
+        const updatedHistory = [...(p.eloHistory || []), newHistoryEntry].slice(-50); // Keep last 50 entries
+        
+        const updates = {
+          elo: newElo,
+          matchesPlayed: (p.matchesPlayed || 0) + 1,
+          wins: isWinner ? (p.wins || 0) + 1 : (p.wins || 0),
+          losses: !isWinner ? (p.losses || 0) + 1 : (p.losses || 0),
+          dailyMatches: (p.dailyMatches || 0) + 1,
+          dailyWins: isWinner ? (p.dailyWins || 0) + 1 : (p.dailyWins || 0),
+          dailyLosses: !isWinner ? (p.dailyLosses || 0) + 1 : (p.dailyLosses || 0),
+          dailyEloGain: (p.dailyEloGain || 0) + eloChange,
+          dailyResults: [...(p.dailyResults || []), (isWinner ? 'V' : 'D') as 'V' | 'D'],
+          playedLastMatch: true,
+          eloHistory: updatedHistory
+        };
         
         batch.set(playerRef, updates, { merge: true });
         batch.set(attendanceRef, updates, { merge: true });
@@ -303,7 +308,7 @@ export const useAppLogic = () => {
     try {
       setIsSyncing(true);
       triggerDbStatus('writing');
-      const dateKey = new Date().toISOString().split('T')[0];
+      const dateKey = getFirestoreDateKey();
       const attendanceRef = doc(db, 'attendance', dateKey, 'players', player.id);
       
       // Calculate next arrival order based on current max in attendance
@@ -330,7 +335,7 @@ export const useAppLogic = () => {
     try {
       setIsSyncing(true);
       triggerDbStatus('writing');
-      const dateKey = new Date().toISOString().split('T')[0];
+      const dateKey = getFirestoreDateKey();
       await deleteDoc(doc(db, 'attendance', dateKey, 'players', playerId));
       await trackUsage(0, 1);
       showNotification('Presença removida.', 'info');
@@ -349,7 +354,7 @@ export const useAppLogic = () => {
         try {
           setIsSyncing(true);
           triggerDbStatus('writing');
-          const dateKey = new Date().toISOString().split('T')[0];
+          const dateKey = getFirestoreDateKey();
           const batch = writeBatch(db);
           attendance.forEach(p => {
             batch.delete(doc(db, 'attendance', dateKey, 'players', p.id));
@@ -583,7 +588,7 @@ export const useAppLogic = () => {
   const repairDatabase = async () => {
     showConfirmModal(
       'Reparar Banco de Dados',
-      'Isto irá remover sócios sem nome, corrigir dados inconsistentes e RECALCULAR TODAS AS SINERGIAS. Deseja continuar?',
+      'Isto irá remover sócios sem nome, corrigir dados inconsistentes, RECALCULAR TODAS AS SINERGIAS e INICIALIZAR HISTÓRICO DE ELO. Deseja continuar?',
       async () => {
         try {
           setIsSyncing(true);
@@ -613,6 +618,12 @@ export const useAppLogic = () => {
               if (typeof p.dailyWins !== 'number') { updates.dailyWins = 0; needsFix = true; }
               if (typeof p.dailyLosses !== 'number') { updates.dailyLosses = 0; needsFix = true; }
               if (typeof p.dailyEloGain !== 'number') { updates.dailyEloGain = 0; needsFix = true; }
+              
+              // Initialize eloHistory if missing
+              if (!p.eloHistory || p.eloHistory.length === 0) {
+                updates.eloHistory = [{ date: getFirestoreDateKey(), elo: p.elo || 1200 }];
+                needsFix = true;
+              }
               
               if (needsFix) {
                 batch.set(doc(db, 'players', p.id), updates, { merge: true });
@@ -674,6 +685,53 @@ export const useAppLogic = () => {
         }
       }
     );
+  };
+
+  const initializeEloHistory = async () => {
+    showConfirmModal(
+      'Inicializar Histórico de ELO',
+      'Isto irá criar um ponto inicial no histórico de ELO para todos os sócios que ainda não possuem. Deseja continuar?',
+      async () => {
+        try {
+          setIsSyncing(true);
+          triggerDbStatus('writing');
+          const batch = writeBatch(db);
+          let count = 0;
+          
+          players.forEach(p => {
+            if (!p.eloHistory || p.eloHistory.length === 0) {
+              batch.set(doc(db, 'players', p.id), {
+                eloHistory: [{ date: getFirestoreDateKey(), elo: p.elo || 1200 }]
+              }, { merge: true });
+              count++;
+            }
+          });
+          
+          await batch.commit();
+          showNotification(`${count} históricos de ELO inicializados!`, 'success');
+        } catch (error) {
+          handleFirestoreError(error, OperationType.WRITE, 'init-elo-history');
+        } finally {
+          setIsSyncing(false);
+          hideConfirmModal();
+        }
+      }
+    );
+  };
+
+  const updateQuotaSettings = async (totalQuota: number) => {
+    try {
+      setIsSyncing(true);
+      triggerDbStatus('writing');
+      await setDoc(doc(db, 'metadata', 'system'), { 
+        dailyReadQuota: totalQuota 
+      }, { merge: true });
+      showNotification('Configurações de cota atualizadas!', 'success');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'update-quota');
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
   const savePlayer = async (playerData: Partial<Player>) => {
@@ -742,7 +800,11 @@ export const useAppLogic = () => {
     if (!magicLinkEmail) return;
     setIsSendingMagicLink(true);
     try {
-      const player = players.find(p => p.email?.toLowerCase() === magicLinkEmail.toLowerCase());
+      if (players.length === 0) {
+        showNotification('Carregando lista de sócios... Tente novamente em instantes.', 'info');
+        return;
+      }
+      const player = players.find(p => p.email?.trim().toLowerCase() === magicLinkEmail.trim().toLowerCase());
       if (player) {
         // Simular login de sócio
         const memberUser = {
@@ -999,7 +1061,7 @@ export const useAppLogic = () => {
         try {
           setIsSyncing(true);
           triggerDbStatus('writing');
-          const today = new Date().toISOString().split('T')[0];
+          const today = getFirestoreDateKey();
           const batch = writeBatch(db);
           
           // Reset statistics in the main players collection
@@ -1124,6 +1186,8 @@ export const useAppLogic = () => {
     deletePlayer,
     clearAllPlayers,
     repairDatabase,
+    initializeEloHistory,
+    updateQuotaSettings,
     savePlayer,
     clearAllHistory,
     clearMatchesOnly,

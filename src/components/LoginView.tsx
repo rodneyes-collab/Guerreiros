@@ -82,6 +82,9 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 </>
               )}
             </button>
+            <p className="text-[10px] text-center text-slate-400 font-bold uppercase tracking-widest px-4 leading-relaxed mt-2">
+              O seu e-mail deve estar cadastrado na base de sócios pelo administrador.
+            </p>
           </form>
         </div>
 

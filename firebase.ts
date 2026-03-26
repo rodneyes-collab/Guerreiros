@@ -77,6 +77,25 @@ let lastSyncTime = 0;
 let isQuotaExceeded = false;
 const SYNC_INTERVAL = 30000; // 30 segundos
 
+export const getFirestoreDateKey = () => {
+  // Use Brazil time (UTC-3) for consistent date keys across all users
+  const now = new Date();
+  const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+  const brTime = new Date(utc + (3600000 * -3));
+  
+  const year = brTime.getUTCFullYear();
+  const month = String(brTime.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(brTime.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+export const getBrazilDay = () => {
+  const now = new Date();
+  const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+  const brTime = new Date(utc + (3600000 * -3));
+  return brTime.getUTCDay();
+};
+
 export const trackUsage = async (reads: number, writes: number) => {
   if (isQuotaExceeded) return; // Para de tentar se a quota foi excedida
 
@@ -94,7 +113,7 @@ export const trackUsage = async (reads: number, writes: number) => {
   pendingWrites = 0;
   lastSyncTime = now;
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = getFirestoreDateKey();
   const usageRef = doc(db, 'metadata', 'usage');
   try {
     await updateDoc(usageRef, {

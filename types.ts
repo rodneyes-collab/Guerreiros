@@ -28,6 +28,8 @@ export interface Player {
   dailyResults?: ('V' | 'D')[]; // Sequência de vitórias/derrotas no dia
   status?: string;
   createdAt?: number;
+  reads?: number; // Total de leituras do sócio
+  lastReadUpdate?: string; // Data da última atualização de leitura
 }
 
 export type MatchMode = 'QUICK' | 'SCORE' | 'SEQUENTIAL';
@@ -51,6 +53,7 @@ export interface SystemMetadata {
   lastResetDate: string | null;
   dailyMatchCount: number;
   matchStartTime: number | null;
+  dailyReadQuota?: number;
 }
 
 export enum PaymentStatus {

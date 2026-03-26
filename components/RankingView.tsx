@@ -297,7 +297,9 @@ export const RankingView: React.FC<RankingViewProps> = ({
 
     for (const match of playerMatches) {
       const isTeamA = match.teamA.includes(selectedPlayer.id);
-      const won = (isTeamA && match.scoreA > match.scoreB) || (!isTeamA && match.scoreB > match.scoreA);
+      const won = match.winner 
+        ? (isTeamA ? match.winner === 'A' : match.winner === 'B')
+        : (isTeamA ? match.scoreA > match.scoreB : match.scoreB > match.scoreA);
       
       if (streak === 0) {
         streak = 1;
@@ -313,7 +315,20 @@ export const RankingView: React.FC<RankingViewProps> = ({
       ? (selectedPlayer.elo - 1000) / selectedPlayer.matchesPlayed 
       : 0;
 
-    return { winLossData, streak, streakType, avgEloChange };
+    // Impact History for Chart
+    const impactHistory = playerMatches.slice(0, 10).reverse().map((m, idx) => {
+      const isTeamA = m.teamA.includes(selectedPlayer.id);
+      const won = m.winner 
+        ? (isTeamA ? m.winner === 'A' : m.winner === 'B')
+        : (isTeamA ? m.scoreA > m.scoreB : m.scoreB > m.scoreA);
+      return {
+        match: idx + 1,
+        impact: won ? 25 : -20,
+        result: won ? 'V' : 'D'
+      };
+    });
+
+    return { winLossData, streak, streakType, avgEloChange, impactHistory };
   }, [selectedPlayer, matches]);
 
   const winRateHistory = useMemo(() => {
@@ -1030,16 +1045,37 @@ export const RankingView: React.FC<RankingViewProps> = ({
 
                 {/* Efficiency Cards */}
                 <div className="md:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm relative overflow-hidden group">
-                    <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform text-indigo-600">
-                      <Activity className="w-16 h-16" />
+                  <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm relative overflow-hidden group flex flex-col">
+                    <div className="relative z-10">
+                      <div className="absolute top-0 right-0 opacity-10 group-hover:scale-110 transition-transform text-indigo-600">
+                        <Activity className="w-16 h-16" />
+                      </div>
+                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-4">Impacto por Jogo</p>
+                      <div className="flex items-baseline gap-2">
+                        <h3 className="text-3xl font-black text-slate-800">{advancedStats?.avgEloChange.toFixed(1)}</h3>
+                        <span className="text-xs font-bold text-slate-400 uppercase">ELO / Partida</span>
+                      </div>
+                      <p className="text-[10px] font-bold text-slate-500 mt-2">Média de crescimento histórico</p>
                     </div>
-                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-4">Impacto por Jogo</p>
-                    <div className="flex items-baseline gap-2">
-                      <h3 className="text-3xl font-black text-slate-800">{advancedStats?.avgEloChange.toFixed(1)}</h3>
-                      <span className="text-xs font-bold text-slate-400 uppercase">ELO / Partida</span>
+                    
+                    <div className="h-24 mt-6 -mx-4">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={advancedStats?.impactHistory}>
+                          <Bar 
+                            dataKey="impact" 
+                            radius={[4, 4, 0, 0]}
+                          >
+                            {advancedStats?.impactHistory.map((entry: any, index: number) => (
+                              <Cell 
+                                key={`cell-${index}`} 
+                                fill={entry.impact > 0 ? '#6366f1' : '#f43f5e'} 
+                                fillOpacity={0.4}
+                              />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
                     </div>
-                    <p className="text-[10px] font-bold text-slate-500 mt-2">Média de crescimento histórico</p>
                   </div>
 
                   <div className={`p-8 rounded-[2.5rem] relative overflow-hidden group border ${

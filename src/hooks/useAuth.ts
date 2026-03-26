@@ -99,26 +99,39 @@ export const useAuth = () => {
     const userRef = doc(db, 'users', user.uid);
     setIsRoleLoading(true);
     const unsubscribeUserDoc = onSnapshot(userRef, (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        if (user.email?.toLowerCase() === 'rodneyes@gmail.com') {
-          setUserRole('ADMIN');
+      try {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          if (user.email?.toLowerCase() === 'rodneyes@gmail.com') {
+            setUserRole('ADMIN');
+          } else {
+            setUserRole(data.role || 'MEMBER');
+          }
         } else {
-          setUserRole(data.role);
+          const defaultRole = user.email?.toLowerCase() === "rodneyes@gmail.com" ? 'ADMIN' : 'MEMBER';
+          console.info('useAuth: User doc not found, creating default role:', defaultRole);
+          setDoc(userRef, cleanObject({
+            uid: user.uid,
+            email: user.email,
+            role: defaultRole
+          }), { merge: true }).catch(err => {
+            console.error('useAuth: Error creating user doc:', err);
+            // Non-fatal, we already set the role locally
+          });
+          setUserRole(defaultRole);
         }
-      } else {
-        const defaultRole = user.email?.toLowerCase() === "rodneyes@gmail.com" ? 'ADMIN' : 'MEMBER';
-        setDoc(userRef, cleanObject({
-          uid: user.uid,
-          email: user.email,
-          role: defaultRole
-        }), { merge: true }).catch(err => handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`));
-        setUserRole(defaultRole);
+      } catch (e) {
+        console.error('useAuth: Error processing user doc snapshot:', e);
+      } finally {
+        setIsRoleLoading(false);
       }
-      setIsRoleLoading(false);
     }, (err) => {
-      if (err.message.includes('permission') && !auth.currentUser) return;
-      handleFirestoreError(err, OperationType.GET, `users/${user.uid}`);
+      console.error('useAuth: User doc snapshot error:', err);
+      if (err.message.includes('permission') && !auth.currentUser) {
+        setIsRoleLoading(false);
+        return;
+      }
+      // Don't throw here to avoid crashing the app
       setIsRoleLoading(false);
     });
 

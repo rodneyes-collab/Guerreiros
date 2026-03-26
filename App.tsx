@@ -20,6 +20,7 @@ import {
   Edit2
 } from 'lucide-react';
 
+import { getBrazilDay } from './firebase';
 import { useStore } from './store';
 import { useAuth } from './src/hooks/useAuth';
 import { useFirestoreSync } from './src/hooks/useFirestoreSync';
@@ -87,6 +88,8 @@ const App: React.FC = () => {
     deletePlayer,
     clearAllPlayers,
     repairDatabase,
+    initializeEloHistory,
+    updateQuotaSettings,
     savePlayer,
     clearAllHistory,
     clearMatchesOnly,
@@ -103,6 +106,7 @@ const App: React.FC = () => {
     attendance,
     matches,
     payments,
+    preConfirmations,
     generationResult,
     isSyncing,
     dbStatus,
@@ -122,11 +126,25 @@ const App: React.FC = () => {
     isFormOpen,
     setIsFormOpen,
     editingPlayer,
-    setEditingPlayer
+    setEditingPlayer,
+    triggerSync: forceSync
   } = useStore();
 
   // --- Local UI State ---
   const [selectedPlayerForHistory, setSelectedPlayerForHistory] = useState<any>(null);
+
+  const isGameDay = useMemo(() => {
+    const day = getBrazilDay();
+    // Quinta-feira (4) é o dia oficial, mas se houver presença ou partida, também é dia de jogo
+    return day === 4 || attendance.length > 0 || matches.length > 0;
+  }, [attendance.length, matches.length]);
+
+  const isIntentionPhase = useMemo(() => {
+    const day = getBrazilDay();
+    // Quarta-feira (3) é o dia de intenção, a menos que já seja dia de jogo (presença aberta)
+    return day === 3 && !isGameDay;
+  }, [isGameDay]);
+
   const [formData, setFormData] = useState({
     name: '',
     gender: 'MALE',
@@ -175,6 +193,12 @@ const App: React.FC = () => {
   };
 
   // --- Timer Logic ---
+  useEffect(() => {
+    if (generationResult && viewMode === 'presence') {
+      setViewMode('generation');
+    }
+  }, [generationResult, viewMode, setViewMode]);
+
   useEffect(() => {
     let interval: NodeJS.Timeout;
 
@@ -372,12 +396,24 @@ const App: React.FC = () => {
                   <div className={`w-2 h-2 rounded-full ${dbStatus === 'idle' ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`}></div>
                   <p className="text-[8px] sm:text-[10px] font-black text-slate-400 uppercase tracking-widest">
                     {dbStatus === 'idle' ? 'Sistema Online' : 'Sincronizando...'}
+                    {useStore.getState().dateKey && ` | KEY: ${useStore.getState().dateKey}`}
                   </p>
                 </div>
               </div>
             </div>
 
             <div className="flex items-center gap-3 sm:gap-6">
+              <button 
+                onClick={() => {
+                  forceSync();
+                  showNotification('Sincronização forçada iniciada...', 'info');
+                }}
+                className={`p-3 sm:p-4 rounded-2xl transition-all ${isSyncing ? 'bg-indigo-50 text-indigo-600 animate-spin' : 'bg-slate-100 text-slate-600 hover:bg-indigo-50 hover:text-indigo-600'}`}
+                title="Sincronizar Agora"
+                disabled={isSyncing}
+              >
+                <Database className="w-5 h-5 sm:w-6 h-6" />
+              </button>
               <div className="hidden sm:flex flex-col items-end">
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Bem-vindo,</p>
                 <div className="flex items-center gap-2">
@@ -435,8 +471,8 @@ const App: React.FC = () => {
           {viewMode === 'presence' && (
             <AttendanceView 
               userRole={userRole}
-              isGameDay={true}
-              isIntentionPhase={true}
+              isGameDay={isGameDay}
+              isIntentionPhase={isIntentionPhase}
               isNearCourt={false}
               currentPlayer={currentPlayer}
               registerAttendance={registerAttendance}
@@ -446,23 +482,24 @@ const App: React.FC = () => {
               refreshPlayers={refreshPlayers}
               resetDailyMatches={resetDailyMatches}
               availablePlayers={players}
+              preConfirmations={preConfirmations}
             />
           )}
 
           {viewMode === 'generation' && (
             <div className="space-y-12">
               <MatchView 
-                handleGenerate={handleGenerate}
-                handleDiscard={handleDiscard}
-                handleAnnounce={handleAnnounce}
-                handleSwapClick={handleSwapClick}
-                handleRemovePlayer={handleRemovePlayer}
-                promoteToSetter={promoteToSetter}
-                setSwapSelection={setSwapSelection}
-                swapSelection={swapSelection}
-                elapsedTime={elapsedTime}
-                handleFinishMatch={handleFinishMatch}
-                handleVerifyRules={handleVerifyRules}
+                onGenerate={handleGenerate}
+                onDiscard={handleDiscard}
+                onFinishDay={handleFinishDay}
+                onFinishMatch={handleFinishMatch}
+                onVerifyRules={handleVerifyRules}
+                isVerifyingRules={isVerifyingRules}
+                isNarratingSummary={isNarratingSummary}
+                onAnnounce={handleAnnounce}
+                onSwapClick={handleSwapClick}
+                onRemovePlayer={handleRemovePlayer}
+                onPromoteToSetter={promoteToSetter}
               />
               
               {generationResult && (
@@ -518,6 +555,9 @@ const App: React.FC = () => {
               resetElo={resetElo}
               triggerSync={triggerSync}
               recalculateStats={recalculateStats}
+              repairDatabase={repairDatabase}
+              initializeEloHistory={initializeEloHistory}
+              updateQuotaSettings={updateQuotaSettings}
               clearAllHistory={clearAllHistory}
               clearMatchesOnly={clearMatchesOnly}
               clearAllDatabase={clearAllDatabase}

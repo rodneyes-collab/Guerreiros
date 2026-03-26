@@ -152,6 +152,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
                     )}
                   </div>
                 </th>
+                <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Email</th>
                 <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Posição</th>
                 <th 
                   onClick={() => handleSort('gender')}
@@ -206,6 +207,9 @@ export const MembersView: React.FC<MembersViewProps> = ({
                   <td className="px-8 py-5">
                     <p className={`font-black ${player.isOfficialSetter ? 'text-rose-600' : 'text-slate-700'}`}>{player.name}</p>
                     <p className="text-[10px] text-slate-400 font-bold uppercase">{player.matchesPlayed} partidas totais</p>
+                  </td>
+                  <td className="px-8 py-5">
+                    <p className="text-xs font-bold text-slate-500">{player.email || '-'}</p>
                   </td>
                   <td className="px-8 py-5 text-center">
                     {player.isOfficialSetter ? (

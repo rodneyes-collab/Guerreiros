@@ -1,12 +1,9 @@
 
 import { Player } from '../types';
+import { getFirestoreDateKey } from '../firebase';
 
 export const getTodayKey = () => {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  return `spikegen_attendance_${year}-${month}-${day}`;
+  return `spikegen_attendance_${getFirestoreDateKey()}`;
 };
 
 export const formatTime = (seconds: number) => {

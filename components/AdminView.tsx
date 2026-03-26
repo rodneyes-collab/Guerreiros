@@ -28,6 +28,9 @@ interface AdminViewProps {
   resetElo: () => void;
   triggerSync: () => void;
   recalculateStats: () => void;
+  repairDatabase: () => void;
+  initializeEloHistory: () => void;
+  updateQuotaSettings: (totalQuota: number) => void;
   clearAllHistory: () => void;
   clearMatchesOnly: () => void;
   clearAllDatabase: () => void;
@@ -41,6 +44,9 @@ export const AdminView: React.FC<AdminViewProps> = ({
   resetElo,
   triggerSync,
   recalculateStats,
+  repairDatabase,
+  initializeEloHistory,
+  updateQuotaSettings,
   clearAllHistory,
   clearMatchesOnly,
   clearAllDatabase,
@@ -49,12 +55,6 @@ export const AdminView: React.FC<AdminViewProps> = ({
   onRejectRequest
 }) => {
   const { userRole, players, matches, payments, systemMetadata, setSystemMetadata, showNotification, usageStats } = useStore();
-
-  const handleCopyInviteLink = (player: Player) => {
-    const inviteUrl = `${window.location.origin}?invite_player_id=${player.id}`;
-    navigator.clipboard.writeText(inviteUrl);
-    showNotification(`Link de convite para ${player.name} copiado!`, "success");
-  };
 
   if (userRole !== 'ADMIN') {
     return (
@@ -133,39 +133,84 @@ export const AdminView: React.FC<AdminViewProps> = ({
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4 text-slate-900">
                 <div className="w-12 h-12 bg-slate-100 rounded-2xl flex items-center justify-center">
-                  <LinkIcon className="w-6 h-6" />
+                  <Zap className="w-6 h-6" />
                 </div>
                 <div>
-                  <h3 className="text-2xl font-black uppercase tracking-tight">Links de Convite</h3>
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Vincule sócios manualmente</p>
+                  <h3 className="text-2xl font-black uppercase tracking-tight">Controle de Acesso</h3>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Monitoramento de leituras por sócio</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-6">
+                <div className="text-right">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Cota Diária Total</p>
+                  <div className="flex items-center gap-2">
+                    <input 
+                      type="number" 
+                      defaultValue={systemMetadata.dailyReadQuota || 50000}
+                      onBlur={(e) => updateQuotaSettings(parseInt(e.target.value))}
+                      className="w-20 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-sm font-black text-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <span className="text-[10px] text-slate-400 font-bold">leituras</span>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Cota por Sócio</p>
+                  <p className="text-xl font-black text-indigo-600">
+                    ~{Math.floor((systemMetadata.dailyReadQuota || 50000) / (players.length || 1))} 
+                    <span className="text-[10px] text-slate-400"> leituras/dia</span>
+                  </p>
                 </div>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {players.filter(p => !p.uid).map(player => (
-                <div key={player.id} className="p-4 bg-slate-50 border border-slate-100 rounded-2xl flex items-center justify-between group hover:border-indigo-200 transition-all">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-slate-400">
-                      <Clock className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-black text-slate-800 uppercase tracking-tight">{player.name}</p>
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Aguardando Vínculo</p>
-                    </div>
-                  </div>
-                  <button 
-                    onClick={() => handleCopyInviteLink(player)}
-                    className="p-3 bg-white text-indigo-600 rounded-xl shadow-sm border border-slate-100 opacity-0 group-hover:opacity-100 transition-all hover:bg-indigo-600 hover:text-white"
-                    title="Copiar Link de Convite"
-                  >
-                    <LinkIcon className="w-4 h-4" />
-                  </button>
-                </div>
-              ))}
-              {players.filter(p => !p.uid).length === 0 && (
-                <div className="col-span-full py-8 text-center bg-slate-50 rounded-3xl border border-dashed border-slate-200">
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Todos os sócios estão vinculados!</p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-separate border-spacing-y-2">
+                <thead>
+                  <tr className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                    <th className="px-4 py-2">Sócio</th>
+                    <th className="px-4 py-2">Leituras Hoje</th>
+                    <th className="px-4 py-2">Status da Cota</th>
+                    <th className="px-4 py-2 text-right">Último Acesso</th>
+                  </tr>
+                </thead>
+                <tbody>
+                    {players.filter(p => p.reads !== undefined || p.uid).sort((a, b) => (b.reads || 0) - (a.reads || 0)).slice(0, 10).map(player => {
+                    const quota = Math.floor((systemMetadata.dailyReadQuota || 50000) / (players.length || 1));
+                    const usage = (player.reads || 0);
+                    const percentage = Math.min(100, (usage / quota) * 100);
+                    
+                    return (
+                      <tr key={player.id} className="bg-slate-50 hover:bg-slate-100 transition-all group">
+                        <td className="px-4 py-4 rounded-l-2xl">
+                          <p className="text-sm font-black text-slate-800 uppercase tracking-tight">{player.name}</p>
+                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{player.email || 'Sem email'}</p>
+                        </td>
+                        <td className="px-4 py-4">
+                          <p className="text-sm font-black font-mono text-slate-700">{usage}</p>
+                        </td>
+                        <td className="px-4 py-4">
+                          <div className="w-32 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                            <div 
+                              className={`h-full rounded-full transition-all duration-500 ${
+                                percentage > 80 ? 'bg-rose-500' : percentage > 50 ? 'bg-amber-500' : 'bg-emerald-500'
+                              }`}
+                              style={{ width: `${percentage}%` }}
+                            />
+                          </div>
+                        </td>
+                        <td className="px-4 py-4 rounded-r-2xl text-right">
+                          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+                            {player.lastReadUpdate ? new Date(player.lastReadUpdate).toLocaleDateString('pt-BR') : 'Sem registro'}
+                          </p>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              {players.length === 0 && (
+                <div className="py-12 text-center bg-slate-50 rounded-3xl border border-dashed border-slate-200">
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Nenhum dado de acesso disponível</p>
                 </div>
               )}
             </div>
@@ -187,6 +232,24 @@ export const AdminView: React.FC<AdminViewProps> = ({
                 <RefreshCw className="w-8 h-8 text-amber-600 mb-4 group-hover:rotate-180 transition-transform duration-500" />
                 <h4 className="font-black text-amber-900 uppercase text-sm tracking-widest mb-2">Resetar Estatísticas Diárias</h4>
                 <p className="text-amber-700/70 text-xs font-medium leading-relaxed">Zera as vitórias, derrotas e partidas jogadas hoje de todos os sócios.</p>
+              </button>
+
+              <button 
+                onClick={repairDatabase}
+                className="flex flex-col items-start p-8 bg-indigo-50 border border-indigo-100 rounded-3xl hover:bg-indigo-100 transition-all group text-left"
+              >
+                <Database className="w-8 h-8 text-indigo-600 mb-4 group-hover:scale-110 transition-transform duration-500" />
+                <h4 className="font-black text-indigo-900 uppercase text-sm tracking-widest mb-2">Reparar Banco de Dados</h4>
+                <p className="text-indigo-700/70 text-xs font-medium leading-relaxed">Corrige inconsistências, remove sócios inválidos e inicializa históricos.</p>
+              </button>
+
+              <button 
+                onClick={initializeEloHistory}
+                className="flex flex-col items-start p-8 bg-blue-50 border border-blue-100 rounded-3xl hover:bg-blue-100 transition-all group text-left"
+              >
+                <Clock className="w-8 h-8 text-blue-600 mb-4 group-hover:rotate-12 transition-transform duration-500" />
+                <h4 className="font-black text-blue-900 uppercase text-sm tracking-widest mb-2">Inicializar Histórico ELO</h4>
+                <p className="text-blue-700/70 text-xs font-medium leading-relaxed">Cria o primeiro ponto no gráfico de ELO para todos os sócios.</p>
               </button>
 
               <button 
@@ -262,7 +325,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
             </div>
             <div className="space-y-6">
               {[
-                { label: "Leituras Estimadas", value: usageStats.reads, max: 50000 },
+                { label: "Leituras Estimadas", value: usageStats.reads, max: systemMetadata.dailyReadQuota || 50000 },
                 { label: "Escritas Estimadas", value: usageStats.writes, max: 20000 },
               ].map((stat, i) => (
                 <div key={i} className="space-y-2">
