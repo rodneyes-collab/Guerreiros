@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../store';
 import { 
   Trophy, 
@@ -52,7 +52,6 @@ interface RankingViewProps {
   handleAnnounceSummary: () => void;
   isNarratingSummary: boolean;
   resetDailyMatches: () => Promise<void>;
-  topSynergies: any[];
 }
 
 export const RankingView: React.FC<RankingViewProps> = ({
@@ -60,11 +59,25 @@ export const RankingView: React.FC<RankingViewProps> = ({
   refreshPlayers,
   handleAnnounceSummary,
   isNarratingSummary,
-  resetDailyMatches,
-  topSynergies
+  resetDailyMatches
 }) => {
-  const { synergy, negativeSynergy, rivalry, players, matches, isSyncing } = useStore();
+  const { synergy, negativeSynergy, rivalry, players, matches, isSyncing, currentPlayer } = useStore();
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
+
+  useEffect(() => {
+    console.log('RankingView: Players in store:', players?.length);
+    console.log('RankingView: Current Player:', currentPlayer?.name);
+    console.log('RankingView: User Role:', userRole);
+  }, [players, currentPlayer, userRole]);
+
+  // Set default player for members
+  useEffect(() => {
+    if (userRole === 'MEMBER' && currentPlayer && !selectedPlayerId) {
+      console.log('RankingView: Setting default player for member:', currentPlayer.name);
+      setSelectedPlayerId(currentPlayer.id);
+    }
+  }, [userRole, currentPlayer, selectedPlayerId]);
+  const [activeTab, setActiveTab] = useState<'daily' | 'individual'>('daily');
 
   const [comparisonPlayerId, setComparisonPlayerId] = useState<string | null>(null);
   const [isListModalOpen, setIsListModalOpen] = useState(false);
@@ -104,20 +117,20 @@ export const RankingView: React.FC<RankingViewProps> = ({
   };
 
   // Default top player
-  const topPlayer = useMemo(() => 
-    [...players].sort((a, b) => b.elo - a.elo)[0],
-    [players]
-  );
+  const topPlayer = useMemo(() => {
+    if (!players || players.length === 0) return null;
+    return [...players].sort((a, b) => (b.elo || 0) - (a.elo || 0))[0];
+  }, [players]);
 
-  const selectedPlayer = useMemo(() => 
-    players.find(p => p.id === (selectedPlayerId || topPlayer?.id)),
-    [players, selectedPlayerId, topPlayer]
-  );
+  const selectedPlayer = useMemo(() => {
+    if (!players) return null;
+    return players.find(p => p.id === (selectedPlayerId || topPlayer?.id));
+  }, [players, selectedPlayerId, topPlayer]);
 
-  const comparisonPlayer = useMemo(() => 
-    players.find(p => p.id === comparisonPlayerId),
-    [players, comparisonPlayerId]
-  );
+  const comparisonPlayer = useMemo(() => {
+    if (!players) return null;
+    return players.find(p => p.id === comparisonPlayerId);
+  }, [players, comparisonPlayerId]);
 
   // Relationship Data for Selected Player
   const playerRelationships = useMemo(() => {
@@ -171,22 +184,22 @@ export const RankingView: React.FC<RankingViewProps> = ({
 
   // Comparison Data
   const comparisonData = useMemo(() => {
-    if (!selectedPlayer) return [];
+    if (!selectedPlayer || !players) return [];
     
     const target = comparisonPlayer || {
       name: 'Média Grupo',
-      elo: players.reduce((acc, p) => acc + p.elo, 0) / (players.length || 1),
-      winRate: players.reduce((acc, p) => acc + (p.matchesPlayed > 0 ? (p.wins / p.matchesPlayed) * 100 : 0), 0) / (players.length || 1),
-      matchesPlayed: players.reduce((acc, p) => acc + p.matchesPlayed, 0) / (players.length || 1)
+      elo: players.reduce((acc, p) => acc + (p.elo || 0), 0) / (players.length || 1),
+      winRate: players.reduce((acc, p) => acc + ((p.matchesPlayed || 0) > 0 ? ((p.wins || 0) / p.matchesPlayed) * 100 : 0), 0) / (players.length || 1),
+      matchesPlayed: players.reduce((acc, p) => acc + (p.matchesPlayed || 0), 0) / (players.length || 1)
     };
 
-    const selectedWinRate = selectedPlayer.matchesPlayed > 0 ? (selectedPlayer.wins / selectedPlayer.matchesPlayed) * 100 : 0;
-    const targetWinRate = 'winRate' in target ? (target as any).winRate : (target.matchesPlayed > 0 ? (target.wins / target.matchesPlayed) * 100 : 0);
+    const selectedWinRate = (selectedPlayer.matchesPlayed || 0) > 0 ? ((selectedPlayer.wins || 0) / selectedPlayer.matchesPlayed) * 100 : 0;
+    const targetWinRate = 'winRate' in target ? (target as any).winRate : ((target.matchesPlayed || 0) > 0 ? ((target.wins || 0) / target.matchesPlayed) * 100 : 0);
 
     return [
-      { subject: 'ELO', A: selectedPlayer.elo, B: target.elo },
+      { subject: 'ELO', A: selectedPlayer.elo || 0, B: target.elo || 0 },
       { subject: 'Vitórias %', A: selectedWinRate, B: targetWinRate },
-      { subject: 'Partidas', A: selectedPlayer.matchesPlayed, B: target.matchesPlayed },
+      { subject: 'Partidas', A: selectedPlayer.matchesPlayed || 0, B: target.matchesPlayed || 0 },
     ];
   }, [selectedPlayer, comparisonPlayer, players]);
 
@@ -223,14 +236,14 @@ export const RankingView: React.FC<RankingViewProps> = ({
 
   // Chart Data: Radar Skills
   const groupAverages = useMemo(() => {
-    if (players.length === 0) return null;
-    const maxElo = Math.max(...players.map(p => p.elo), 1);
-    const maxMatches = Math.max(...players.map(p => p.matchesPlayed), 1);
-    const maxDaily = Math.max(...players.map(p => (p.dailyEloGain || 0)), 1);
+    if (!players || players.length === 0) return null;
+    const maxElo = Math.max(...players.map(p => p.elo || 0), 1);
+    const maxMatches = Math.max(...players.map(p => p.matchesPlayed || 0), 1);
+    const maxDaily = Math.max(...players.map(p => Math.abs(p.dailyEloGain || 0)), 1);
     
-    const avgElo = players.reduce((acc, p) => acc + p.elo, 0) / players.length;
-    const avgWinRate = players.reduce((acc, p) => acc + (p.matchesPlayed > 0 ? (p.wins / p.matchesPlayed) * 100 : 0), 0) / players.length;
-    const avgMatches = players.reduce((acc, p) => acc + p.matchesPlayed, 0) / players.length;
+    const avgElo = players.reduce((acc, p) => acc + (p.elo || 0), 0) / players.length;
+    const avgWinRate = players.reduce((acc, p) => acc + ((p.matchesPlayed || 0) > 0 ? ((p.wins || 0) / p.matchesPlayed) * 100 : 0), 0) / players.length;
+    const avgMatches = players.reduce((acc, p) => acc + (p.matchesPlayed || 0), 0) / players.length;
     const avgDaily = players.reduce((acc, p) => acc + (p.dailyEloGain || 0), 0) / players.length;
 
     return {
@@ -243,41 +256,41 @@ export const RankingView: React.FC<RankingViewProps> = ({
   }, [players]);
 
   const radarData = useMemo(() => {
-    if (!selectedPlayer || !groupAverages) return [];
+    if (!selectedPlayer || !groupAverages || !players) return [];
     
-    const maxElo = Math.max(...players.map(p => p.elo), 1);
-    const maxMatches = Math.max(...players.map(p => p.matchesPlayed), 1);
+    const maxElo = Math.max(...players.map(p => p.elo || 0), 1);
+    const maxMatches = Math.max(...players.map(p => p.matchesPlayed || 0), 1);
     const maxDaily = Math.max(...players.map(p => Math.abs(p.dailyEloGain || 0)), 1);
     
-    const winRate = selectedPlayer.matchesPlayed > 0 
-      ? (selectedPlayer.wins / selectedPlayer.matchesPlayed) * 100 
+    const winRate = (selectedPlayer.matchesPlayed || 0) > 0 
+      ? ((selectedPlayer.wins || 0) / selectedPlayer.matchesPlayed) * 100 
       : 0;
 
     // Simulação de Sinergia (poderia ser real se tivéssemos os dados aqui)
-    const synergyScore = 70 + (selectedPlayer.elo % 25); 
+    const synergyScore = 70 + ((selectedPlayer.elo || 0) % 25); 
 
     return [
-      { subject: 'Poder', A: (selectedPlayer.elo / maxElo) * 100, B: groupAverages.elo, fullMark: 100 },
+      { subject: 'Poder', A: ((selectedPlayer.elo || 0) / maxElo) * 100, B: groupAverages.elo, fullMark: 100 },
       { subject: 'Vitórias', A: winRate, B: groupAverages.winRate, fullMark: 100 },
-      { subject: 'Volume', A: (selectedPlayer.matchesPlayed / maxMatches) * 100, B: groupAverages.matches, fullMark: 100 },
-      { subject: 'Momento', A: maxDaily > 0 ? ((selectedPlayer.dailyEloGain || 0) / maxDaily) * 50 + 50 : 50, B: groupAverages.daily, fullMark: 100 },
+      { subject: 'Volume', A: ((selectedPlayer.matchesPlayed || 0) / maxMatches) * 100, B: groupAverages.matches, fullMark: 100 },
+      { subject: 'Momento', A: maxDaily > 0 ? (((selectedPlayer.dailyEloGain || 0) / maxDaily) * 50 + 50) : 50, B: groupAverages.daily, fullMark: 100 },
       { subject: 'Sinergia', A: synergyScore, B: groupAverages.resilience, fullMark: 100 },
     ];
   }, [selectedPlayer, players, groupAverages]);
 
   // Advanced Stats Calculations
   const advancedStats = useMemo(() => {
-    if (!selectedPlayer) return null;
+    if (!selectedPlayer || !matches) return null;
 
     const winLossData = [
-      { name: 'Vitórias', value: selectedPlayer.wins, color: '#10b981' },
-      { name: 'Derrotas', value: selectedPlayer.losses, color: '#f43f5e' }
+      { name: 'Vitórias', value: selectedPlayer.wins || 0, color: '#10b981' },
+      { name: 'Derrotas', value: selectedPlayer.losses || 0, color: '#f43f5e' }
     ];
 
     // Calculate current streak from matches
     const playerMatches = matches
-      .filter(m => m.teamA.includes(selectedPlayer.id) || m.teamB.includes(selectedPlayer.id))
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      .filter(m => (m.teamA && m.teamA.includes(selectedPlayer.id)) || (m.teamB && m.teamB.includes(selectedPlayer.id)))
+      .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 
     let streak = 0;
     let streakType: 'win' | 'loss' | 'none' = 'none';
@@ -304,18 +317,18 @@ export const RankingView: React.FC<RankingViewProps> = ({
   }, [selectedPlayer, matches]);
 
   const winRateHistory = useMemo(() => {
-    if (!selectedPlayer || matches.length === 0) return [];
+    if (!selectedPlayer || !matches || matches.length === 0) return [];
     
     const playerMatches = matches
-      .filter(m => m.teamA.includes(selectedPlayer.id) || m.teamB.includes(selectedPlayer.id))
-      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      .filter(m => (m.teamA && m.teamA.includes(selectedPlayer.id)) || (m.teamB && m.teamB.includes(selectedPlayer.id)))
+      .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
 
     let wins = 0;
     let total = 0;
     
     return playerMatches.map((m, idx) => {
       total++;
-      const isTeamA = m.teamA.includes(selectedPlayer.id);
+      const isTeamA = m.teamA && m.teamA.includes(selectedPlayer.id);
       const won = (isTeamA && m.winner === 'A') || (!isTeamA && m.winner === 'B');
       if (won) wins++;
       
@@ -339,22 +352,75 @@ export const RankingView: React.FC<RankingViewProps> = ({
 
   // Top Stats
   const topStats = useMemo(() => {
-    const mvp = [...players].sort((a, b) => b.wins - a.wins)[0];
-    const bestSetter = [...players].filter(p => p.isOfficialSetter).sort((a, b) => b.wins - a.wins)[0];
-    const topElo = [...players].sort((a, b) => b.elo - a.elo)[0];
+    if (!players || players.length === 0) return { mvp: null, bestSetter: null, topElo: null, dailyKing: null, topImpact: null, dailyMvp: null, dailyBestSetter: null };
+    
+    // Minimum matches to qualify for MVP/Best Setter to avoid 1-match outliers
+    const MIN_MATCHES = 3;
+
+    const getWinRate = (p: any) => (p.matchesPlayed || 0) > 0 ? (p.wins || 0) / p.matchesPlayed : 0;
+    const getDailyWinRate = (p: any) => (p.dailyMatches || 0) > 0 ? (p.dailyWins || 0) / p.dailyMatches : 0;
+
+    const mvp = [...players]
+      .filter(p => (p.matchesPlayed || 0) >= MIN_MATCHES)
+      .sort((a, b) => getWinRate(b) - getWinRate(a))[0] || 
+      [...players].sort((a, b) => (b.wins || 0) - (a.wins || 0))[0];
+
+    const bestSetter = [...players]
+      .filter(p => p.isOfficialSetter && (p.matchesPlayed || 0) >= MIN_MATCHES)
+      .sort((a, b) => getWinRate(b) - getWinRate(a))[0] ||
+      [...players].filter(p => p.isOfficialSetter).sort((a, b) => (b.wins || 0) - (a.wins || 0))[0];
+
+    const dailyMvp = [...players]
+      .filter(p => (p.dailyMatches || 0) > 0)
+      .sort((a, b) => getDailyWinRate(b) - getDailyWinRate(a) || (b.dailyWins || 0) - (a.dailyWins || 0))[0];
+
+    const dailyBestSetter = [...players]
+      .filter(p => p.isOfficialSetter && (p.dailyMatches || 0) > 0)
+      .sort((a, b) => getDailyWinRate(b) - getDailyWinRate(a) || (b.dailyWins || 0) - (a.dailyWins || 0))[0];
+
+    const topElo = [...players].sort((a, b) => (b.elo || 0) - (a.elo || 0))[0];
     const dailyKing = [...players].sort((a, b) => (b.dailyEloGain || 0) - (a.dailyEloGain || 0))[0];
     const topImpact = [...players].sort((a, b) => {
-      const impactA = (a.elo - 1000) / (a.matchesPlayed || 1);
-      const impactB = (b.elo - 1000) / (b.matchesPlayed || 1);
+      const impactA = ((a.elo || 1000) - 1000) / (a.matchesPlayed || 1);
+      const impactB = ((b.elo || 1000) - 1000) / (b.matchesPlayed || 1);
       return impactB - impactA;
     })[0];
     
-    return { mvp, bestSetter, topElo, dailyKing, topImpact };
+    return { mvp, bestSetter, topElo, dailyKing, topImpact, dailyMvp, dailyBestSetter };
   }, [players]);
 
+  // Global Top Synergies & Rivalries
+  const globalRelationships = useMemo(() => {
+    if (!players || players.length === 0) return { synergies: [], rivalries: [] };
+
+    const synergies = Object.entries(synergy || {})
+      .map(([pair, wins]) => {
+        const [id1, id2] = pair.split('_');
+        const p1 = players.find(p => p.id === id1);
+        const p2 = players.find(p => p.id === id2);
+        return { p1, p2, wins: wins as number };
+      })
+      .filter(s => s.p1 && s.p2)
+      .sort((a, b) => b.wins - a.wins)
+      .slice(0, 3);
+
+    const rivalries = Object.entries(rivalry || {})
+      .map(([pair, wins]) => {
+        const [loserId, winnerId] = pair.split('_');
+        const loser = players.find(p => p.id === loserId);
+        const winner = players.find(p => p.id === winnerId);
+        return { loser, winner, wins: wins as number };
+      })
+      .filter(r => r.loser && r.winner)
+      .sort((a, b) => b.wins - a.wins)
+      .slice(0, 3);
+
+    return { synergies, rivalries };
+  }, [synergy, rivalry, players]);
+
   const averageElo = useMemo(() => {
-    if (players.length === 0) return 0;
-    const sum = players.reduce((acc, p) => acc + p.elo, 0);
+    if (!players || players.length === 0) return 0;
+    const sum = players.reduce((acc, p) => acc + (p.elo || 0), 0);
     return Math.round(sum / players.length);
   }, [players]);
 
@@ -392,91 +458,298 @@ export const RankingView: React.FC<RankingViewProps> = ({
           <p className="text-sm font-bold text-slate-400 uppercase tracking-widest mt-2">Inteligência e Performance</p>
         </div>
         <div className="flex w-full md:w-auto gap-3">
-          <button 
-            onClick={() => {
-              setModalTarget('selected');
-              setIsListModalOpen(true);
-            }}
-            className="flex-1 md:flex-none bg-white border border-slate-200 text-slate-600 px-6 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-slate-50 shadow-sm transition-all"
-          >
-            <Users className="w-5 h-5" />
-            Selecionar Sócio
-          </button>
-          <button 
-            onClick={handleAnnounceSummary}
-            disabled={isNarratingSummary}
-            className="flex-1 md:flex-none bg-indigo-600 text-white px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-indigo-700 shadow-xl shadow-indigo-100 transition-all disabled:opacity-50"
-          >
-            <Sparkles className={`w-5 h-5 ${isNarratingSummary ? 'animate-spin' : ''}`} />
-            {isNarratingSummary ? 'Narrando...' : 'Resumo IA'}
-          </button>
+          {userRole === 'ADMIN' && (
+            <button 
+              onClick={handleAnnounceSummary}
+              disabled={isNarratingSummary}
+              className="flex-1 md:flex-none bg-indigo-600 text-white px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-indigo-700 shadow-xl shadow-indigo-100 transition-all disabled:opacity-50"
+            >
+              <Sparkles className={`w-5 h-5 ${isNarratingSummary ? 'animate-spin' : ''}`} />
+              {isNarratingSummary ? 'Narrando...' : 'Resumo IA'}
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Top Cards Grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-white p-6 md:p-8 rounded-[2rem] border border-slate-200 shadow-sm relative overflow-hidden group"
+      {/* Tabs Switcher */}
+      <div className="bg-slate-200/50 p-1.5 rounded-2xl flex gap-1">
+        <button
+          onClick={() => setActiveTab('daily')}
+          className={`flex-1 py-3 px-4 rounded-xl font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${
+            activeTab === 'daily' 
+              ? 'bg-white text-indigo-600 shadow-sm' 
+              : 'text-slate-500 hover:text-slate-700'
+          }`}
         >
-          <div className="absolute top-0 right-0 p-4 md:p-6 opacity-10 group-hover:scale-110 transition-transform">
-            <Trophy className="w-12 h-12 md:w-16 md:h-16 text-indigo-600" />
-          </div>
-          <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-3 md:mb-4">MVP Temporada</p>
-          <h3 className="text-lg md:text-2xl font-black text-slate-800 truncate">{topStats.mvp?.name || '-'}</h3>
-          <p className="text-indigo-600 font-black text-xs md:text-sm mt-1 uppercase tracking-widest">{topStats.mvp?.wins || 0} Vitórias</p>
-        </motion.div>
-
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className="bg-white p-6 md:p-8 rounded-[2rem] border border-slate-200 shadow-sm relative overflow-hidden group"
+          <Calendar className="w-4 h-4" />
+          Destaques do Dia
+        </button>
+        <button
+          onClick={() => setActiveTab('individual')}
+          className={`flex-1 py-3 px-4 rounded-xl font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${
+            activeTab === 'individual' 
+              ? 'bg-white text-indigo-600 shadow-sm' 
+              : 'text-slate-500 hover:text-slate-700'
+          }`}
         >
-          <div className="absolute top-0 right-0 p-4 md:p-6 opacity-10 group-hover:scale-110 transition-transform">
-            <Target className="w-12 h-12 md:w-16 md:h-16 text-amber-600" />
-          </div>
-          <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-3 md:mb-4">Melhor Levantador</p>
-          <h3 className="text-lg md:text-2xl font-black text-slate-800 truncate">{topStats.bestSetter?.name || '-'}</h3>
-          <p className="text-amber-600 font-black text-xs md:text-sm mt-1 uppercase tracking-widest">{topStats.bestSetter?.wins || 0} Vitórias</p>
-        </motion.div>
-
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-          className="bg-white p-6 md:p-8 rounded-[2rem] border border-slate-200 shadow-sm relative overflow-hidden group"
-        >
-          <div className="absolute top-0 right-0 p-4 md:p-6 opacity-10 group-hover:scale-110 transition-transform">
-            <Zap className="w-12 h-12 md:w-16 md:h-16 text-emerald-600" />
-          </div>
-          <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-3 md:mb-4">Rei do ELO</p>
-          <h3 className="text-lg md:text-2xl font-black text-slate-800 truncate">{topStats.topElo?.name || '-'}</h3>
-          <p className="text-emerald-600 font-black text-xs md:text-sm mt-1 uppercase tracking-widest">{topStats.topElo?.elo || 0} Pontos</p>
-        </motion.div>
-
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3 }}
-          className="bg-white p-6 md:p-8 rounded-[2rem] border border-slate-200 shadow-sm relative overflow-hidden group"
-        >
-          <div className="absolute top-0 right-0 p-4 md:p-6 opacity-10 group-hover:scale-110 transition-transform">
-            <Activity className="w-12 h-12 md:w-16 md:h-16 text-rose-600" />
-          </div>
-          <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-3 md:mb-4">Maior Impacto</p>
-          <h3 className="text-lg md:text-2xl font-black text-slate-800 truncate">{topStats.topImpact?.name || '-'}</h3>
-          <p className="text-rose-600 font-black text-xs md:text-sm mt-1 uppercase tracking-widest">
-            {topStats.topImpact ? ((topStats.topImpact.elo - 1000) / (topStats.topImpact.matchesPlayed || 1)).toFixed(1) : '0.0'} ELO/Jogo
-          </p>
-        </motion.div>
+          <Users className="w-4 h-4" />
+          Análise de Sócio
+        </button>
       </div>
 
-      <div className="w-full space-y-8">
-        {/* Detailed Analytics */}
-        <div className="w-full space-y-8">
-          {selectedPlayer ? (
+      <AnimatePresence mode="wait">
+        {activeTab === 'daily' ? (
+          <motion.div
+            key="daily"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="space-y-8"
+          >
+            {/* Daily Results Section */}
+            <section className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-amber-50 rounded-xl">
+                    <Sparkles className="w-5 h-5 text-amber-600" />
+                  </div>
+                  <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Destaques de Hoje</h3>
+                </div>
+                {userRole === 'ADMIN' && (
+                  <button 
+                    onClick={resetDailyMatches}
+                    className="p-2 bg-slate-100 hover:bg-rose-50 hover:text-rose-600 rounded-xl text-slate-400 transition-all"
+                    title="Resetar Dia"
+                  >
+                    <RotateCcw className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+                <motion.div 
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="bg-gradient-to-br from-amber-500 to-orange-600 p-6 rounded-[2.5rem] text-white shadow-xl shadow-amber-200 relative overflow-hidden group"
+                >
+                  <div className="absolute top-0 right-0 p-6 opacity-20 group-hover:scale-110 transition-transform">
+                    <Trophy className="w-12 h-12" />
+                  </div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-80 mb-2">MVP do Dia</p>
+                  <h4 className="text-xl font-black truncate">{topStats.dailyMvp?.name || '-'}</h4>
+                  <div className="mt-4 flex items-center gap-2">
+                    <span className="bg-white/20 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">
+                      {topStats.dailyMvp ? Math.round((topStats.dailyMvp.dailyWins / (topStats.dailyMvp.dailyMatches || 1)) * 100) : 0}% Win Rate
+                    </span>
+                  </div>
+                </motion.div>
+
+                <motion.div 
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: 0.1 }}
+                  className="bg-gradient-to-br from-indigo-500 to-purple-600 p-6 rounded-[2.5rem] text-white shadow-xl shadow-indigo-200 relative overflow-hidden group"
+                >
+                  <div className="absolute top-0 right-0 p-6 opacity-20 group-hover:scale-110 transition-transform">
+                    <Target className="w-12 h-12" />
+                  </div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-80 mb-2">Levantador do Dia</p>
+                  <h4 className="text-xl font-black truncate">{topStats.dailyBestSetter?.name || '-'}</h4>
+                  <div className="mt-4 flex items-center gap-2">
+                    <span className="bg-white/20 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">
+                      {topStats.dailyBestSetter ? Math.round((topStats.dailyBestSetter.dailyWins / (topStats.dailyBestSetter.dailyMatches || 1)) * 100) : 0}% Win Rate
+                    </span>
+                  </div>
+                </motion.div>
+
+                <motion.div 
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: 0.2 }}
+                  className="bg-gradient-to-br from-emerald-500 to-teal-600 p-6 rounded-[2.5rem] text-white shadow-xl shadow-emerald-200 relative overflow-hidden group"
+                >
+                  <div className="absolute top-0 right-0 p-6 opacity-20 group-hover:scale-110 transition-transform">
+                    <Zap className="w-12 h-12" />
+                  </div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-80 mb-2">Rei do Dia</p>
+                  <h4 className="text-xl font-black truncate">{topStats.dailyKing?.name || '-'}</h4>
+                  <div className="mt-4 flex items-center gap-2">
+                    <span className="bg-white/20 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">
+                      +{topStats.dailyKing?.dailyEloGain || 0} ELO
+                    </span>
+                  </div>
+                </motion.div>
+
+                <motion.div 
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: 0.3 }}
+                  className="bg-white p-6 rounded-[2.5rem] border border-slate-200 shadow-sm relative overflow-hidden group"
+                >
+                  <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                    <Activity className="w-12 h-12 text-slate-400" />
+                  </div>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-2">Partidas Hoje</p>
+                  <h4 className="text-3xl font-black text-slate-800">{matches.filter(m => m.date === new Date().toISOString().split('T')[0]).length}</h4>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-2">Registradas</p>
+                </motion.div>
+              </div>
+            </section>
+
+            {/* Global Top Stats Section */}
+            <section className="space-y-6">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-indigo-50 rounded-xl">
+                  <Trophy className="w-5 h-5 text-indigo-600" />
+                </div>
+                <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Ranking Histórico</h3>
+              </div>
+              
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+                <motion.div 
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="bg-white p-6 md:p-8 rounded-[2rem] border border-slate-200 shadow-sm relative overflow-hidden group"
+                >
+                  <div className="absolute top-0 right-0 p-4 md:p-6 opacity-10 group-hover:scale-110 transition-transform">
+                    <Trophy className="w-12 h-12 md:w-16 md:h-16 text-indigo-600" />
+                  </div>
+                  <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-3 md:mb-4">MVP Eficiência</p>
+                  <h3 className="text-lg md:text-2xl font-black text-slate-800 truncate">{topStats.mvp?.name || '-'}</h3>
+                  <p className="text-indigo-600 font-black text-xs md:text-sm mt-1 uppercase tracking-widest">
+                    {topStats.mvp ? Math.round((topStats.mvp.wins / (topStats.mvp.matchesPlayed || 1)) * 100) : 0}% Aproveitamento
+                  </p>
+                </motion.div>
+
+                <motion.div 
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.1 }}
+                  className="bg-white p-6 md:p-8 rounded-[2rem] border border-slate-200 shadow-sm relative overflow-hidden group"
+                >
+                  <div className="absolute top-0 right-0 p-4 md:p-6 opacity-10 group-hover:scale-110 transition-transform">
+                    <Target className="w-12 h-12 md:w-16 md:h-16 text-amber-600" />
+                  </div>
+                  <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-3 md:mb-4">Melhor Levantador</p>
+                  <h3 className="text-lg md:text-2xl font-black text-slate-800 truncate">{topStats.bestSetter?.name || '-'}</h3>
+                  <p className="text-amber-600 font-black text-xs md:text-sm mt-1 uppercase tracking-widest">
+                    {topStats.bestSetter ? Math.round((topStats.bestSetter.wins / (topStats.bestSetter.matchesPlayed || 1)) * 100) : 0}% Aproveitamento
+                  </p>
+                </motion.div>
+
+                <motion.div 
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.2 }}
+                  className="bg-white p-6 md:p-8 rounded-[2rem] border border-slate-200 shadow-sm relative overflow-hidden group"
+                >
+                  <div className="absolute top-0 right-0 p-4 md:p-6 opacity-10 group-hover:scale-110 transition-transform">
+                    <Zap className="w-12 h-12 md:w-16 md:h-16 text-emerald-600" />
+                  </div>
+                  <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-3 md:mb-4">Rei do ELO</p>
+                  <h3 className="text-lg md:text-2xl font-black text-slate-800 truncate">{topStats.topElo?.name || '-'}</h3>
+                  <p className="text-emerald-600 font-black text-xs md:text-sm mt-1 uppercase tracking-widest">{topStats.topElo?.elo || 0} Pontos</p>
+                </motion.div>
+
+                <motion.div 
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.3 }}
+                  className="bg-white p-6 md:p-8 rounded-[2rem] border border-slate-200 shadow-sm relative overflow-hidden group"
+                >
+                  <div className="absolute top-0 right-0 p-4 md:p-6 opacity-10 group-hover:scale-110 transition-transform">
+                    <Activity className="w-12 h-12 md:w-16 md:h-16 text-rose-600" />
+                  </div>
+                  <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-3 md:mb-4">Maior Impacto</p>
+                  <h3 className="text-lg md:text-2xl font-black text-slate-800 truncate">{topStats.topImpact?.name || '-'}</h3>
+                  <p className="text-rose-600 font-black text-xs md:text-sm mt-1 uppercase tracking-widest">
+                    {topStats.topImpact ? ((topStats.topImpact.elo - 1000) / (topStats.topImpact.matchesPlayed || 1)).toFixed(1) : '0.0'} ELO/Jogo
+                  </p>
+                </motion.div>
+              </div>
+            </section>
+
+      {/* Global Synergies & Rivalries */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="p-2 bg-emerald-50 rounded-xl">
+              <Users className="w-5 h-5 text-emerald-600" />
+            </div>
+            <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest">Melhores Duplas (Sinergia)</h4>
+          </div>
+          <div className="space-y-4">
+            {globalRelationships.synergies.length > 0 ? globalRelationships.synergies.map((s, i) => (
+              <div key={i} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                <div className="flex items-center gap-3">
+                  <div className="flex -space-x-2">
+                    <div className="w-8 h-8 rounded-full bg-indigo-100 border-2 border-white flex items-center justify-center text-[10px] font-black text-indigo-600">
+                      {s.p1?.name.charAt(0)}
+                    </div>
+                    <div className="w-8 h-8 rounded-full bg-emerald-100 border-2 border-white flex items-center justify-center text-[10px] font-black text-emerald-600">
+                      {s.p2?.name.charAt(0)}
+                    </div>
+                  </div>
+                  <p className="text-xs font-black text-slate-700">{s.p1?.name} + {s.p2?.name}</p>
+                </div>
+                <p className="text-xs font-black text-emerald-600">{s.wins} Vitórias</p>
+              </div>
+            )) : (
+              <p className="text-center py-8 text-slate-400 text-xs font-bold uppercase tracking-widest">Sem dados de sinergia</p>
+            )}
+          </div>
+        </div>
+
+        <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="p-2 bg-rose-50 rounded-xl">
+              <Swords className="w-5 h-5 text-rose-600" />
+            </div>
+            <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest">Maiores Rivalidades</h4>
+          </div>
+          <div className="space-y-4">
+            {globalRelationships.rivalries.length > 0 ? globalRelationships.rivalries.map((r, i) => (
+              <div key={i} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-black text-slate-700">{r.winner?.name}</span>
+                    <span className="text-[10px] font-black text-slate-400">vs</span>
+                    <span className="text-xs font-black text-slate-700">{r.loser?.name}</span>
+                  </div>
+                </div>
+                <p className="text-xs font-black text-rose-600">{r.wins} Vitórias</p>
+              </div>
+            )) : (
+              <p className="text-center py-8 text-slate-400 text-xs font-bold uppercase tracking-widest">Sem dados de rivalidade</p>
+            )}
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  ) : (
+    <motion.div
+      key="individual"
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -20 }}
+      className="space-y-8"
+    >
+      <div className="flex flex-col gap-6">
+        <button 
+          onClick={() => {
+            setModalTarget('selected');
+            setIsListModalOpen(true);
+          }}
+          className="w-full bg-white border border-slate-200 text-slate-600 px-6 py-5 rounded-[2rem] font-black text-sm uppercase tracking-widest flex items-center justify-between gap-3 hover:bg-slate-50 shadow-sm transition-all"
+        >
+          <div className="flex items-center gap-3">
+            <Users className="w-6 h-6 text-indigo-600" />
+            {selectedPlayer ? `Analisando: ${selectedPlayer.name}` : 'Selecionar Sócio para Análise'}
+          </div>
+          <ChevronRight className="w-5 h-5 opacity-40" />
+        </button>
+
+        {selectedPlayer ? (
             <motion.div 
               key={selectedPlayer.id}
               initial={{ opacity: 0, scale: 0.98 }}
@@ -495,7 +768,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
                       {selectedPlayer.name.charAt(0)}
                     </div>
                     <div>
-                      <h3 className="text-3xl font-black uppercase tracking-tighter">{selectedPlayer.name}</h3>
+                      <h3 className={`text-3xl font-black uppercase tracking-tighter ${selectedPlayer.isOfficialSetter ? 'text-rose-400' : ''}`}>{selectedPlayer.name}</h3>
                       <p className="text-indigo-200 text-xs font-bold uppercase tracking-[0.2em] mt-1">Sócio Nível Pro</p>
                     </div>
                   </div>
@@ -533,6 +806,36 @@ export const RankingView: React.FC<RankingViewProps> = ({
                     <p className="text-[8px] font-black uppercase tracking-widest opacity-60 mb-1">Aproveitamento</p>
                     <p className="text-xl font-black">
                       {selectedPlayer.matchesPlayed > 0 ? Math.round((selectedPlayer.wins / selectedPlayer.matchesPlayed) * 100) : 0}%
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Accumulated Results Card */}
+              <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
+                <div className="flex items-center gap-3 mb-8">
+                  <div className="p-2 bg-indigo-50 rounded-xl">
+                    <History className="w-5 h-5 text-indigo-600" />
+                  </div>
+                  <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest">Resultados Acumulados</h4>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                  <div className="p-6 bg-slate-50 rounded-[2rem] border border-slate-100">
+                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">Total Vitórias</p>
+                    <p className="text-3xl font-black text-emerald-600">{selectedPlayer.wins || 0}</p>
+                  </div>
+                  <div className="p-6 bg-slate-50 rounded-[2rem] border border-slate-100">
+                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">Total Derrotas</p>
+                    <p className="text-3xl font-black text-rose-600">{selectedPlayer.losses || 0}</p>
+                  </div>
+                  <div className="p-6 bg-slate-50 rounded-[2rem] border border-slate-100">
+                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">Total Partidas</p>
+                    <p className="text-3xl font-black text-slate-800">{selectedPlayer.matchesPlayed || 0}</p>
+                  </div>
+                  <div className="p-6 bg-slate-50 rounded-[2rem] border border-slate-100">
+                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">Saldo Vitórias</p>
+                    <p className={`text-3xl font-black ${(selectedPlayer.wins || 0) - (selectedPlayer.losses || 0) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                      {(selectedPlayer.wins || 0) - (selectedPlayer.losses || 0)}
                     </p>
                   </div>
                 </div>
@@ -900,7 +1203,9 @@ export const RankingView: React.FC<RankingViewProps> = ({
             </div>
           )}
         </div>
-      </div>
+      </motion.div>
+    )}
+  </AnimatePresence>
 
       {/* Player Listing Modal */}
       <AnimatePresence>
@@ -923,7 +1228,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
                 <div className="flex justify-between items-center mb-6">
                   <div>
                     <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tighter">Lista de Sócios</h3>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">{players.length} Atletas Registrados</p>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">{(players?.length || 0)} Atletas Registrados</p>
                   </div>
                   <button 
                     onClick={() => {
@@ -988,7 +1293,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
                             {player.name.charAt(0)}
                           </div>
                           <div>
-                            <p className="font-black uppercase tracking-tight text-sm">{player.name}</p>
+                            <p className={`font-black uppercase tracking-tight text-sm ${!isSelected && player.isOfficialSetter ? 'text-rose-600' : ''}`}>{player.name}</p>
                             <p className={`text-[9px] font-bold uppercase ${isSelected ? 'text-indigo-100' : 'text-slate-400'}`}>
                               ELO: {player.elo} • {player.wins}V • Impacto: {((player.elo - 1000) / (player.matchesPlayed || 1)).toFixed(1)}
                             </p>

@@ -1,37 +1,48 @@
-import express from "express";
-import cors from "cors";
-import path from "path";
-import { fileURLToPath } from "url";
-import { createServer as createViteServer } from "vite";
+import express from 'express';
+import cors from 'cors';
+import { createServer as createViteServer } from 'vite';
+import path from 'path';
+import fs from 'fs';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const app = express();
+app.use(cors());
+app.use(express.json());
 
+// API Routes
+app.get('/api/health', (req, res) => {
+    res.json({ status: 'ok' });
+});
+
+// Vite Integration
 async function startServer() {
-  const app = express();
-  const PORT = 3000;
+    console.log('Starting server...');
+    if (process.env.NODE_ENV !== 'production') {
+        console.log('Running in development mode with Vite middleware');
+        try {
+            const vite = await createViteServer({
+                server: { middlewareMode: true },
+                appType: 'spa',
+            });
+            app.use(vite.middlewares);
+            console.log('Vite middleware integrated');
+        } catch (error) {
+            console.error('Error creating Vite server:', error);
+        }
+    } else {
+        console.log('Running in production mode');
+        const distPath = path.join(process.cwd(), 'dist');
+        app.use(express.static(distPath));
+        app.get('*', (req, res) => {
+            res.sendFile(path.join(distPath, 'index.html'));
+        });
+    }
 
-  app.use(cors());
-  app.use(express.json());
-
-  // Vite middleware for development
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
+    const PORT = 3000;
+    app.listen(PORT, '0.0.0.0', () => {
+        console.log(`Server running on http://0.0.0.0:${PORT}`);
     });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
-  }
-
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
 }
 
-startServer();
+startServer().catch(err => {
+    console.error('Failed to start server:', err);
+});

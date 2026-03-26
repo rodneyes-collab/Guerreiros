@@ -48,7 +48,7 @@ export const PlayerForm: React.FC<PlayerFormProps> = ({
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Gênero</label>
               <select
@@ -60,6 +60,17 @@ export const PlayerForm: React.FC<PlayerFormProps> = ({
                 <option value={Gender.MALE}>Masculino</option>
                 <option value={Gender.FEMALE}>Feminino</option>
               </select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Partidas Jogadas</label>
+              <input
+                type="number"
+                name="matchesPlayed"
+                required
+                value={formData.matchesPlayed ?? 0}
+                onChange={e => setFormData({ ...formData, matchesPlayed: parseInt(e.target.value) || 0 })}
+                className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 transition-all font-bold text-slate-700 outline-none"
+              />
             </div>
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">ELO Inicial</label>
@@ -98,18 +109,34 @@ export const PlayerForm: React.FC<PlayerFormProps> = ({
             />
           </div>
 
-          <div className="flex items-center gap-4 p-6 bg-amber-50 rounded-3xl border border-amber-100">
-            <input
-              type="checkbox"
-              id="isOfficialSetter"
-              name="isOfficialSetter"
-              checked={formData.isOfficialSetter}
-              onChange={e => setFormData({ ...formData, isOfficialSetter: e.target.checked })}
-              className="w-6 h-6 rounded-lg border-amber-300 text-amber-600 focus:ring-amber-500"
-            />
-            <label htmlFor="isOfficialSetter" className="text-sm font-black text-amber-900 uppercase tracking-tight cursor-pointer">
-              Levantador Oficial
-            </label>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="flex items-center gap-4 p-6 bg-amber-50 rounded-3xl border border-amber-100">
+              <input
+                type="checkbox"
+                id="isOfficialSetter"
+                name="isOfficialSetter"
+                checked={formData.isOfficialSetter}
+                onChange={e => setFormData({ ...formData, isOfficialSetter: e.target.checked })}
+                className="w-6 h-6 rounded-lg border-amber-300 text-amber-600 focus:ring-amber-500"
+              />
+              <label htmlFor="isOfficialSetter" className="text-sm font-black text-amber-900 uppercase tracking-tight cursor-pointer">
+                Levantador
+              </label>
+            </div>
+
+            <div className="flex items-center gap-4 p-6 bg-indigo-50 rounded-3xl border border-indigo-100">
+              <input
+                type="checkbox"
+                id="isAdmin"
+                name="isAdmin"
+                checked={formData.isAdmin}
+                onChange={e => setFormData({ ...formData, isAdmin: e.target.checked })}
+                className="w-6 h-6 rounded-lg border-indigo-300 text-indigo-600 focus:ring-indigo-500"
+              />
+              <label htmlFor="isAdmin" className="text-sm font-black text-indigo-900 uppercase tracking-tight cursor-pointer">
+                Admin
+              </label>
+            </div>
           </div>
 
           <div className="pt-4 flex gap-4">

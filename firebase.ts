@@ -1,12 +1,24 @@
-import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, User } from 'firebase/auth';
-import { getFirestore, collection, doc, updateDoc, onSnapshot, setDoc, deleteDoc, getDoc, getDocFromServer, getDocs, writeBatch, increment, query, where, orderBy, arrayUnion } from 'firebase/firestore';
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import { 
+  getAuth, 
+  GoogleAuthProvider, 
+  EmailAuthProvider,
+  signInWithPopup, 
+  onAuthStateChanged, 
+  sendSignInLinkToEmail,
+  isSignInWithEmailLink,
+  signInWithEmailLink,
+  signOut,
+  User 
+} from 'firebase/auth';
+import { getFirestore, collection, doc, updateDoc, onSnapshot, setDoc, deleteDoc, getDoc, getDocFromServer, getDocs, writeBatch, increment, query, where, orderBy, arrayUnion, addDoc, serverTimestamp } from 'firebase/firestore';
 import firebaseConfig from './firebase-applet-config.json';
 
-const app = initializeApp(firebaseConfig);
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
+export const emailProvider = new EmailAuthProvider();
 
 export enum OperationType {
   CREATE = 'create',
@@ -59,7 +71,87 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   throw new Error(JSON.stringify(errInfo));
 }
 
-export { signInWithPopup, onAuthStateChanged, collection, doc, updateDoc, onSnapshot, setDoc, deleteDoc, getDoc, getDocFromServer, getDocs, writeBatch, increment, query, where, orderBy, arrayUnion };
+let pendingReads = 0;
+let pendingWrites = 0;
+let lastSyncTime = 0;
+let isQuotaExceeded = false;
+const SYNC_INTERVAL = 30000; // 30 segundos
+
+export const trackUsage = async (reads: number, writes: number) => {
+  if (isQuotaExceeded) return; // Para de tentar se a quota foi excedida
+
+  pendingReads += reads;
+  pendingWrites += writes;
+
+  const now = Date.now();
+  if (now - lastSyncTime < SYNC_INTERVAL && pendingWrites < 50) {
+    return;
+  }
+
+  const readsToSync = pendingReads;
+  const writesToSync = pendingWrites;
+  pendingReads = 0;
+  pendingWrites = 0;
+  lastSyncTime = now;
+
+  const today = new Date().toISOString().split('T')[0];
+  const usageRef = doc(db, 'metadata', 'usage');
+  try {
+    await updateDoc(usageRef, {
+      reads: increment(readsToSync),
+      writes: increment(writesToSync),
+      lastUpdate: today
+    });
+  } catch (e: any) {
+    if (e?.code === 'resource-exhausted') {
+      isQuotaExceeded = true;
+      console.error('Quota do Firestore excedida. Rastreamento desativado até o próximo carregamento.');
+      return;
+    }
+    try {
+      // Se o documento não existir, cria um novo
+      await setDoc(usageRef, {
+        reads: readsToSync,
+        writes: writesToSync,
+        lastUpdate: today
+      }, { merge: true });
+    } catch (err: any) {
+      if (err?.code === 'resource-exhausted') {
+        isQuotaExceeded = true;
+      }
+      console.error('Erro crítico ao rastrear uso:', err);
+      // Devolve os valores para tentar novamente na próxima
+      pendingReads += readsToSync;
+      pendingWrites += writesToSync;
+    }
+  }
+};
+
+export { 
+  signInWithPopup, 
+  onAuthStateChanged, 
+  sendSignInLinkToEmail,
+  isSignInWithEmailLink,
+  signInWithEmailLink,
+  signOut,
+  collection, 
+  doc, 
+  updateDoc, 
+  onSnapshot, 
+  setDoc, 
+  deleteDoc, 
+  getDoc, 
+  getDocFromServer, 
+  getDocs, 
+  writeBatch, 
+  increment, 
+  query, 
+  where, 
+  orderBy, 
+  arrayUnion,
+  addDoc,
+  serverTimestamp
+};
 export type { User };
 
 // Test connection

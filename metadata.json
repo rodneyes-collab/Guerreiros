@@ -1,5 +1,5 @@
 {
   "name": "Guerreiros Volleyball Club",
   "description": "Uma ferramenta especializada para clubes de vôlei de quadra para gerar times equilibrados usando o sistema ELO, distribuição por gênero e regras de prioridade para levantadores oficiais.",
-  "requestFramePermissions": ["geolocation"]
+  "requestFramePermissions": []
 }

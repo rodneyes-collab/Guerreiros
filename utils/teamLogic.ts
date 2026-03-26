@@ -12,15 +12,26 @@ export function generateTeams(attendanceList: Player[]): GenerationResult {
   // 3º Nível técnico (ELO) em caso de desempate
   const sortedOfficialSetters = [...officialSetters].sort((a, b) => {
     // Prioridade 1: Quem descansou na partida anterior (tem prioridade máxima)
-    if (a.playedLastMatch !== b.playedLastMatch) {
-      return a.playedLastMatch ? 1 : -1;
+    const playedA = a.playedLastMatch ? 1 : 0;
+    const playedB = b.playedLastMatch ? 1 : 0;
+    if (playedA !== playedB) {
+      return playedA - playedB;
     }
+
     // Prioridade 2: Menos partidas no dia (Rodízio)
-    if (a.dailyMatches !== b.dailyMatches) {
-      return a.dailyMatches - b.dailyMatches;
+    if ((a.dailyMatches || 0) !== (b.dailyMatches || 0)) {
+      return (a.dailyMatches || 0) - (b.dailyMatches || 0);
     }
-    // Prioridade 3: Aleatoriedade controlada para permitir novas escalações
-    // Se ambos têm o mesmo status de rodízio, damos uma chance aleatória
+
+    // Prioridade 3: Ordem de chegada (Quem chegou antes joga antes)
+    // Se não tem ordem de chegada, vai para o fim da fila (999)
+    const orderA = a.arrivalOrder ?? 999;
+    const orderB = b.arrivalOrder ?? 999;
+    if (orderA !== orderB) {
+      return orderA - orderB;
+    }
+
+    // Prioridade 4: Aleatoriedade controlada para permitir novas escalações
     return Math.random() - 0.5;
   });
 
@@ -39,14 +50,26 @@ export function generateTeams(attendanceList: Player[]): GenerationResult {
   // 2. Seleção dos demais jogadores por número de partidas, ordem de chegada e gênero
   const pool = [...nonSetters].sort((a, b) => {
     // Prioridade 1: Quem descansou na partida anterior (tem prioridade máxima)
-    if (a.playedLastMatch !== b.playedLastMatch) {
-      return a.playedLastMatch ? 1 : -1;
+    const playedA = a.playedLastMatch ? 1 : 0;
+    const playedB = b.playedLastMatch ? 1 : 0;
+    if (playedA !== playedB) {
+      return playedA - playedB;
     }
+
     // Prioridade 2: Menos partidas no dia (Rodízio)
-    if (a.dailyMatches !== b.dailyMatches) {
-      return a.dailyMatches - b.dailyMatches;
+    if ((a.dailyMatches || 0) !== (b.dailyMatches || 0)) {
+      return (a.dailyMatches || 0) - (b.dailyMatches || 0);
     }
-    // Prioridade 3: Aleatoriedade para variar a escalação entre jogadores com mesma prioridade
+
+    // Prioridade 3: Ordem de chegada (Quem chegou antes joga antes)
+    // Se não tem ordem de chegada, vai para o fim da fila (999)
+    const orderA = a.arrivalOrder ?? 999;
+    const orderB = b.arrivalOrder ?? 999;
+    if (orderA !== orderB) {
+      return orderA - orderB;
+    }
+
+    // Prioridade 4: Aleatoriedade para variar a escalação entre jogadores com mesma prioridade
     return Math.random() - 0.5;
   });
 
@@ -134,12 +157,19 @@ export function generateTeams(attendanceList: Player[]): GenerationResult {
     teamB: { setter: setterB, players: playersB, totalElo: currentEloB },
     swaps,
     remainingPlayers: [...remainingSetters, ...remainingLinePlayers].sort((a, b) => {
-      if (a.playedLastMatch !== b.playedLastMatch) {
-        return a.playedLastMatch ? 1 : -1;
+      // Prioridade 1: Quem descansou na partida anterior
+      const playedA = a.playedLastMatch ? 1 : 0;
+      const playedB = b.playedLastMatch ? 1 : 0;
+      if (playedA !== playedB) {
+        return playedA - playedB;
       }
-      if (a.dailyMatches !== b.dailyMatches) {
-        return a.dailyMatches - b.dailyMatches;
+
+      // Prioridade 2: Menos partidas no dia
+      if ((a.dailyMatches || 0) !== (b.dailyMatches || 0)) {
+        return (a.dailyMatches || 0) - (b.dailyMatches || 0);
       }
+
+      // Prioridade 3: Ordem de chegada
       return (a.arrivalOrder || 0) - (b.arrivalOrder || 0);
     })
   };

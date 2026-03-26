@@ -8,13 +8,15 @@
         "id": { "type": "string" },
         "name": { "type": "string" },
         "email": { "type": "string", "format": "email" },
-        "gender": { "type": "string", "enum": ["MALE", "FEMALE"] },
+        "gender": { "type": "string", "enum": ["MALE", "FEMALE", "M", "F"] },
         "isOfficialSetter": { "type": "boolean" },
         "elo": { "type": "integer" },
         "matchesPlayed": { "type": "integer" },
         "dailyMatches": { "type": "integer" },
         "dailyWins": { "type": "integer" },
+        "dailyLosses": { "type": "integer" },
         "dailyEloGain": { "type": "integer" },
+        "dailyResults": { "type": "array", "items": { "type": "string", "enum": ["V", "D"] } },
         "wins": { "type": "integer" },
         "losses": { "type": "integer" },
         "eloHistory": {
@@ -30,7 +32,17 @@
         "isAdmin": { "type": "boolean" },
         "joinedAt": { "type": "string", "format": "date" },
         "playedLastMatch": { "type": "boolean" },
-        "birthDate": { "type": "string", "format": "date" }
+        "birthDate": { "type": "string", "format": "date" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "uid": { "type": "string" },
+        "arrivalOrder": { "type": "integer" },
+        "isPresent": { "type": "boolean" },
+        "timestamp": { "type": "integer" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "integer" },
+        "role": { "type": "string" },
+        "position": { "type": "string" },
+        "level": { "type": "string" }
       },
       "required": ["id", "name", "gender", "elo"]
     },
@@ -96,9 +108,57 @@
         "role": { "type": "string", "enum": ["ADMIN", "MEMBER"] }
       },
       "required": ["uid", "email", "role"]
+    },
+    "PendingRequest": {
+      "title": "PendingRequest",
+      "description": "Solicitação de acesso de um novo usuário.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "name", "status"]
+    },
+    "CurrentMatch": {
+      "title": "Current Match",
+      "description": "The state of the match currently being played",
+      "type": "object",
+      "properties": {
+        "teamA": { "type": "object" },
+        "teamB": { "type": "object" },
+        "remainingPlayers": { "type": "array" },
+        "startTime": { "type": "integer" },
+        "status": { "type": "string", "enum": ["PLAYING", "FINISHED"] }
+      }
+    },
+    "UsageStats": {
+      "title": "Usage Stats",
+      "description": "Estimated Firestore quota usage for the day",
+      "type": "object",
+      "properties": {
+        "reads": { "type": "integer" },
+        "writes": { "type": "integer" },
+        "lastUpdate": { "type": "string" }
+      }
     }
   },
   "firestore": {
+    "/metadata/currentMatch": {
+      "schema": "CurrentMatch",
+      "description": "The match currently in progress, shared among admins"
+    },
+    "/metadata/usage": {
+      "schema": "UsageStats",
+      "description": "Daily estimated Firestore usage stats"
+    },
+    "/pendingRequests/{requestId}": {
+      "schema": "PendingRequest",
+      "description": "Solicitações de acesso de novos usuários."
+    },
     "/players/{playerId}": {
       "schema": "Player",
       "description": "Collection of all players"

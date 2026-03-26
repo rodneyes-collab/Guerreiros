@@ -1,0 +1,192 @@
+
+import { useEffect, useState } from 'react';
+import { 
+  auth, 
+  onAuthStateChanged, 
+  isSignInWithEmailLink, 
+  signInWithEmailLink, 
+  db, 
+  doc, 
+  onSnapshot, 
+  setDoc, 
+  updateDoc,
+  OperationType,
+  handleFirestoreError
+} from '../../firebase';
+import { useStore } from '../../store';
+import { cleanObject } from '../../utils/helpers';
+import { Player } from '../../types';
+
+export const useAuth = () => {
+  const { 
+    user,
+    userRole,
+    currentPlayer,
+    setUser, 
+    setUserRole, 
+    setCurrentPlayer, 
+    players, 
+    showNotification 
+  } = useStore();
+
+  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [isRoleLoading, setIsRoleLoading] = useState(true);
+
+  useEffect(() => {
+    // Handle Magic Link
+    if (isSignInWithEmailLink(auth, window.location.href)) {
+      let email = window.localStorage.getItem('emailForSignIn');
+      if (!email) {
+        email = window.prompt('Por favor, confirme seu e-mail para completar o login:');
+      }
+      if (email) {
+        signInWithEmailLink(auth, email, window.location.href)
+          .then(() => {
+            window.localStorage.removeItem('emailForSignIn');
+            showNotification('Login realizado com sucesso!', 'success');
+            window.history.replaceState({}, document.title, window.location.pathname);
+          })
+          .catch((error) => {
+            console.error('Erro ao fazer login com link:', error);
+            showNotification('Link de login inválido ou expirado.', 'error');
+          });
+      }
+    }
+
+    const unsubscribeAuth = onAuthStateChanged(auth, async (u) => {
+      if (u) {
+        setUser(u);
+        setIsAuthReady(true);
+      } else {
+        // Check for member session
+        const storedMember = window.localStorage.getItem('memberUser');
+        if (storedMember) {
+          try {
+            const memberData = JSON.parse(storedMember);
+            setUser(memberData);
+          } catch (e) {
+            setUser(null);
+          }
+        } else {
+          setUser(null);
+        }
+        setIsAuthReady(true);
+      }
+      if (!u && !window.localStorage.getItem('memberUser')) {
+        setUserRole(null);
+      }
+    });
+
+    return () => {
+      unsubscribeAuth();
+    };
+  }, [setUser, setUserRole, showNotification]);
+
+  // Role Sync and User Doc Subscription
+  useEffect(() => {
+    if (!user) {
+      setIsRoleLoading(false);
+      return;
+    }
+
+    // Mock member role
+    if (user.uid?.startsWith('member_')) {
+      setUserRole('MEMBER');
+      setIsRoleLoading(false);
+      return;
+    }
+
+    const userRef = doc(db, 'users', user.uid);
+    setIsRoleLoading(true);
+    const unsubscribeUserDoc = onSnapshot(userRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (user.email?.toLowerCase() === 'rodneyes@gmail.com') {
+          setUserRole('ADMIN');
+        } else {
+          setUserRole(data.role);
+        }
+      } else {
+        const defaultRole = user.email?.toLowerCase() === "rodneyes@gmail.com" ? 'ADMIN' : 'MEMBER';
+        setDoc(userRef, cleanObject({
+          uid: user.uid,
+          email: user.email,
+          role: defaultRole
+        }), { merge: true }).catch(err => handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`));
+        setUserRole(defaultRole);
+      }
+      setIsRoleLoading(false);
+    }, (err) => {
+      if (err.message.includes('permission') && !auth.currentUser) return;
+      handleFirestoreError(err, OperationType.GET, `users/${user.uid}`);
+      setIsRoleLoading(false);
+    });
+
+    return () => {
+      unsubscribeUserDoc();
+    };
+  }, [user, setUserRole]);
+
+  // Link user to player profile
+  useEffect(() => {
+    if (user && players.length > 0) {
+      const urlParams = new URLSearchParams(window.location.search);
+      const invitePlayerId = urlParams.get('invite_player_id');
+
+      if (invitePlayerId) {
+        const player = players.find(p => p.id === invitePlayerId);
+        if (player) {
+          if (!player.uid) {
+            const playerRef = doc(db, 'players', player.id);
+            setDoc(playerRef, { uid: user.uid, email: user.email }, { merge: true })
+              .then(() => {
+                showNotification(`Perfil de ${player.name} vinculado com sucesso!`, 'success');
+                window.history.replaceState({}, document.title, window.location.pathname);
+              })
+              .catch(console.error);
+          } else if (player.uid === user.uid) {
+            showNotification('Seu perfil já está vinculado.', 'info');
+            window.history.replaceState({}, document.title, window.location.pathname);
+          } else {
+            showNotification('Este perfil já pertence a outro usuário.', 'error');
+          }
+        }
+      }
+
+      const player = players.find(p => p.email?.toLowerCase() === user.email?.toLowerCase() || p.uid === user.uid);
+      if (player) {
+        setCurrentPlayer(player);
+        if (!player.uid) {
+          const playerRef = doc(db, 'players', player.id);
+          setDoc(playerRef, { uid: user.uid }, { merge: true }).catch(console.error);
+        }
+      }
+    } else {
+      setCurrentPlayer(null);
+    }
+  }, [user, players, setCurrentPlayer, showNotification]);
+
+  // Admin sync based on player profile
+  useEffect(() => {
+    if (user && players.length > 0) {
+      const isAdminEmail = user.email?.toLowerCase() === 'rodneyes@gmail.com';
+      const playerProfile = players.find(p => p.email?.toLowerCase() === user.email?.toLowerCase());
+      const shouldBeAdmin = isAdminEmail || playerProfile?.isAdmin;
+
+      if (shouldBeAdmin && userRole !== 'ADMIN') {
+        setUserRole('ADMIN');
+        const userRef = doc(db, 'users', user.uid);
+        setDoc(userRef, cleanObject({ role: 'ADMIN', email: user.email }), { merge: true })
+          .catch(err => handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`));
+      }
+    }
+  }, [user, players, userRole, setUserRole]);
+
+  return {
+    user,
+    userRole,
+    currentPlayer,
+    isAuthReady,
+    isRoleLoading
+  };
+};

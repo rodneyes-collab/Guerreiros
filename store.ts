@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Player, Payment, Match, GenerationResult, SystemMetadata } from './types';
+import { Player, Payment, Match, GenerationResult, SystemMetadata, UsageStats } from './types';
 import { User } from './firebase';
 
 export type ViewMode = 'presence' | 'history' | 'generation' | 'members' | 'dashboard' | 'rules' | 'payments' | 'admin';
@@ -25,6 +25,8 @@ interface AppState {
   userRole: 'ADMIN' | 'MEMBER' | null;
   isNearCourt: boolean;
   currentPlayer: Player | null;
+  pendingRequests: any[];
+  usageStats: UsageStats;
   
   // Generation Result
   generationResult: GenerationResult | null;
@@ -81,6 +83,8 @@ interface AppState {
   setUserRole: (role: 'ADMIN' | 'MEMBER' | null) => void;
   setIsNearCourt: (is: boolean) => void;
   setCurrentPlayer: (player: Player | null) => void;
+  setPendingRequests: (requests: any[]) => void;
+  setUsageStats: (stats: UsageStats) => void;
   setGenerationResult: (result: GenerationResult | null) => void;
   
   setAnalysis: (analysis: string) => void;
@@ -140,6 +144,8 @@ export const useStore = create<AppState>((set) => ({
   userRole: null,
   isNearCourt: false,
   currentPlayer: null,
+  pendingRequests: [],
+  usageStats: { reads: 0, writes: 0, lastUpdate: '' },
   generationResult: null,
   analysis: '',
   ruleVerification: '',
@@ -192,7 +198,12 @@ export const useStore = create<AppState>((set) => ({
   setSystemMetadata: (metadata) => set((state) => ({ 
     systemMetadata: { ...state.systemMetadata, ...metadata } 
   })),
-  setViewMode: (viewMode) => set({ viewMode }),
+  setViewMode: (viewMode) => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('spikegen_viewMode', viewMode);
+    }
+    set({ viewMode });
+  },
   setIsInitialLoading: (isInitialLoading) => set({ isInitialLoading }),
   setIsSyncing: (isSyncing) => set({ isSyncing }),
   setDbStatus: (dbStatus) => set({ dbStatus }),
@@ -200,6 +211,8 @@ export const useStore = create<AppState>((set) => ({
   setUserRole: (userRole) => set({ userRole }),
   setIsNearCourt: (isNearCourt) => set({ isNearCourt }),
   setCurrentPlayer: (currentPlayer) => set({ currentPlayer }),
+  setPendingRequests: (pendingRequests) => set({ pendingRequests }),
+  setUsageStats: (usageStats) => set({ usageStats }),
   setGenerationResult: (generationResult) => set({ generationResult }),
   setAnalysis: (analysis) => set({ analysis }),
   setRuleVerification: (ruleVerification) => set({ ruleVerification }),

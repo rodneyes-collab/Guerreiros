@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useStore } from '../store';
 import { TeamCard } from './TeamCard';
-import { formatTime } from '../utils/formatters';
+import { formatTime } from '../utils/helpers';
 import { 
   Swords, 
   Trophy,
@@ -18,7 +18,8 @@ import {
   ArrowLeftRight,
   ShieldCheck,
   X,
-  Plus
+  Plus,
+  Users
 } from 'lucide-react';
 
 interface MatchViewProps {
@@ -74,10 +75,23 @@ export const MatchView: React.FC<MatchViewProps> = ({
   const [showAudit, setShowAudit] = useState(false);
 
   const today = new Date().toISOString().split('T')[0];
-  const todayMatches = matches
+  const todayMatches = (matches || [])
     .filter(m => m.date === today)
-    .sort((a, b) => a.timestamp - b.timestamp);
+    .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
   const currentMatchNumber = todayMatches.length + 1;
+
+  // Métricas de Tempo
+  const avgMatchDuration = todayMatches.length > 0
+    ? todayMatches.reduce((acc, m) => acc + (m.duration || 0), 0) / todayMatches.length
+    : 15 * 60; // Média padrão de 15 minutos
+
+  const quickestMatch = todayMatches.length > 0
+    ? Math.min(...todayMatches.map(m => m.duration || Infinity))
+    : null;
+    
+  const longestMatch = todayMatches.length > 0
+    ? Math.max(...todayMatches.map(m => m.duration || 0))
+    : null;
 
   // Lógica de Previsão de Rodízio (Levantadores vs Linha)
   const settersInWait = generationResult?.remainingPlayers.filter(p => p.isOfficialSetter) || [];
@@ -89,17 +103,32 @@ export const MatchView: React.FC<MatchViewProps> = ({
   const lineCapacity = currentLineCount || 10;
 
   const getPlayerPrediction = (player: any) => {
+    let matchesToWait = 0;
     if (player.isOfficialSetter) {
       const sIdx = settersInWait.findIndex(p => p.id === player.id);
-      if (sIdx < settersCapacity) return '• Próxima';
-      if (sIdx < settersCapacity * 2) return '• Daqui a 2';
-      return '• Daqui a 3';
+      matchesToWait = Math.floor(sIdx / settersCapacity) + 1;
     } else {
       const lIdx = linePlayersInWait.findIndex(p => p.id === player.id);
-      if (lIdx < lineCapacity) return '• Próxima';
-      if (lIdx < lineCapacity * 2) return '• Daqui a 2';
-      return '• Daqui a 3';
+      matchesToWait = Math.floor(lIdx / lineCapacity) + 1;
     }
+
+    const label = matchesToWait === 1 ? 'Próx' : `Dq ${matchesToWait}`;
+    
+    // Cálculo de tempo estimado
+    let remainingCurrent = avgMatchDuration - elapsedTime;
+    let isOvertime = false;
+    
+    if (remainingCurrent <= 0) {
+      remainingCurrent = Math.max(120, avgMatchDuration * 0.15); 
+      isOvertime = true;
+    }
+    
+    const totalWaitSeconds = remainingCurrent + (matchesToWait - 1) * avgMatchDuration;
+    
+    const startTime = new Date(Date.now() + totalWaitSeconds * 1000);
+    const timeStr = startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    return `• ${label} • ${timeStr}`;
   };
 
   return (
@@ -182,40 +211,78 @@ export const MatchView: React.FC<MatchViewProps> = ({
                     </div>
                   );
                 })()}
+                <div className="bg-emerald-50 px-4 py-1.5 rounded-full flex items-center gap-2 border border-emerald-100">
+                  <Users className="w-3.5 h-3.5 text-emerald-500" />
+                  <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">{attendance.length} Presentes</span>
+                </div>
                 <div className="bg-indigo-50 px-4 py-1.5 rounded-full flex items-center gap-2 border border-indigo-100">
                   <Clock className="w-3.5 h-3.5 text-indigo-500" />
                   <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest tabular-nums">{formatTime(elapsedTime)}</span>
+                  {todayMatches.length > 0 && (
+                    <>
+                      <div className="w-px h-3 bg-indigo-200 mx-1" />
+                      <span className="text-[8px] font-bold text-indigo-400 uppercase tracking-widest" title="Média de duração das partidas hoje">Média: {formatTime(avgMatchDuration)}</span>
+                    </>
+                  )}
                 </div>
+                {quickestMatch && (
+                  <div className="hidden sm:flex bg-emerald-50 px-4 py-1.5 rounded-full items-center gap-2 border border-emerald-100">
+                    <Sparkles className="w-3.5 h-3.5 text-emerald-500" />
+                    <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">⚡ Recorde: {formatTime(quickestMatch)}</span>
+                  </div>
+                )}
+                {longestMatch && longestMatch > 0 && (
+                  <div className="hidden lg:flex bg-slate-50 px-4 py-1.5 rounded-full items-center gap-2 border border-slate-200">
+                    <Clock className="w-3.5 h-3.5 text-slate-400" />
+                    <span className="text-[10px] font-black text-slate-600 uppercase tracking-widest">🐢 Longa: {formatTime(longestMatch)}</span>
+                  </div>
+                )}
               </div>
             </div>
-            <div className="flex gap-2">
-              <button 
-                onClick={() => {
-                  if (!showAudit && !ruleVerification) {
-                    handleVerifyRules();
-                  }
-                  setShowAudit(!showAudit);
-                }} 
-                className={`flex items-center gap-2 text-[10px] font-black uppercase px-4 py-2 rounded-xl border transition-all ${showAudit ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
-              >
-                <Sparkles className={`w-3.5 h-3.5 ${showAudit ? 'text-indigo-500' : 'text-slate-400'}`} />
-                {showAudit ? 'Ocultar Auditoria' : 'Ver Auditoria IA'}
-              </button>
-              {userRole === 'ADMIN' && (
-                <>
-                  <button onClick={handleDiscard} className="text-[10px] font-black uppercase text-slate-400 hover:text-rose-600 px-4 py-2">Descartar</button>
-                  <button 
-                    onClick={handleAnnounce} 
-                    disabled={isNarrating}
-                    className={`flex items-center gap-2 text-[10px] font-black uppercase px-6 py-2 rounded-xl shadow-sm transition-all ${isNarrating ? 'bg-amber-100 text-amber-600 animate-pulse' : 'bg-amber-500 text-white hover:bg-amber-600'}`}
-                  >
-                    {isNarrating ? <Volume2 className="w-3.5 h-3.5 animate-bounce" /> : <Megaphone className="w-3.5 h-3.5" />}
-                    {isNarrating ? 'Anunciando...' : 'Anunciar Times'}
-                  </button>
-                  <button onClick={() => handleGenerate(true)} className="text-[10px] font-black uppercase bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 px-6 py-2 rounded-xl shadow-sm">Nova Escalação</button>
-                </>
-              )}
-            </div>
+            {userRole === 'ADMIN' && (
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => {
+                    if (!showAudit && !ruleVerification) {
+                      handleVerifyRules();
+                    }
+                    setShowAudit(!showAudit);
+                  }} 
+                  className={`flex items-center gap-2 text-[10px] font-black uppercase px-4 py-2 rounded-xl border transition-all ${showAudit ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                >
+                  <Sparkles className={`w-3.5 h-3.5 ${showAudit ? 'text-indigo-500' : 'text-slate-400'}`} />
+                  {showAudit ? 'Ocultar Auditoria' : 'Ver Auditoria IA'}
+                </button>
+                <button onClick={handleDiscard} className="text-[10px] font-black uppercase text-slate-400 hover:text-rose-600 px-4 py-2">Descartar</button>
+                <button 
+                  onClick={handleAnnounce} 
+                  disabled={isNarrating}
+                  className={`flex items-center gap-2 text-[10px] font-black uppercase px-6 py-2 rounded-xl shadow-sm transition-all ${isNarrating ? 'bg-amber-100 text-amber-600 animate-pulse' : 'bg-amber-500 text-white hover:bg-amber-600'}`}
+                >
+                  {isNarrating ? <Volume2 className="w-3.5 h-3.5 animate-bounce" /> : <Megaphone className="w-3.5 h-3.5" />}
+                  {isNarrating ? 'Anunciando...' : 'Anunciar Times'}
+                </button>
+                <button onClick={() => handleGenerate(true)} className="text-[10px] font-black uppercase bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 px-6 py-2 rounded-xl shadow-sm">Nova Escalação</button>
+              </div>
+            )}
+
+            {/* Auditoria IA para Membros (apenas visualização) */}
+            {userRole !== 'ADMIN' && (
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => {
+                    if (!showAudit && !ruleVerification) {
+                      handleVerifyRules();
+                    }
+                    setShowAudit(!showAudit);
+                  }} 
+                  className={`flex items-center gap-2 text-[10px] font-black uppercase px-4 py-2 rounded-xl border transition-all ${showAudit ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                >
+                  <Sparkles className={`w-3.5 h-3.5 ${showAudit ? 'text-indigo-500' : 'text-slate-400'}`} />
+                  {showAudit ? 'Ocultar Auditoria' : 'Ver Auditoria IA'}
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Auditoria IA */}
@@ -227,17 +294,19 @@ export const MatchView: React.FC<MatchViewProps> = ({
               
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-3">
-                  <div className="p-2 bg-indigo-500/20 rounded-xl border border-indigo-500/30">
-                    <Sparkles className="w-5 h-5 text-indigo-400" />
+                  <div className={`p-2 rounded-xl border ${ruleVerification?.includes('⚠️') || ruleVerification?.includes('ALERTA') ? 'bg-rose-500/20 border-rose-500/30' : 'bg-indigo-500/20 border-indigo-500/30'}`}>
+                    <Sparkles className={`w-5 h-5 ${ruleVerification?.includes('⚠️') || ruleVerification?.includes('ALERTA') ? 'text-rose-400' : 'text-indigo-400'}`} />
                   </div>
                   <div>
-                    <h4 className="text-[10px] font-black text-indigo-300 uppercase tracking-[0.2em]">Relatório de Auditoria</h4>
-                    <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">SpikeGen Intelligence v2.0</p>
+                    <h4 className={`text-[10px] font-black uppercase tracking-[0.2em] ${ruleVerification?.includes('⚠️') || ruleVerification?.includes('ALERTA') ? 'text-rose-300' : 'text-indigo-300'}`}>Relatório de Auditoria</h4>
+                    <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Guerreiros Intelligence v2.0</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 rounded-full">
-                  <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
-                  <span className="text-[8px] font-black text-emerald-400 uppercase tracking-widest">Integridade Validada</span>
+                <div className={`flex items-center gap-2 px-3 py-1 border rounded-full ${ruleVerification?.includes('⚠️') || ruleVerification?.includes('ALERTA') ? 'bg-rose-500/10 border-rose-500/20' : 'bg-emerald-500/10 border-emerald-500/20'}`}>
+                  <div className={`w-1.5 h-1.5 rounded-full animate-pulse ${ruleVerification?.includes('⚠️') || ruleVerification?.includes('ALERTA') ? 'bg-rose-500' : 'bg-emerald-500'}`} />
+                  <span className={`text-[8px] font-black uppercase tracking-widest ${ruleVerification?.includes('⚠️') || ruleVerification?.includes('ALERTA') ? 'text-rose-400' : 'text-emerald-400'}`}>
+                    {ruleVerification?.includes('⚠️') || ruleVerification?.includes('ALERTA') ? 'Inconsistência Detectada' : 'Integridade Validada'}
+                  </span>
                 </div>
               </div>
 
@@ -277,15 +346,21 @@ export const MatchView: React.FC<MatchViewProps> = ({
           {/* Resumo Rápido para Mobile */}
           <div className="bg-white/50 backdrop-blur-sm p-3 sm:p-5 rounded-[1.5rem] sm:rounded-[2rem] border border-slate-200 flex flex-col gap-2 sm:gap-3 mb-2 shadow-sm">
             <div className="flex items-start gap-2 sm:gap-3">
-              <span className="text-[8px] sm:text-[10px] font-black uppercase text-indigo-600 bg-indigo-100/50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg sm:rounded-xl shrink-0 border border-indigo-100">Time A</span>
-              <p className="text-xs sm:text-sm font-bold text-slate-700 leading-relaxed">
+              <div className="flex flex-col items-center shrink-0 gap-1">
+                <span className="text-[8px] sm:text-[10px] font-black uppercase text-indigo-600 bg-indigo-100/50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg sm:rounded-xl border border-indigo-100">Time A</span>
+                <span className="text-[10px] font-black text-indigo-400 tabular-nums">{generationResult.teamA.totalElo}</span>
+              </div>
+              <p className="text-xs sm:text-sm font-bold text-slate-700 leading-relaxed pt-1">
                 {[generationResult.teamA.setter?.name, ...generationResult.teamA.players.map(p => p.name)].filter(Boolean).join(', ')}
               </p>
             </div>
             <div className="h-px bg-slate-100 w-full" />
             <div className="flex items-start gap-2 sm:gap-3">
-              <span className="text-[8px] sm:text-[10px] font-black uppercase text-rose-600 bg-rose-100/50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg sm:rounded-xl shrink-0 border border-rose-100">Time B</span>
-              <p className="text-xs sm:text-sm font-bold text-slate-700 leading-relaxed">
+              <div className="flex flex-col items-center shrink-0 gap-1">
+                <span className="text-[8px] sm:text-[10px] font-black uppercase text-rose-600 bg-rose-100/50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg sm:rounded-xl border border-rose-100">Time B</span>
+                <span className="text-[10px] font-black text-rose-400 tabular-nums">{generationResult.teamB.totalElo}</span>
+              </div>
+              <p className="text-xs sm:text-sm font-bold text-slate-700 leading-relaxed pt-1">
                 {[generationResult.teamB.setter?.name, ...generationResult.teamB.players.map(p => p.name)].filter(Boolean).join(', ')}
               </p>
             </div>
@@ -385,14 +460,14 @@ export const MatchView: React.FC<MatchViewProps> = ({
                 </div>
                 <h3 className="text-[10px] sm:text-sm font-black text-slate-800 uppercase tracking-widest">Lista de Espera</h3>
               </div>
-              <span className="bg-slate-100 text-slate-500 text-[8px] sm:text-[10px] font-black px-2 sm:px-3 py-1 rounded-full">{generationResult.remainingPlayers.length} Jogadores</span>
+              <span className="bg-slate-100 text-slate-500 text-[8px] sm:text-[10px] font-black px-2 sm:px-3 py-1 rounded-full">{(generationResult?.remainingPlayers?.length || 0)} Jogadores</span>
             </div>
             
-            {generationResult.remainingPlayers.length > 0 ? (
+            {generationResult?.remainingPlayers && generationResult.remainingPlayers.length > 0 ? (
               <div className="grid grid-cols-2 lg:grid-cols-3 gap-1.5 sm:gap-4">
                 {generationResult.remainingPlayers.map((player, idx) => (
                   <div 
-                    key={player.id} 
+                    key={player.id || `remaining-${idx}`} 
                     className={`relative flex items-center justify-between p-2 sm:p-4 rounded-xl sm:rounded-2xl border transition-all ${swapSelection?.playerId === player.id ? 'bg-amber-50 border-amber-300 shadow-md ring-2 ring-amber-200' : 'bg-slate-50 border-slate-100 hover:border-amber-200 shadow-sm'}`}
                   >
                     {/* Badge de Posição na Espera */}
@@ -405,15 +480,13 @@ export const MatchView: React.FC<MatchViewProps> = ({
                         #{player.arrivalOrder || '?'}
                       </div>
                       <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className="text-[10px] sm:text-sm font-black text-slate-800 uppercase tracking-tight truncate">{player.name}</p>
-                          <span className="text-[7px] sm:text-[9px] font-black text-fuchsia-600 uppercase tracking-widest whitespace-nowrap shrink-0">
-                            {getPlayerPrediction(player)}
-                          </span>
-                        </div>
+                        <p className={`text-[10px] sm:text-sm font-black uppercase tracking-tight ${player.isOfficialSetter ? 'text-rose-600' : 'text-slate-800'}`}>{player.name}</p>
                         <div className="flex items-center gap-1 sm:gap-2 mt-0.5 sm:mt-1">
                           <span className="text-[7px] sm:text-[10px] font-black uppercase text-emerald-600 bg-emerald-50 px-1 py-0.5 rounded border border-emerald-100">{player.dailyWins || 0}V</span>
                           <span className="text-[7px] sm:text-[10px] font-black uppercase text-rose-600 bg-rose-50 px-1 py-0.5 rounded border border-rose-100">{player.dailyLosses || 0}D</span>
+                          <span className="text-[7px] sm:text-[9px] font-black text-fuchsia-600 uppercase tracking-widest whitespace-nowrap shrink-0">
+                            {getPlayerPrediction(player)}
+                          </span>
                         </div>
                       </div>
                     </div>
@@ -450,6 +523,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
               team={generationResult.teamA} 
               color="indigo" 
               attendance={attendance}
+              userRole={userRole}
               onSwap={(pid) => handleSwapClick('A', pid)}
               onRemove={handleRemovePlayer}
               onPromote={(pid) => promoteToSetter('teamA', pid)}
@@ -460,6 +534,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
               team={generationResult.teamB} 
               color="rose" 
               attendance={attendance}
+              userRole={userRole}
               onSwap={(pid) => handleSwapClick('B', pid)}
               onRemove={handleRemovePlayer}
               onPromote={(pid) => promoteToSetter('teamB', pid)}
@@ -492,20 +567,20 @@ export const MatchView: React.FC<MatchViewProps> = ({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
-                    {attendance.sort((a, b) => b.dailyMatches - a.dailyMatches).map((player) => (
-                      <tr key={player.id} className="hover:bg-slate-50/50 transition-colors">
+                    {[...attendance].sort((a, b) => (a.arrivalOrder || 0) - (b.arrivalOrder || 0)).map((player, idx) => (
+                      <tr key={player.id || `attendance-row-${idx}`} className="hover:bg-slate-50/50 transition-colors">
                         <td className="py-3 px-2 sticky left-0 bg-white z-10 border-r border-slate-50 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
-                          <p className="text-[11px] sm:text-xs font-black text-slate-700 uppercase tracking-tight truncate max-w-[90px] sm:max-w-[120px]">{player.name}</p>
-                          <p className="text-[8px] sm:text-[9px] font-bold text-slate-400 uppercase">#{attendance.findIndex(p => p.id === player.id) + 1}º</p>
+                          <p className={`text-[11px] sm:text-xs font-black uppercase tracking-tight truncate max-w-[90px] sm:max-w-[120px] ${player.isOfficialSetter ? 'text-rose-600' : 'text-slate-700'}`}>{player.name}</p>
+                          <p className="text-[8px] sm:text-[9px] font-bold text-slate-400 uppercase">#{player.arrivalOrder}º</p>
                         </td>
-                        {todayMatches.map((match) => {
-                          const isTeamA = match.teamA.includes(player.id);
-                          const isTeamB = match.teamB.includes(player.id);
+                        {todayMatches.map((match, mIdx) => {
+                          const isTeamA = (match.teamA || []).includes(player.id);
+                          const isTeamB = (match.teamB || []).includes(player.id);
                           const played = isTeamA || isTeamB;
                           const won = (isTeamA && match.winner === 'A') || (isTeamB && match.winner === 'B');
                           
                           return (
-                            <td key={match.id} className="py-3 px-1 sm:px-2 text-center">
+                            <td key={match.id || `match-cell-${mIdx}`} className="py-3 px-1 sm:px-2 text-center">
                               {played ? (
                                 <span className={`inline-flex items-center justify-center w-7 h-7 sm:w-8 h-8 rounded-md sm:rounded-lg font-black text-[10px] sm:text-xs ${won ? 'bg-emerald-100 text-emerald-600 border border-emerald-200' : 'bg-rose-100 text-rose-600 border border-rose-200'}`}>
                                   {won ? 'V' : 'D'}

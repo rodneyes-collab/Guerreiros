@@ -11,6 +11,7 @@ interface TeamCardProps {
   team: Team;
   color: 'indigo' | 'rose';
   attendance: Player[];
+  userRole?: string;
   onSwap: (pid: string) => void;
   onRemove: (pid: string) => void;
   onPromote: (pid: string) => void;
@@ -22,6 +23,7 @@ export const TeamCard: React.FC<TeamCardProps> = ({
   team, 
   color, 
   attendance, 
+  userRole,
   onSwap, 
   onRemove, 
   onPromote, 
@@ -30,7 +32,10 @@ export const TeamCard: React.FC<TeamCardProps> = ({
   const colorClass = color === 'indigo' ? 'bg-indigo-600' : 'bg-rose-600';
   const lightColorClass = color === 'indigo' ? 'bg-indigo-50 text-indigo-600' : 'bg-rose-50 text-rose-600';
 
-  const getPos = (pid: string) => attendance.findIndex(ap => ap.id === pid) + 1;
+  const getPos = (pid: string) => {
+    const player = attendance.find(ap => ap.id === pid);
+    return player?.arrivalOrder || '?';
+  };
 
   // Calcula posições sugeridas para exibir na lista
   const getSuggestedPositions = () => {
@@ -58,7 +63,9 @@ export const TeamCard: React.FC<TeamCardProps> = ({
           <Swords className="w-12 h-12 sm:w-20 h-20" />
         </div>
         <div className="flex justify-between items-center mb-2 sm:mb-3">
-          <p className="text-[8px] sm:text-sm font-black uppercase opacity-70 tracking-[0.2em] sm:tracking-[0.3em]">Line-up Equipe</p>
+          <p className="text-[8px] sm:text-sm font-black uppercase opacity-70 tracking-[0.2em] sm:tracking-[0.3em]">
+            Line-up Equipe <span className="ml-1 opacity-50">({attendance.length} Presentes)</span>
+          </p>
           <p className="text-[8px] sm:text-sm font-black uppercase opacity-70 tracking-[0.2em] sm:tracking-[0.3em]">Média ELO</p>
         </div>
         <div className="flex justify-between items-end">
@@ -80,6 +87,7 @@ export const TeamCard: React.FC<TeamCardProps> = ({
               isActive={activeSwapId === team.setter.id} 
               attendancePosition={getPos(team.setter.id)}
               suggestedPosition={suggestedPositions[team.setter.id]}
+              userRole={userRole}
               onSwap={onSwap} 
               onRemove={onRemove}
             />
@@ -103,6 +111,7 @@ export const TeamCard: React.FC<TeamCardProps> = ({
                 isActive={activeSwapId === p.id} 
                 attendancePosition={getPos(p.id)}
                 suggestedPosition={suggestedPositions[p.id]}
+                userRole={userRole}
                 onSwap={onSwap} 
                 onRemove={onRemove}
                 onPromote={!team.setter ? onPromote : undefined}

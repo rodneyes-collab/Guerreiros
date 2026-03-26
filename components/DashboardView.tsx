@@ -14,11 +14,13 @@ interface DashboardViewProps {
   generateDailySummary: () => void;
   isGeneratingSummary: boolean;
   refreshPlayers: () => Promise<void>;
+  userRole?: string;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
   generateDailySummary,
-  refreshPlayers
+  refreshPlayers,
+  userRole
 }) => {
   const { players, matches, isNarratingSummary, isSyncing } = useStore();
   const [startY, setStartY] = React.useState(0);
@@ -59,6 +61,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const topElo = [...players].sort((a, b) => b.elo - a.elo)[0];
   const activePlayers = players.filter(p => p.matchesPlayed > 0).length;
 
+  const formatHour = (timestamp?: number) => {
+    if (!timestamp) return '--:--';
+    return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+
   return (
     <div 
       className="relative space-y-8 animate-in fade-in duration-500"
@@ -84,14 +91,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <h2 className="text-4xl font-black text-slate-900 uppercase tracking-tighter">Painel</h2>
           <p className="text-sm font-bold text-slate-400 uppercase tracking-widest mt-2">Visão geral da temporada</p>
         </div>
-        <button 
-          onClick={generateDailySummary}
-          disabled={isNarratingSummary}
-          className="w-full md:w-auto bg-indigo-600 text-white px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-indigo-700 shadow-xl shadow-indigo-100 transition-all disabled:opacity-50"
-        >
-          <Sparkles className={`w-5 h-5 ${isNarratingSummary ? 'animate-spin' : ''}`} />
-          {isNarratingSummary ? 'Gerando Resumo...' : 'Resumo IA do Dia'}
-        </button>
+        {userRole === 'ADMIN' && (
+          <button 
+            onClick={generateDailySummary}
+            disabled={isNarratingSummary}
+            className="w-full md:w-auto bg-indigo-600 text-white px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-indigo-700 shadow-xl shadow-indigo-100 transition-all disabled:opacity-50"
+          >
+            <Sparkles className={`w-5 h-5 ${isNarratingSummary ? 'animate-spin' : ''}`} />
+            {isNarratingSummary ? 'Gerando Resumo...' : 'Resumo IA do Dia'}
+          </button>
+        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -163,7 +172,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             {matches.slice(0, 5).map(match => (
               <div key={match.id} className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-3">
                 <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-slate-400">
-                  <span>{new Date(match.timestamp).toLocaleDateString('pt-BR')}</span>
+                  <div className="flex items-center gap-2">
+                    <span>{new Date(match.timestamp).toLocaleDateString('pt-BR')}</span>
+                    {match.startTime && (
+                      <span className="text-slate-300">• {formatHour(match.startTime)} - {formatHour(match.endTime)}</span>
+                    )}
+                  </div>
                   <span className="text-indigo-600">
                     {match.mode === 'QUICK' ? 'Rápida' : match.mode === 'SCORE' ? 'Pontuada' : 'Sequencial'}
                   </span>

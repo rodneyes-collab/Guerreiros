@@ -26,6 +26,8 @@ export interface Player {
   birthDate?: string; // ISO date string
   uid?: string; // Firebase Auth UID
   dailyResults?: ('V' | 'D')[]; // Sequência de vitórias/derrotas no dia
+  status?: string;
+  createdAt?: number;
 }
 
 export type MatchMode = 'QUICK' | 'SCORE' | 'SEQUENTIAL';
@@ -40,6 +42,8 @@ export interface Match {
   scoreB: number;
   winner: 'A' | 'B';
   duration: number;
+  startTime?: number; // Timestamp
+  endTime?: number; // Timestamp
   mode: MatchMode;
 }
 
@@ -47,8 +51,6 @@ export interface SystemMetadata {
   lastResetDate: string | null;
   dailyMatchCount: number;
   matchStartTime: number | null;
-  courtLocation?: { lat: number; lng: number };
-  geofenceRadius?: number;
 }
 
 export enum PaymentStatus {
@@ -79,4 +81,10 @@ export interface GenerationResult {
   teamB: Team;
   remainingPlayers: Player[];
   swaps?: { playerA: string; playerB: string }[];
+}
+
+export interface UsageStats {
+  reads: number;
+  writes: number;
+  lastUpdate: string;
 }

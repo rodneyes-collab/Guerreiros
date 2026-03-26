@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useStore } from '../store';
 import { Match, Player } from '../types';
-import { formatTime } from '../utils/formatters';
+import { formatTime } from '../utils/helpers';
 import { 
   Trophy, 
   Clock, 
@@ -28,6 +28,11 @@ export const HistoryView: React.FC = () => {
 
   const getPlayerName = (id: string) => {
     return players.find(p => p.id === id)?.name || 'Jogador Desconhecido';
+  };
+
+  const formatHour = (timestamp?: number) => {
+    if (!timestamp) return '--:--';
+    return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
   const normalize = (str: string) => 
@@ -101,7 +106,7 @@ export const HistoryView: React.FC = () => {
                     <Calendar className="w-3.5 h-3.5" /> {new Date(selectedMatch.timestamp).toLocaleDateString()}
                   </div>
                   <div className="flex items-center gap-2 text-slate-400 text-[10px] font-black uppercase tracking-widest">
-                    <Clock className="w-3.5 h-3.5" /> {formatTime(selectedMatch.duration)}
+                    <Clock className="w-3.5 h-3.5" /> {formatHour(selectedMatch.startTime)} - {formatHour(selectedMatch.endTime)} ({formatTime(selectedMatch.duration)})
                   </div>
                   <div className="flex items-center gap-2 text-slate-400 text-[10px] font-black uppercase tracking-widest">
                     <Hash className="w-3.5 h-3.5" /> {selectedMatch.mode}
@@ -146,7 +151,7 @@ export const HistoryView: React.FC = () => {
                       <div className="w-8 h-8 rounded-full bg-slate-50 flex items-center justify-center text-[10px] font-black text-slate-400">
                         {idx === 0 ? <ShieldCheck className="w-4 h-4 text-indigo-500" /> : idx + 1}
                       </div>
-                      <span className="text-xs font-black text-slate-700 uppercase tracking-tight">{getPlayerName(id)}</span>
+                      <span className={`text-xs font-black uppercase tracking-tight ${players.find(p => p.id === id)?.isOfficialSetter ? 'text-rose-600' : 'text-slate-700'}`}>{getPlayerName(id)}</span>
                     </div>
                     {idx === 0 && <span className="text-[8px] font-black text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded uppercase tracking-widest">Levantador</span>}
                   </div>
@@ -176,7 +181,7 @@ export const HistoryView: React.FC = () => {
                       <div className="w-8 h-8 rounded-full bg-slate-50 flex items-center justify-center text-[10px] font-black text-slate-400">
                         {idx === 0 ? <ShieldCheck className="w-4 h-4 text-rose-500" /> : idx + 1}
                       </div>
-                      <span className="text-xs font-black text-slate-700 uppercase tracking-tight">{getPlayerName(id)}</span>
+                      <span className={`text-xs font-black uppercase tracking-tight ${players.find(p => p.id === id)?.isOfficialSetter ? 'text-rose-600' : 'text-slate-700'}`}>{getPlayerName(id)}</span>
                     </div>
                     {idx === 0 && <span className="text-[8px] font-black text-rose-600 bg-rose-50 px-2 py-0.5 rounded uppercase tracking-widest">Levantador</span>}
                   </div>
@@ -279,7 +284,7 @@ export const HistoryView: React.FC = () => {
               <div className="flex items-center gap-6 w-full md:w-auto">
                 <div className="w-16 h-16 rounded-2xl bg-slate-50 flex flex-col items-center justify-center border border-slate-100 group-hover:bg-indigo-50 group-hover:border-indigo-100 transition-colors">
                   <span className="text-[10px] font-black text-slate-400 uppercase group-hover:text-indigo-400">Partida</span>
-                  <span className="text-lg font-black text-slate-700 group-hover:text-indigo-600">#{match.id.split('_')[1].slice(-3)}</span>
+                  <span className="text-lg font-black text-slate-700 group-hover:text-indigo-600">#{match.id.split('_')[1]?.slice(-3) || '---'}</span>
                 </div>
                 
                 <div className="space-y-1">
@@ -307,7 +312,9 @@ export const HistoryView: React.FC = () => {
                 <div className="flex flex-col items-end gap-1">
                   <div className="flex items-center gap-2">
                     <Clock className="w-3 h-3 text-slate-400" />
-                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{formatTime(match.duration)}</span>
+                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                      {formatHour(match.startTime)} - {formatHour(match.endTime)} ({formatTime(match.duration)})
+                    </span>
                   </div>
                   <div className="flex items-center gap-2">
                     <Users className="w-3 h-3 text-slate-400" />
