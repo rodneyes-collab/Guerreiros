@@ -14,11 +14,16 @@ import {
   Swords,
   Hash,
   User,
-  ShieldCheck
+  ShieldCheck,
+  Trash2
 } from 'lucide-react';
 
-export const HistoryView: React.FC = () => {
-  const { matches, players } = useStore();
+interface HistoryViewProps {
+  onDeleteMatch?: (matchId: string) => void;
+}
+
+export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch }) => {
+  const { matches, players, userRole } = useStore();
   const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterPlayerId, setFilterPlayerId] = useState<string>('');
@@ -80,12 +85,26 @@ export const HistoryView: React.FC = () => {
   if (selectedMatch) {
     return (
       <div className="space-y-6 animate-in slide-in-from-right duration-300">
-        <button 
-          onClick={() => setSelectedMatch(null)}
-          className="flex items-center gap-2 text-slate-500 hover:text-indigo-600 transition-colors font-black uppercase text-[10px] tracking-widest"
-        >
-          <ArrowLeft className="w-4 h-4" /> Voltar para a Lista
-        </button>
+        <div className="flex items-center justify-between">
+          <button 
+            onClick={() => setSelectedMatch(null)}
+            className="flex items-center gap-2 text-slate-500 hover:text-indigo-600 transition-colors font-black uppercase text-[10px] tracking-widest"
+          >
+            <ArrowLeft className="w-4 h-4" /> Voltar para a Lista
+          </button>
+          
+          {userRole === 'ADMIN' && onDeleteMatch && (
+            <button
+              onClick={() => {
+                onDeleteMatch(selectedMatch.id);
+                setSelectedMatch(null);
+              }}
+              className="flex items-center gap-2 text-rose-500 hover:text-rose-600 transition-colors font-black uppercase text-[10px] tracking-widest"
+            >
+              <Trash2 className="w-4 h-4" /> Excluir Partida
+            </button>
+          )}
+        </div>
 
         <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-xl overflow-hidden">
           <div className="bg-slate-900 p-8 text-white relative overflow-hidden">
@@ -117,12 +136,31 @@ export const HistoryView: React.FC = () => {
               <div className="flex items-center gap-8">
                 <div className="text-center">
                   <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Time A</p>
-                  <p className="text-5xl font-black tracking-tighter">{selectedMatch.scoreA}</p>
+                  {selectedMatch.mode !== 'QUICK' ? (
+                    <div className="flex flex-col items-center gap-2">
+                      <p className="text-5xl font-black tracking-tighter">{selectedMatch.scoreA}</p>
+                      {selectedMatch.winner === 'A' && <Trophy className="w-12 h-12 text-yellow-500 drop-shadow-[0_0_15px_rgba(234,179,8,0.4)] fill-yellow-500" />}
+                    </div>
+                  ) : (
+                    <div className="h-[3.75rem] flex items-center justify-center">
+                      {selectedMatch.winner === 'A' && <Trophy className="w-20 h-20 text-yellow-500 drop-shadow-[0_0_15px_rgba(234,179,8,0.4)] fill-yellow-500" />}
+                    </div>
+                  )}
                 </div>
                 <div className="text-2xl font-black text-slate-700">VS</div>
                 <div className="text-center">
                   <p className="text-[10px] font-black text-rose-400 uppercase tracking-widest mb-1">Time B</p>
-                  <p className="text-5xl font-black tracking-tighter">{selectedMatch.scoreB}</p>
+                  {selectedMatch.winner === 'B' ? (
+                    <div className="h-[3.75rem] flex items-center justify-center">
+                      <Trophy className="w-20 h-20 text-yellow-500 drop-shadow-[0_0_15px_rgba(234,179,8,0.4)] fill-yellow-500" />
+                    </div>
+                  ) : (
+                    selectedMatch.mode !== 'QUICK' && (
+                      <div className="flex flex-col items-center gap-2">
+                        <p className="text-5xl font-black tracking-tighter">{selectedMatch.scoreB}</p>
+                      </div>
+                    )
+                  )}
                 </div>
               </div>
             </div>
@@ -284,7 +322,9 @@ export const HistoryView: React.FC = () => {
               <div className="flex items-center gap-6 w-full md:w-auto">
                 <div className="w-16 h-16 rounded-2xl bg-slate-50 flex flex-col items-center justify-center border border-slate-100 group-hover:bg-indigo-50 group-hover:border-indigo-100 transition-colors">
                   <span className="text-[10px] font-black text-slate-400 uppercase group-hover:text-indigo-400">Partida</span>
-                  <span className="text-lg font-black text-slate-700 group-hover:text-indigo-600">#{match.id.split('_')[1]?.slice(-3) || '---'}</span>
+                  <span className="text-lg font-black text-slate-700 group-hover:text-indigo-600">
+                    #{match.dailyNumber || match.id.split('_')[1]?.slice(-3).toUpperCase() || '---'}
+                  </span>
                 </div>
                 
                 <div className="space-y-1">
@@ -293,16 +333,20 @@ export const HistoryView: React.FC = () => {
                     <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{new Date(match.timestamp).toLocaleDateString()}</span>
                   </div>
                   <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-2">
-                      {match.winner === 'A' && <Trophy className="w-3 h-3 text-emerald-500" />}
-                      <span className={`text-sm font-black uppercase tracking-tighter ${match.winner === 'A' ? 'text-emerald-600' : 'text-rose-600'}`}>Time A</span>
-                      <span className={`text-lg font-black ${match.winner === 'A' ? 'text-emerald-600' : 'text-rose-600'}`}>{match.scoreA}</span>
+                    <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl transition-all ${match.winner === 'A' ? 'bg-emerald-50 border-2 border-emerald-200 shadow-sm scale-105' : 'border border-transparent'}`}>
+                      {match.winner === 'A' && <Trophy className="w-5 h-5 text-yellow-500 fill-yellow-500" />}
+                      <span className={`text-sm font-black uppercase tracking-tighter ${match.winner === 'A' ? 'text-emerald-700' : 'text-slate-400'}`}>Time A</span>
+                      {match.mode !== 'QUICK' && (
+                        <span className={`text-lg font-black ${match.winner === 'A' ? 'text-emerald-700' : 'text-slate-400'}`}>{match.scoreA}</span>
+                      )}
                     </div>
-                    <div className="text-xs font-black text-slate-200">VS</div>
-                    <div className="flex items-center gap-2">
-                      <span className={`text-lg font-black ${match.winner === 'B' ? 'text-emerald-600' : 'text-rose-600'}`}>{match.scoreB}</span>
-                      <span className={`text-sm font-black uppercase tracking-tighter ${match.winner === 'B' ? 'text-emerald-600' : 'text-rose-600'}`}>Time B</span>
-                      {match.winner === 'B' && <Trophy className="w-3 h-3 text-emerald-500" />}
+                    <div className="text-xs font-black text-slate-200 italic">VS</div>
+                    <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl transition-all ${match.winner === 'B' ? 'bg-emerald-50 border-2 border-emerald-200 shadow-sm scale-105' : 'border border-transparent'}`}>
+                      {match.mode !== 'QUICK' && (
+                        <span className={`text-lg font-black ${match.winner === 'B' ? 'text-emerald-700' : 'text-slate-400'}`}>{match.scoreB}</span>
+                      )}
+                      <span className={`text-sm font-black uppercase tracking-tighter ${match.winner === 'B' ? 'text-emerald-700' : 'text-slate-400'}`}>Time B</span>
+                      {match.winner === 'B' && <Trophy className="w-5 h-5 text-yellow-500 fill-yellow-500" />}
                     </div>
                   </div>
                 </div>

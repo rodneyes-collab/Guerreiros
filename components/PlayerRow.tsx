@@ -1,4 +1,5 @@
 import React from 'react';
+import { useStore } from '../store';
 import { Player } from '../types';
 import { 
   UserCheck, 
@@ -13,7 +14,7 @@ interface PlayerRowProps {
   p: Player;
   isSetter?: boolean;
   isActive?: boolean;
-  attendancePosition?: number;
+  attendancePosition?: number | string;
   suggestedPosition?: string;
   userRole?: string;
   onSwap: (pid: string) => void;
@@ -32,17 +33,21 @@ export const PlayerRow: React.FC<PlayerRowProps> = ({
   onRemove, 
   onPromote 
 }) => {
+  const players = useStore(state => state.players);
+  const fullPlayer = players.find(fp => fp.id === p.id);
+  const displayName = p.name || fullPlayer?.name || "Sócio sem nome";
+
   return (
     <div className={`flex items-center justify-between p-3 sm:p-5 rounded-[1.5rem] sm:rounded-[2rem] border transition-all group ${isActive ? 'bg-indigo-50 border-indigo-300 shadow-md ring-2 ring-indigo-200' : 'bg-white border-slate-100 hover:border-indigo-200 shadow-sm hover:shadow-md'}`}>
       <div className="flex items-center gap-3 sm:gap-6">
         <div className="relative">
           <div className={`w-10 h-10 sm:w-16 sm:h-16 rounded-full flex items-center justify-center text-lg sm:text-2xl font-black ${isSetter ? 'bg-amber-100 text-amber-600' : 'bg-slate-100 text-slate-400'} border border-slate-200 shadow-sm`}>
-            {attendancePosition || '?'}
+            {attendancePosition && attendancePosition !== 0 ? attendancePosition : '?'}
           </div>
           {isSetter && <div className="absolute -top-1 -right-1 sm:-top-2 sm:-right-2 w-5 h-5 sm:w-6 sm:h-6 bg-amber-500 rounded-full border-2 border-white flex items-center justify-center shadow-sm"><UserCheck className="w-2.5 h-2.5 sm:w-3 h-3 text-white" /></div>}
         </div>
         <div className="min-w-0">
-          <p className={`text-sm sm:text-2xl font-black ${p.isOfficialSetter ? 'text-rose-600' : 'text-slate-800'} tracking-tight leading-none truncate`}>{p.name}</p>
+          <p className={`text-sm sm:text-2xl font-black ${(p.isOfficialSetter || isSetter) ? 'text-red-600' : 'text-slate-800'} tracking-tight leading-none truncate`}>{displayName}</p>
           <div className="flex items-center gap-2 sm:gap-3 mt-1 sm:mt-2">
             <span className="text-[9px] sm:text-[11px] font-black uppercase text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100">{p.dailyWins || 0}V</span>
             <span className="text-[9px] sm:text-[11px] font-black uppercase text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-100">{p.dailyLosses || 0}D</span>

@@ -144,6 +144,21 @@
         "writes": { "type": "integer" },
         "lastUpdate": { "type": "string" }
       }
+    },
+    "Tournament": {
+      "title": "Tournament",
+      "description": "A monthly celebration tournament with fixed teams",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "status": { "type": "string", "enum": ["active", "completed"] },
+        "teams": { "type": "array" },
+        "matches": { "type": "array" },
+        "config": { "type": "object" }
+      },
+      "required": ["id", "name", "date", "status", "teams", "matches", "config"]
     }
   },
   "firestore": {
@@ -154,6 +169,14 @@
     "/metadata/usage": {
       "schema": "UsageStats",
       "description": "Daily estimated Firestore usage stats"
+    },
+    "/metadata/activeTournament": {
+      "schema": "Tournament",
+      "description": "The tournament currently in progress"
+    },
+    "/tournaments/{tournamentId}": {
+      "schema": "Tournament",
+      "description": "Monthly tournaments"
     },
     "/pendingRequests/{requestId}": {
       "schema": "PendingRequest",

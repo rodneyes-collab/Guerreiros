@@ -1,13 +1,14 @@
 import { create } from 'zustand';
-import { Player, Payment, Match, GenerationResult, SystemMetadata, UsageStats } from './types';
+import { Player, Payment, Match, GenerationResult, SystemMetadata, UsageStats, Expense, Tournament } from './types';
 import { User } from './firebase';
 
-export type ViewMode = 'presence' | 'history' | 'generation' | 'members' | 'dashboard' | 'rules' | 'payments' | 'admin';
+export type ViewMode = 'presence' | 'history' | 'generation' | 'members' | 'dashboard' | 'rules' | 'payments' | 'admin' | 'tournament' | 'attendance_report';
 
 interface AppState {
   // Data
   players: Player[];
   payments: Payment[];
+  expenses: Expense[];
   preConfirmations: Player[];
   matches: Match[];
   attendance: Player[];
@@ -33,6 +34,10 @@ interface AppState {
   // Generation Result
   generationResult: GenerationResult | null;
   
+  // Tournament State
+  tournaments: Tournament[];
+  activeTournament: Tournament | null;
+  
   // Analysis & Rules
   analysis: string;
   ruleVerification: string;
@@ -50,6 +55,9 @@ interface AppState {
   isNarratingSummary: boolean;
   isAnalyzing: boolean;
   isVerifyingRules: boolean;
+  isLoggingOut: boolean;
+  isScanningAnomalies: boolean;
+  anomalyReport: string | null;
   
   // Management State
   isFormOpen: boolean;
@@ -88,6 +96,8 @@ interface AppState {
   setPendingRequests: (requests: any[]) => void;
   setUsageStats: (stats: UsageStats) => void;
   setGenerationResult: (result: GenerationResult | null) => void;
+  setTournaments: (tournaments: Tournament[] | ((prev: Tournament[]) => Tournament[])) => void;
+  setActiveTournament: (tournament: Tournament | null) => void;
   triggerSync: () => void;
   
   setAnalysis: (analysis: string) => void;
@@ -105,6 +115,9 @@ interface AppState {
   setIsNarratingSummary: (is: boolean) => void;
   setIsAnalyzing: (is: boolean) => void;
   setIsVerifyingRules: (is: boolean) => void;
+  setIsLoggingOut: (is: boolean) => void;
+  setIsScanningAnomalies: (is: boolean) => void;
+  setAnomalyReport: (report: string | null) => void;
   
   setIsFormOpen: (isOpen: boolean) => void;
   setEditingPlayer: (player: Player | null) => void;
@@ -125,6 +138,7 @@ interface AppState {
 export const useStore = create<AppState>((set) => ({
   players: [],
   payments: [],
+  expenses: [],
   preConfirmations: [],
   matches: [],
   attendance: [],
@@ -148,10 +162,12 @@ export const useStore = create<AppState>((set) => ({
   isNearCourt: false,
   currentPlayer: null,
   pendingRequests: [],
-  usageStats: { reads: 0, writes: 0, lastUpdate: '' },
+  usageStats: { reads: 0, writes: 0, aiCalls: 0, lastUpdate: '' },
   syncTrigger: 0,
   dateKey: '',
   generationResult: null,
+  tournaments: [],
+  activeTournament: null,
   analysis: '',
   ruleVerification: '',
   
@@ -167,6 +183,9 @@ export const useStore = create<AppState>((set) => ({
   isNarratingSummary: false,
   isAnalyzing: false,
   isVerifyingRules: false,
+  isLoggingOut: false,
+  isScanningAnomalies: false,
+  anomalyReport: null,
   
   isFormOpen: false,
   editingPlayer: null,
@@ -187,6 +206,9 @@ export const useStore = create<AppState>((set) => ({
   })),
   setPayments: (payments) => set((state) => ({ 
     payments: typeof payments === 'function' ? payments(state.payments) : payments 
+  })),
+  setExpenses: (expenses) => set((state) => ({ 
+    expenses: typeof expenses === 'function' ? expenses(state.expenses) : expenses 
   })),
   setPreConfirmations: (preConfirmations) => set((state) => ({ 
     preConfirmations: typeof preConfirmations === 'function' ? preConfirmations(state.preConfirmations) : preConfirmations 
@@ -219,6 +241,10 @@ export const useStore = create<AppState>((set) => ({
   setPendingRequests: (pendingRequests) => set({ pendingRequests }),
   setUsageStats: (usageStats) => set({ usageStats }),
   setGenerationResult: (generationResult) => set({ generationResult }),
+  setTournaments: (tournaments) => set((state) => ({ 
+    tournaments: typeof tournaments === 'function' ? tournaments(state.tournaments) : tournaments 
+  })),
+  setActiveTournament: (activeTournament) => set({ activeTournament }),
   triggerSync: () => set((state) => ({ syncTrigger: state.syncTrigger + 1, isSyncing: true })),
   setAnalysis: (analysis) => set({ analysis }),
   setRuleVerification: (ruleVerification) => set({ ruleVerification }),
@@ -237,6 +263,9 @@ export const useStore = create<AppState>((set) => ({
   setIsNarratingSummary: (isNarratingSummary) => set({ isNarratingSummary }),
   setIsAnalyzing: (isAnalyzing) => set({ isAnalyzing }),
   setIsVerifyingRules: (isVerifyingRules) => set({ isVerifyingRules }),
+  setIsLoggingOut: (isLoggingOut) => set({ isLoggingOut }),
+  setIsScanningAnomalies: (isScanningAnomalies) => set({ isScanningAnomalies }),
+  setAnomalyReport: (anomalyReport) => set({ anomalyReport }),
   
   setIsFormOpen: (isFormOpen) => set({ isFormOpen }),
   setEditingPlayer: (editingPlayer) => set({ editingPlayer }),

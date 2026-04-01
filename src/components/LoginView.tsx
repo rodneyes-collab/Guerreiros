@@ -1,22 +1,39 @@
 
-import React from 'react';
-import { Trophy, LogIn, Mail, RefreshCw, Send, Swords, TrendingUp, ShieldCheck } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Trophy, LogIn, Mail, RefreshCw, Send, Swords, TrendingUp, ShieldCheck, User, X } from 'lucide-react';
 
 interface LoginViewProps {
-  handleLogin: () => void;
   handleMagicLink: (e: React.FormEvent) => void;
   magicLinkEmail: string;
   setMagicLinkEmail: (email: string) => void;
   isSendingMagicLink: boolean;
+  isLoggingIn: boolean;
 }
 
 export const LoginView: React.FC<LoginViewProps> = ({
-  handleLogin,
   handleMagicLink,
   magicLinkEmail,
   setMagicLinkEmail,
-  isSendingMagicLink
+  isSendingMagicLink,
+  isLoggingIn
 }) => {
+  const [recentLogins, setRecentLogins] = useState<string[]>([]);
+
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(window.localStorage.getItem('recentLogins') || '[]');
+      setRecentLogins(stored);
+    } catch (e) {
+      console.error('Error loading recent logins', e);
+    }
+  }, []);
+
+  const removeRecent = (email: string) => {
+    const updated = recentLogins.filter(e => e !== email);
+    setRecentLogins(updated);
+    window.localStorage.setItem('recentLogins', JSON.stringify(updated));
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
       <div className="max-w-md w-full bg-white rounded-[2.5rem] shadow-2xl shadow-emerald-200/50 p-8 md:p-12 border border-slate-100 text-center space-y-8 animate-in fade-in zoom-in duration-700">
@@ -39,22 +56,30 @@ export const LoginView: React.FC<LoginViewProps> = ({
         </div>
 
         <div className="space-y-6">
-          <button 
-            onClick={handleLogin}
-            className="w-full flex items-center justify-center gap-3 px-8 py-5 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest hover:bg-slate-800 transition-all shadow-xl shadow-slate-200 group"
-          >
-            <LogIn className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-            Entrar com Google
-          </button>
-
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-slate-100"></div>
+          {recentLogins.length > 0 && (
+            <div className="space-y-3">
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Logins Recentes</p>
+              <div className="flex flex-wrap justify-center gap-2">
+                {recentLogins.map(email => (
+                  <div key={email} className="group relative">
+                    <button
+                      onClick={() => setMagicLinkEmail(email)}
+                      className="flex items-center gap-2 px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold text-slate-600 hover:bg-emerald-50 hover:border-emerald-200 hover:text-emerald-700 transition-all"
+                    >
+                      <User className="w-3 h-3" />
+                      {email}
+                    </button>
+                    <button
+                      onClick={() => removeRecent(email)}
+                      className="absolute -top-1 -right-1 w-4 h-4 bg-slate-200 text-slate-500 rounded-full flex items-center justify-center hover:bg-rose-100 hover:text-rose-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <X className="w-2 h-2" />
+                    </button>
+                  </div>
+                ))}
+              </div>
             </div>
-            <div className="relative flex justify-center text-xs uppercase font-black tracking-widest">
-              <span className="bg-white px-4 text-slate-300">Acesso para Sócios</span>
-            </div>
-          </div>
+          )}
 
           <form onSubmit={handleMagicLink} className="space-y-3">
             <div className="relative group">

@@ -36,6 +36,7 @@ import {
   Cell,
   PieChart,
   Pie,
+  Legend,
   ReferenceLine,
   Radar,
   RadarChart,
@@ -78,6 +79,8 @@ export const RankingView: React.FC<RankingViewProps> = ({
     }
   }, [userRole, currentPlayer, selectedPlayerId]);
   const [activeTab, setActiveTab] = useState<'daily' | 'individual'>('daily');
+  const [selectedDailyDate, setSelectedDailyDate] = useState<string>('Hoje');
+  const [rankingSearchQuery, setRankingSearchQuery] = useState('');
 
   const [comparisonPlayerId, setComparisonPlayerId] = useState<string | null>(null);
   const [isListModalOpen, setIsListModalOpen] = useState(false);
@@ -147,7 +150,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
         const otherId = ids.find(id => id !== selectedPlayer.id);
         const otherPlayer = players.find(p => p.id === otherId);
         if (otherPlayer && (wins as number) > bestSynergy.wins) {
-          bestSynergy = { name: otherPlayer.name, wins: wins as number };
+          bestSynergy = { name: otherPlayer.name || "Sócio sem nome", wins: wins as number };
         }
       }
     });
@@ -159,7 +162,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
         const otherId = ids.find(id => id !== selectedPlayer.id);
         const otherPlayer = players.find(p => p.id === otherId);
         if (otherPlayer && (losses as number) > worstNegativeSynergy.losses) {
-          worstNegativeSynergy = { name: otherPlayer.name, losses: losses as number };
+          worstNegativeSynergy = { name: otherPlayer.name || "Sócio sem nome", losses: losses as number };
         }
       }
     });
@@ -170,7 +173,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
       if (loserId === selectedPlayer.id) {
         const otherPlayer = players.find(p => p.id === winnerId);
         if (otherPlayer && (losses as number) > worstRival.losses) {
-          worstRival = { name: otherPlayer.name, losses: losses as number };
+          worstRival = { name: otherPlayer.name || "Sócio sem nome", losses: losses as number };
         }
       }
     });
@@ -209,7 +212,9 @@ export const RankingView: React.FC<RankingViewProps> = ({
     
     return selectedPlayer.eloHistory.map(h => {
       const dateStr = h.date;
-      const dateObj = new Date(dateStr + 'T00:00:00');
+      // Extract only the date part if it's a full ISO string
+      const cleanDateStr = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr;
+      const dateObj = new Date(cleanDateStr + 'T00:00:00');
       
       // Calculate average ELO of all players at this specific date
       const groupElosAtDate = players.map(p => {
@@ -233,6 +238,38 @@ export const RankingView: React.FC<RankingViewProps> = ({
       };
     });
   }, [selectedPlayer, players]);
+
+  // New Chart Data: Daily Performance (ELO Variation)
+  const dailyPerformanceData = useMemo(() => {
+    if (!selectedPlayer?.eloHistory || selectedPlayer.eloHistory.length < 2) return [];
+    
+    const history = selectedPlayer.eloHistory;
+    const variations: Record<string, number> = {};
+    
+    for (let i = 1; i < history.length; i++) {
+      const prev = history[i-1];
+      const curr = history[i];
+      const diff = curr.elo - prev.elo;
+      
+      const dateStr = curr.date;
+      const cleanDateStr = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr;
+      
+      if (!variations[cleanDateStr]) {
+        variations[cleanDateStr] = 0;
+      }
+      variations[cleanDateStr] += diff;
+    }
+    
+    return Object.entries(variations)
+      .sort(([dateA], [dateB]) => dateA.localeCompare(dateB))
+      .map(([dateStr, variation]) => {
+        const dateObj = new Date(dateStr + 'T00:00:00');
+        return {
+          date: dateObj.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }),
+          variation
+        };
+      });
+  }, [selectedPlayer]);
 
   // Chart Data: Radar Skills
   const groupAverages = useMemo(() => {
@@ -365,44 +402,130 @@ export const RankingView: React.FC<RankingViewProps> = ({
     return 'neutral';
   };
 
+  // Get unique dates from matches for filtering
+  const availableDates = useMemo(() => {
+    const dates = new Set(matches.map(m => m.date));
+    const sortedDates = Array.from(dates).sort((a, b) => b.localeCompare(a));
+    return ['Hoje', ...sortedDates];
+  }, [matches]);
+
   // Top Stats
   const topStats = useMemo(() => {
-    if (!players || players.length === 0) return { mvp: null, bestSetter: null, topElo: null, dailyKing: null, topImpact: null, dailyMvp: null, dailyBestSetter: null };
+    if (!players || players.length === 0) return { mvp: null, bestSetter: null, topElo: null, dailyKing: null, topImpact: null, dailyMvp: null, dailyBestSetter: null, dailyMatchesCount: 0 };
     
     // Minimum matches to qualify for MVP/Best Setter to avoid 1-match outliers
     const MIN_MATCHES = 3;
 
     const getWinRate = (p: any) => (p.matchesPlayed || 0) > 0 ? (p.wins || 0) / p.matchesPlayed : 0;
-    const getDailyWinRate = (p: any) => (p.dailyMatches || 0) > 0 ? (p.dailyWins || 0) / p.dailyMatches : 0;
+
+    // Calculate daily stats based on selected date
+    let dailyStats: Record<string, { matches: number, wins: number, eloGain: number }> = {};
+    let dailyMatchesCount = 0;
+
+    if (selectedDailyDate === 'Hoje') {
+      players.forEach(p => {
+        dailyStats[p.id] = {
+          matches: p.dailyMatches || 0,
+          wins: p.dailyWins || 0,
+          eloGain: p.dailyEloGain || 0
+        };
+      });
+      dailyMatchesCount = matches.filter(m => m.date === new Date().toISOString().split('T')[0]).length;
+    } else {
+      const dateMatches = matches.filter(m => m.date === selectedDailyDate);
+      dailyMatchesCount = dateMatches.length;
+      
+      players.forEach(p => {
+        const playerMatches = dateMatches.filter(m => 
+          m.teamA.includes(p.id) || m.teamB.includes(p.id)
+        );
+        const playerWins = playerMatches.filter(m => 
+          (m.winner === 'A' && m.teamA.includes(p.id)) || 
+          (m.winner === 'B' && m.teamB.includes(p.id))
+        ).length;
+
+        // For eloGain in historical matches, we'd need to track it per match.
+        // Since we don't have per-match elo gain in the match object, 
+        // we can estimate it or look at eloHistory if available.
+        // For now, let's look at eloHistory.
+        let eloGain = 0;
+        if (p.eloHistory) {
+          const entry = p.eloHistory.find(h => h.date === selectedDailyDate);
+          if (entry) {
+            // Find previous entry
+            const sortedHistory = [...p.eloHistory].sort((a, b) => a.date.localeCompare(b.date));
+            const index = sortedHistory.findIndex(h => h.date === selectedDailyDate);
+            if (index > 0) {
+              eloGain = entry.elo - sortedHistory[index - 1].elo;
+            } else {
+              eloGain = entry.elo - 1200; // Assuming 1200 starting
+            }
+          }
+        }
+
+        dailyStats[p.id] = {
+          matches: playerMatches.length,
+          wins: playerWins,
+          eloGain: eloGain
+        };
+      });
+    }
+
+    const getDailyWinRate = (pId: string) => {
+      const stats = dailyStats[pId];
+      return (stats?.matches || 0) > 0 ? (stats.wins || 0) / stats.matches : 0;
+    };
 
     const mvp = [...players]
       .filter(p => (p.matchesPlayed || 0) >= MIN_MATCHES)
       .sort((a, b) => getWinRate(b) - getWinRate(a))[0] || 
-      [...players].sort((a, b) => (b.wins || 0) - (a.wins || 0))[0];
+      [...players]
+        .filter(p => (p.matchesPlayed || 0) > 0)
+        .sort((a, b) => (b.wins || 0) - (a.wins || 0))[0];
 
     const bestSetter = [...players]
       .filter(p => p.isOfficialSetter && (p.matchesPlayed || 0) >= MIN_MATCHES)
       .sort((a, b) => getWinRate(b) - getWinRate(a))[0] ||
-      [...players].filter(p => p.isOfficialSetter).sort((a, b) => (b.wins || 0) - (a.wins || 0))[0];
+      [...players]
+        .filter(p => p.isOfficialSetter && (p.matchesPlayed || 0) > 0)
+        .sort((a, b) => (b.wins || 0) - (a.wins || 0))[0];
 
     const dailyMvp = [...players]
-      .filter(p => (p.dailyMatches || 0) > 0)
-      .sort((a, b) => getDailyWinRate(b) - getDailyWinRate(a) || (b.dailyWins || 0) - (a.dailyWins || 0))[0];
+      .filter(p => (dailyStats[p.id]?.matches || 0) > 0)
+      .sort((a, b) => getDailyWinRate(b.id) - getDailyWinRate(a.id) || (dailyStats[b.id]?.wins || 0) - (dailyStats[a.id]?.wins || 0))[0];
 
     const dailyBestSetter = [...players]
-      .filter(p => p.isOfficialSetter && (p.dailyMatches || 0) > 0)
-      .sort((a, b) => getDailyWinRate(b) - getDailyWinRate(a) || (b.dailyWins || 0) - (a.dailyWins || 0))[0];
+      .filter(p => p.isOfficialSetter && (dailyStats[p.id]?.matches || 0) > 0)
+      .sort((a, b) => getDailyWinRate(b.id) - getDailyWinRate(a.id) || (dailyStats[b.id]?.wins || 0) - (dailyStats[a.id]?.wins || 0))[0];
 
     const topElo = [...players].sort((a, b) => (b.elo || 0) - (a.elo || 0))[0];
-    const dailyKing = [...players].sort((a, b) => (b.dailyEloGain || 0) - (a.dailyEloGain || 0))[0];
-    const topImpact = [...players].sort((a, b) => {
-      const impactA = ((a.elo || 1000) - 1000) / (a.matchesPlayed || 1);
-      const impactB = ((b.elo || 1000) - 1000) / (b.matchesPlayed || 1);
-      return impactB - impactA;
-    })[0];
+    const dailyKing = [...players]
+      .filter(p => (dailyStats[p.id]?.matches || 0) > 0)
+      .sort((a, b) => 
+        (dailyStats[b.id]?.eloGain || 0) - (dailyStats[a.id]?.eloGain || 0) || 
+        (dailyStats[b.id]?.wins || 0) - (dailyStats[a.id]?.wins || 0) ||
+        (dailyStats[a.id]?.matches || 0) - (dailyStats[b.id]?.matches || 0)
+      )[0];
+    const topImpact = [...players]
+      .filter(p => (p.matchesPlayed || 0) > 0)
+      .sort((a, b) => {
+        const impactA = ((a.elo || 1000) - 1000) / (a.matchesPlayed || 1);
+        const impactB = ((b.elo || 1000) - 1000) / (b.matchesPlayed || 1);
+        return impactB - impactA || (b.matchesPlayed || 0) - (a.matchesPlayed || 0);
+      })[0];
     
-    return { mvp, bestSetter, topElo, dailyKing, topImpact, dailyMvp, dailyBestSetter };
-  }, [players]);
+    return { 
+      mvp, 
+      bestSetter, 
+      topElo, 
+      dailyKing, 
+      topImpact, 
+      dailyMvp, 
+      dailyBestSetter,
+      dailyMatchesCount,
+      dailyStats // Export dailyStats for use in UI
+    };
+  }, [players, matches, selectedDailyDate]);
 
   // Global Top Synergies & Rivalries
   const globalRelationships = useMemo(() => {
@@ -530,11 +653,26 @@ export const RankingView: React.FC<RankingViewProps> = ({
                   </div>
                   <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Destaques de Hoje</h3>
                 </div>
-                {userRole === 'ADMIN' && (
+                <div className="flex items-center gap-2 overflow-x-auto pb-2 no-scrollbar">
+                  {availableDates.map(date => (
+                    <button
+                      key={date}
+                      onClick={() => setSelectedDailyDate(date)}
+                      className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap border ${
+                        selectedDailyDate === date 
+                          ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg shadow-indigo-100' 
+                          : 'bg-white border-slate-200 text-slate-400 hover:border-indigo-200'
+                      }`}
+                    >
+                      {date === 'Hoje' ? 'Hoje' : new Date(date + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
+                    </button>
+                  ))}
+                </div>
+                {userRole === 'ADMIN' && selectedDailyDate === 'Hoje' && (
                   <button 
                     onClick={resetDailyMatches}
                     className="p-2 bg-slate-100 hover:bg-rose-50 hover:text-rose-600 rounded-xl text-slate-400 transition-all"
-                    title="Resetar Dia"
+                    title="Finalizar Dia"
                   >
                     <RotateCcw className="w-4 h-4" />
                   </button>
@@ -550,11 +688,11 @@ export const RankingView: React.FC<RankingViewProps> = ({
                   <div className="absolute top-0 right-0 p-6 opacity-20 group-hover:scale-110 transition-transform">
                     <Trophy className="w-12 h-12" />
                   </div>
-                  <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-80 mb-2">MVP do Dia</p>
-                  <h4 className="text-xl font-black truncate">{topStats.dailyMvp?.name || '-'}</h4>
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-80 mb-2">MVP {selectedDailyDate === 'Hoje' ? 'do Dia' : ''}</p>
+                  <h4 className="text-xl font-black truncate">{topStats.dailyMvp ? (topStats.dailyMvp.name || "Sócio sem nome") : "Nenhum"}</h4>
                   <div className="mt-4 flex items-center gap-2">
                     <span className="bg-white/20 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">
-                      {topStats.dailyMvp ? Math.round((topStats.dailyMvp.dailyWins / (topStats.dailyMvp.dailyMatches || 1)) * 100) : 0}% Win Rate
+                      {topStats.dailyMvp ? `${Math.round((topStats.dailyStats[topStats.dailyMvp.id].wins / (topStats.dailyStats[topStats.dailyMvp.id].matches || 1)) * 100)}% Win Rate` : "Sem partidas"}
                     </span>
                   </div>
                 </motion.div>
@@ -568,11 +706,11 @@ export const RankingView: React.FC<RankingViewProps> = ({
                   <div className="absolute top-0 right-0 p-6 opacity-20 group-hover:scale-110 transition-transform">
                     <Target className="w-12 h-12" />
                   </div>
-                  <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-80 mb-2">Levantador do Dia</p>
-                  <h4 className="text-xl font-black truncate">{topStats.dailyBestSetter?.name || '-'}</h4>
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-80 mb-2">Levantador {selectedDailyDate === 'Hoje' ? 'do Dia' : ''}</p>
+                  <h4 className="text-xl font-black truncate">{topStats.dailyBestSetter ? (topStats.dailyBestSetter.name || "Sócio sem nome") : "Nenhum"}</h4>
                   <div className="mt-4 flex items-center gap-2">
                     <span className="bg-white/20 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">
-                      {topStats.dailyBestSetter ? Math.round((topStats.dailyBestSetter.dailyWins / (topStats.dailyBestSetter.dailyMatches || 1)) * 100) : 0}% Win Rate
+                      {topStats.dailyBestSetter ? `${Math.round((topStats.dailyStats[topStats.dailyBestSetter.id].wins / (topStats.dailyStats[topStats.dailyBestSetter.id].matches || 1)) * 100)}% Win Rate` : "Sem partidas"}
                     </span>
                   </div>
                 </motion.div>
@@ -586,11 +724,11 @@ export const RankingView: React.FC<RankingViewProps> = ({
                   <div className="absolute top-0 right-0 p-6 opacity-20 group-hover:scale-110 transition-transform">
                     <Zap className="w-12 h-12" />
                   </div>
-                  <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-80 mb-2">Rei do Dia</p>
-                  <h4 className="text-xl font-black truncate">{topStats.dailyKing?.name || '-'}</h4>
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-80 mb-2">Rei {selectedDailyDate === 'Hoje' ? 'do Dia' : ''}</p>
+                  <h4 className="text-xl font-black truncate">{topStats.dailyKing ? (topStats.dailyKing.name || "Sócio sem nome") : "Nenhum"}</h4>
                   <div className="mt-4 flex items-center gap-2">
                     <span className="bg-white/20 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">
-                      +{topStats.dailyKing?.dailyEloGain || 0} ELO
+                      {topStats.dailyKing ? `${topStats.dailyStats[topStats.dailyKing.id].eloGain >= 0 ? '+' : ''}${topStats.dailyStats[topStats.dailyKing.id].eloGain || 0} ELO` : "Sem partidas"}
                     </span>
                   </div>
                 </motion.div>
@@ -604,8 +742,8 @@ export const RankingView: React.FC<RankingViewProps> = ({
                   <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
                     <Activity className="w-12 h-12 text-slate-400" />
                   </div>
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-2">Partidas Hoje</p>
-                  <h4 className="text-3xl font-black text-slate-800">{matches.filter(m => m.date === new Date().toISOString().split('T')[0]).length}</h4>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-2">Partidas {selectedDailyDate === 'Hoje' ? 'Hoje' : ''}</p>
+                  <h4 className="text-3xl font-black text-slate-800">{topStats.dailyMatchesCount}</h4>
                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-2">Registradas</p>
                 </motion.div>
               </div>
@@ -630,9 +768,9 @@ export const RankingView: React.FC<RankingViewProps> = ({
                     <Trophy className="w-12 h-12 md:w-16 md:h-16 text-indigo-600" />
                   </div>
                   <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-3 md:mb-4">MVP Eficiência</p>
-                  <h3 className="text-lg md:text-2xl font-black text-slate-800 truncate">{topStats.mvp?.name || '-'}</h3>
+                  <h3 className="text-lg md:text-2xl font-black text-slate-800 truncate">{topStats.mvp ? (topStats.mvp.name || "Sócio sem nome") : "Nenhum"}</h3>
                   <p className="text-indigo-600 font-black text-xs md:text-sm mt-1 uppercase tracking-widest">
-                    {topStats.mvp ? Math.round((topStats.mvp.wins / (topStats.mvp.matchesPlayed || 1)) * 100) : 0}% Aproveitamento
+                    {topStats.mvp ? `${Math.round((topStats.mvp.wins / (topStats.mvp.matchesPlayed || 1)) * 100)}% Aproveitamento` : "Sem partidas"}
                   </p>
                 </motion.div>
 
@@ -646,9 +784,9 @@ export const RankingView: React.FC<RankingViewProps> = ({
                     <Target className="w-12 h-12 md:w-16 md:h-16 text-amber-600" />
                   </div>
                   <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-3 md:mb-4">Melhor Levantador</p>
-                  <h3 className="text-lg md:text-2xl font-black text-slate-800 truncate">{topStats.bestSetter?.name || '-'}</h3>
+                  <h3 className="text-lg md:text-2xl font-black text-slate-800 truncate">{topStats.bestSetter ? (topStats.bestSetter.name || "Sócio sem nome") : "Nenhum"}</h3>
                   <p className="text-amber-600 font-black text-xs md:text-sm mt-1 uppercase tracking-widest">
-                    {topStats.bestSetter ? Math.round((topStats.bestSetter.wins / (topStats.bestSetter.matchesPlayed || 1)) * 100) : 0}% Aproveitamento
+                    {topStats.bestSetter ? `${Math.round((topStats.bestSetter.wins / (topStats.bestSetter.matchesPlayed || 1)) * 100)}% Aproveitamento` : "Sem partidas"}
                   </p>
                 </motion.div>
 
@@ -662,7 +800,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
                     <Zap className="w-12 h-12 md:w-16 md:h-16 text-emerald-600" />
                   </div>
                   <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-3 md:mb-4">Rei do ELO</p>
-                  <h3 className="text-lg md:text-2xl font-black text-slate-800 truncate">{topStats.topElo?.name || '-'}</h3>
+                  <h3 className="text-lg md:text-2xl font-black text-slate-800 truncate">{topStats.topElo?.name || "Sócio sem nome" || '-'}</h3>
                   <p className="text-emerald-600 font-black text-xs md:text-sm mt-1 uppercase tracking-widest">{topStats.topElo?.elo || 0} Pontos</p>
                 </motion.div>
 
@@ -676,9 +814,9 @@ export const RankingView: React.FC<RankingViewProps> = ({
                     <Activity className="w-12 h-12 md:w-16 md:h-16 text-rose-600" />
                   </div>
                   <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-3 md:mb-4">Maior Impacto</p>
-                  <h3 className="text-lg md:text-2xl font-black text-slate-800 truncate">{topStats.topImpact?.name || '-'}</h3>
+                  <h3 className="text-lg md:text-2xl font-black text-slate-800 truncate">{topStats.topImpact ? (topStats.topImpact.name || "Sócio sem nome") : "Nenhum"}</h3>
                   <p className="text-rose-600 font-black text-xs md:text-sm mt-1 uppercase tracking-widest">
-                    {topStats.topImpact ? ((topStats.topImpact.elo - 1000) / (topStats.topImpact.matchesPlayed || 1)).toFixed(1) : '0.0'} ELO/Jogo
+                    {topStats.topImpact ? `${((topStats.topImpact.elo - 1000) / (topStats.topImpact.matchesPlayed || 1)).toFixed(1)} ELO/Jogo` : "Sem partidas"}
                   </p>
                 </motion.div>
               </div>
@@ -740,6 +878,107 @@ export const RankingView: React.FC<RankingViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Full Ranking for Selected Date */}
+      <section className="space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-slate-100 rounded-xl">
+              <Filter className="w-5 h-5 text-slate-600" />
+            </div>
+            <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">
+              {selectedDailyDate === 'Hoje' ? 'Ranking de Hoje' : `Ranking de ${new Date(selectedDailyDate + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}`}
+            </h3>
+          </div>
+          <div className="relative flex-1 max-w-xs">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400" />
+            <input 
+              type="text" 
+              placeholder="Buscar sócio..."
+              value={rankingSearchQuery}
+              onChange={(e) => setRankingSearchQuery(e.target.value)}
+              className="w-full pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-xl text-[10px] font-bold focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all outline-none"
+            />
+          </div>
+        </div>
+
+        <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50/50 border-b border-slate-100">
+                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Sócio</th>
+                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">J</th>
+                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">V</th>
+                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">D</th>
+                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">%</th>
+                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">ELO</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {[...players]
+                  .filter(p => {
+                    const stats = topStats.dailyStats[p.id];
+                    const hasPlayed = stats && stats.matches > 0;
+                    const matchesSearch = p.name.toLowerCase().includes(rankingSearchQuery.toLowerCase());
+                    return hasPlayed && matchesSearch;
+                  })
+                  .sort((a, b) => {
+                    const statsA = topStats.dailyStats[a.id];
+                    const statsB = topStats.dailyStats[b.id];
+                    return (statsB.eloGain || 0) - (statsA.eloGain || 0) || (statsB.wins || 0) - (statsA.wins || 0);
+                  })
+                  .map((player, idx) => {
+                    const stats = topStats.dailyStats[player.id];
+                    const winRate = Math.round((stats.wins / (stats.matches || 1)) * 100);
+                    
+                    return (
+                      <tr key={player.id} className="hover:bg-slate-50/50 transition-colors group">
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <span className="text-[10px] font-black text-slate-300 w-4">{idx + 1}</span>
+                            <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-[10px] font-black text-slate-600 group-hover:bg-indigo-100 group-hover:text-indigo-600 transition-colors">
+                              {player.name.charAt(0)}
+                            </div>
+                            <div>
+                              <p className="text-xs font-black text-slate-700 uppercase tracking-tight">{player.name}</p>
+                              {player.isOfficialSetter && (
+                                <span className="text-[8px] font-black text-rose-500 uppercase tracking-widest">Levantador</span>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-center text-xs font-bold text-slate-600">{stats.matches}</td>
+                        <td className="px-6 py-4 text-center text-xs font-bold text-emerald-600">{stats.wins}</td>
+                        <td className="px-6 py-4 text-center text-xs font-bold text-rose-600">{stats.matches - stats.wins}</td>
+                        <td className="px-6 py-4 text-center">
+                          <span className={`text-[10px] font-black px-2 py-1 rounded-lg ${winRate >= 50 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                            {winRate}%
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <div className="flex flex-col items-end">
+                            <span className={`text-xs font-black ${stats.eloGain >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                              {stats.eloGain >= 0 ? '+' : ''}{stats.eloGain}
+                            </span>
+                            <span className="text-[8px] font-bold text-slate-400 uppercase">Pontos</span>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                {[...players].filter(p => topStats.dailyStats[p.id]?.matches > 0).length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-6 py-12 text-center">
+                      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Nenhuma partida registrada para este dia</p>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
     </motion.div>
   ) : (
     <motion.div
@@ -759,7 +998,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
         >
           <div className="flex items-center gap-3">
             <Users className="w-6 h-6 text-indigo-600" />
-            {selectedPlayer ? `Analisando: ${selectedPlayer.name}` : 'Selecionar Sócio para Análise'}
+            {selectedPlayer ? `Analisando: ${selectedPlayer.name || "Sócio sem nome"}` : 'Selecionar Sócio para Análise'}
           </div>
           <ChevronRight className="w-5 h-5 opacity-40" />
         </button>
@@ -780,10 +1019,10 @@ export const RankingView: React.FC<RankingViewProps> = ({
                 <div className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
                   <div className="flex items-center gap-6">
                     <div className="w-20 h-20 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center text-3xl font-black border-2 border-white/30">
-                      {selectedPlayer.name.charAt(0)}
+                      {(selectedPlayer.name || "S").charAt(0)}
                     </div>
                     <div>
-                      <h3 className={`text-3xl font-black uppercase tracking-tighter ${selectedPlayer.isOfficialSetter ? 'text-rose-400' : ''}`}>{selectedPlayer.name}</h3>
+                      <h3 className={`text-3xl font-black uppercase tracking-tighter ${selectedPlayer.isOfficialSetter ? 'text-rose-400' : ''}`}>{selectedPlayer.name || "Sócio sem nome"}</h3>
                       <p className="text-indigo-200 text-xs font-bold uppercase tracking-[0.2em] mt-1">Sócio Nível Pro</p>
                     </div>
                   </div>
@@ -795,12 +1034,10 @@ export const RankingView: React.FC<RankingViewProps> = ({
                     {userRole === 'ADMIN' && (
                       <button 
                         onClick={() => {
-                          if (confirm('Deseja zerar os ganhos diários de todos os jogadores?')) {
-                            resetDailyMatches();
-                          }
+                          resetDailyMatches();
                         }}
                         className="p-4 bg-white/10 backdrop-blur-md text-white hover:bg-white/20 rounded-2xl transition-all border border-white/20"
-                        title="Zerar Ganhos Diários"
+                        title="Finalizar Dia"
                       >
                         <RotateCcw className="w-5 h-5" />
                       </button>
@@ -884,7 +1121,10 @@ export const RankingView: React.FC<RankingViewProps> = ({
                           dy={10}
                         />
                         <YAxis 
-                          hide 
+                          width={40}
+                          axisLine={false}
+                          tickLine={false}
+                          tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }}
                           domain={['dataMin - 50', 'dataMax + 50']}
                         />
                         <Tooltip 
@@ -895,6 +1135,13 @@ export const RankingView: React.FC<RankingViewProps> = ({
                             fontSize: '12px',
                             fontWeight: 'bold'
                           }}
+                        />
+                        <Legend 
+                          verticalAlign="top" 
+                          align="right" 
+                          height={36}
+                          iconType="circle"
+                          wrapperStyle={{ fontSize: '10px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.05em' }}
                         />
                         <Area 
                           name={selectedPlayer.name}
@@ -917,6 +1164,52 @@ export const RankingView: React.FC<RankingViewProps> = ({
                           activeDot={{ r: 4 }}
                         />
                       </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                {/* Daily Performance Chart */}
+                <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
+                  <div className="flex items-center gap-3 mb-8">
+                    <div className="p-2 bg-indigo-50 rounded-xl">
+                      <TrendingUp className="w-5 h-5 text-indigo-600" />
+                    </div>
+                    <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest">Desempenho Diário (Variação ELO)</h4>
+                  </div>
+                  <div className="h-[250px] w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={dailyPerformanceData}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis 
+                          dataKey="date" 
+                          axisLine={false} 
+                          tickLine={false} 
+                          tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }}
+                          dy={10}
+                        />
+                        <YAxis 
+                          width={40}
+                          axisLine={false}
+                          tickLine={false}
+                          tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }}
+                        />
+                        <Tooltip 
+                          cursor={{ fill: '#f8fafc' }}
+                          contentStyle={{ 
+                            borderRadius: '16px', 
+                            border: 'none', 
+                            boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
+                            fontSize: '12px',
+                            fontWeight: 'bold'
+                          }}
+                          formatter={(value: number) => [`${value >= 0 ? '+' : ''}${value} Pontos`, 'Variação']}
+                        />
+                        <Bar dataKey="variation" radius={[8, 8, 0, 0]}>
+                          {dailyPerformanceData.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={entry.variation >= 0 ? '#10b981' : '#f43f5e'} />
+                          ))}
+                        </Bar>
+                      </BarChart>
                     </ResponsiveContainer>
                   </div>
                 </div>

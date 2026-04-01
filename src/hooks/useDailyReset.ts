@@ -3,10 +3,12 @@ import { useEffect, useRef } from 'react';
 import { 
   db, 
   doc, 
+  setDoc,
   writeBatch, 
   OperationType, 
   handleFirestoreError,
-  trackUsage
+  trackUsage,
+  getFirestoreDateKey
 } from '../../firebase';
 import { useStore } from '../../store';
 import { Player } from '../../types';
@@ -28,13 +30,19 @@ export const useDailyReset = () => {
   useEffect(() => {
     if (isInitialLoading || !user || players.length === 0 || isResettingRef.current) return;
 
-    const now = new Date();
-    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const today = getFirestoreDateKey();
     
     // Prevent retrying if it failed today already
     if (lastFailedResetRef.current === today) return;
 
-    if (systemMetadata.lastResetDate && systemMetadata.lastResetDate !== today) {
+    if (!systemMetadata.lastResetDate) {
+      // Se não houver data de reset, apenas define como hoje sem zerar nada
+      const systemRef = doc(db, 'metadata', 'system');
+      setDoc(systemRef, { lastResetDate: today }, { merge: true }).catch(err => console.error("Erro ao inicializar data de reset:", err));
+      return;
+    }
+
+    if (systemMetadata.lastResetDate !== today) {
       const performReset = async () => {
         isResettingRef.current = true;
         console.log("Novo dia detectado. Zerando estatísticas...");
@@ -65,6 +73,7 @@ export const useDailyReset = () => {
           const systemRef = doc(db, 'metadata', 'system');
           batch.set(systemRef, { 
             lastResetDate: today,
+            lastResetTimestamp: Date.now(),
             dailyMatchCount: 0,
             matchStartTime: null
           }, { merge: true });
@@ -78,8 +87,13 @@ export const useDailyReset = () => {
           await batch.commit();
           await trackUsage(0, writeCount);
           
-          setPlayers(players.map(reset));
-          setAttendance(prev => prev.map(reset));
+          // Update local state immediately to prevent loop
+          useStore.setState((state) => ({
+            systemMetadata: { ...state.systemMetadata, lastResetDate: today },
+            players: state.players.map(reset),
+            attendance: state.attendance.map(reset),
+            generationResult: null
+          }));
           
           showNotification("Novo dia! Estatísticas diárias foram zeradas.", "info");
           lastFailedResetRef.current = null;

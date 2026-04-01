@@ -15,23 +15,7 @@ export const useNarration = () => {
   } = useStore();
 
   useEffect(() => {
-    if (generationResult) {
-      const timer = setTimeout(async () => {
-        try {
-          const script = await generateNarrationScript(generationResult.teamA, generationResult.teamB);
-          setNarrationScript(script);
-          
-          const audioData = await getNarrationAudio(script);
-          if (audioData) {
-            setNarrationAudio(audioData);
-          }
-        } catch (err) {
-          console.error("Failed to pre-generate narration:", err);
-        }
-      }, 1000); // Aguarda 1 segundo de estabilidade no resultado antes de chamar a IA
-
-      return () => clearTimeout(timer);
-    } else {
+    if (!generationResult) {
       setNarrationScript('');
       setNarrationAudio(null);
     }

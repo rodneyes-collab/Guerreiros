@@ -1,27 +1,101 @@
-import React from 'react';
+import React, { useState, useMemo } from 'react';
 import { useStore } from '../store';
-import { Payment, PaymentStatus } from '../types';
+import { Payment, PaymentStatus, Expense } from '../types';
 import { 
   Trash2, 
   Plus, 
   Edit2,
   CheckCircle2,
   Clock,
-  XCircle
+  XCircle,
+  Filter,
+  X,
+  CreditCard,
+  DollarSign
 } from 'lucide-react';
 
 interface PaymentsViewProps {
   deletePayment: (id: string) => void;
   setEditingPayment: (payment: Payment | null) => void;
   setIsPaymentFormOpen: (open: boolean) => void;
+  deleteExpense: (id: string) => void;
+  setEditingExpense: (expense: Expense | null) => void;
+  setIsExpenseFormOpen: (open: boolean) => void;
+  updateMonthlyFee: (fee: number) => void;
 }
 
 export const PaymentsView: React.FC<PaymentsViewProps> = ({
   deletePayment,
   setEditingPayment,
-  setIsPaymentFormOpen
+  setIsPaymentFormOpen,
+  deleteExpense,
+  setEditingExpense,
+  setIsExpenseFormOpen,
+  updateMonthlyFee
 }) => {
-  const { payments, userRole } = useStore();
+  const { payments, expenses, userRole, systemMetadata, players } = useStore();
+  const [activeTab, setActiveTab] = useState<'RECEIPTS' | 'EXPENSES' | 'COMPLIANCE'>('RECEIPTS');
+  const [filterMonth, setFilterMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [filterDate, setFilterDate] = useState('');
+  const [filterPlayer, setFilterPlayer] = useState('');
+  const [filterStatus, setFilterStatus] = useState<PaymentStatus | ''>('');
+  const [isEditingFee, setIsEditingFee] = useState(false);
+  const [tempFee, setTempFee] = useState(systemMetadata.monthlyFee || 0);
+
+  const uniqueMonths = useMemo(() => {
+    const months = new Set([...payments.map(p => p.month), ...expenses.map(e => e.month)]);
+    return Array.from(months).sort();
+  }, [payments, expenses]);
+
+  const uniquePlayers = useMemo(() => {
+    const players = new Set(payments.map(p => p.playerName));
+    return Array.from(players).sort();
+  }, [payments]);
+
+  const filteredPayments = useMemo(() => {
+    return payments.filter(p => {
+      const matchMonth = !filterMonth || p.month === filterMonth;
+      const matchDate = !filterDate || p.paymentDate === filterDate;
+      const matchPlayer = !filterPlayer || p.playerName === filterPlayer;
+      const matchStatus = !filterStatus || p.status === filterStatus;
+      return matchMonth && matchDate && matchPlayer && matchStatus;
+    }).sort((a,b) => (b.dueDate || '').localeCompare(a.dueDate || ''));
+  }, [payments, filterMonth, filterDate, filterPlayer, filterStatus]);
+
+  const filteredExpenses = useMemo(() => {
+    return expenses.filter(e => {
+      const matchMonth = !filterMonth || e.month === filterMonth;
+      const matchDate = !filterDate || e.date === filterDate;
+      return matchMonth && matchDate;
+    }).sort((a,b) => b.date.localeCompare(a.date));
+  }, [expenses, filterMonth, filterDate]);
+
+  const summary = useMemo(() => {
+    const receipts = filteredPayments.reduce((acc, p) => {
+      if (p.status === PaymentStatus.PAID) acc.paid += p.amount;
+      else if (p.status === PaymentStatus.PENDING) acc.pending += p.amount;
+      else if (p.status === PaymentStatus.OVERDUE) acc.overdue += p.amount;
+      return acc;
+    }, { paid: 0, pending: 0, overdue: 0 });
+
+    const totalExpenses = filteredExpenses.reduce((acc, e) => acc + e.amount, 0);
+    
+    // Orçamento Mensal = Total de sócios ativos * valor da mensalidade (se um mês estiver selecionado)
+    const activePlayersCount = players.length;
+    const monthlyBudget = filterMonth ? (activePlayersCount * (systemMetadata.monthlyFee || 0)) : 0;
+
+    return { 
+      ...receipts, 
+      expenses: totalExpenses, 
+      balance: receipts.paid - totalExpenses,
+      budget: monthlyBudget
+    };
+  }, [filteredPayments, filteredExpenses, players.length, systemMetadata.monthlyFee, filterMonth]);
+
+  const handleUpdateFee = () => {
+    updateMonthlyFee(tempFee);
+    setIsEditingFee(false);
+  };
 
   const getStatusIcon = (status: PaymentStatus) => {
     switch (status) {
@@ -52,108 +126,546 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
         <div>
           <h2 className="text-4xl font-black text-slate-900 uppercase tracking-tighter">Financeiro</h2>
-          <p className="text-sm font-bold text-slate-400 uppercase tracking-widest mt-2">Controle de mensalidades e taxas</p>
+          <p className="text-sm font-bold text-slate-400 uppercase tracking-widest mt-2">Gestão de mensalidades e despesas</p>
         </div>
-        {userRole === 'ADMIN' && (
-          <button 
-            onClick={() => { setEditingPayment(null); setIsPaymentFormOpen(true); }} 
-            className="w-full md:w-auto bg-indigo-600 text-white px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-indigo-700 shadow-xl shadow-indigo-100 transition-all"
+        <div className="flex flex-col sm:flex-row gap-4 w-full md:w-auto">
+          {userRole === 'ADMIN' && (
+            <div className="bg-white px-6 py-3 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
+              <div className="space-y-0.5">
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Valor Mensalidade</p>
+                {isEditingFee ? (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      value={tempFee}
+                      onChange={e => setTempFee(parseFloat(e.target.value))}
+                      className="w-20 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 font-black text-sm outline-none"
+                    />
+                    <button onClick={handleUpdateFee} className="text-emerald-500 hover:scale-110 transition-transform"><CheckCircle2 className="w-5 h-5" /></button>
+                    <button onClick={() => { setIsEditingFee(false); setTempFee(systemMetadata.monthlyFee || 0); }} className="text-rose-500 hover:scale-110 transition-transform"><X className="w-5 h-5" /></button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-3">
+                    <p className="text-lg font-black text-slate-700 font-mono">R$ {(systemMetadata.monthlyFee || 0).toFixed(2)}</p>
+                    <button onClick={() => setIsEditingFee(true)} className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"><Edit2 className="w-3.5 h-3.5" /></button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+          {userRole === 'ADMIN' && (
+            <button 
+              onClick={() => { 
+                if (activeTab === 'RECEIPTS') {
+                  setEditingPayment(null); 
+                  setIsPaymentFormOpen(true); 
+                } else {
+                  setEditingExpense(null);
+                  setIsExpenseFormOpen(true);
+                }
+              }} 
+              className="bg-indigo-600 text-white px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-indigo-700 shadow-xl shadow-indigo-100 transition-all"
+            >
+              <Plus className="w-5 h-5" />
+              {activeTab === 'RECEIPTS' ? 'Novo Lançamento' : 'Nova Despesa'}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-2 p-1.5 bg-slate-100 rounded-[1.5rem] w-fit">
+        <button
+          onClick={() => setActiveTab('RECEIPTS')}
+          className={`px-8 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${
+            activeTab === 'RECEIPTS' 
+              ? 'bg-white text-indigo-600 shadow-sm' 
+              : 'text-slate-400 hover:text-slate-600'
+          }`}
+        >
+          Mensalidades
+        </button>
+        <button
+          onClick={() => setActiveTab('EXPENSES')}
+          className={`px-8 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${
+            activeTab === 'EXPENSES' 
+              ? 'bg-white text-indigo-600 shadow-sm' 
+              : 'text-slate-400 hover:text-slate-600'
+          }`}
+        >
+          Despesas do Clube
+        </button>
+        <button
+          onClick={() => setActiveTab('COMPLIANCE')}
+          className={`px-8 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${
+            activeTab === 'COMPLIANCE' 
+              ? 'bg-white text-indigo-600 shadow-sm' 
+              : 'text-slate-400 hover:text-slate-600'
+          }`}
+        >
+          Adimplência
+        </button>
+      </div>
+
+      {/* Financial Summary Dashboard */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Recebido</p>
+          <p className="text-2xl font-black text-emerald-600 font-mono">R$ {summary.paid.toFixed(2)}</p>
+        </div>
+        <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Despesas</p>
+          <p className="text-2xl font-black text-rose-600 font-mono">R$ {summary.expenses.toFixed(2)}</p>
+        </div>
+        <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Saldo Atual</p>
+          <p className={`text-2xl font-black font-mono ${summary.balance >= 0 ? 'text-indigo-600' : 'text-rose-600'}`}>
+            R$ {summary.balance.toFixed(2)}
+          </p>
+        </div>
+        {filterMonth && (
+          <div className="bg-indigo-50 p-6 rounded-[2rem] border border-indigo-100 shadow-sm">
+            <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Orçamento Mensal ({filterMonth})</p>
+            <div className="flex justify-between items-end">
+              <p className="text-2xl font-black text-indigo-600 font-mono">R$ {summary.budget.toFixed(2)}</p>
+              <p className="text-[10px] font-bold text-indigo-400 mb-1">Pend: R$ {(summary.budget - summary.paid).toFixed(2)}</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Filters */}
+      <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex flex-wrap gap-4 items-end">
+        <div className="flex-1 min-w-[200px] space-y-2">
+          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex items-center gap-2">
+            <Filter className="w-3 h-3" /> Mês de Referência
+          </label>
+          <select
+            value={filterMonth}
+            onChange={e => setFilterMonth(e.target.value)}
+            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700 text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all appearance-none"
           >
-            <Plus className="w-5 h-5" />
-            Novo Lançamento
+            <option value="">Todos os meses</option>
+            {uniqueMonths.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </div>
+
+        <div className="flex-1 min-w-[200px] space-y-2">
+          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex items-center gap-2">
+            <Clock className="w-3 h-3" /> Data Específica
+          </label>
+          <div className="relative">
+            <input
+              type="date"
+              value={filterDate}
+              onChange={e => setFilterDate(e.target.value)}
+              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700 text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all appearance-none"
+            />
+            {filterDate && (
+              <button 
+                onClick={() => setFilterDate('')}
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-rose-500 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {activeTab === 'RECEIPTS' && (
+          <>
+            <div className="flex-1 min-w-[200px] space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex items-center gap-2">
+                <Filter className="w-3 h-3" /> Sócio
+              </label>
+              <select
+                value={filterPlayer}
+                onChange={e => setFilterPlayer(e.target.value)}
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700 text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all appearance-none"
+              >
+                <option value="">Todos os sócios</option>
+                {uniquePlayers.map(p => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+
+            <div className="flex-1 min-w-[200px] space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex items-center gap-2">
+                <Filter className="w-3 h-3" /> Status
+              </label>
+              <select
+                value={filterStatus}
+                onChange={e => setFilterStatus(e.target.value as PaymentStatus | '')}
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700 text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all appearance-none"
+              >
+                <option value="">Todos os status</option>
+                <option value={PaymentStatus.PAID}>Pago</option>
+                <option value={PaymentStatus.PENDING}>Pendente</option>
+                <option value={PaymentStatus.OVERDUE}>Atrasado</option>
+              </select>
+            </div>
+          </>
+        )}
+
+        {(filterMonth || filterPlayer || filterStatus) && (
+          <button
+            onClick={() => { setFilterMonth(''); setFilterPlayer(''); setFilterStatus(''); }}
+            className="p-3 bg-slate-100 text-slate-500 rounded-xl hover:bg-slate-200 transition-all"
+            title="Limpar Filtros"
+          >
+            <X className="w-5 h-5" />
           </button>
         )}
       </div>
 
-      {/* Desktop Table View */}
-      <div className="hidden md:block bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden">
-        <table className="w-full text-left">
-          <thead className="bg-slate-50 border-b border-slate-200">
-            <tr>
-              <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Sócio</th>
-              <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Mês/Ref</th>
-              <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Valor</th>
-              <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Status</th>
-              <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Vencimento</th>
-              <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Ações</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {[...payments].sort((a,b) => (b.dueDate || '').localeCompare(a.dueDate || '')).map(payment => (
-              <tr key={payment.id} className="hover:bg-slate-50/50 transition-colors group">
-                <td className="px-8 py-5">
-                  <p className="font-black text-slate-700">{payment.playerName}</p>
-                </td>
-                <td className="px-8 py-5 text-center text-[10px] font-bold text-slate-500 uppercase">{payment.month}</td>
-                <td className="px-8 py-5 text-center font-mono text-sm font-black text-slate-700">R$ {payment.amount.toFixed(2)}</td>
-                <td className="px-8 py-5 text-center">
-                  <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border ${getStatusColor(payment.status)}`}>
-                    {getStatusIcon(payment.status)}
-                    {translateStatus(payment.status)}
-                  </span>
-                </td>
-                <td className="px-8 py-5 text-center text-[10px] font-bold text-slate-500 uppercase">
-                  {new Date(payment.dueDate + 'T00:00:00').toLocaleDateString('pt-BR')}
-                </td>
-                <td className="px-8 py-5 text-right">
-                  {userRole === 'ADMIN' ? (
-                    <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button onClick={() => { setEditingPayment(payment); setIsPaymentFormOpen(true); }} className="p-2.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"><Edit2 className="w-4 h-4" /></button>
-                      <button onClick={() => deletePayment(payment.id)} className="p-2.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"><Trash2 className="w-4 h-4" /></button>
-                    </div>
-                  ) : (
-                    <span className="text-[10px] text-slate-300 font-bold uppercase tracking-widest">Somente Leitura</span>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Mobile Card View */}
-      <div className="md:hidden space-y-4">
-        {[...payments].sort((a,b) => (b.dueDate || '').localeCompare(a.dueDate || '')).map(payment => (
-          <div key={payment.id} className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm space-y-4">
-            <div className="flex justify-between items-start">
-              <div>
-                <h4 className="text-xl font-black text-slate-800">{payment.playerName}</h4>
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Referência: {payment.month}</p>
-              </div>
-              <div className="text-right">
-                <p className="text-2xl font-black text-slate-800 font-mono">R$ {payment.amount.toFixed(2)}</p>
-              </div>
-            </div>
-            
-            <div className="flex flex-wrap gap-2">
-              <span className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border ${getStatusColor(payment.status)}`}>
-                {getStatusIcon(payment.status)}
-                {translateStatus(payment.status)}
-              </span>
-              <span className="bg-slate-100 text-slate-600 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border border-slate-200">
-                Vence em: {new Date(payment.dueDate + 'T00:00:00').toLocaleDateString('pt-BR')}
-              </span>
-            </div>
-
-            {userRole === 'ADMIN' && (
-              <div className="flex gap-3 pt-2 border-t border-slate-100">
-                <button 
-                  onClick={() => { setEditingPayment(payment); setIsPaymentFormOpen(true); }} 
-                  className="flex-1 flex items-center justify-center gap-2 py-3 bg-indigo-50 text-indigo-600 rounded-xl font-black text-xs uppercase tracking-widest"
-                >
-                  <Edit2 className="w-4 h-4" /> Editar
-                </button>
-                <button 
-                  onClick={() => deletePayment(payment.id)} 
-                  className="flex-1 flex items-center justify-center gap-2 py-3 bg-rose-50 text-rose-600 rounded-xl font-black text-xs uppercase tracking-widest"
-                >
-                  <Trash2 className="w-4 h-4" /> Excluir
-                </button>
+      {activeTab === 'RECEIPTS' ? (
+        <>
+          {/* Desktop Table View - Receipts */}
+          <div className="hidden md:block bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden">
+            <table className="w-full text-left">
+              <thead className="bg-slate-50 border-b border-slate-200">
+                <tr>
+                  <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Sócio</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Mês/Ref</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Valor</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Forma</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Status</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Vencimento</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Ações</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filteredPayments.map(payment => (
+                  <tr key={payment.id} className="hover:bg-slate-50/50 transition-colors group">
+                    <td className="px-8 py-5">
+                      <p className={`font-black ${payment.status === PaymentStatus.OVERDUE ? 'text-rose-600' : 'text-slate-700'}`}>
+                        {payment.playerName}
+                      </p>
+                    </td>
+                    <td className="px-8 py-5 text-center text-[10px] font-bold text-slate-500 uppercase">{payment.month}</td>
+                    <td className="px-8 py-5 text-center font-mono text-sm font-black text-slate-700">R$ {payment.amount.toFixed(2)}</td>
+                    <td className="px-8 py-5 text-center">
+                      {payment.method ? (
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest bg-slate-100 px-2 py-1 rounded-lg border border-slate-200">
+                          {payment.method}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-slate-300 italic">-</span>
+                      )}
+                    </td>
+                    <td className="px-8 py-5 text-center">
+                      <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border ${getStatusColor(payment.status)}`}>
+                        {getStatusIcon(payment.status)}
+                        {translateStatus(payment.status)}
+                      </span>
+                    </td>
+                    <td className="px-8 py-5 text-center text-[10px] font-bold text-slate-500 uppercase">
+                      <div>{new Date(payment.dueDate + 'T00:00:00').toLocaleDateString('pt-BR')}</div>
+                      {payment.status === PaymentStatus.PAID && payment.paymentDate && (
+                        <div className="text-[8px] text-emerald-500 mt-1">Pago em: {new Date(payment.paymentDate + 'T00:00:00').toLocaleDateString('pt-BR')}</div>
+                      )}
+                    </td>
+                    <td className="px-8 py-5 text-right">
+                      {userRole === 'ADMIN' ? (
+                        <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button onClick={() => { setEditingPayment(payment); setIsPaymentFormOpen(true); }} className="p-2.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"><Edit2 className="w-4 h-4" /></button>
+                          <button onClick={() => deletePayment(payment.id)} className="p-2.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"><Trash2 className="w-4 h-4" /></button>
+                        </div>
+                      ) : (
+                        <span className="text-[10px] text-slate-300 font-bold uppercase tracking-widest">Somente Leitura</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {filteredPayments.length === 0 && (
+              <div className="p-20 text-center">
+                <CreditCard className="w-12 h-12 text-slate-200 mx-auto mb-4" />
+                <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">Nenhum lançamento encontrado</p>
               </div>
             )}
           </div>
-        ))}
-      </div>
+
+          {/* Mobile Card View - Receipts */}
+          <div className="md:hidden space-y-4">
+            {filteredPayments.map(payment => (
+              <div key={payment.id} className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm space-y-4">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h4 className={`text-xl font-black ${payment.status === PaymentStatus.OVERDUE ? 'text-rose-600' : 'text-slate-800'}`}>
+                      {payment.playerName}
+                    </h4>
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Referência: {payment.month}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-2xl font-black text-slate-800 font-mono">R$ {payment.amount.toFixed(2)}</p>
+                  </div>
+                </div>
+                
+                <div className="flex flex-wrap gap-2">
+                  <span className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border ${getStatusColor(payment.status)}`}>
+                    {getStatusIcon(payment.status)}
+                    {translateStatus(payment.status)}
+                  </span>
+                  <span className="bg-slate-100 text-slate-600 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border border-slate-200">
+                    Vence em: {new Date(payment.dueDate + 'T00:00:00').toLocaleDateString('pt-BR')}
+                  </span>
+                  {payment.method && (
+                    <span className="bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border border-indigo-100">
+                      {payment.method}
+                    </span>
+                  )}
+                  {payment.status === PaymentStatus.PAID && payment.paymentDate && (
+                    <span className="bg-emerald-50 text-emerald-600 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border border-emerald-100">
+                      Pago em: {new Date(payment.paymentDate + 'T00:00:00').toLocaleDateString('pt-BR')}
+                    </span>
+                  )}
+                </div>
+
+                {userRole === 'ADMIN' && (
+                  <div className="flex gap-3 pt-2 border-t border-slate-100">
+                    <button 
+                      onClick={() => { setEditingPayment(payment); setIsPaymentFormOpen(true); }} 
+                      className="flex-1 flex items-center justify-center gap-2 py-3 bg-indigo-50 text-indigo-600 rounded-xl font-black text-xs uppercase tracking-widest"
+                    >
+                      <Edit2 className="w-4 h-4" /> Editar
+                    </button>
+                    <button 
+                      onClick={() => deletePayment(payment.id)} 
+                      className="flex-1 flex items-center justify-center gap-2 py-3 bg-rose-50 text-rose-600 rounded-xl font-black text-xs uppercase tracking-widest"
+                    >
+                      <Trash2 className="w-4 h-4" /> Excluir
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+            {filteredPayments.length === 0 && (
+              <div className="p-12 text-center bg-white rounded-[2rem] border border-slate-200">
+                <CreditCard className="w-10 h-10 text-slate-200 mx-auto mb-3" />
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Nenhum lançamento encontrado</p>
+              </div>
+            )}
+          </div>
+        </>
+      ) : activeTab === 'EXPENSES' ? (
+        <>
+          {/* Desktop Table View - Expenses */}
+          <div className="hidden md:block bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden">
+            <table className="w-full text-left">
+              <thead className="bg-slate-50 border-b border-slate-200">
+                <tr>
+                  <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Descrição</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Categoria</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Mês/Ref</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Valor</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Data</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Ações</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filteredExpenses.map(expense => (
+                  <tr key={expense.id} className="hover:bg-slate-50/50 transition-colors group">
+                    <td className="px-8 py-5">
+                      <p className="font-black text-slate-700">{expense.description}</p>
+                    </td>
+                    <td className="px-8 py-5 text-center">
+                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest bg-slate-100 px-3 py-1 rounded-lg border border-slate-200">
+                        {expense.category}
+                      </span>
+                    </td>
+                    <td className="px-8 py-5 text-center text-[10px] font-bold text-slate-500 uppercase">{expense.month}</td>
+                    <td className="px-8 py-5 text-center font-mono text-sm font-black text-rose-600">R$ {expense.amount.toFixed(2)}</td>
+                    <td className="px-8 py-5 text-center text-[10px] font-bold text-slate-500 uppercase">
+                      {new Date(expense.date + 'T00:00:00').toLocaleDateString('pt-BR')}
+                    </td>
+                    <td className="px-8 py-5 text-right">
+                      {userRole === 'ADMIN' ? (
+                        <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button onClick={() => { setEditingExpense(expense); setIsExpenseFormOpen(true); }} className="p-2.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"><Edit2 className="w-4 h-4" /></button>
+                          <button onClick={() => deleteExpense(expense.id)} className="p-2.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"><Trash2 className="w-4 h-4" /></button>
+                        </div>
+                      ) : (
+                        <span className="text-[10px] text-slate-300 font-bold uppercase tracking-widest">Somente Leitura</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {filteredExpenses.length === 0 && (
+              <div className="p-20 text-center">
+                <DollarSign className="w-12 h-12 text-slate-200 mx-auto mb-4" />
+                <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">Nenhuma despesa encontrada</p>
+              </div>
+            )}
+          </div>
+
+          {/* Mobile Card View - Expenses */}
+          <div className="md:hidden space-y-4">
+            {filteredExpenses.map(expense => (
+              <div key={expense.id} className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm space-y-4">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h4 className="text-xl font-black text-slate-800">{expense.description}</h4>
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">{expense.category} • {expense.month}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-2xl font-black text-rose-600 font-mono">R$ {expense.amount.toFixed(2)}</p>
+                  </div>
+                </div>
+                
+                <div className="flex flex-wrap gap-2">
+                  <span className="bg-slate-100 text-slate-600 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border border-slate-200">
+                    Data: {new Date(expense.date + 'T00:00:00').toLocaleDateString('pt-BR')}
+                  </span>
+                </div>
+
+                {userRole === 'ADMIN' && (
+                  <div className="flex gap-3 pt-2 border-t border-slate-100">
+                    <button 
+                      onClick={() => { setEditingExpense(expense); setIsExpenseFormOpen(true); }} 
+                      className="flex-1 flex items-center justify-center gap-2 py-3 bg-indigo-50 text-indigo-600 rounded-xl font-black text-xs uppercase tracking-widest"
+                    >
+                      <Edit2 className="w-4 h-4" /> Editar
+                    </button>
+                    <button 
+                      onClick={() => deleteExpense(expense.id)} 
+                      className="flex-1 flex items-center justify-center gap-2 py-3 bg-rose-50 text-rose-600 rounded-xl font-black text-xs uppercase tracking-widest"
+                    >
+                      <Trash2 className="w-4 h-4" /> Excluir
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+            {filteredExpenses.length === 0 && (
+              <div className="p-12 text-center bg-white rounded-[2rem] border border-slate-200">
+                <DollarSign className="w-10 h-10 text-slate-200 mx-auto mb-3" />
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Nenhuma despesa encontrada</p>
+              </div>
+            )}
+          </div>
+        </>
+      ) : (
+        <>
+          {/* Compliance View */}
+          <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-8 border-b border-slate-100 bg-slate-50/50">
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div>
+                  <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Relatório de Adimplência</h3>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Status de todos os sócios para {filterMonth || 'todos os meses'}</p>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-4 w-full md:w-auto">
+                  <div className="relative flex-1 sm:w-64">
+                    <Filter className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="Buscar sócio..."
+                      value={filterPlayer}
+                      onChange={e => setFilterPlayer(e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-2xl pl-11 pr-4 py-3 text-sm font-bold text-slate-700 placeholder:text-slate-400 outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all"
+                    />
+                  </div>
+                  {filterMonth && (
+                    <div className="flex gap-4">
+                      <div className="text-center px-4 py-2 bg-emerald-50 rounded-xl border border-emerald-100 min-w-[80px]">
+                        <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">Pagos</p>
+                        <p className="text-lg font-black text-emerald-700">
+                          {players.filter(player => payments.some(p => p.playerId === player.id && p.month === filterMonth && p.status === PaymentStatus.PAID)).length}
+                        </p>
+                      </div>
+                      <div className="text-center px-4 py-2 bg-rose-50 rounded-xl border border-rose-100 min-w-[80px]">
+                        <p className="text-[10px] font-black text-rose-600 uppercase tracking-widest">Pendentes</p>
+                        <p className="text-lg font-black text-rose-700">
+                          {players.length - players.filter(player => payments.some(p => p.playerId === player.id && p.month === filterMonth && p.status === PaymentStatus.PAID)).length}
+                        </p>
+                      </div>
+                      <div className="text-center px-4 py-2 bg-indigo-50 rounded-xl border border-indigo-100 min-w-[100px]">
+                        <p className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">Total Pago</p>
+                        <p className="text-lg font-black text-indigo-700 font-mono">
+                          R$ {payments.filter(p => p.month === filterMonth && p.status === PaymentStatus.PAID).reduce((acc, p) => acc + p.amount, 0).toFixed(0)}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead className="bg-slate-50 border-b border-slate-200">
+                  <tr>
+                    <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Sócio</th>
+                    <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Status ({filterMonth})</th>
+                    <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Valor</th>
+                    <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Data Pagto</th>
+                    <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Ações</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {players
+                    .filter(player => !filterPlayer || player.name.toLowerCase().includes(filterPlayer.toLowerCase()))
+                    .sort((a, b) => a.name.localeCompare(b.name))
+                    .map(player => {
+                      const payment = payments.find(p => p.playerId === player.id && p.month === filterMonth);
+                      const status = payment ? payment.status : PaymentStatus.PENDING;
+                      
+                      return (
+                        <tr key={player.id} className="hover:bg-slate-50/50 transition-colors group">
+                          <td className="px-8 py-5">
+                            <p className="font-black text-slate-700">{player.name}</p>
+                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{player.gender === 'MALE' ? 'Sócio' : 'Sócia'}</p>
+                          </td>
+                          <td className="px-8 py-5 text-center">
+                            <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border ${getStatusColor(status)}`}>
+                              {getStatusIcon(status)}
+                              {payment ? translateStatus(status) : 'Não Lançado'}
+                            </span>
+                          </td>
+                          <td className="px-8 py-5 text-center font-mono text-sm font-black text-slate-700">
+                            {payment ? `R$ ${payment.amount.toFixed(2)}` : '-'}
+                          </td>
+                          <td className="px-8 py-5 text-center text-[10px] font-bold text-slate-500 uppercase">
+                            {payment?.paymentDate ? new Date(payment.paymentDate + 'T00:00:00').toLocaleDateString('pt-BR') : '-'}
+                          </td>
+                          <td className="px-8 py-5 text-right">
+                            {userRole === 'ADMIN' && (
+                              <button 
+                                onClick={() => {
+                                  if (payment) {
+                                    setEditingPayment(payment);
+                                    setIsPaymentFormOpen(true);
+                                  } else {
+                                    setEditingPayment({
+                                      id: '',
+                                      playerId: player.id,
+                                      playerName: player.name,
+                                      amount: systemMetadata.monthlyFee || 0,
+                                      month: filterMonth,
+                                      dueDate: new Date().toISOString().split('T')[0],
+                                      status: PaymentStatus.PENDING
+                                    });
+                                    setIsPaymentFormOpen(true);
+                                  }
+                                }}
+                                className="p-2.5 text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all font-black text-[10px] uppercase tracking-widest"
+                              >
+                                {payment ? 'Editar' : 'Lançar'}
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 };

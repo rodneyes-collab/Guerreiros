@@ -139,7 +139,8 @@ service cloud.firestore {
 
     match /players/{playerId} {
       allow read, list: if true;
-      allow create, update, delete: if true;
+      allow create, update: if isAdmin() && isValidPlayer(request.resource.data);
+      allow delete: if isAdmin();
     }
 
     match /matches/{matchId} {
@@ -171,6 +172,12 @@ service cloud.firestore {
     match /payments/{paymentId} {
       allow read, list: if true;
       allow create, update: if isAdmin() && isValidPayment(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /tournaments/{tournamentId} {
+      allow read, list: if true;
+      allow create, update: if isAdmin();
       allow delete: if isAdmin();
     }
 

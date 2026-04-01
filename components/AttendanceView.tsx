@@ -121,7 +121,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                   {userRole === 'ADMIN' && (
                     <>
                       <button onClick={clearAttendance} title="Limpar lista" className="p-3 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"><Trash2 className="w-6 h-6"/></button>
-                      <button onClick={resetDailyMatches} title="Zerar dia" className="p-3 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"><RotateCcw className="w-6 h-6"/></button>
+                      <button onClick={resetDailyMatches} title="Finalizar dia" className="p-3 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"><RotateCcw className="w-6 h-6"/></button>
                     </>
                   )}
                 </div>
@@ -135,35 +135,41 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                 ) : (
                   [...attendance]
                     .sort((a, b) => (a.arrivalOrder || 0) - (b.arrivalOrder || 0))
-                    .map((player, idx) => (
-                    <div key={player.id || `attendance-${idx}`} className={`flex items-center justify-between p-5 rounded-2xl border transition-all group shadow-sm hover:shadow-md ${player.gender === Gender.FEMALE ? 'bg-pink-50/30 border-pink-100 hover:border-pink-200' : 'bg-white border-slate-100 hover:border-emerald-200'}`}>
-                      <div className="flex items-center gap-4">
-                        <span className="text-base font-black text-emerald-500 w-6">#{player.arrivalOrder}</span>
-                        <div>
-                          <p className={`text-xl font-black flex items-center gap-2 ${player.isOfficialSetter ? 'text-rose-600' : 'text-slate-800'}`}>
-                            {player.name}
-                            {player.isOfficialSetter && <span className="text-[11px] font-black uppercase bg-rose-100 text-rose-600 px-3 py-1.5 rounded-full border border-rose-200">Levantador</span>}
-                          </p>
-                          <div className="flex flex-wrap items-center gap-2 mt-2">
-                            <span className="text-sm font-black text-emerald-700 bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-100">
-                              {player.dailyWins}V - {player.dailyLosses}D
-                            </span>
-                            <span className="text-sm text-slate-500 font-bold uppercase tracking-wider">ELO {player.elo}</span>
-                            {player.playedLastMatch && <span className="text-[11px] font-black uppercase bg-blue-50 text-blue-600 px-3 py-1.5 rounded-full border border-blue-100">Jogou Última</span>}
+                    .map((player, idx) => {
+                      const fullPlayer = availablePlayers.find(p => p.id === player.id);
+                      const displayName = player.name || fullPlayer?.name || "Sócio sem nome";
+                      
+                      return (
+                        <div key={player.id || `attendance-${idx}`} className={`flex items-center justify-between p-4 sm:p-6 rounded-2xl border transition-all group shadow-sm hover:shadow-md ${player.gender === Gender.FEMALE ? 'bg-pink-50/30 border-pink-100 hover:border-pink-200' : 'bg-white border-slate-100 hover:border-emerald-200'}`}>
+                          <div className="flex items-center gap-3 sm:gap-5">
+                            <span className="text-sm sm:text-lg font-black text-emerald-500 w-6 sm:w-8">#{player.arrivalOrder}</span>
+                            <div>
+                              <p className={`text-lg sm:text-2xl font-black flex items-center gap-2 leading-tight ${player.isOfficialSetter ? 'text-rose-600' : 'text-slate-800'}`}>
+                                {displayName}
+                                {player.isOfficialSetter && <span className="text-[10px] sm:text-[12px] font-black uppercase bg-rose-100 text-rose-600 px-2.5 py-1 rounded-full border border-rose-200">Levantador</span>}
+                              </p>
+                              <div className="flex flex-wrap items-center gap-1.5 sm:gap-3 mt-1.5 sm:mt-3">
+                                <span className="text-xs sm:text-base font-black text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100">
+                                  {player.dailyWins}V - {player.dailyLosses}D
+                                </span>
+                                <span className="text-xs sm:text-base text-slate-600 font-black uppercase tracking-wider">ELO {player.elo}</span>
+                                {player.playedLastMatch && <span className="text-[10px] sm:text-[12px] font-black uppercase bg-blue-50 text-blue-600 px-2.5 py-1 rounded-full border border-blue-100">Jogou Última</span>}
+                                {(player.consecutiveBenched || 0) > 0 && <span className="text-[10px] sm:text-[12px] font-black uppercase bg-amber-50 text-amber-600 px-2.5 py-1 rounded-full border border-amber-100">Banco: {player.consecutiveBenched}</span>}
+                              </div>
+                            </div>
                           </div>
+                          {userRole === 'ADMIN' && (
+                            <button onClick={() => removeAttendance(player.id)} className="p-3 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all"><X className="w-7 h-7" /></button>
+                          )}
                         </div>
-                      </div>
-                      {userRole === 'ADMIN' && (
-                        <button onClick={() => removeAttendance(player.id)} className="p-3 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all"><X className="w-7 h-7" /></button>
-                      )}
-                    </div>
-                  ))
+                      );
+                    })
                 )}
               </div>
               <div className="p-6 bg-slate-50 border-t border-slate-200">
                 <p className="text-sm text-slate-500 font-bold uppercase text-center italic leading-relaxed">
-                  {attendance.length < 10 
-                    ? `Mínimo de 10 jogadores para escalar (Faltam ${10 - attendance.length})` 
+                  {attendance.length < 12 
+                    ? `Mínimo de 12 jogadores para escalar (Faltam ${12 - attendance.length})` 
                     : "Vá para a aba Partida para escalar o jogo"}
                 </p>
               </div>
@@ -208,7 +214,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                       >
                         <div>
                           <p className={`text-xl font-black flex items-center gap-2 ${player.isOfficialSetter ? 'text-rose-600' : 'text-slate-800'}`}>
-                            {player.name}
+                            {player.name || "Sócio sem nome"}
                             {player.isOfficialSetter && <span className="text-[11px] font-black uppercase bg-rose-100 text-rose-600 px-3 py-1.5 rounded-full border border-rose-200">Levantador</span>}
                           </p>
                           <p className="text-sm text-slate-500 font-bold uppercase tracking-wider mt-2">Jogos Hoje: <span className="text-indigo-600">{player.dailyMatches}</span> • <span className="text-emerald-600 font-black">{player.elo} ELO</span></p>

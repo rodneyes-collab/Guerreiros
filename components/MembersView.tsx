@@ -152,7 +152,9 @@ export const MembersView: React.FC<MembersViewProps> = ({
                     )}
                   </div>
                 </th>
-                <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Email</th>
+                {userRole === 'ADMIN' && (
+                  <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Email</th>
+                )}
                 <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Posição</th>
                 <th 
                   onClick={() => handleSort('gender')}
@@ -205,12 +207,14 @@ export const MembersView: React.FC<MembersViewProps> = ({
               {sortedPlayers.map(player => (
                 <tr key={player.id} className="hover:bg-slate-50/50 transition-colors group">
                   <td className="px-8 py-5">
-                    <p className={`font-black ${player.isOfficialSetter ? 'text-rose-600' : 'text-slate-700'}`}>{player.name}</p>
+                    <p className={`font-black ${player.isOfficialSetter ? 'text-rose-600' : 'text-slate-700'}`}>{player.name || "Sócio sem nome"}</p>
                     <p className="text-[10px] text-slate-400 font-bold uppercase">{player.matchesPlayed} partidas totais</p>
                   </td>
-                  <td className="px-8 py-5">
-                    <p className="text-xs font-bold text-slate-500">{player.email || '-'}</p>
-                  </td>
+                  {userRole === 'ADMIN' && (
+                    <td className="px-8 py-5">
+                      <p className="text-xs font-bold text-slate-500">{player.email || '-'}</p>
+                    </td>
+                  )}
                   <td className="px-8 py-5 text-center">
                     {player.isOfficialSetter ? (
                       <span className="bg-amber-100 text-amber-700 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest">Levantador</span>
@@ -247,7 +251,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
           <div key={player.id} className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm space-y-4">
             <div className="flex justify-between items-start">
               <div>
-                <h4 className={`text-xl font-black ${player.isOfficialSetter ? 'text-rose-600' : 'text-slate-800'}`}>{player.name}</h4>
+                <h4 className={`text-xl font-black ${player.isOfficialSetter ? 'text-rose-600' : 'text-slate-800'}`}>{player.name || "Sócio sem nome"}</h4>
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">{player.matchesPlayed} partidas totais</p>
               </div>
               <div className="text-right">

@@ -23,6 +23,7 @@ export interface Player {
   isAdmin?: boolean;
   joinedAt?: string;
   playedLastMatch?: boolean;
+  consecutiveBenched?: number; // Número de partidas consecutivas no banco
   birthDate?: string; // ISO date string
   uid?: string; // Firebase Auth UID
   dailyResults?: ('V' | 'D')[]; // Sequência de vitórias/derrotas no dia
@@ -47,13 +48,21 @@ export interface Match {
   startTime?: number; // Timestamp
   endTime?: number; // Timestamp
   mode: MatchMode;
+  dailyNumber?: number;
 }
 
 export interface SystemMetadata {
   lastResetDate: string | null;
+  lastResetTimestamp?: number;
   dailyMatchCount: number;
   matchStartTime: number | null;
+  lastMatchTimestamp?: number;
+  lastUpdate?: number;
   dailyReadQuota?: number;
+  dailyAICallsQuota?: number; // Adicionado
+  courtLocation?: { lat: number; lng: number };
+  geofenceRadius?: number;
+  monthlyFee?: number;
 }
 
 export enum PaymentStatus {
@@ -68,9 +77,19 @@ export interface Payment {
   playerName: string;
   amount: number;
   month: string; // e.g., "2024-03"
-  paymentDate: string; // ISO date string
+  paymentDate?: string; // ISO date string (quando foi pago)
   dueDate: string; // ISO date string
   status: PaymentStatus;
+  method?: 'PIX' | 'CASH' | 'TRANSFER' | 'OTHER';
+}
+
+export interface Expense {
+  id: string;
+  description: string;
+  amount: number;
+  date: string; // ISO date string
+  category: 'RENT' | 'EQUIPMENT' | 'TOURNAMENT' | 'OTHER';
+  month: string; // e.g., "Março/2024"
 }
 
 export interface Team {
@@ -86,8 +105,58 @@ export interface GenerationResult {
   swaps?: { playerA: string; playerB: string }[];
 }
 
+export interface TournamentTeam {
+  id: string;
+  name: string;
+  players: string[]; // IDs dos jogadores
+  totalElo?: number;
+  points: number;
+  setsWon: number;
+  setsLost: number;
+  pointsFor: number;
+  pointsAgainst: number;
+  matchesPlayed: number;
+  matchesWon: number;
+  matchesLost: number;
+}
+
+export interface SetScore {
+  scoreA: number;
+  scoreB: number;
+}
+
+export interface TournamentMatch {
+  id: string;
+  teamAId: string;
+  teamBId: string;
+  scoreA: number;
+  scoreB: number;
+  setsA: number;
+  setsB: number;
+  setScores?: SetScore[];
+  winnerId?: string;
+  status: 'pending' | 'completed';
+  round: number;
+}
+
+export interface Tournament {
+  id: string;
+  name: string;
+  date: string;
+  status: 'active' | 'completed';
+  teams: TournamentTeam[];
+  matches: TournamentMatch[];
+  reserves?: string[]; // IDs dos jogadores reservas
+  config: {
+    pointsPerSet: number;
+    setsPerMatch: number;
+    numTeams: number;
+  };
+}
+
 export interface UsageStats {
   reads: number;
   writes: number;
+  aiCalls?: number; // Adicionado
   lastUpdate: string;
 }

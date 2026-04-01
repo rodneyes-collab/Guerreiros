@@ -19,7 +19,7 @@ import {
 } from '../../firebase';
 import { useStore } from '../../store';
 import { safeLocalStorage, cleanObject } from '../../utils/helpers';
-import { Player, Payment, Match, GenerationResult, UsageStats } from '../../types';
+import { Player, Payment, Match, GenerationResult, UsageStats, Tournament, Expense } from '../../types';
 import { INITIAL_PLAYERS } from '../../constants';
 import firebaseConfig from '../../firebase-applet-config.json';
 
@@ -44,6 +44,8 @@ export const useFirestoreSync = () => {
     setPreConfirmations,
     setPendingRequests,
     setGenerationResult,
+    setTournaments,
+    setActiveTournament,
     syncTrigger,
     setIsSyncing
   } = useStore();
@@ -72,11 +74,11 @@ export const useFirestoreSync = () => {
           currentUsage = { reads: 0, writes: 0, lastUpdate: date };
         }
         
-        await setDoc(usageRef, {
+        await setDoc(usageRef, cleanObject({
           ...currentUsage,
           reads: (currentUsage.reads || 0) + 15, // Estimate 15 reads per session load
           lastUpdate: date
-        }, { merge: true });
+        }), { merge: true });
 
         // Increment per-player usage
         if (currentPlayer) {
@@ -147,6 +149,10 @@ export const useFirestoreSync = () => {
     let unsubscribeSynergy: (() => void) | undefined;
     let unsubscribeNegativeSynergy: (() => void) | undefined;
     let unsubscribeRivalry: (() => void) | undefined;
+    let unsubscribeTournaments: (() => void) | undefined;
+    let unsubscribeActiveTournament: (() => void) | undefined;
+    let unsubscribePayments: (() => void) | undefined;
+    let unsubscribeExpenses: (() => void) | undefined;
 
     const dateKey = getFirestoreDateKey();
     console.info('Firestore Sync: Starting listeners for date:', dateKey, 'User:', user?.email, 'Role:', userRole, 'Trigger:', syncTrigger);
@@ -233,6 +239,43 @@ export const useFirestoreSync = () => {
         if (snapshot.exists()) setRivalry(snapshot.data());
       }, (err) => console.error('Firestore Sync Error (Rivalry):', err));
 
+      // Tournaments Sync
+      unsubscribeTournaments = onSnapshot(collection(db, 'tournaments'), (snapshot) => {
+        const list: Tournament[] = [];
+        snapshot.forEach((doc) => list.push({ ...doc.data(), id: doc.id } as Tournament));
+        setTournaments(list.sort((a, b) => b.date.localeCompare(a.date)));
+      }, (err) => {
+        console.error('Firestore Sync Error (Tournaments):', err);
+      });
+
+      // Payments Sync
+      unsubscribePayments = onSnapshot(collection(db, 'payments'), (snapshot) => {
+        const list: Payment[] = [];
+        snapshot.forEach((doc) => list.push({ ...doc.data(), id: doc.id } as Payment));
+        setPayments(list);
+      }, (err) => {
+        console.error('Firestore Sync Error (Payments):', err);
+      });
+
+      // Expenses Sync
+      unsubscribeExpenses = onSnapshot(collection(db, 'expenses'), (snapshot) => {
+        const list: Expense[] = [];
+        snapshot.forEach((doc) => list.push({ ...doc.data(), id: doc.id } as any));
+        useStore.setState({ expenses: list });
+      }, (err) => {
+        console.error('Firestore Sync Error (Expenses):', err);
+      });
+
+      unsubscribeActiveTournament = onSnapshot(doc(db, 'metadata', 'activeTournament'), (snapshot) => {
+        if (snapshot.exists()) {
+          setActiveTournament(snapshot.data() as Tournament);
+        } else {
+          setActiveTournament(null);
+        }
+      }, (err) => {
+        console.error('Firestore Sync Error (Active Tournament):', err);
+      });
+
       // Admin-only Listeners
       if (userRole === 'ADMIN') {
         unsubscribePending = onSnapshot(collection(db, 'pendingRequests'), (snapshot) => {
@@ -267,29 +310,12 @@ export const useFirestoreSync = () => {
       if (unsubscribeSynergy) unsubscribeSynergy();
       if (unsubscribeNegativeSynergy) unsubscribeNegativeSynergy();
       if (unsubscribeRivalry) unsubscribeRivalry();
+      if (unsubscribeTournaments) unsubscribeTournaments();
+      if (unsubscribeActiveTournament) unsubscribeActiveTournament();
+      if (unsubscribePayments) unsubscribePayments();
+      if (unsubscribeExpenses) unsubscribeExpenses();
     };
-  }, [user, userRole, syncTrigger, setPlayers, setAttendance, setPendingRequests, setMatches, setSystemMetadata, setGenerationResult, setUsageStats, setPreConfirmations, setSynergy, setNegativeSynergy, setRivalry, setIsSyncing, setIsInitialLoading]);
-
-  // View-specific Fetching (Payments & Matches)
-  useEffect(() => {
-    if (!user) return;
-
-    const fetchData = async () => {
-      if (viewMode === 'payments') {
-        triggerDbStatus('reading');
-        try {
-          const snapshot = await getDocs(collection(db, 'payments'));
-          const paymentsList: Payment[] = [];
-          snapshot.forEach((doc) => paymentsList.push({ ...doc.data(), id: doc.id } as Payment));
-          setPayments(paymentsList);
-        } catch (err) {
-          handleFirestoreError(err, OperationType.LIST, 'payments');
-        }
-      }
-    };
-
-    fetchData();
-  }, [user, viewMode, setPayments, setMatches, triggerDbStatus]);
+  }, [user, userRole, syncTrigger, setPlayers, setAttendance, setPendingRequests, setMatches, setSystemMetadata, setGenerationResult, setUsageStats, setPreConfirmations, setSynergy, setNegativeSynergy, setRivalry, setTournaments, setActiveTournament, setIsSyncing, setIsInitialLoading, setPayments]);
 
   // Initialize eloHistory for the current user if missing
   useEffect(() => {

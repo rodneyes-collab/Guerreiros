@@ -1,5 +1,6 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   Users, 
   Trophy, 
@@ -17,7 +18,8 @@ import {
   Database,
   Zap,
   CheckCircle2,
-  Edit2
+  Edit2,
+  BarChart3
 } from 'lucide-react';
 
 import { getBrazilDay } from './firebase';
@@ -27,11 +29,13 @@ import { useFirestoreSync } from './src/hooks/useFirestoreSync';
 import { useDailyReset } from './src/hooks/useDailyReset';
 import { useNarration } from './src/hooks/useNarration';
 import { useAppLogic } from './src/hooks/useAppLogic';
+import { PaymentStatus } from './types';
 
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Notification } from './components/Notification';
 import { ConfirmModal } from './components/ConfirmModal';
 import { AttendanceView } from './components/AttendanceView';
+import { AttendanceReportView } from './components/AttendanceReportView';
 import { MatchView } from './components/MatchView';
 import { RankingView } from './components/RankingView';
 import { MembersView } from './components/MembersView';
@@ -39,7 +43,10 @@ import { PaymentsView } from './components/PaymentsView';
 import { RulesView } from './components/RulesView';
 import { AdminView } from './components/AdminView';
 import { HistoryView } from './components/HistoryView';
+import { TournamentView } from './components/TournamentView';
 import { PlayerForm } from './components/PlayerForm';
+import { PaymentForm } from './components/PaymentForm';
+import { ExpenseForm } from './components/ExpenseForm';
 import { LoginView } from './src/components/LoginView';
 import { AccessRequestView } from './src/components/AccessRequestView';
 import { CourtDiagram } from './src/components/CourtDiagram';
@@ -61,26 +68,28 @@ const App: React.FC = () => {
     magicLinkEmail,
     setMagicLinkEmail,
     isSendingMagicLink,
+    isLoggingIn,
     isRequestingAccess,
     requestName,
     setRequestName,
     isRequestSubmitted,
-    isVerifyingRules,
     isNarratingSummary,
-    handleLogin,
+    createDataSnapshot,
     handleLogout,
     handleMagicLink,
     handleRequestAccess,
     handleGenerate,
     handleDiscard,
     handleFinishDay,
-    resetDailyMatches,
     handleFinishMatch,
+    handleAnalyzeMatch,
     handleVerifyRules,
+    isAnalyzing,
     onApproveRequest,
     onRejectRequest,
     triggerSync,
     recalculateStats,
+    recalculateDailyStats,
     registerAttendance,
     removeAttendance,
     clearAttendance,
@@ -91,11 +100,26 @@ const App: React.FC = () => {
     initializeEloHistory,
     updateQuotaSettings,
     savePlayer,
+    savePayment,
+    saveExpense,
+    deleteExpense,
+    updateMonthlyFee,
     clearAllHistory,
     clearMatchesOnly,
+    deleteMatch,
     clearAllDatabase,
     resetElo,
-    refreshPlayers
+    refreshPlayers,
+    deletePayment,
+    handleScanAnomalies,
+    fixDatabaseAnomalies,
+    startTournament,
+    recordTournamentMatch,
+    endTournament,
+    addTournamentPlayer,
+    substituteTournamentPlayer,
+    resetTournamentMatch,
+    deleteTournament
   } = useAppLogic();
 
   // --- Store State ---
@@ -108,6 +132,11 @@ const App: React.FC = () => {
     payments,
     preConfirmations,
     generationResult,
+    activeTournament,
+    isVerifyingRules,
+    isScanningAnomalies,
+    anomalyReport,
+    isLoggingOut,
     isSyncing,
     dbStatus,
     notification,
@@ -122,6 +151,10 @@ const App: React.FC = () => {
     setGenerationResult,
     showNotification,
     showConfirmModal,
+    setEditingPayment,
+    setIsPaymentFormOpen,
+    editingPayment,
+    isPaymentFormOpen,
     pendingRequests,
     isFormOpen,
     setIsFormOpen,
@@ -132,6 +165,25 @@ const App: React.FC = () => {
 
   // --- Local UI State ---
   const [selectedPlayerForHistory, setSelectedPlayerForHistory] = useState<any>(null);
+  const [isExpenseFormOpen, setIsExpenseFormOpen] = useState(false);
+  const [editingExpense, setEditingExpense] = useState<any>(null);
+  const [paymentFormData, setPaymentFormData] = useState({
+    playerId: '',
+    month: '',
+    amount: 0,
+    dueDate: '',
+    status: PaymentStatus.PENDING,
+    method: '',
+    paymentDate: ''
+  });
+
+  const [expenseFormData, setExpenseFormData] = useState({
+    description: '',
+    amount: 0,
+    date: new Date().toISOString().split('T')[0],
+    category: 'OTHER' as any,
+    month: ''
+  });
 
   const isGameDay = useMemo(() => {
     const day = getBrazilDay();
@@ -149,6 +201,7 @@ const App: React.FC = () => {
     name: '',
     gender: 'MALE',
     elo: 1200,
+    matchesPlayed: 0,
     isOfficialSetter: false,
     isAdmin: false,
     joinedAt: new Date().toISOString().split('T')[0],
@@ -192,13 +245,31 @@ const App: React.FC = () => {
     setEditingPlayer(null);
   };
 
-  // --- Timer Logic ---
-  useEffect(() => {
-    if (generationResult && viewMode === 'presence') {
-      setViewMode('generation');
+  const handlePaymentSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const player = players.find(p => p.id === paymentFormData.playerId);
+    const amount = paymentFormData.amount || systemMetadata.monthlyFee || 0;
+    const success = await savePayment({
+      ...paymentFormData,
+      amount,
+      playerName: player?.name || 'Sócio desconhecido'
+    }, editingPayment?.id);
+    if (success) {
+      setIsPaymentFormOpen(false);
+      setEditingPayment(null);
     }
-  }, [generationResult, viewMode, setViewMode]);
+  };
 
+  const handleExpenseSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const success = await saveExpense(expenseFormData, editingExpense?.id);
+    if (success) {
+      setIsExpenseFormOpen(false);
+      setEditingExpense(null);
+    }
+  };
+
+  // --- Timer Logic ---
   useEffect(() => {
     let interval: NodeJS.Timeout;
 
@@ -222,10 +293,64 @@ const App: React.FC = () => {
     };
   }, [generationResult, systemMetadata.matchStartTime, setElapsedTime]);
 
+  useEffect(() => {
+    if (editingPayment) {
+      setPaymentFormData({
+        playerId: editingPayment.playerId,
+        month: editingPayment.month,
+        amount: editingPayment.amount,
+        dueDate: editingPayment.dueDate,
+        status: editingPayment.status,
+        method: editingPayment.method || '',
+        paymentDate: editingPayment.paymentDate || ''
+      });
+    } else {
+      const now = new Date();
+      const monthNames = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+      const currentMonth = `${monthNames[now.getMonth()]}/${now.getFullYear()}`;
+      
+      setPaymentFormData({
+        playerId: '',
+        month: currentMonth,
+        amount: 0,
+        dueDate: new Date(now.getFullYear(), now.getMonth(), 5).toISOString().split('T')[0],
+        status: PaymentStatus.PENDING,
+        method: '',
+        paymentDate: ''
+      });
+    }
+  }, [editingPayment]);
+
+  useEffect(() => {
+    if (editingExpense) {
+      setExpenseFormData({
+        description: editingExpense.description,
+        amount: editingExpense.amount,
+        date: editingExpense.date,
+        category: editingExpense.category,
+        month: editingExpense.month
+      });
+    } else {
+      const now = new Date();
+      const monthNames = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+      const currentMonth = `${monthNames[now.getMonth()]}/${now.getFullYear()}`;
+      
+      setExpenseFormData({
+        description: '',
+        amount: 0,
+        date: now.toISOString().split('T')[0],
+        category: 'OTHER',
+        month: currentMonth
+      });
+    }
+  }, [editingExpense]);
+
   // --- Navigation Items ---
   const navItems = useMemo(() => [
     { id: 'presence', label: 'Presença', icon: ClipboardCheck, adminOnly: false },
+    { id: 'attendance_report', label: 'Relatório', icon: BarChart3, adminOnly: false },
     { id: 'generation', label: 'Partida', icon: Swords, adminOnly: false },
+    { id: 'tournament', label: 'Torneio', icon: Trophy, adminOnly: false },
     { id: 'history', label: 'Histórico', icon: History, adminOnly: false },
     { id: 'members', label: 'Sócios', icon: Users, adminOnly: true },
     { id: 'payments', label: 'Mensalidades', icon: CreditCard, adminOnly: true },
@@ -318,21 +443,22 @@ const App: React.FC = () => {
     performSwap(playerId, generationResult.remainingPlayers[0].id);
   };
 
-  const promoteToSetter = (teamKey: 'teamA' | 'teamB', playerId: string) => {
+  const promoteToSetter = (team: 'A' | 'B', playerId: string) => {
     if (!generationResult) return;
     
-    const team = generationResult[teamKey];
-    const playerIndex = team.players.findIndex((p: any) => p.id === playerId);
+    const teamKey = team === 'A' ? 'teamA' : 'teamB';
+    const teamData = generationResult[teamKey];
+    const playerIndex = teamData.players.findIndex((p: any) => p.id === playerId);
     if (playerIndex === -1) return;
     
-    const player = team.players[playerIndex];
-    const newPlayers = [...team.players];
+    const player = teamData.players[playerIndex];
+    const newPlayers = [...teamData.players];
     newPlayers.splice(playerIndex, 1);
     
     setGenerationResult({
       ...generationResult,
       [teamKey]: {
-        ...team,
+        ...teamData,
         setter: player,
         players: newPlayers
       }
@@ -341,14 +467,37 @@ const App: React.FC = () => {
   };
 
   // --- Render Logic ---
+  if (isLoggingOut) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4 text-white">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="text-center space-y-6"
+        >
+          <div className="w-24 h-24 bg-white/10 rounded-full flex items-center justify-center mx-auto mb-8">
+            <LogOut className="w-12 h-12 text-white" />
+          </div>
+          <h1 className="text-4xl font-black uppercase tracking-tighter italic">
+            Até breve!
+          </h1>
+          <p className="text-slate-400 font-medium">
+            Sua sessão foi encerrada com segurança.
+          </p>
+          <div className="pt-8">
+            <div className="w-12 h-1 bg-indigo-500 mx-auto rounded-full animate-pulse" />
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
+
   if (!isAuthReady || (user && isRoleLoading)) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6">
-        <div className="flex flex-col items-center gap-6 animate-pulse">
-          <div className="w-20 h-20 bg-indigo-600 rounded-3xl rotate-12 flex items-center justify-center shadow-2xl shadow-indigo-500/20">
-            <Zap className="w-10 h-10 text-white fill-white" />
-          </div>
-          <p className="text-slate-400 font-black uppercase tracking-[0.3em] text-xs">Carregando Sistema...</p>
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-10 h-10 border-4 border-emerald-600 border-t-transparent rounded-full animate-spin" />
+          <p className="text-slate-400 font-black uppercase tracking-[0.3em] text-[10px] animate-pulse">Carregando...</p>
         </div>
       </div>
     );
@@ -360,7 +509,7 @@ const App: React.FC = () => {
         magicLinkEmail={magicLinkEmail}
         setMagicLinkEmail={setMagicLinkEmail}
         isSendingMagicLink={isSendingMagicLink}
-        handleLogin={handleLogin}
+        isLoggingIn={isLoggingIn}
         handleMagicLink={handleMagicLink}
       />
     );
@@ -473,17 +622,20 @@ const App: React.FC = () => {
               userRole={userRole}
               isGameDay={isGameDay}
               isIntentionPhase={isIntentionPhase}
-              isNearCourt={false}
               currentPlayer={currentPlayer}
               registerAttendance={registerAttendance}
               removeAttendance={removeAttendance}
               clearAttendance={clearAttendance}
               onToggleIntention={onToggleIntention}
               refreshPlayers={refreshPlayers}
-              resetDailyMatches={resetDailyMatches}
+              resetDailyMatches={handleFinishDay}
               availablePlayers={players}
               preConfirmations={preConfirmations}
             />
+          )}
+
+          {viewMode === 'attendance_report' && (
+            <AttendanceReportView />
           )}
 
           {viewMode === 'generation' && (
@@ -494,7 +646,10 @@ const App: React.FC = () => {
                 onFinishDay={handleFinishDay}
                 onFinishMatch={handleFinishMatch}
                 onVerifyRules={handleVerifyRules}
+                onAnalyzeMatch={handleAnalyzeMatch}
+                recalculateDailyStats={recalculateDailyStats}
                 isVerifyingRules={isVerifyingRules}
+                isAnalyzing={isAnalyzing}
                 isNarratingSummary={isNarratingSummary}
                 onAnnounce={handleAnnounce}
                 onSwapClick={handleSwapClick}
@@ -516,11 +671,17 @@ const App: React.FC = () => {
           )}
 
           {viewMode === 'history' && (
-            <HistoryView 
-              onPlayerClick={(p) => {
-                setSelectedPlayerForHistory(p);
-                setViewMode('dashboard');
-              }}
+            <HistoryView onDeleteMatch={deleteMatch} />
+          )}
+
+          {viewMode === 'tournament' && (
+            <TournamentView 
+              onStart={startTournament}
+              onRecord={recordTournamentMatch}
+              onResetMatch={resetTournamentMatch}
+              onEnd={endTournament}
+              onAddPlayer={addTournamentPlayer}
+              onSubstitute={substituteTournamentPlayer}
             />
           )}
 
@@ -535,7 +696,17 @@ const App: React.FC = () => {
             />
           )}
 
-          {viewMode === 'payments' && <PaymentsView />}
+          {viewMode === 'payments' && (
+            <PaymentsView 
+              deletePayment={deletePayment}
+              setEditingPayment={setEditingPayment}
+              setIsPaymentFormOpen={setIsPaymentFormOpen}
+              deleteExpense={deleteExpense}
+              setEditingExpense={setEditingExpense}
+              setIsExpenseFormOpen={setIsExpenseFormOpen}
+              updateMonthlyFee={updateMonthlyFee}
+            />
+          )}
 
           {viewMode === 'dashboard' && (
             <RankingView 
@@ -543,7 +714,7 @@ const App: React.FC = () => {
               refreshPlayers={refreshPlayers}
               handleAnnounceSummary={handleAnnounce}
               isNarratingSummary={isNarratingSummary}
-              resetDailyMatches={resetDailyMatches}
+              resetDailyMatches={handleFinishDay}
             />
           )}
 
@@ -551,19 +722,25 @@ const App: React.FC = () => {
 
           {viewMode === 'admin' && (
             <AdminView 
-              resetDailyStats={resetDailyMatches}
+              resetDailyStats={handleFinishDay}
               resetElo={resetElo}
               triggerSync={triggerSync}
               recalculateStats={recalculateStats}
+              recalculateDailyStats={recalculateDailyStats}
               repairDatabase={repairDatabase}
               initializeEloHistory={initializeEloHistory}
               updateQuotaSettings={updateQuotaSettings}
+              createDataSnapshot={createDataSnapshot}
               clearAllHistory={clearAllHistory}
               clearMatchesOnly={clearMatchesOnly}
               clearAllDatabase={clearAllDatabase}
               pendingRequests={pendingRequests}
               onApproveRequest={onApproveRequest}
               onRejectRequest={onRejectRequest}
+              handleScanAnomalies={handleScanAnomalies}
+              fixDatabaseAnomalies={fixDatabaseAnomalies}
+              deleteTournament={deleteTournament}
+              showConfirmModal={showConfirmModal}
             />
           )}
         </main>
@@ -580,11 +757,33 @@ const App: React.FC = () => {
           setFormData={setFormData}
         />
 
-        {/* Modals & Notifications */}
-        <Notification 
-          notification={notification} 
-          onClose={hideNotification} 
+        <PaymentForm
+          isOpen={isPaymentFormOpen}
+          onClose={() => {
+            setIsPaymentFormOpen(false);
+            setEditingPayment(null);
+          }}
+          onSubmit={handlePaymentSubmit}
+          editingPayment={editingPayment}
+          paymentFormData={paymentFormData}
+          setPaymentFormData={setPaymentFormData}
+          players={players}
         />
+
+        <ExpenseForm
+          isOpen={isExpenseFormOpen}
+          onClose={() => {
+            setIsExpenseFormOpen(false);
+            setEditingExpense(null);
+          }}
+          onSubmit={handleExpenseSubmit}
+          editingExpense={editingExpense}
+          expenseFormData={expenseFormData}
+          setExpenseFormData={setExpenseFormData}
+        />
+
+        {/* Modals & Notifications */}
+        <Notification />
         
         <ConfirmModal />
 

@@ -1,71 +1,81 @@
-import React, { Component } from 'react';
-import { ShieldAlert, RefreshCw, LogOut } from 'lucide-react';
-import { auth } from '../firebase';
+import React, { Component, ErrorInfo, ReactNode } from 'react';
+import { AlertCircle, RotateCcw } from 'lucide-react';
 
-interface ErrorBoundaryProps {
-  children: React.ReactNode;
+interface Props {
+  children: ReactNode;
 }
 
-interface ErrorBoundaryState {
+interface State {
   hasError: boolean;
-  error: any;
+  error: Error | null;
+  errorInfo: string | null;
 }
 
-export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  public state: ErrorBoundaryState;
-  public props: ErrorBoundaryProps;
+export class ErrorBoundary extends React.Component<Props, State> {
+  public state: State = {
+    hasError: false,
+    error: null,
+    errorInfo: null
+  };
 
-  constructor(props: ErrorBoundaryProps) {
-    super(props);
-    this.state = { hasError: false, error: null };
-    this.props = props;
+  public static getDerivedStateFromError(error: Error): State {
+    return { hasError: true, error, errorInfo: null };
   }
 
-  static getDerivedStateFromError(error: any) {
-    return { hasError: true, error };
-  }
-
-  componentDidCatch(error: any, errorInfo: any) {
-    console.error("ErrorBoundary caught an error", error, errorInfo);
-  }
-
-  render() {
-    if (this.state.hasError) {
-      let errorMessage = "Ocorreu um erro inesperado.";
-      try {
-        const parsedError = JSON.parse(this.state.error.message);
-        if (parsedError.error.includes("permission-denied") || parsedError.error.includes("Missing or insufficient permissions")) {
-          errorMessage = "Você não tem permissão para realizar esta ação ou acessar estes dados. Por favor, verifique se está logado com a conta correta.";
-        }
-      } catch (e) {
-        // Not a JSON error
+  public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error('Uncaught error:', error, errorInfo);
+    
+    // Try to parse JSON error from Firestore
+    let detailedInfo = null;
+    try {
+      if (error.message.startsWith('{')) {
+        detailedInfo = JSON.parse(error.message);
       }
+    } catch (e) {
+      // Not a JSON error
+    }
 
+    this.setState({
+      error,
+      errorInfo: detailedInfo ? JSON.stringify(detailedInfo, null, 2) : error.message
+    });
+  }
+
+  private handleReset = () => {
+    window.location.reload();
+  };
+
+  public render() {
+    if (this.state.hasError) {
       return (
-        <div className="min-h-screen flex items-center justify-center bg-zinc-950 text-white p-4">
-          <div className="max-w-md w-full bg-zinc-900 border border-zinc-800 rounded-2xl p-8 text-center">
-            <ShieldAlert className="w-16 h-16 text-red-500 mx-auto mb-4" />
-            <h1 className="text-2xl font-bold mb-2">Ops! Algo deu errado</h1>
-            <p className="text-zinc-400 mb-6">{errorMessage}</p>
-            <div className="flex flex-col gap-3">
-              <button 
-                onClick={() => window.location.reload()}
-                className="px-6 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-full transition-colors flex items-center justify-center gap-2"
-              >
-                <RefreshCw className="w-4 h-4" />
-                Recarregar Página
-              </button>
-              <button 
-                onClick={() => {
-                  auth.signOut();
-                  window.location.reload();
-                }}
-                className="px-6 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-full transition-colors flex items-center justify-center gap-2"
-              >
-                <LogOut className="w-4 h-4" />
-                Sair e Tentar Novamente
-              </button>
+        <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+          <div className="max-w-md w-full bg-white rounded-[2.5rem] shadow-xl border border-slate-200 p-8 text-center">
+            <div className="w-20 h-20 bg-rose-50 rounded-full flex items-center justify-center mx-auto mb-6">
+              <AlertCircle className="w-10 h-10 text-rose-500" />
             </div>
+            
+            <h1 className="text-2xl font-black text-slate-800 mb-2">Ops! Algo deu errado</h1>
+            <p className="text-slate-500 mb-8">
+              Ocorreu um erro inesperado. Tentamos capturar os detalhes para ajudar na correção.
+            </p>
+
+            <div className="bg-slate-50 rounded-2xl p-4 mb-8 text-left overflow-auto max-h-48">
+              <p className="text-xs font-mono text-slate-600 break-all">
+                {this.state.errorInfo || this.state.error?.message}
+              </p>
+            </div>
+
+            <button
+              onClick={this.handleReset}
+              className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-black py-4 rounded-2xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-200"
+            >
+              <RotateCcw className="w-5 h-5" />
+              Recarregar Aplicativo
+            </button>
+            
+            <p className="mt-6 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+              Se o problema persistir, contate o suporte
+            </p>
           </div>
         </div>
       );

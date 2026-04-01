@@ -102,6 +102,35 @@ export const PaymentForm: React.FC<PaymentFormProps> = ({
             </div>
           </div>
 
+          <div className="grid grid-cols-2 gap-6">
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Forma</label>
+              <select
+                value={paymentFormData.method || ''}
+                onChange={e => setPaymentFormData({ ...paymentFormData, method: e.target.value })}
+                className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 transition-all font-bold text-slate-700 outline-none appearance-none"
+              >
+                <option value="">Selecione...</option>
+                <option value="PIX">Pix</option>
+                <option value="CASH">Dinheiro</option>
+                <option value="TRANSFER">Transferência</option>
+                <option value="OTHER">Outro</option>
+              </select>
+            </div>
+            {paymentFormData.status === PaymentStatus.PAID && (
+              <div className="space-y-2 animate-in slide-in-from-top-2 duration-300">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Data do Pagamento</label>
+                <input
+                  type="date"
+                  required
+                  value={paymentFormData.paymentDate || ''}
+                  onChange={e => setPaymentFormData({ ...paymentFormData, paymentDate: e.target.value })}
+                  className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 transition-all font-bold text-slate-700 outline-none"
+                />
+              </div>
+            )}
+          </div>
+
           <div className="pt-4 flex gap-4">
             <button
               type="button"

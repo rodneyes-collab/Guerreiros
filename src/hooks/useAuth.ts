@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react';
 import { 
   auth, 
   onAuthStateChanged, 
+  signInWithRedirect,
+  getRedirectResult,
   isSignInWithEmailLink, 
   signInWithEmailLink, 
   db, 
@@ -33,6 +35,25 @@ export const useAuth = () => {
   const [isRoleLoading, setIsRoleLoading] = useState(true);
 
   useEffect(() => {
+    console.log('useAuth: Setting up onAuthStateChanged and Redirect Result');
+    
+    // Handle Redirect Result
+    getRedirectResult(auth)
+      .then((result) => {
+        if (result?.user) {
+          console.log('useAuth: Redirect login success', result.user.uid);
+          showNotification('Login realizado com sucesso!', 'success');
+        }
+      })
+      .catch((error) => {
+        console.error('useAuth: Error processing redirect result:', error);
+        if (error.code === 'auth/unauthorized-domain') {
+          showNotification('Erro: Domínio não autorizado no Firebase Console.', 'error');
+        } else {
+          showNotification('Erro ao completar login com Google.', 'error');
+        }
+      });
+
     // Handle Magic Link
     if (isSignInWithEmailLink(auth, window.location.href)) {
       let email = window.localStorage.getItem('emailForSignIn');
@@ -54,17 +75,20 @@ export const useAuth = () => {
     }
 
     const unsubscribeAuth = onAuthStateChanged(auth, async (u) => {
+      console.log('useAuth: onAuthStateChanged fired', u?.uid);
       if (u) {
         setUser(u);
         setIsAuthReady(true);
       } else {
         // Check for member session
         const storedMember = window.localStorage.getItem('memberUser');
+        console.log('useAuth: Checking localStorage for memberUser', !!storedMember);
         if (storedMember) {
           try {
             const memberData = JSON.parse(storedMember);
             setUser(memberData);
           } catch (e) {
+            console.error('useAuth: Error parsing memberUser', e);
             setUser(null);
           }
         } else {
@@ -89,9 +113,18 @@ export const useAuth = () => {
       return;
     }
 
-    // Mock member role
-    if (user.uid?.startsWith('member_')) {
-      setUserRole('MEMBER');
+    console.log('useAuth: User changed', user.uid);
+
+    // Mock member/admin role
+    if (user.uid?.startsWith('member_') || user.uid?.startsWith('admin_')) {
+      console.log('useAuth: Member/Admin login detected');
+      const isAdminEmail = user.email?.toLowerCase() === 'rodneyes@gmail.com';
+      const playerProfile = players.find(p => p.email?.toLowerCase() === user.email?.toLowerCase());
+      
+      const newRole = (isAdminEmail || playerProfile?.isAdmin) ? 'ADMIN' : 'MEMBER';
+      if (userRole !== newRole) {
+        setUserRole(newRole);
+      }
       setIsRoleLoading(false);
       return;
     }
@@ -102,10 +135,15 @@ export const useAuth = () => {
       try {
         if (docSnap.exists()) {
           const data = docSnap.data();
+          let newRole: 'ADMIN' | 'MEMBER' = 'MEMBER';
           if (user.email?.toLowerCase() === 'rodneyes@gmail.com') {
-            setUserRole('ADMIN');
+            newRole = 'ADMIN';
           } else {
-            setUserRole(data.role || 'MEMBER');
+            newRole = data.role || 'MEMBER';
+          }
+          
+          if (userRole !== newRole) {
+            setUserRole(newRole);
           }
         } else {
           const defaultRole = user.email?.toLowerCase() === "rodneyes@gmail.com" ? 'ADMIN' : 'MEMBER';
@@ -118,7 +156,10 @@ export const useAuth = () => {
             console.error('useAuth: Error creating user doc:', err);
             // Non-fatal, we already set the role locally
           });
-          setUserRole(defaultRole);
+          
+          if (userRole !== defaultRole) {
+            setUserRole(defaultRole);
+          }
         }
       } catch (e) {
         console.error('useAuth: Error processing user doc snapshot:', e);
@@ -136,9 +177,23 @@ export const useAuth = () => {
     });
 
     return () => {
+      console.log('useAuth: Cleaning up user doc listener');
       unsubscribeUserDoc();
     };
-  }, [user, setUserRole]);
+  }, [user?.uid, user?.email]); // Only depend on user identity
+
+  // Separate effect for mock role updates when players change
+  useEffect(() => {
+    if (user && (user.uid?.startsWith('member_') || user.uid?.startsWith('admin_'))) {
+      const isAdminEmail = user.email?.toLowerCase() === 'rodneyes@gmail.com';
+      const playerProfile = players.find(p => p.email?.toLowerCase() === user.email?.toLowerCase());
+      const newRole = (isAdminEmail || playerProfile?.isAdmin) ? 'ADMIN' : 'MEMBER';
+      
+      if (userRole !== newRole) {
+        setUserRole(newRole);
+      }
+    }
+  }, [players, user, userRole, setUserRole]);
 
   // Link user to player profile
   useEffect(() => {

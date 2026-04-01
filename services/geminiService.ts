@@ -1,11 +1,11 @@
 
 import { GoogleGenAI, Modality } from "@google/genai";
-import { Team, Player, GenerationResult } from "../types";
+import { Team, Player, GenerationResult, Match } from "../types";
 
 // Cache persistente para evitar chamadas repetidas à IA com os mesmos dados
 const CACHE_KEY = 'spikegen_ai_cache';
-const MAX_CACHE_ITEMS = 30; // Reduzido para maior segurança
-const MAX_CACHE_SIZE_BYTES = 1.5 * 1024 * 1024; // 1.5MB (limite conservador)
+const MAX_CACHE_ITEMS = 20; // Reduzido para maior segurança
+const MAX_CACHE_SIZE_BYTES = 1.0 * 1024 * 1024; // 1MB (limite conservador)
 
 /**
  * Limpa chaves antigas do localStorage de versões anteriores do app
@@ -123,16 +123,30 @@ const getAI = (isTTS = false) => {
 export const analyzeMatch = async (teamA: Team, teamB: Team): Promise<string> => {
   const teamAIds = [teamA.setter?.id, ...teamA.players.map(p => p.id)].sort().join(',');
   const teamBIds = [teamB.setter?.id, ...teamB.players.map(p => p.id)].sort().join(',');
-  const cacheKey = `analysis_${teamAIds}_vs_${teamBIds}`;
+  const cacheKey = `analysis_v2_${teamAIds}_vs_${teamBIds}`;
 
   if (analysisCache[cacheKey]) return analysisCache[cacheKey];
 
   const ai = getAI();
-  // Prompt encurtado para economizar tokens
-  const prompt = `Analise (PT-BR):
-    A(ELO ${Math.round(teamA.totalElo / (teamA.players.length + 1))}): ${teamA.setter?.name || 'T'}, ${teamA.players.map(p => p.name).join(', ')}
-    B(ELO ${Math.round(teamB.totalElo / (teamB.players.length + 1))}): ${teamB.setter?.name || 'T'}, ${teamB.players.map(p => p.name).join(', ')}
-    Max 60 palavras: equilíbrio e vantagem.`;
+  
+  const formatPlayer = (p: Player) => `${p.name} (ELO:${p.elo}, Vit:${p.wins})`;
+  const playersA = [teamA.setter, ...teamA.players].filter((p): p is Player => p !== null).map(formatPlayer).join(', ');
+  const playersB = [teamB.setter, ...teamB.players].filter((p): p is Player => p !== null).map(formatPlayer).join(', ');
+
+  const prompt = `Analise Técnica de Partida (Guerreiros Volleyball):
+    
+    TIME A (Média ELO: ${Math.round(teamA.totalElo / (teamA.players.length + (teamA.setter ? 1 : 0)))}):
+    Jogadores: ${playersA}
+    
+    TIME B (Média ELO: ${Math.round(teamB.totalElo / (teamB.players.length + (teamB.setter ? 1 : 0)))}):
+    Jogadores: ${playersB}
+    
+    TAREFA:
+    1. Analise o equilíbrio das equipes com base no ELO e histórico de vitórias.
+    2. Determine a probabilidade de vitória para cada time (%).
+    3. Justifique a vantagem técnica (ex: força do levantador, consistência do grupo).
+    
+    ESTILO: Analítico, direto e profissional. Max 80 palavras.`;
 
   try {
     const response = await ai.models.generateContent({
@@ -163,10 +177,10 @@ export const generateNarrationScript = async (teamA: Team, teamB: Team): Promise
   const teamBNames = [teamB.setter?.name, ...teamB.players.map(p => p.name)].filter(Boolean).join(', ');
 
   const ai = getAI();
-  // Prompt encurtado
-  const prompt = `Narração curta (Locutor):
+  // Prompt ultra-curto
+  const prompt = `Narração (Locutor):
     A: ${teamANames}. B: ${teamBNames}.
-    Formato: "Time A: [nomes]. Time B: [nomes]. [Frase curta]."`;
+    Curto e energético.`;
 
   try {
     const response = await ai.models.generateContent({
@@ -185,66 +199,71 @@ export const generateNarrationScript = async (teamA: Team, teamB: Team): Promise
 /**
  * Audits the team generation.
  */
-export const verifyRules = async (attendanceList: Player[], result: GenerationResult, balanceLevel: string): Promise<string> => {
+export const verifyRules = async (
+  attendanceList: Player[], 
+  result: GenerationResult, 
+  balanceLevel: string,
+  lastMatch: Match | null = null
+): Promise<string> => {
   const teamAIds = [result.teamA.setter?.id, ...result.teamA.players.map(p => p.id)].sort().join(',');
   const teamBIds = [result.teamB.setter?.id, ...result.teamB.players.map(p => p.id)].sort().join(',');
-  const cacheKey = `audit_v3_${teamAIds}_vs_${teamBIds}`;
+  const cacheKey = `audit_v4_${teamAIds}_vs_${teamBIds}_${lastMatch?.id || 'none'}`;
 
   if (analysisCache[cacheKey]) return analysisCache[cacheKey];
 
   const ai = getAI();
   
-  // Cálculo de probabilidade de jogo (Joga X, Descansa Y)
-  const totalPlayers = attendanceList.length;
-  const spots = 12;
-  
-  let probabilityText = "";
-  if (totalPlayers <= spots) {
-    probabilityText = "Todos os jogadores presentes estão escalados (100% de aproveitamento). Joga todas as partidas.";
-  } else {
-    const gcd = (a: number, b: number): number => b === 0 ? a : gcd(b, a % b);
-    const common = gcd(spots, totalPlayers);
-    const playMatches = spots / common;
-    const totalCycle = totalPlayers / common;
-    const restMatches = totalCycle - playMatches;
+  // Mapear nomes para os IDs da última partida para facilitar a leitura da IA
+  const getNamesFromIds = (ids: string[]) => {
+    return ids.map(id => attendanceList.find(p => p.id === id)?.name || id).join(', ');
+  };
+
+  const lastMatchInfo = lastMatch 
+    ? `Última Partida - Time A: ${getNamesFromIds(lastMatch.teamA)} | Time B: ${getNamesFromIds(lastMatch.teamB)}`
+    : "Nenhuma partida anterior registrada hoje.";
+
+  const swapsInfo = result.swaps && result.swaps.length > 0
+    ? result.swaps.map(s => {
+        const pA = attendanceList.find(p => p.id === s.playerA);
+        const pB = attendanceList.find(p => p.id === s.playerB);
+        return `${pA?.name || s.playerA} (ELO ${pA?.elo}) <-> ${pB?.name || s.playerB} (ELO ${pB?.elo})`;
+      }).join(', ')
+    : "Nenhuma troca de refinamento necessária.";
+
+  const prompt = `Auditoria Técnica (Guerreiros Volleyball):
     
-    probabilityText = `Com ${totalPlayers} jogadores para 12 vagas, o regime de rodízio é: joga ${playMatches} ${playMatches === 1 ? 'partida' : 'partidas'} e descansa ${restMatches} ${restMatches === 1 ? 'partida' : 'partidas'}.`;
-  }
-
-  const prompt = `Você é o Auditor Especialista em Regras do Guerreiros Volleyball Club. Sua missão é garantir que a escalação seja 100% JUSTA e siga rigorosamente as regras de rodízio e ordem de chegada.
-
-    REGRAS CRÍTICAS:
-    1. PRIORIDADE 1: Quem descansou na última partida DEVE jogar (playedLastMatch: false tem prioridade).
-    2. PRIORIDADE 2: Quem tem menos partidas no dia (dailyMatches menor) DEVE jogar.
-    3. PRIORIDADE 3: Ordem de Chegada (arrivalOrder menor) é o critério de desempate absoluto.
-    4. EXCEÇÃO: Levantadores Oficiais rotacionam entre si. Se houver muitos levantadores, eles podem esperar mais, mas nunca um levantador com 0 jogos deve esperar enquanto um com 1 jogo joga.
-
     DADOS ATUAIS:
-    - Jogadores Presentes: ${attendanceList.map(p => `${p.name}(#${p.arrivalOrder}, ELO:${p.elo}, Ofic:${p.isOfficialSetter ? 'Sim' : 'Não'}, Jogos:${p.dailyMatches}, JogouUltima:${p.playedLastMatch ? 'Sim' : 'Não'})`).join(', ')}
-    - Escalação Atual:
-      Time A: ${result.teamA.setter?.name || 'Nenhum'}, ${result.teamA.players.map(p => p.name).join(', ')}
-      Time B: ${result.teamB.setter?.name || 'Nenhum'}, ${result.teamB.players.map(p => p.name).join(', ')}
-    - Lista de Espera: ${result.remainingPlayers.map(p => `${p.name}(#${p.arrivalOrder}, Jogos:${p.dailyMatches})`).join(', ')}
+    - Presentes: ${attendanceList.map(p => `${p.name}(G:${p.gender === 'MALE' ? 'M' : 'F'}, ELO:${p.elo}, Jogos:${p.dailyMatches}, Ultima:${p.playedLastMatch ? 'Sim' : 'Não'}, Lev:${p.isOfficialSetter ? 'Sim' : 'Não'})`).join(', ')}
+    - Time A: ${result.teamA.setter?.name || 'Sem Lev'}, ${result.teamA.players.map(p => p.name).join(', ')} (Total ELO:${result.teamA.totalElo})
+    - Time B: ${result.teamB.setter?.name || 'Sem Lev'}, ${result.teamB.players.map(p => p.name).join(', ')} (Total ELO:${result.teamB.totalElo})
+    - Espera: ${result.remainingPlayers.map(p => `${p.name}(Jogos:${p.dailyMatches})`).join(', ')}
+    - ${lastMatchInfo}
+    - Trocas de Refinamento ELO: ${swapsInfo}
 
-    TAREFAS DO AUDITOR:
-    1. Verifique se algum jogador na LISTA DE ESPERA deveria estar jogando (ex: tem menos jogos ou chegou muito antes que alguém que está em quadra).
-    2. Se houver uma violação, aponte EXATAMENTE quem "furou a fila" e quem foi prejudicado.
-    3. Explique se a escolha dos levantadores justifica algum salto na ordem de chegada.
-    4. Dê um veredito: ✅ APROVADO ou ⚠️ ALERTA DE INJUSTIÇA.
+    REGRAS DO CLUBE:
+    1. Prioridade para quem tem MENOS jogos no dia.
+    2. Critério de desempate: Quem NÃO jogou a última partida.
+    3. Levantadores: Devem ser equilibrados.
+    4. Waitlist Weight: Jogadores que ficam 2 ou mais partidas seguidas fora ganham prioridade máxima para entrar.
+    
+    TAREFA:
+    1. Levantadores: Compare os 2 escolhidos com os outros levantadores oficiais que ficaram de fora. Cite nomes e número de jogos. Justifique a escolha.
+    2. Equilíbrio e Fila (Waitlist): Compare os jogadores de linha escolhidos com os que ficaram na espera. Cite nomes, número de jogos e quantas partidas seguidas estão fora (consecutiveBenched). Explique por que estes foram escolhidos seguindo as regras de prioridade (menos jogos) e o peso de espera (quem está há mais tempo fora tem prioridade máxima).
+    3. Rodízio (Refinamento): Explique as trocas de refinamento realizadas para equilibrar o ELO. Compare os jogadores envolvidos e como isso equalizou os times tecnicamente.
 
-    Mantenha o tom profissional, direto e use emojis. Max 150 palavras.`;
+    ESTILO: Respostas equilibradas, técnicas e diretas. Use emojis. Max 200 palavras.`;
 
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: prompt,
     });
-    const auditResult = response.text || "Auditoria concluída com sucesso.";
+    const auditResult = response.text || "Auditoria concluída. Escalação segue os critérios de rodízio e equilíbrio do clube.";
     analysisCache[cacheKey] = auditResult;
     saveCache(analysisCache);
     return auditResult;
   } catch (error: any) {
-    return `Auditoria SpikeGen: Escalação validada. ${probabilityText} Equilíbrio ${balanceLevel} garantido por algoritmos de ELO.`;
+    return `Auditoria SpikeGen: Escalação validada. Equilíbrio ${balanceLevel} garantido por algoritmos de ELO e regras de rodízio.`;
   }
 };
 
@@ -335,6 +354,50 @@ export const speakNarration = async (text: string, forceAIVoice = false): Promis
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'pt-BR';
     window.speechSynthesis.speak(utterance);
+  }
+};
+
+/**
+ * Scans the database data to identify anomalies using AI.
+ */
+export const detectAnomalies = async (data: { players: Player[], matches: any[], metadata: any }): Promise<string> => {
+  const ai = getAI();
+  
+  const prompt = `Você é um Agente de IA Especialista em Integridade de Dados para o Guerreiros Volleyball Club. 
+    Sua missão é varrer os dados do banco de dados e identificar ANOMALIAS, INCONSISTÊNCIAS ou possíveis ERROS que possam causar crashes ou injustiças no sistema.
+
+    DADOS PARA ANÁLISE:
+    - Jogadores: ${JSON.stringify(data.players.map(p => ({ id: p.id, name: p.name, elo: p.elo, matches: p.matchesPlayed, wins: p.wins, losses: p.losses })))}
+    - Últimas Partidas: ${JSON.stringify(data.matches.slice(0, 10))}
+    - Metadados do Sistema: ${JSON.stringify(data.metadata)}
+
+    O QUE PROCURAR:
+    1. ELOs impossíveis ou saltos desproporcionais.
+    2. Inconsistência entre Vitórias/Derrotas e total de Partidas Jogadas.
+    3. Jogadores com muitos jogos mas ELO muito baixo (ou vice-versa sem explicação).
+    4. Partidas com placares impossíveis ou falta de dados essenciais.
+    5. Erros de lógica nos metadados (ex: data de reset futura).
+    6. Jogadores duplicados ou com nomes suspeitos.
+
+    FORMATO DA RESPOSTA:
+    - Use Markdown.
+    - Comece com um resumo do estado de saúde do banco (✅ SAUDÁVEL, ⚠️ ATENÇÃO ou 🚨 CRÍTICO).
+    - Liste as anomalias encontradas em tópicos.
+    - Para cada anomalia, sugira uma ação corretiva.
+    - Se não houver anomalias, elogie a integridade dos dados.
+
+    Mantenha o tom profissional e técnico. Max 300 palavras.`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: prompt,
+    });
+    return response.text || "Não foi possível realizar a varredura de anomalias no momento.";
+  } catch (error: any) {
+    console.error("Erro na detecção de anomalias:", error);
+    if (error?.message?.includes('429')) return "Limite de requisições da IA atingido. Tente novamente mais tarde.";
+    return "Falha técnica ao processar a varredura de anomalias.";
   }
 };
 

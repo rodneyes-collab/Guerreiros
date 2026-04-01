@@ -4,6 +4,8 @@ import {
   GoogleAuthProvider, 
   EmailAuthProvider,
   signInWithPopup, 
+  signInWithRedirect,
+  getRedirectResult,
   onAuthStateChanged, 
   sendSignInLinkToEmail,
   isSignInWithEmailLink,
@@ -11,7 +13,7 @@ import {
   signOut,
   User 
 } from 'firebase/auth';
-import { getFirestore, collection, doc, updateDoc, onSnapshot, setDoc, deleteDoc, getDoc, getDocFromServer, getDocs, writeBatch, increment, query, where, orderBy, arrayUnion, addDoc, serverTimestamp } from 'firebase/firestore';
+import { getFirestore, collection, doc, updateDoc, onSnapshot, setDoc, deleteDoc, getDoc, getDocFromServer, getDocs, writeBatch, increment, query, where, orderBy, arrayUnion, addDoc, serverTimestamp, collectionGroup } from 'firebase/firestore';
 import firebaseConfig from './firebase-applet-config.json';
 
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
@@ -146,8 +148,32 @@ export const trackUsage = async (reads: number, writes: number) => {
   }
 };
 
+export const trackAIUsage = async (calls: number) => {
+  if (isQuotaExceeded) return;
+
+  const today = getFirestoreDateKey();
+  const usageRef = doc(db, 'metadata', 'usage');
+  try {
+    await updateDoc(usageRef, {
+      aiCalls: increment(calls),
+      lastUpdate: today
+    });
+  } catch (e: any) {
+    try {
+      await setDoc(usageRef, {
+        aiCalls: calls,
+        lastUpdate: today
+      }, { merge: true });
+    } catch (err) {
+      console.error('Erro ao rastrear uso de IA:', err);
+    }
+  }
+};
+
 export { 
   signInWithPopup, 
+  signInWithRedirect,
+  getRedirectResult,
   onAuthStateChanged, 
   sendSignInLinkToEmail,
   isSignInWithEmailLink,
@@ -169,7 +195,8 @@ export {
   orderBy, 
   arrayUnion,
   addDoc,
-  serverTimestamp
+  serverTimestamp,
+  collectionGroup
 };
 export type { User };
 

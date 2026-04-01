@@ -9,7 +9,7 @@ import {
 interface TeamCardProps {
   title: string;
   team: Team;
-  color: 'indigo' | 'rose';
+  color: 'blue' | 'green';
   attendance: Player[];
   userRole?: string;
   onSwap: (pid: string) => void;
@@ -29,8 +29,8 @@ export const TeamCard: React.FC<TeamCardProps> = ({
   onPromote, 
   activeSwapId 
 }) => {
-  const colorClass = color === 'indigo' ? 'bg-indigo-600' : 'bg-rose-600';
-  const lightColorClass = color === 'indigo' ? 'bg-indigo-50 text-indigo-600' : 'bg-rose-50 text-rose-600';
+  const colorClass = color === 'blue' ? 'bg-blue-600' : 'bg-emerald-600';
+  const lightColorClass = color === 'blue' ? 'bg-blue-50 text-blue-600' : 'bg-emerald-50 text-emerald-600';
 
   const getPos = (pid: string) => {
     const player = attendance.find(ap => ap.id === pid);

@@ -1,6 +1,5 @@
 import express from 'express';
 import cors from 'cors';
-import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
 
@@ -19,6 +18,7 @@ async function startServer() {
     if (process.env.NODE_ENV !== 'production') {
         console.log('Running in development mode with Vite middleware');
         try {
+            const { createServer: createViteServer } = await import('vite');
             const vite = await createViteServer({
                 server: { middlewareMode: true },
                 appType: 'spa',
@@ -30,6 +30,7 @@ async function startServer() {
         }
     } else {
         console.log('Running in production mode');
+        // When bundled in dist/server.cjs, we serve the dist directory
         const distPath = path.join(process.cwd(), 'dist');
         app.use(express.static(distPath));
         app.get('*', (req, res) => {

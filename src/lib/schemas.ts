@@ -1,0 +1,40 @@
+import { z } from 'zod';
+import { Gender } from '../../types';
+
+export const playerSchema = z.object({
+  id: z.string().optional(),
+  name: z.string().min(2, "Nome deve ter pelo menos 2 caracteres").max(50, "Nome muito longo"),
+  elo: z.number().int().min(800).max(3000).default(1200),
+  gender: z.nativeEnum(Gender),
+  matchesPlayed: z.number().int().min(0).default(0),
+  wins: z.number().int().min(0).default(0),
+  losses: z.number().int().min(0).default(0),
+  dailyMatches: z.number().int().min(0).default(0),
+  dailyWins: z.number().int().min(0).default(0),
+  dailyLosses: z.number().int().min(0).default(0),
+  dailyEloGain: z.number().int().default(0),
+  dailyResults: z.array(z.enum(['V', 'D'])).default([]),
+  playedLastMatch: z.boolean().default(false),
+  isAdmin: z.boolean().default(false),
+  joinedAt: z.string().optional(),
+  email: z.string().email("Email inválido").or(z.literal('')),
+  eloHistory: z.array(z.object({
+    date: z.string(),
+    elo: z.number()
+  })).optional()
+});
+
+export const matchSchema = z.object({
+  id: z.string(),
+  timestamp: z.number(),
+  date: z.string(),
+  teamA: z.array(z.string()),
+  teamB: z.array(z.string()),
+  winner: z.enum(['A', 'B']),
+  scoreA: z.number().int().min(0),
+  scoreB: z.number().int().min(0),
+  duration: z.number().int().min(0),
+  startTime: z.number(),
+  endTime: z.number(),
+  mode: z.string()
+});

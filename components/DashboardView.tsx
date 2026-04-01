@@ -184,12 +184,24 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </div>
                 <div className="flex items-center justify-between gap-4">
                   <div className={`flex-1 text-center p-2 rounded-xl ${match.winner === 'A' ? 'bg-indigo-50 border border-indigo-100' : ''}`}>
-                    <p className={`text-lg font-black ${match.winner === 'A' ? 'text-indigo-600' : 'text-slate-400'}`}>{match.scoreA}</p>
+                    {match.mode !== 'QUICK' ? (
+                      <p className={`text-lg font-black ${match.winner === 'A' ? 'text-indigo-600' : 'text-slate-400'}`}>{match.scoreA}</p>
+                    ) : (
+                      <div className="h-7 flex items-center justify-center">
+                        {match.winner === 'A' && <Trophy className="w-4 h-4 text-emerald-500" />}
+                      </div>
+                    )}
                     <p className="text-[8px] font-black text-slate-400 uppercase tracking-tighter">Time A</p>
                   </div>
                   <span className="text-slate-300 font-black italic">VS</span>
                   <div className={`flex-1 text-center p-2 rounded-xl ${match.winner === 'B' ? 'bg-indigo-50 border border-indigo-100' : ''}`}>
-                    <p className={`text-lg font-black ${match.winner === 'B' ? 'text-indigo-600' : 'text-slate-400'}`}>{match.scoreB}</p>
+                    {match.mode !== 'QUICK' ? (
+                      <p className={`text-lg font-black ${match.winner === 'B' ? 'text-indigo-600' : 'text-slate-400'}`}>{match.scoreB}</p>
+                    ) : (
+                      <div className="h-7 flex items-center justify-center">
+                        {match.winner === 'B' && <Trophy className="w-4 h-4 text-emerald-500" />}
+                      </div>
+                    )}
                     <p className="text-[8px] font-black text-slate-400 uppercase tracking-tighter">Time B</p>
                   </div>
                 </div>
