@@ -10,6 +10,7 @@ import {
   sendSignInLinkToEmail,
   isSignInWithEmailLink,
   signInWithEmailLink,
+  signInAnonymously,
   signOut,
   User 
 } from 'firebase/auth';
@@ -214,6 +215,7 @@ export {
   sendSignInLinkToEmail,
   isSignInWithEmailLink,
   signInWithEmailLink,
+  signInAnonymously,
   signOut,
   collection, 
   doc, 

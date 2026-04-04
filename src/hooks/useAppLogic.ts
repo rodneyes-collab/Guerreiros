@@ -7,6 +7,7 @@ import {
   googleProvider, 
   signOut, 
   sendSignInLinkToEmail, 
+  signInAnonymously,
   db, 
   doc, 
   setDoc, 
@@ -1202,6 +1203,7 @@ export const useAppLogic = () => {
       setIsLoggingOut(true);
       await signOut(auth);
       window.localStorage.removeItem('memberUser');
+      window.localStorage.removeItem('simpleLoginEmail');
       setUser(null);
       setUserRole(null);
       setCurrentPlayer(null);
@@ -1250,12 +1252,8 @@ export const useAppLogic = () => {
       const player = players.find(p => p.email?.trim().toLowerCase() === trimmedEmail);
       
       if (player || isAdminEmail) {
-        const actionCodeSettings = {
-          url: window.location.origin,
-          handleCodeInApp: true,
-        };
-        await sendSignInLinkToEmail(auth, trimmedEmail, actionCodeSettings);
-        window.localStorage.setItem('emailForSignIn', trimmedEmail);
+        window.localStorage.setItem('simpleLoginEmail', trimmedEmail);
+        await signInAnonymously(auth);
         
         // Save to recent logins
         try {
@@ -1266,13 +1264,13 @@ export const useAppLogic = () => {
           console.error('Error saving recent logins', e);
         }
         
-        showNotification('Link de acesso enviado! Verifique seu e-mail.', 'success');
+        showNotification('Login realizado com sucesso!', 'success');
       } else {
         showNotification('E-mail não encontrado na lista de sócios.', 'error');
       }
     } catch (error) {
-      console.error('Erro ao enviar link mágico:', error);
-      showNotification('Erro ao enviar link de acesso.', 'error');
+      console.error('Erro ao fazer login:', error);
+      showNotification('Erro ao fazer login.', 'error');
     } finally {
       setIsSendingMagicLink(false);
     }

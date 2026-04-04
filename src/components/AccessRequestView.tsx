@@ -46,7 +46,7 @@ export const AccessRequestView: React.FC<AccessRequestViewProps> = ({
         ) : (
           <div className="space-y-6">
             <p className="text-sm text-white/60 leading-relaxed">
-              Seu e-mail não está vinculado a nenhum sócio cadastrado. Se você é sócio, preencha os dados abaixo para solicitar acesso.
+              Seu e-mail não está vinculado a nenhum sócio cadastrado. Se você é sócio, preencha os dados abaixo para solicitar acesso ao administrador.
             </p>
 
             <form onSubmit={handleRequestAccess} className="space-y-4 text-left">

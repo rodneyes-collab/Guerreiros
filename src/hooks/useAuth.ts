@@ -179,10 +179,15 @@ export const useAuth = () => {
         }
       }
 
-      const player = players.find(p => p.email?.toLowerCase() === user.email?.toLowerCase() || p.uid === user.uid);
+      const simpleEmail = window.localStorage.getItem('simpleLoginEmail');
+      const player = players.find(p => 
+        (user.email && p.email?.toLowerCase() === user.email?.toLowerCase()) || 
+        p.uid === user.uid ||
+        (simpleEmail && p.email?.toLowerCase() === simpleEmail.toLowerCase())
+      );
       if (player) {
         setCurrentPlayer(player);
-        if (!player.uid) {
+        if (!player.uid && user.uid) {
           const playerRef = doc(db, 'players', player.id);
           setDoc(playerRef, { uid: user.uid }, { merge: true }).catch(console.error);
         }
