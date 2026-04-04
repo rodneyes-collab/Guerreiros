@@ -27,6 +27,7 @@ import {
 import { db, doc, updateDoc, setDoc } from '../firebase';
 import { Player } from '../types';
 import Markdown from 'react-markdown';
+import { Logo } from '../src/components/Logo';
 
 interface AdminViewProps {
   resetDailyStats: () => void;
@@ -81,6 +82,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
     setSystemMetadata, 
     showNotification, 
     usageStats,
+    monthlyUsageStats,
     isScanningAnomalies,
     anomalyReport,
     user
@@ -112,11 +114,11 @@ export const AdminView: React.FC<AdminViewProps> = ({
   if (userRole !== 'ADMIN') {
     return (
       <div className="flex flex-col items-center justify-center py-20 space-y-6">
-        <div className="p-6 bg-rose-50 rounded-full text-rose-600">
+        <div className="p-6 bg-brand-light rounded-full text-brand-secondary">
           <Shield className="w-16 h-16" />
         </div>
-        <h2 className="text-3xl font-black text-slate-900 uppercase tracking-tighter">Acesso Restrito</h2>
-        <p className="text-slate-500 font-bold uppercase tracking-widest text-sm">Esta área é exclusiva para administradores</p>
+        <h2 className="text-3xl font-black text-brand-secondary uppercase tracking-tighter">Acesso Restrito</h2>
+        <p className="text-brand-accent font-bold uppercase tracking-widest text-sm">Esta área é exclusiva para administradores</p>
       </div>
     );
   }
@@ -124,54 +126,57 @@ export const AdminView: React.FC<AdminViewProps> = ({
   return (
     <div className="space-y-10 animate-in fade-in duration-500">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
-        <div>
-          <h2 className="text-4xl font-black text-slate-900 uppercase tracking-tighter">Painel de Controle</h2>
-          <p className="text-sm font-bold text-slate-400 uppercase tracking-widest mt-2">Configurações avançadas do sistema</p>
+        <div className="flex items-center gap-6">
+          <Logo size="lg" className="hidden md:flex" />
+          <div>
+            <h2 className="text-4xl font-black text-brand-secondary uppercase tracking-tighter">Painel de Controle</h2>
+            <p className="text-sm font-bold text-brand-accent uppercase tracking-widest mt-2">Configurações avançadas do sistema</p>
+          </div>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-8">
           {pendingRequests.length > 0 && (
-            <section className="bg-indigo-600 p-10 rounded-[3rem] shadow-xl shadow-indigo-100 space-y-8 animate-in slide-in-from-top duration-500">
+            <section className="bg-brand-primary p-10 rounded-[3rem] shadow-xl shadow-brand-primary/10 space-y-8 animate-in slide-in-from-top duration-500">
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4 text-white">
-                  <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center">
+                <div className="flex items-center gap-4 text-brand-secondary">
+                  <div className="w-12 h-12 bg-brand-secondary/10 rounded-2xl flex items-center justify-center">
                     <UserPlus className="w-6 h-6" />
                   </div>
                   <div>
                     <h3 className="text-2xl font-black uppercase tracking-tight">Solicitações Pendentes</h3>
-                    <p className="text-xs font-bold text-indigo-200 uppercase tracking-widest">Novos usuários aguardando aprovação</p>
+                    <p className="text-xs font-bold text-brand-secondary/60 uppercase tracking-widest">Novos usuários aguardando aprovação</p>
                   </div>
                 </div>
-                <span className="bg-white text-indigo-600 px-4 py-1 rounded-full text-xs font-black uppercase tracking-widest animate-pulse">
+                <span className="bg-brand-secondary text-brand-primary px-4 py-1 rounded-full text-xs font-black uppercase tracking-widest animate-pulse">
                   {pendingRequests.length}
                 </span>
               </div>
 
               <div className="space-y-4">
                 {pendingRequests.map((req) => (
-                  <div key={req.id} className="bg-white/10 backdrop-blur-md rounded-3xl p-6 flex flex-col md:flex-row items-center justify-between gap-6 border border-white/10">
-                    <div className="flex items-center gap-4 text-white">
-                      <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center text-indigo-600">
+                  <div key={req.id} className="bg-brand-secondary/5 backdrop-blur-md rounded-3xl p-6 flex flex-col md:flex-row items-center justify-between gap-6 border border-brand-secondary/10">
+                    <div className="flex items-center gap-4 text-brand-secondary">
+                      <div className="w-12 h-12 bg-brand-secondary rounded-2xl flex items-center justify-center text-brand-primary">
                         <UserCheck className="w-6 h-6" />
                       </div>
                       <div>
                         <p className="font-black uppercase tracking-tight">{req.name}</p>
-                        <p className="text-xs font-medium text-indigo-100">{req.email}</p>
-                        {req.phone && <p className="text-[10px] font-bold text-indigo-200 uppercase tracking-widest mt-1">{req.phone}</p>}
+                        <p className="text-xs font-medium text-brand-secondary/80">{req.email}</p>
+                        {req.phone && <p className="text-[10px] font-bold text-brand-secondary/60 uppercase tracking-widest mt-1">{req.phone}</p>}
                       </div>
                     </div>
                     <div className="flex items-center gap-3 w-full md:w-auto">
                       <button 
                         onClick={() => onRejectRequest(req.id)}
-                        className="flex-1 md:flex-none p-4 bg-rose-500/20 text-rose-100 hover:bg-rose-500/40 rounded-2xl transition-all"
+                        className="flex-1 md:flex-none p-4 bg-brand-accent/10 text-brand-accent hover:bg-brand-accent/20 rounded-2xl transition-all"
                       >
                         <X className="w-5 h-5" />
                       </button>
                       <button 
                         onClick={() => onApproveRequest(req)}
-                        className="flex-1 md:flex-none flex items-center justify-center gap-3 px-8 py-4 bg-white text-indigo-600 rounded-2xl font-black uppercase tracking-widest hover:bg-indigo-50 transition-all shadow-lg"
+                        className="flex-1 md:flex-none flex items-center justify-center gap-3 px-8 py-4 bg-brand-secondary text-brand-primary rounded-2xl font-black uppercase tracking-widest hover:opacity-90 transition-all shadow-lg"
                       >
                         <Check className="w-5 h-5" /> Aprovar
                       </button>
@@ -182,15 +187,15 @@ export const AdminView: React.FC<AdminViewProps> = ({
             </section>
           )}
 
-          <section className="bg-white p-10 rounded-[3rem] border border-slate-200 shadow-sm space-y-8">
+          <section className="bg-white p-10 rounded-[3rem] border border-brand-accent/20 shadow-sm space-y-8">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4 text-slate-900">
-                <div className="w-12 h-12 bg-slate-100 rounded-2xl flex items-center justify-center">
-                  <Zap className="w-6 h-6" />
+              <div className="flex items-center gap-4 text-brand-secondary">
+                <div className="w-12 h-12 bg-brand-light rounded-2xl flex items-center justify-center">
+                  <Zap className="w-6 h-6 text-brand-primary" />
                 </div>
                 <div>
                   <h3 className="text-2xl font-black uppercase tracking-tight">Controle de Acesso</h3>
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Monitoramento de leituras por sócio</p>
+                  <p className="text-xs font-bold text-brand-accent uppercase tracking-widest">Monitoramento de leituras por sócio</p>
                 </div>
               </div>
               <div className="flex items-center gap-6">
@@ -201,14 +206,14 @@ export const AdminView: React.FC<AdminViewProps> = ({
                       type="number" 
                       defaultValue={systemMetadata.dailyReadQuota || 50000}
                       onBlur={(e) => updateQuotaSettings(parseInt(e.target.value))}
-                      className="w-20 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-sm font-black text-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      className="w-20 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-sm font-black text-brand-primary focus:outline-none focus:ring-2 focus:ring-brand-primary/50"
                     />
                     <span className="text-[10px] text-slate-400 font-bold">leituras</span>
                   </div>
                 </div>
                 <div className="text-right">
                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Cota por Sócio</p>
-                  <p className="text-xl font-black text-indigo-600">
+                  <p className="text-xl font-black text-brand-primary">
                     ~{Math.floor((systemMetadata.dailyReadQuota || 50000) / (players.length || 1))} 
                     <span className="text-[10px] text-slate-400"> leituras/dia</span>
                   </p>
@@ -243,17 +248,17 @@ export const AdminView: React.FC<AdminViewProps> = ({
                         const isAdmin = player.isAdmin || isMaster;
                         
                         return (
-                          <tr key={player.id} className={`bg-slate-50 hover:bg-slate-100 transition-all group ${isMaster ? 'border-l-4 border-indigo-600' : ''}`}>
+                          <tr key={player.id} className={`bg-slate-50 hover:bg-slate-100 transition-all group ${isMaster ? 'border-l-4 border-brand-primary' : ''}`}>
                             <td className="px-4 py-4 rounded-l-2xl">
                               <div className="flex items-center gap-3">
-                                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-black ${isMaster ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-500'}`}>
+                                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-black ${isMaster ? 'bg-brand-primary text-brand-secondary' : 'bg-slate-200 text-slate-500'}`}>
                                   {player.name.charAt(0)}
                                 </div>
                                 <div>
                                   <p className="text-sm font-black text-slate-800 uppercase tracking-tight">
                                     {player.name}
                                     {isMaster && (
-                                      <span className="ml-2 px-1.5 py-0.5 bg-indigo-100 text-indigo-700 text-[8px] rounded-full uppercase tracking-tighter">Master</span>
+                                      <span className="ml-2 px-1.5 py-0.5 bg-brand-primary/20 text-brand-primary text-[8px] rounded-full uppercase tracking-tighter">Master</span>
                                     )}
                                   </p>
                                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{player.email || 'Sem email'}</p>
@@ -263,11 +268,11 @@ export const AdminView: React.FC<AdminViewProps> = ({
                             <td className="px-4 py-4">
                               <div className="flex items-center gap-2">
                                 {isMaster ? (
-                                  <span className="bg-indigo-600 text-white text-[8px] font-black px-2 py-0.5 rounded uppercase tracking-widest flex items-center gap-1">
+                                  <span className="bg-brand-secondary text-brand-primary text-[8px] font-black px-2 py-0.5 rounded uppercase tracking-widest flex items-center gap-1">
                                     <Shield className="w-2 h-2" /> Master
                                   </span>
                                 ) : isAdmin ? (
-                                  <span className="bg-amber-500 text-white text-[8px] font-black px-2 py-0.5 rounded uppercase tracking-widest flex items-center gap-1">
+                                  <span className="bg-brand-primary text-brand-secondary text-[8px] font-black px-2 py-0.5 rounded uppercase tracking-widest flex items-center gap-1">
                                     <Shield className="w-2 h-2" /> Admin
                                   </span>
                                 ) : (
@@ -284,7 +289,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                               <div className="w-32 h-1.5 bg-slate-200 rounded-full overflow-hidden">
                                 <div 
                                   className={`h-full rounded-full transition-all duration-500 ${
-                                    percentage > 80 ? 'bg-rose-500' : percentage > 50 ? 'bg-amber-500' : 'bg-emerald-500'
+                                    percentage > 80 ? 'bg-rose-500' : percentage > 50 ? 'bg-brand-primary' : 'bg-emerald-500'
                                   }`}
                                   style={{ width: `${percentage}%` }}
                                 />
@@ -294,7 +299,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                               {user?.email?.toLowerCase() === 'rodneyes@gmail.com' && !isMaster && (
                                 <button 
                                   onClick={() => toggleAdmin(player)}
-                                  className={`p-2 rounded-lg transition-all ${isAdmin ? 'text-rose-600 hover:bg-rose-50' : 'text-indigo-600 hover:bg-indigo-50'}`}
+                                  className={`p-2 rounded-lg transition-all ${isAdmin ? 'text-rose-600 hover:bg-rose-50' : 'text-brand-primary hover:bg-brand-primary/10'}`}
                                   title={isAdmin ? "Remover Admin" : "Tornar Admin"}
                                 >
                                   {isAdmin ? <Shield className="w-4 h-4" /> : <Shield className="w-4 h-4 opacity-30" />}
@@ -318,14 +323,14 @@ export const AdminView: React.FC<AdminViewProps> = ({
             </div>
           </section>
 
-          <section className="bg-gradient-to-br from-slate-900 to-indigo-950 p-10 rounded-[3rem] shadow-2xl space-y-8 text-white relative overflow-hidden">
-            <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl -mr-32 -mt-32"></div>
-            <div className="absolute bottom-0 left-0 w-64 h-64 bg-emerald-500/10 rounded-full blur-3xl -ml-32 -mb-32"></div>
+          <section className="bg-gradient-to-br from-brand-secondary to-brand-secondary/90 p-10 rounded-[3rem] shadow-2xl space-y-8 text-white relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-64 h-64 bg-brand-primary/10 rounded-full blur-3xl -mr-32 -mt-32"></div>
+            <div className="absolute bottom-0 left-0 w-64 h-64 bg-brand-primary/5 rounded-full blur-3xl -ml-32 -mb-32"></div>
             
             <div className="relative flex items-center justify-between">
               <div className="flex items-center gap-4">
                 <div className="w-12 h-12 bg-white/10 backdrop-blur rounded-2xl flex items-center justify-center border border-white/20">
-                  <Activity className="w-6 h-6 text-emerald-400" />
+                  <Activity className="w-6 h-6 text-brand-primary" />
                 </div>
                 <div>
                   <h3 className="text-2xl font-black uppercase tracking-tight">Agente de Integridade IA</h3>
@@ -335,7 +340,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
               <div className="flex gap-3">
                 <button 
                   onClick={fixDatabaseAnomalies}
-                  className="flex items-center gap-2 px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-xs transition-all bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-lg shadow-amber-500/20"
+                  className="flex items-center gap-2 px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-xs transition-all bg-brand-primary hover:bg-brand-primary/90 text-brand-secondary shadow-lg shadow-brand-primary/20"
                 >
                   <RefreshCw className="w-4 h-4" />
                   Corrigir Anomalias
@@ -346,7 +351,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                   className={`flex items-center gap-2 px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-xs transition-all ${
                     isScanningAnomalies 
                       ? 'bg-slate-800 text-slate-500 cursor-not-allowed' 
-                      : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-lg shadow-emerald-500/20'
+                      : 'bg-brand-primary/20 hover:bg-brand-primary/30 text-brand-primary border border-brand-primary/20'
                   }`}
                 >
                   {isScanningAnomalies ? (
@@ -366,11 +371,11 @@ export const AdminView: React.FC<AdminViewProps> = ({
 
             {anomalyReport && (
               <div className="relative bg-white/5 backdrop-blur border border-white/10 rounded-[2rem] p-8 animate-in fade-in slide-in-from-top-4 duration-500">
-                <div className="flex items-center gap-2 mb-6 text-emerald-400">
+                <div className="flex items-center gap-2 mb-6 text-brand-primary">
                   <Shield className="w-5 h-5" />
                   <h4 className="font-black uppercase tracking-widest text-sm">Relatório de Integridade</h4>
                 </div>
-                <div className="prose prose-invert prose-sm max-w-none prose-p:text-slate-300 prose-headings:text-white prose-strong:text-emerald-400 prose-ul:text-slate-300">
+                <div className="prose prose-invert prose-sm max-w-none prose-p:text-slate-300 prose-headings:text-white prose-strong:text-brand-primary prose-ul:text-slate-300">
                   <Markdown>{anomalyReport}</Markdown>
                 </div>
               </div>
@@ -395,56 +400,56 @@ export const AdminView: React.FC<AdminViewProps> = ({
             <div className="grid md:grid-cols-2 gap-6">
               <button 
                 onClick={recalculateDailyStats}
-                className="flex flex-col items-start p-8 bg-amber-50 border border-amber-100 rounded-3xl hover:bg-amber-100 transition-all group text-left"
+                className="flex flex-col items-start p-8 bg-brand-primary/5 border border-brand-primary/10 rounded-3xl hover:bg-brand-primary/10 transition-all group text-left"
               >
-                <RefreshCw className="w-8 h-8 text-amber-600 mb-4 group-hover:rotate-180 transition-transform duration-500" />
-                <h4 className="font-black text-amber-900 uppercase text-sm tracking-widest mb-2">Recuperar Estatísticas de Hoje</h4>
-                <p className="text-amber-700/70 text-xs font-medium leading-relaxed">Recalcula as vitórias e derrotas de hoje a partir do histórico de partidas.</p>
+                <RefreshCw className="w-8 h-8 text-brand-primary mb-4 group-hover:rotate-180 transition-transform duration-500" />
+                <h4 className="font-black text-brand-secondary uppercase text-sm tracking-widest mb-2">Recuperar Estatísticas de Hoje</h4>
+                <p className="text-brand-accent text-xs font-medium leading-relaxed">Recalcula as vitórias e derrotas de hoje a partir do histórico de partidas.</p>
               </button>
 
               <button 
                 onClick={resetDailyStats}
-                className="flex flex-col items-start p-8 bg-amber-50 border border-amber-100 rounded-3xl hover:bg-amber-100 transition-all group text-left"
+                className="flex flex-col items-start p-8 bg-brand-primary/5 border border-brand-primary/10 rounded-3xl hover:bg-brand-primary/10 transition-all group text-left"
               >
-                <RefreshCw className="w-8 h-8 text-amber-600 mb-4 group-hover:rotate-180 transition-transform duration-500" />
-                <h4 className="font-black text-amber-900 uppercase text-sm tracking-widest mb-2">Finalizar Dia de Jogos</h4>
-                <p className="text-amber-700/70 text-xs font-medium leading-relaxed">Zera as estatísticas diárias e arquiva as partidas de hoje para iniciar uma nova sessão.</p>
+                <RefreshCw className="w-8 h-8 text-brand-primary mb-4 group-hover:rotate-180 transition-transform duration-500" />
+                <h4 className="font-black text-brand-secondary uppercase text-sm tracking-widest mb-2">Finalizar Dia de Jogos</h4>
+                <p className="text-brand-accent text-xs font-medium leading-relaxed">Zera as estatísticas diárias e arquiva as partidas de hoje para iniciar uma nova sessão.</p>
               </button>
 
               <button 
                 onClick={repairDatabase}
-                className="flex flex-col items-start p-8 bg-indigo-50 border border-indigo-100 rounded-3xl hover:bg-indigo-100 transition-all group text-left"
+                className="flex flex-col items-start p-8 bg-brand-primary/5 border border-brand-primary/10 rounded-3xl hover:bg-brand-primary/10 transition-all group text-left"
               >
-                <Database className="w-8 h-8 text-indigo-600 mb-4 group-hover:scale-110 transition-transform duration-500" />
-                <h4 className="font-black text-indigo-900 uppercase text-sm tracking-widest mb-2">Reparar Banco de Dados</h4>
-                <p className="text-indigo-700/70 text-xs font-medium leading-relaxed">Corrige inconsistências, remove sócios inválidos e inicializa históricos.</p>
+                <Database className="w-8 h-8 text-brand-primary mb-4 group-hover:scale-110 transition-transform duration-500" />
+                <h4 className="font-black text-brand-secondary uppercase text-sm tracking-widest mb-2">Reparar Banco de Dados</h4>
+                <p className="text-brand-accent text-xs font-medium leading-relaxed">Corrige inconsistências, remove sócios inválidos e inicializa históricos.</p>
               </button>
 
               <button 
                 onClick={initializeEloHistory}
-                className="flex flex-col items-start p-8 bg-blue-50 border border-blue-100 rounded-3xl hover:bg-blue-100 transition-all group text-left"
+                className="flex flex-col items-start p-8 bg-brand-primary/5 border border-brand-primary/10 rounded-3xl hover:bg-brand-primary/10 transition-all group text-left"
               >
-                <Clock className="w-8 h-8 text-blue-600 mb-4 group-hover:rotate-12 transition-transform duration-500" />
-                <h4 className="font-black text-blue-900 uppercase text-sm tracking-widest mb-2">Inicializar Histórico ELO</h4>
-                <p className="text-blue-700/70 text-xs font-medium leading-relaxed">Cria o primeiro ponto no gráfico de ELO para todos os sócios.</p>
+                <Clock className="w-8 h-8 text-brand-primary mb-4 group-hover:rotate-12 transition-transform duration-500" />
+                <h4 className="font-black text-brand-secondary uppercase text-sm tracking-widest mb-2">Inicializar Histórico ELO</h4>
+                <p className="text-brand-accent text-xs font-medium leading-relaxed">Cria o primeiro ponto no gráfico de ELO para todos os sócios.</p>
               </button>
 
               <button 
                 onClick={triggerSync}
-                className="flex flex-col items-start p-8 bg-indigo-50 border border-indigo-100 rounded-3xl hover:bg-indigo-100 transition-all group text-left"
+                className="flex flex-col items-start p-8 bg-brand-primary/5 border border-brand-primary/10 rounded-3xl hover:bg-brand-primary/10 transition-all group text-left"
               >
-                <RefreshCw className="w-8 h-8 text-indigo-600 mb-4 group-hover:rotate-180 transition-transform duration-500" />
-                <h4 className="font-black text-indigo-900 uppercase text-sm tracking-widest mb-2">Forçar Sincronização</h4>
-                <p className="text-indigo-700/70 text-xs font-medium leading-relaxed">Sincroniza manualmente todos os dados locais com o banco de dados na nuvem.</p>
+                <RefreshCw className="w-8 h-8 text-brand-primary mb-4 group-hover:rotate-180 transition-transform duration-500" />
+                <h4 className="font-black text-brand-secondary uppercase text-sm tracking-widest mb-2">Forçar Sincronização</h4>
+                <p className="text-brand-accent text-xs font-medium leading-relaxed">Sincroniza manualmente todos os dados locais com o banco de dados na nuvem.</p>
               </button>
 
               <button 
                 onClick={recalculateStats}
-                className="flex flex-col items-start p-8 bg-emerald-50 border border-emerald-100 rounded-3xl hover:bg-emerald-100 transition-all group text-left"
+                className="flex flex-col items-start p-8 bg-brand-primary/5 border border-brand-primary/10 rounded-3xl hover:bg-brand-primary/10 transition-all group text-left"
               >
-                <RefreshCw className="w-8 h-8 text-emerald-600 mb-4 group-hover:rotate-180 transition-transform duration-500" />
-                <h4 className="font-black text-emerald-900 uppercase text-sm tracking-widest mb-2">Recalcular Estatísticas</h4>
-                <p className="text-emerald-700/70 text-xs font-medium leading-relaxed">Reconstrói as sinergias e rivalidades a partir de todo o histórico de partidas.</p>
+                <RefreshCw className="w-8 h-8 text-brand-primary mb-4 group-hover:rotate-180 transition-transform duration-500" />
+                <h4 className="font-black text-brand-secondary uppercase text-sm tracking-widest mb-2">Recalcular Estatísticas</h4>
+                <p className="text-brand-accent text-xs font-medium leading-relaxed">Reconstrói as sinergias e rivalidades a partir de todo o histórico de partidas.</p>
               </button>
 
               <button 
@@ -453,7 +458,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
               >
                 <Trash2 className="w-8 h-8 text-rose-600 mb-4 group-hover:scale-110 transition-transform duration-500" />
                 <h4 className="font-black text-rose-900 uppercase text-sm tracking-widest mb-2">Zerar Histórico de Partidas</h4>
-                <p className="text-rose-700/70 text-xs font-medium leading-relaxed">Exclui TODAS as partidas registradas. As estatísticas dos sócios permanecem intactas.</p>
+                <p className="text-rose-700/70 text-xs font-medium leading-relaxed">Exclui TODAS as partidas registradas e zera os gráficos de evolução. O ELO atual e vitórias/derrotas permanecem intactos.</p>
               </button>
 
               <button 
@@ -462,7 +467,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
               >
                 <RefreshCw className="w-8 h-8 text-rose-600 mb-4 group-hover:rotate-180 transition-transform duration-500" />
                 <h4 className="font-black text-rose-900 uppercase text-sm tracking-widest mb-2">Resetar ELO de Todos</h4>
-                <p className="text-rose-700/70 text-xs font-medium leading-relaxed">Reseta o ELO de todos os sócios para 1200 (valor inicial).</p>
+                <p className="text-rose-700/70 text-xs font-medium leading-relaxed">Reseta o ELO de todos os sócios para 1200 e limpa o histórico de evolução.</p>
               </button>
             </div>
           </section>
@@ -555,12 +560,12 @@ export const AdminView: React.FC<AdminViewProps> = ({
               </button>
               <button 
                 onClick={() => createDataSnapshot()}
-                className="flex items-center gap-4 p-6 bg-indigo-600 text-white rounded-2xl hover:bg-indigo-700 transition-all text-left shadow-lg shadow-indigo-200"
+                className="flex items-center gap-4 p-6 bg-brand-primary text-brand-secondary rounded-2xl hover:bg-brand-primary/90 transition-all text-left shadow-lg shadow-brand-primary/20"
               >
                 <Shield className="w-6 h-6" />
                 <div>
                   <h4 className="font-black uppercase text-[10px] tracking-widest">Criar Snapshot</h4>
-                  <p className="text-indigo-100 text-[10px] font-medium">Backup manual do estado atual</p>
+                  <p className="text-brand-secondary/80 text-[10px] font-medium">Backup manual do estado atual</p>
                 </div>
               </button>
             </div>
@@ -568,34 +573,69 @@ export const AdminView: React.FC<AdminViewProps> = ({
         </div>
 
         <div className="space-y-8">
-          <section className="bg-slate-900 p-10 rounded-[3rem] text-white space-y-8">
+          <section className="bg-brand-secondary p-10 rounded-[3rem] text-white space-y-8">
             <div className="flex items-center gap-4">
-              <Zap className="w-6 h-6 text-amber-400" />
-              <h3 className="text-xl font-black uppercase tracking-tight">Consumo Firestore</h3>
+              <Zap className="w-6 h-6 text-brand-primary" />
+              <h3 className="text-xl font-black uppercase tracking-tight">Painel de Custos e Consumo</h3>
             </div>
-            <div className="space-y-6">
-              {[
-                { label: "Leituras Estimadas", value: usageStats.reads, max: systemMetadata.dailyReadQuota || 50000 },
-                { label: "Escritas Estimadas", value: usageStats.writes, max: 20000 },
-                { label: "Chamadas IA (Gemini)", value: usageStats.aiCalls || 0, max: systemMetadata.dailyAICallsQuota || 100 },
-              ].map((stat, i) => (
-                <div key={i} className="space-y-2">
-                  <div className="flex justify-between items-end">
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{stat.label}</p>
-                    <p className="text-lg font-black font-mono">{stat.value} / {stat.max}</p>
-                  </div>
-                  <div className="h-2 bg-white/10 rounded-full overflow-hidden">
-                    <div 
-                      className={`h-full rounded-full transition-all duration-1000 ${
-                        (stat.value / stat.max) > 0.8 ? 'bg-rose-500' : (stat.value / stat.max) > 0.5 ? 'bg-amber-500' : 'bg-emerald-500'
-                      }`}
-                      style={{ width: `${Math.min(100, (stat.value / (stat.max || 1)) * 100)}%` }}
-                    />
-                  </div>
+            
+            <div className="bg-white/5 p-6 rounded-2xl border border-white/10">
+              <h4 className="text-sm font-black uppercase tracking-widest text-brand-primary mb-4">Consumo Mensal Acumulado</h4>
+              <div className="grid grid-cols-3 gap-4 mb-6">
+                <div className="bg-black/20 p-4 rounded-xl">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Leituras</p>
+                  <p className="text-xl font-black font-mono">{monthlyUsageStats?.reads || 0}</p>
                 </div>
-              ))}
+                <div className="bg-black/20 p-4 rounded-xl">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Gravações</p>
+                  <p className="text-xl font-black font-mono">{monthlyUsageStats?.writes || 0}</p>
+                </div>
+                <div className="bg-black/20 p-4 rounded-xl">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">IA (Gemini/TTS)</p>
+                  <p className="text-xl font-black font-mono">{monthlyUsageStats?.aiCalls || 0}</p>
+                </div>
+              </div>
               
-              <div className="pt-4 border-t border-white/10 space-y-4">
+              <div className="pt-4 border-t border-white/10">
+                <div className="flex justify-between items-center mb-2">
+                  <h4 className="text-sm font-black uppercase tracking-widest text-brand-primary">Custo Estimado (Mês Atual)</h4>
+                  <p className="text-2xl font-black text-brand-primary font-mono">
+                    US$ {((((monthlyUsageStats?.reads || 0) * 0.036) / 100000) + (((monthlyUsageStats?.writes || 0) * 0.108) / 100000) + (((monthlyUsageStats?.aiCalls || 0) * 0.001))).toFixed(4)}
+                  </p>
+                </div>
+                <p className="text-[10px] text-slate-400 leading-relaxed">
+                  * O Google Cloud oferece uma cota gratuita generosa (50k leituras/dia, Gemini Free Tier). Este valor é uma estimativa de quanto custaria se você estivesse fora do plano gratuito. O faturamento real deve ser consultado no Google Cloud Console.
+                </p>
+              </div>
+            </div>
+
+            <div className="pt-4 border-t border-white/10">
+              <h4 className="text-sm font-black uppercase tracking-widest text-slate-300 mb-6">Consumo Diário (Hoje)</h4>
+              <div className="space-y-6">
+                {[
+                  { label: "Leituras Estimadas", value: usageStats.reads, max: systemMetadata.dailyReadQuota || 50000 },
+                  { label: "Escritas Estimadas", value: usageStats.writes, max: 20000 },
+                  { label: "Chamadas IA (Gemini)", value: usageStats.aiCalls || 0, max: systemMetadata.dailyAICallsQuota || 100 },
+                ].map((stat, i) => (
+                  <div key={i} className="space-y-2">
+                    <div className="flex justify-between items-end">
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{stat.label}</p>
+                      <p className="text-lg font-black font-mono">{stat.value} / {stat.max}</p>
+                    </div>
+                    <div className="h-2 bg-white/10 rounded-full overflow-hidden">
+                      <div 
+                        className={`h-full rounded-full transition-all duration-1000 ${
+                          (stat.value / stat.max) > 0.8 ? 'bg-rose-500' : (stat.value / stat.max) > 0.5 ? 'bg-brand-primary' : 'bg-emerald-500'
+                        }`}
+                        style={{ width: `${Math.min(100, (stat.value / (stat.max || 1)) * 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+              
+            <div className="pt-4 border-t border-white/10 space-y-4">
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Configurar Limite Diário IA</p>
                 <div className="flex gap-2">
                   {[50, 100, 200, 500].map(q => (
@@ -604,7 +644,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                       onClick={() => setSystemMetadata({ dailyAICallsQuota: q })}
                       className={`flex-1 py-2 rounded-xl text-[10px] font-black transition-all ${
                         (systemMetadata.dailyAICallsQuota || 100) === q
-                          ? 'bg-amber-500 text-slate-900'
+                          ? 'bg-brand-primary text-brand-secondary'
                           : 'bg-white/10 text-slate-400 hover:bg-white/20'
                       }`}
                     >
@@ -620,7 +660,6 @@ export const AdminView: React.FC<AdminViewProps> = ({
               <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest leading-relaxed">
                 * Valores baseados no uso da sessão e sincronizados entre administradores. Limites diários do plano gratuito.
               </p>
-            </div>
           </section>
 
           <section className="bg-slate-900 p-10 rounded-[3rem] text-white space-y-8">

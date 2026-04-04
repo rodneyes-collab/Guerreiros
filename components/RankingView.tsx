@@ -19,7 +19,8 @@ import {
   RotateCcw,
   Sparkles,
   Swords,
-  History
+  History,
+  X
 } from 'lucide-react';
 import { 
   LineChart, 
@@ -46,6 +47,7 @@ import {
 } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
 import { WinLossChart } from '../src/components/WinLossChart';
+import { translateGender } from '../utils/helpers';
 
 interface RankingViewProps {
   userRole: 'ADMIN' | 'MEMBER';
@@ -53,6 +55,7 @@ interface RankingViewProps {
   handleAnnounceSummary: () => void;
   isNarratingSummary: boolean;
   resetDailyMatches: () => Promise<void>;
+  isDark?: boolean;
 }
 
 export const RankingView: React.FC<RankingViewProps> = ({
@@ -60,7 +63,8 @@ export const RankingView: React.FC<RankingViewProps> = ({
   refreshPlayers,
   handleAnnounceSummary,
   isNarratingSummary,
-  resetDailyMatches
+  resetDailyMatches,
+  isDark = false
 }) => {
   const { synergy, negativeSynergy, rivalry, players, matches, isSyncing, currentPlayer } = useStore();
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
@@ -81,6 +85,8 @@ export const RankingView: React.FC<RankingViewProps> = ({
   const [activeTab, setActiveTab] = useState<'daily' | 'individual'>('daily');
   const [selectedDailyDate, setSelectedDailyDate] = useState<string>('Hoje');
   const [rankingSearchQuery, setRankingSearchQuery] = useState('');
+  const [timeRange, setTimeRange] = useState<'7' | '30' | 'all'>('all');
+  const [chartMetric, setChartMetric] = useState<'elo' | 'winrate' | 'matches'>('elo');
 
   const [comparisonPlayerId, setComparisonPlayerId] = useState<string | null>(null);
   const [isListModalOpen, setIsListModalOpen] = useState(false);
@@ -210,7 +216,18 @@ export const RankingView: React.FC<RankingViewProps> = ({
   const eloChartData = useMemo(() => {
     if (!selectedPlayer?.eloHistory) return [];
     
-    return selectedPlayer.eloHistory.map(h => {
+    let history = [...selectedPlayer.eloHistory];
+    
+    // Apply time range filter
+    if (timeRange !== 'all') {
+      const days = parseInt(timeRange);
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - days);
+      const cutoffStr = cutoff.toISOString().split('T')[0];
+      history = history.filter(h => h.date >= cutoffStr);
+    }
+    
+    return history.map(h => {
       const dateStr = h.date;
       // Extract only the date part if it's a full ISO string
       const cleanDateStr = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr;
@@ -243,9 +260,22 @@ export const RankingView: React.FC<RankingViewProps> = ({
   const dailyPerformanceData = useMemo(() => {
     if (!selectedPlayer?.eloHistory || selectedPlayer.eloHistory.length < 2) return [];
     
-    const history = selectedPlayer.eloHistory;
-    const variations: Record<string, number> = {};
+    let history = [...selectedPlayer.eloHistory];
     
+    // Apply time range filter
+    if (timeRange !== 'all') {
+      const days = parseInt(timeRange);
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - days);
+      const cutoffStr = cutoff.toISOString().split('T')[0];
+      history = history.filter(h => h.date >= cutoffStr);
+    }
+    
+    if (history.length < 2) return [];
+    
+    const variations: Record<string, { variation: number, wins: number, matches: number }> = {};
+    
+    // Calculate daily variations
     for (let i = 1; i < history.length; i++) {
       const prev = history[i-1];
       const curr = history[i];
@@ -255,21 +285,43 @@ export const RankingView: React.FC<RankingViewProps> = ({
       const cleanDateStr = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr;
       
       if (!variations[cleanDateStr]) {
-        variations[cleanDateStr] = 0;
+        variations[cleanDateStr] = { variation: 0, wins: 0, matches: 0 };
       }
-      variations[cleanDateStr] += diff;
+      variations[cleanDateStr].variation += diff;
     }
+    
+    // Add wins and matches per day from matches history
+    const playerMatches = matches.filter(m => 
+      m.teamA.includes(selectedPlayer.id) || m.teamB.includes(selectedPlayer.id)
+    );
+    
+    playerMatches.forEach(m => {
+      const dateStr = m.date;
+      if (!variations[dateStr]) {
+        variations[dateStr] = { variation: 0, wins: 0, matches: 0 };
+      }
+      variations[dateStr].matches += 1;
+      const isWinner = (m.winner === 'A' && m.teamA.includes(selectedPlayer.id)) || 
+                       (m.winner === 'B' && m.teamB.includes(selectedPlayer.id));
+      if (isWinner) {
+        variations[dateStr].wins += 1;
+      }
+    });
     
     return Object.entries(variations)
       .sort(([dateA], [dateB]) => dateA.localeCompare(dateB))
-      .map(([dateStr, variation]) => {
+      .map(([dateStr, stats]) => {
         const dateObj = new Date(dateStr + 'T00:00:00');
         return {
           date: dateObj.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }),
-          variation
+          fullDate: dateStr,
+          variation: stats.variation,
+          wins: stats.wins,
+          matches: stats.matches,
+          winRate: stats.matches > 0 ? Math.round((stats.wins / stats.matches) * 100) : 0
         };
       });
-  }, [selectedPlayer]);
+  }, [selectedPlayer, matches, timeRange]);
 
   // Chart Data: Radar Skills
   const groupAverages = useMemo(() => {
@@ -578,8 +630,8 @@ export const RankingView: React.FC<RankingViewProps> = ({
           transition: isPulling ? 'none' : 'transform 0.3s ease, opacity 0.3s ease'
         }}
       >
-        <div className="bg-white p-2 rounded-full shadow-lg border border-slate-200">
-          <RotateCcw className={`w-6 h-6 text-emerald-600 ${isSyncing ? 'animate-spin' : ''}`} />
+        <div className="bg-white p-2 rounded-full shadow-lg border border-brand-accent">
+          <RotateCcw className={`w-6 h-6 text-brand-primary ${isSyncing ? 'animate-spin' : ''}`} />
         </div>
       </div>
 
@@ -589,18 +641,18 @@ export const RankingView: React.FC<RankingViewProps> = ({
           <motion.h2 
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
-            className="text-4xl font-black text-slate-900 uppercase tracking-tighter"
+            className={`text-4xl font-black uppercase tracking-tighter text-white`}
           >
-            Ranking <span className="text-indigo-600">Pro</span>
+            Ranking <span className="text-brand-primary">Pro</span>
           </motion.h2>
-          <p className="text-sm font-bold text-slate-400 uppercase tracking-widest mt-2">Inteligência e Performance</p>
+          <p className={`text-sm font-bold uppercase tracking-widest mt-2 text-brand-accent`}>Inteligência e Performance</p>
         </div>
         <div className="flex w-full md:w-auto gap-3">
           {userRole === 'ADMIN' && (
             <button 
               onClick={handleAnnounceSummary}
               disabled={isNarratingSummary}
-              className="flex-1 md:flex-none bg-indigo-600 text-white px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-indigo-700 shadow-xl shadow-indigo-100 transition-all disabled:opacity-50"
+              className="flex-1 md:flex-none bg-brand-primary text-brand-secondary px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-brand-primary/90 shadow-xl shadow-brand-primary/10 transition-all disabled:opacity-50 border border-brand-primary/20"
             >
               <Sparkles className={`w-5 h-5 ${isNarratingSummary ? 'animate-spin' : ''}`} />
               {isNarratingSummary ? 'Narrando...' : 'Resumo IA'}
@@ -610,13 +662,13 @@ export const RankingView: React.FC<RankingViewProps> = ({
       </div>
 
       {/* Tabs Switcher */}
-      <div className="bg-slate-200/50 p-1.5 rounded-2xl flex gap-1">
+      <div className={`bg-white/5 p-1.5 rounded-2xl flex gap-1 border border-white/10`}>
         <button
           onClick={() => setActiveTab('daily')}
           className={`flex-1 py-3 px-4 rounded-xl font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${
             activeTab === 'daily' 
-              ? 'bg-white text-indigo-600 shadow-sm' 
-              : 'text-slate-500 hover:text-slate-700'
+              ? 'bg-brand-primary text-brand-secondary shadow-lg shadow-brand-primary/20' 
+              : `text-white/40 hover:text-white`
           }`}
         >
           <Calendar className="w-4 h-4" />
@@ -626,8 +678,8 @@ export const RankingView: React.FC<RankingViewProps> = ({
           onClick={() => setActiveTab('individual')}
           className={`flex-1 py-3 px-4 rounded-xl font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${
             activeTab === 'individual' 
-              ? 'bg-white text-indigo-600 shadow-sm' 
-              : 'text-slate-500 hover:text-slate-700'
+              ? 'bg-brand-primary text-brand-secondary shadow-lg shadow-brand-primary/20' 
+              : `text-white/40 hover:text-white`
           }`}
         >
           <Users className="w-4 h-4" />
@@ -648,10 +700,10 @@ export const RankingView: React.FC<RankingViewProps> = ({
             <section className="space-y-6">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="p-2 bg-amber-50 rounded-xl">
-                    <Sparkles className="w-5 h-5 text-amber-600" />
+                  <div className="p-2 bg-brand-primary/10 rounded-xl">
+                    <Sparkles className="w-5 h-5 text-brand-primary" />
                   </div>
-                  <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Destaques de Hoje</h3>
+                  <h3 className={`text-xl font-black uppercase tracking-tight text-white`}>Destaques de Hoje</h3>
                 </div>
                 <div className="flex items-center gap-2 overflow-x-auto pb-2 no-scrollbar">
                   {availableDates.map(date => (
@@ -660,8 +712,8 @@ export const RankingView: React.FC<RankingViewProps> = ({
                       onClick={() => setSelectedDailyDate(date)}
                       className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap border ${
                         selectedDailyDate === date 
-                          ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg shadow-indigo-100' 
-                          : 'bg-white border-slate-200 text-slate-400 hover:border-indigo-200'
+                          ? 'bg-brand-primary border-brand-primary text-brand-secondary shadow-lg shadow-brand-primary/20' 
+                          : `bg-white/5 border-white/10 text-white/60 hover:text-white`
                       }`}
                     >
                       {date === 'Hoje' ? 'Hoje' : new Date(date + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
@@ -671,7 +723,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
                 {userRole === 'ADMIN' && selectedDailyDate === 'Hoje' && (
                   <button 
                     onClick={resetDailyMatches}
-                    className="p-2 bg-slate-100 hover:bg-rose-50 hover:text-rose-600 rounded-xl text-slate-400 transition-all"
+                    className="p-2 bg-white/5 hover:bg-brand-primary/10 hover:text-brand-primary rounded-xl text-brand-accent transition-all"
                     title="Finalizar Dia"
                   >
                     <RotateCcw className="w-4 h-4" />
@@ -683,15 +735,15 @@ export const RankingView: React.FC<RankingViewProps> = ({
                 <motion.div 
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  className="bg-gradient-to-br from-amber-500 to-orange-600 p-6 rounded-[2.5rem] text-white shadow-xl shadow-amber-200 relative overflow-hidden group"
+                  className={`bg-black border-white/10 p-6 rounded-[2.5rem] shadow-sm relative overflow-hidden group border`}
                 >
-                  <div className="absolute top-0 right-0 p-6 opacity-20 group-hover:scale-110 transition-transform">
-                    <Trophy className="w-12 h-12" />
+                  <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                    <Trophy className="w-12 h-12 text-brand-primary" />
                   </div>
-                  <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-80 mb-2">MVP {selectedDailyDate === 'Hoje' ? 'do Dia' : ''}</p>
-                  <h4 className="text-xl font-black truncate">{topStats.dailyMvp ? (topStats.dailyMvp.name || "Sócio sem nome") : "Nenhum"}</h4>
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-brand-accent mb-2">MVP {selectedDailyDate === 'Hoje' ? 'do Dia' : ''}</p>
+                  <h4 className="text-xl font-black text-brand-primary truncate">{topStats.dailyMvp ? (topStats.dailyMvp.name || "Sócio sem nome") : "Nenhum"}</h4>
                   <div className="mt-4 flex items-center gap-2">
-                    <span className="bg-white/20 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">
+                    <span className={`bg-white/5 text-white/60 border-white/10 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border`}>
                       {topStats.dailyMvp ? `${Math.round((topStats.dailyStats[topStats.dailyMvp.id].wins / (topStats.dailyStats[topStats.dailyMvp.id].matches || 1)) * 100)}% Win Rate` : "Sem partidas"}
                     </span>
                   </div>
@@ -701,15 +753,15 @@ export const RankingView: React.FC<RankingViewProps> = ({
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
                   transition={{ delay: 0.1 }}
-                  className="bg-gradient-to-br from-indigo-500 to-purple-600 p-6 rounded-[2.5rem] text-white shadow-xl shadow-indigo-200 relative overflow-hidden group"
+                  className={`bg-black border-white/10 p-6 rounded-[2.5rem] shadow-sm relative overflow-hidden group border`}
                 >
-                  <div className="absolute top-0 right-0 p-6 opacity-20 group-hover:scale-110 transition-transform">
-                    <Target className="w-12 h-12" />
+                  <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                    <Target className="w-12 h-12 text-brand-primary" />
                   </div>
-                  <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-80 mb-2">Levantador {selectedDailyDate === 'Hoje' ? 'do Dia' : ''}</p>
-                  <h4 className="text-xl font-black truncate">{topStats.dailyBestSetter ? (topStats.dailyBestSetter.name || "Sócio sem nome") : "Nenhum"}</h4>
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-brand-accent mb-2">Levantador {selectedDailyDate === 'Hoje' ? 'do Dia' : ''}</p>
+                  <h4 className="text-xl font-black text-brand-primary truncate">{topStats.dailyBestSetter ? (topStats.dailyBestSetter.name || "Sócio sem nome") : "Nenhum"}</h4>
                   <div className="mt-4 flex items-center gap-2">
-                    <span className="bg-white/20 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">
+                    <span className={`bg-white/5 text-white/60 border-white/10 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border`}>
                       {topStats.dailyBestSetter ? `${Math.round((topStats.dailyStats[topStats.dailyBestSetter.id].wins / (topStats.dailyStats[topStats.dailyBestSetter.id].matches || 1)) * 100)}% Win Rate` : "Sem partidas"}
                     </span>
                   </div>
@@ -719,15 +771,15 @@ export const RankingView: React.FC<RankingViewProps> = ({
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
                   transition={{ delay: 0.2 }}
-                  className="bg-gradient-to-br from-emerald-500 to-teal-600 p-6 rounded-[2.5rem] text-white shadow-xl shadow-emerald-200 relative overflow-hidden group"
+                  className={`bg-black border-white/10 p-6 rounded-[2.5rem] shadow-sm relative overflow-hidden group border`}
                 >
-                  <div className="absolute top-0 right-0 p-6 opacity-20 group-hover:scale-110 transition-transform">
-                    <Zap className="w-12 h-12" />
+                  <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                    <Zap className="w-12 h-12 text-brand-primary" />
                   </div>
-                  <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-80 mb-2">Rei {selectedDailyDate === 'Hoje' ? 'do Dia' : ''}</p>
-                  <h4 className="text-xl font-black truncate">{topStats.dailyKing ? (topStats.dailyKing.name || "Sócio sem nome") : "Nenhum"}</h4>
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-brand-accent mb-2">Rei {selectedDailyDate === 'Hoje' ? 'do Dia' : ''}</p>
+                  <h4 className="text-xl font-black text-brand-primary truncate">{topStats.dailyKing ? (topStats.dailyKing.name || "Sócio sem nome") : "Nenhum"}</h4>
                   <div className="mt-4 flex items-center gap-2">
-                    <span className="bg-white/20 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">
+                    <span className={`bg-white/5 text-white/60 border-white/10 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border`}>
                       {topStats.dailyKing ? `${topStats.dailyStats[topStats.dailyKing.id].eloGain >= 0 ? '+' : ''}${topStats.dailyStats[topStats.dailyKing.id].eloGain || 0} ELO` : "Sem partidas"}
                     </span>
                   </div>
@@ -737,14 +789,14 @@ export const RankingView: React.FC<RankingViewProps> = ({
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
                   transition={{ delay: 0.3 }}
-                  className="bg-white p-6 rounded-[2.5rem] border border-slate-200 shadow-sm relative overflow-hidden group"
+                  className={`bg-black border-white/10 p-6 rounded-[2.5rem] shadow-sm relative overflow-hidden group border`}
                 >
                   <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
-                    <Activity className="w-12 h-12 text-slate-400" />
+                    <Activity className="w-12 h-12 text-brand-primary" />
                   </div>
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-2">Partidas {selectedDailyDate === 'Hoje' ? 'Hoje' : ''}</p>
-                  <h4 className="text-3xl font-black text-slate-800">{topStats.dailyMatchesCount}</h4>
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-2">Registradas</p>
+                  <p className="text-[10px] font-black text-brand-accent uppercase tracking-[0.2em] mb-2">Partidas {selectedDailyDate === 'Hoje' ? 'Hoje' : ''}</p>
+                  <h4 className="text-3xl font-black text-brand-primary">{topStats.dailyMatchesCount}</h4>
+                  <p className="text-[10px] font-bold text-brand-accent uppercase tracking-widest mt-2">Registradas</p>
                 </motion.div>
               </div>
             </section>
@@ -752,24 +804,24 @@ export const RankingView: React.FC<RankingViewProps> = ({
             {/* Global Top Stats Section */}
             <section className="space-y-6">
               <div className="flex items-center gap-3">
-                <div className="p-2 bg-indigo-50 rounded-xl">
-                  <Trophy className="w-5 h-5 text-indigo-600" />
+                <div className="p-2 bg-brand-primary/10 rounded-xl">
+                  <Trophy className="w-5 h-5 text-brand-primary" />
                 </div>
-                <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Ranking Histórico</h3>
+                <h3 className={`text-xl font-black uppercase tracking-tight text-white`}>Ranking Histórico</h3>
               </div>
               
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
                 <motion.div 
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="bg-white p-6 md:p-8 rounded-[2rem] border border-slate-200 shadow-sm relative overflow-hidden group"
+                  className={`bg-black border-white/10 p-6 md:p-8 rounded-[2rem] shadow-sm relative overflow-hidden group border`}
                 >
                   <div className="absolute top-0 right-0 p-4 md:p-6 opacity-10 group-hover:scale-110 transition-transform">
-                    <Trophy className="w-12 h-12 md:w-16 md:h-16 text-indigo-600" />
+                    <Trophy className="w-12 h-12 md:w-16 md:h-16 text-brand-primary" />
                   </div>
-                  <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-3 md:mb-4">MVP Eficiência</p>
-                  <h3 className="text-lg md:text-2xl font-black text-slate-800 truncate">{topStats.mvp ? (topStats.mvp.name || "Sócio sem nome") : "Nenhum"}</h3>
-                  <p className="text-indigo-600 font-black text-xs md:text-sm mt-1 uppercase tracking-widest">
+                  <p className="text-[9px] md:text-[10px] font-black text-brand-accent uppercase tracking-[0.2em] mb-3 md:mb-4">MVP Eficiência</p>
+                  <h3 className="text-lg md:text-2xl font-black text-brand-primary truncate">{topStats.mvp ? (topStats.mvp.name || "Sócio sem nome") : "Nenhum"}</h3>
+                  <p className="text-brand-accent font-black text-xs md:text-sm mt-1 uppercase tracking-widest">
                     {topStats.mvp ? `${Math.round((topStats.mvp.wins / (topStats.mvp.matchesPlayed || 1)) * 100)}% Aproveitamento` : "Sem partidas"}
                   </p>
                 </motion.div>
@@ -778,14 +830,14 @@ export const RankingView: React.FC<RankingViewProps> = ({
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.1 }}
-                  className="bg-white p-6 md:p-8 rounded-[2rem] border border-slate-200 shadow-sm relative overflow-hidden group"
+                  className={`bg-black border-white/10 p-6 md:p-8 rounded-[2rem] shadow-sm relative overflow-hidden group border`}
                 >
                   <div className="absolute top-0 right-0 p-4 md:p-6 opacity-10 group-hover:scale-110 transition-transform">
-                    <Target className="w-12 h-12 md:w-16 md:h-16 text-amber-600" />
+                    <Target className="w-12 h-12 md:w-16 md:h-16 text-brand-primary" />
                   </div>
-                  <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-3 md:mb-4">Melhor Levantador</p>
-                  <h3 className="text-lg md:text-2xl font-black text-slate-800 truncate">{topStats.bestSetter ? (topStats.bestSetter.name || "Sócio sem nome") : "Nenhum"}</h3>
-                  <p className="text-amber-600 font-black text-xs md:text-sm mt-1 uppercase tracking-widest">
+                  <p className="text-[9px] md:text-[10px] font-black text-brand-accent uppercase tracking-[0.2em] mb-3 md:mb-4">Melhor Levantador</p>
+                  <h3 className="text-lg md:text-2xl font-black text-brand-primary truncate">{topStats.bestSetter ? (topStats.bestSetter.name || "Sócio sem nome") : "Nenhum"}</h3>
+                  <p className="text-brand-accent font-black text-xs md:text-sm mt-1 uppercase tracking-widest">
                     {topStats.bestSetter ? `${Math.round((topStats.bestSetter.wins / (topStats.bestSetter.matchesPlayed || 1)) * 100)}% Aproveitamento` : "Sem partidas"}
                   </p>
                 </motion.div>
@@ -794,28 +846,28 @@ export const RankingView: React.FC<RankingViewProps> = ({
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.2 }}
-                  className="bg-white p-6 md:p-8 rounded-[2rem] border border-slate-200 shadow-sm relative overflow-hidden group"
+                  className={`bg-black border-white/10 p-6 md:p-8 rounded-[2rem] shadow-sm relative overflow-hidden group border`}
                 >
                   <div className="absolute top-0 right-0 p-4 md:p-6 opacity-10 group-hover:scale-110 transition-transform">
-                    <Zap className="w-12 h-12 md:w-16 md:h-16 text-emerald-600" />
+                    <Zap className="w-12 h-12 md:w-16 md:h-16 text-brand-primary" />
                   </div>
-                  <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-3 md:mb-4">Rei do ELO</p>
-                  <h3 className="text-lg md:text-2xl font-black text-slate-800 truncate">{topStats.topElo?.name || "Sócio sem nome" || '-'}</h3>
-                  <p className="text-emerald-600 font-black text-xs md:text-sm mt-1 uppercase tracking-widest">{topStats.topElo?.elo || 0} Pontos</p>
+                  <p className="text-[9px] md:text-[10px] font-black text-brand-accent uppercase tracking-[0.2em] mb-3 md:mb-4">Rei do ELO</p>
+                  <h3 className="text-lg md:text-2xl font-black text-brand-primary truncate">{topStats.topElo?.name || "Sócio sem nome" || '-'}</h3>
+                  <p className="text-brand-accent font-black text-xs md:text-sm mt-1 uppercase tracking-widest">{topStats.topElo?.elo || 0} Pontos</p>
                 </motion.div>
 
                 <motion.div 
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.3 }}
-                  className="bg-white p-6 md:p-8 rounded-[2rem] border border-slate-200 shadow-sm relative overflow-hidden group"
+                  className={`bg-black border-white/10 p-6 md:p-8 rounded-[2rem] shadow-sm relative overflow-hidden group border`}
                 >
                   <div className="absolute top-0 right-0 p-4 md:p-6 opacity-10 group-hover:scale-110 transition-transform">
-                    <Activity className="w-12 h-12 md:w-16 md:h-16 text-rose-600" />
+                    <Activity className="w-12 h-12 md:w-16 md:h-16 text-brand-primary" />
                   </div>
-                  <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-3 md:mb-4">Maior Impacto</p>
-                  <h3 className="text-lg md:text-2xl font-black text-slate-800 truncate">{topStats.topImpact ? (topStats.topImpact.name || "Sócio sem nome") : "Nenhum"}</h3>
-                  <p className="text-rose-600 font-black text-xs md:text-sm mt-1 uppercase tracking-widest">
+                  <p className="text-[9px] md:text-[10px] font-black text-brand-accent uppercase tracking-[0.2em] mb-3 md:mb-4">Maior Impacto</p>
+                  <h3 className="text-lg md:text-2xl font-black text-brand-primary truncate">{topStats.topImpact ? (topStats.topImpact.name || "Sócio sem nome") : "Nenhum"}</h3>
+                  <p className="text-brand-accent font-black text-xs md:text-sm mt-1 uppercase tracking-widest">
                     {topStats.topImpact ? `${((topStats.topImpact.elo - 1000) / (topStats.topImpact.matchesPlayed || 1)).toFixed(1)} ELO/Jogo` : "Sem partidas"}
                   </p>
                 </motion.div>
@@ -824,56 +876,58 @@ export const RankingView: React.FC<RankingViewProps> = ({
 
       {/* Global Synergies & Rivalries */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
+        <div className={`bg-black border-white/10 p-8 rounded-[2.5rem] shadow-sm border`}>
           <div className="flex items-center gap-3 mb-6">
-            <div className="p-2 bg-emerald-50 rounded-xl">
-              <Users className="w-5 h-5 text-emerald-600" />
+            <div className="p-2 bg-brand-primary/10 rounded-xl">
+              <Users className="w-5 h-5 text-brand-primary" />
             </div>
-            <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest">Melhores Duplas (Sinergia)</h4>
+            <h4 className={`text-xs font-black uppercase tracking-widest text-brand-primary`}>Melhores Duplas (Sinergia)</h4>
           </div>
           <div className="space-y-4">
             {globalRelationships.synergies.length > 0 ? globalRelationships.synergies.map((s, i) => (
-              <div key={i} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+              <div key={i} className={`flex items-center justify-between p-4 rounded-2xl border bg-white/5 border-white/10`}>
                 <div className="flex items-center gap-3">
                   <div className="flex -space-x-2">
-                    <div className="w-8 h-8 rounded-full bg-indigo-100 border-2 border-white flex items-center justify-center text-[10px] font-black text-indigo-600">
+                    <div className="w-8 h-8 rounded-full bg-brand-secondary border-2 border-white flex items-center justify-center text-[10px] font-black text-brand-primary">
                       {s.p1?.name.charAt(0)}
                     </div>
-                    <div className="w-8 h-8 rounded-full bg-emerald-100 border-2 border-white flex items-center justify-center text-[10px] font-black text-emerald-600">
+                    <div className="w-8 h-8 rounded-full bg-brand-primary border-2 border-white flex items-center justify-center text-[10px] font-black text-brand-secondary">
                       {s.p2?.name.charAt(0)}
                     </div>
                   </div>
-                  <p className="text-xs font-black text-slate-700">{s.p1?.name} + {s.p2?.name}</p>
+                  <p className={`text-xs font-black text-white`}>{s.p1?.name} + {s.p2?.name}</p>
                 </div>
-                <p className="text-xs font-black text-emerald-600">{s.wins} Vitórias</p>
+                <p className="text-xs font-black text-brand-primary drop-shadow-sm">{s.wins} Vitórias</p>
               </div>
             )) : (
-              <p className="text-center py-8 text-slate-400 text-xs font-bold uppercase tracking-widest">Sem dados de sinergia</p>
+              <p className="text-center py-8 text-brand-accent text-xs font-bold uppercase tracking-widest">Sem dados de sinergia</p>
             )}
           </div>
         </div>
 
-        <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
+        <div className={`bg-black border-white/10 p-8 rounded-[2.5rem] shadow-sm border`}>
           <div className="flex items-center gap-3 mb-6">
-            <div className="p-2 bg-rose-50 rounded-xl">
-              <Swords className="w-5 h-5 text-rose-600" />
+            <div className="p-2 bg-brand-primary/10 rounded-xl">
+              <Swords className="w-5 h-5 text-brand-primary" />
             </div>
-            <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest">Maiores Rivalidades</h4>
+            <h4 className={`text-xs font-black uppercase tracking-widest text-brand-primary`}>Maiores Rivalidades</h4>
           </div>
           <div className="space-y-4">
             {globalRelationships.rivalries.length > 0 ? globalRelationships.rivalries.map((r, i) => (
-              <div key={i} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+              <div key={i} className={`flex items-center justify-between p-4 rounded-2xl border bg-white/5 border-white/10`}>
                 <div className="flex items-center gap-3">
                   <div className="flex items-center gap-2">
-                    <span className="text-xs font-black text-slate-700">{r.winner?.name}</span>
-                    <span className="text-[10px] font-black text-slate-400">vs</span>
-                    <span className="text-xs font-black text-slate-700">{r.loser?.name}</span>
+                    <span className={`text-xs font-black text-white`}>{r.winner?.name}</span>
+                    <span className="text-[10px] font-black text-brand-accent">vs</span>
+                    <span className={`text-xs font-black text-white`}>{r.loser?.name}</span>
                   </div>
                 </div>
-                <p className="text-xs font-black text-rose-600">{r.wins} Vitórias</p>
+                <div className="text-right">
+                  <p className="text-xs font-black text-brand-primary drop-shadow-sm">{r.wins} Vitórias</p>
+                </div>
               </div>
             )) : (
-              <p className="text-center py-8 text-slate-400 text-xs font-bold uppercase tracking-widest">Sem dados de rivalidade</p>
+              <p className="text-center py-8 text-brand-accent text-xs font-bold uppercase tracking-widest">Sem dados de rivalidade</p>
             )}
           </div>
         </div>
@@ -883,39 +937,39 @@ export const RankingView: React.FC<RankingViewProps> = ({
       <section className="space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-slate-100 rounded-xl">
-              <Filter className="w-5 h-5 text-slate-600" />
+            <div className={`p-2 rounded-xl bg-white/5`}>
+              <Filter className="w-5 h-5 text-brand-primary" />
             </div>
-            <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">
+            <h3 className={`text-xl font-black uppercase tracking-tight text-white`}>
               {selectedDailyDate === 'Hoje' ? 'Ranking de Hoje' : `Ranking de ${new Date(selectedDailyDate + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}`}
             </h3>
           </div>
           <div className="relative flex-1 max-w-xs">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3 h-3 text-white/40" />
             <input 
               type="text" 
               placeholder="Buscar sócio..."
               value={rankingSearchQuery}
               onChange={(e) => setRankingSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-xl text-[10px] font-bold focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all outline-none"
+              className={`w-full pl-9 pr-4 py-2 rounded-xl text-[10px] font-bold transition-all outline-none bg-white/5 border-white/10 text-white placeholder:text-white/20 focus:ring-2 focus:ring-brand-primary border`}
             />
           </div>
         </div>
 
-        <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden">
+        <div className={`bg-black border-white/10 rounded-[2.5rem] shadow-sm overflow-hidden border`}>
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="bg-slate-50/50 border-b border-slate-100">
-                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Sócio</th>
-                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">J</th>
-                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">V</th>
-                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">D</th>
-                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">%</th>
-                  <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">ELO</th>
+                <tr className={`bg-white/5 border-b border-white/10`}>
+                  <th className="px-6 py-4 text-[10px] font-black text-brand-primary uppercase tracking-widest">Sócio</th>
+                  <th className="px-6 py-4 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">J</th>
+                  <th className="px-6 py-4 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">V</th>
+                  <th className="px-6 py-4 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">D</th>
+                  <th className="px-6 py-4 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">%</th>
+                  <th className="px-6 py-4 text-[10px] font-black text-brand-primary uppercase tracking-widest text-right">ELO</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-50">
+              <tbody className={`divide-y divide-white/5`}>
                 {[...players]
                   .filter(p => {
                     const stats = topStats.dailyStats[p.id];
@@ -933,35 +987,35 @@ export const RankingView: React.FC<RankingViewProps> = ({
                     const winRate = Math.round((stats.wins / (stats.matches || 1)) * 100);
                     
                     return (
-                      <tr key={player.id} className="hover:bg-slate-50/50 transition-colors group">
+                      <tr key={player.id} className={`transition-colors group hover:bg-white/5`}>
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-3">
-                            <span className="text-[10px] font-black text-slate-300 w-4">{idx + 1}</span>
-                            <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-[10px] font-black text-slate-600 group-hover:bg-indigo-100 group-hover:text-indigo-600 transition-colors">
+                            <span className="text-[10px] font-black text-white/40 w-4">{idx + 1}</span>
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-black transition-colors bg-white/5 text-white/60 group-hover:bg-brand-primary/20 group-hover:text-brand-primary`}>
                               {player.name.charAt(0)}
                             </div>
                             <div>
-                              <p className="text-xs font-black text-slate-700 uppercase tracking-tight">{player.name}</p>
+                              <p className={`text-xs font-black uppercase tracking-tight text-white`}>{player.name}</p>
                               {player.isOfficialSetter && (
-                                <span className="text-[8px] font-black text-rose-500 uppercase tracking-widest">Levantador</span>
+                                <span className="text-[8px] font-black text-brand-primary uppercase tracking-widest">Levantador</span>
                               )}
                             </div>
                           </div>
                         </td>
-                        <td className="px-6 py-4 text-center text-xs font-bold text-slate-600">{stats.matches}</td>
-                        <td className="px-6 py-4 text-center text-xs font-bold text-emerald-600">{stats.wins}</td>
-                        <td className="px-6 py-4 text-center text-xs font-bold text-rose-600">{stats.matches - stats.wins}</td>
+                        <td className={`px-6 py-4 text-center text-xs font-bold text-white/80`}>{stats.matches}</td>
+                        <td className="px-6 py-4 text-center text-xs font-bold text-brand-primary">{stats.wins}</td>
+                        <td className="px-6 py-4 text-center text-xs font-bold text-white/40">{stats.matches - stats.wins}</td>
                         <td className="px-6 py-4 text-center">
-                          <span className={`text-[10px] font-black px-2 py-1 rounded-lg ${winRate >= 50 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                          <span className={`text-[10px] font-black px-2 py-1 rounded-lg ${winRate >= 50 ? 'bg-brand-primary/10 text-brand-primary' : 'bg-white/10 text-white/40'}`}>
                             {winRate}%
                           </span>
                         </td>
                         <td className="px-6 py-4 text-right">
                           <div className="flex flex-col items-end">
-                            <span className={`text-xs font-black ${stats.eloGain >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                            <span className={`text-xs font-black ${stats.eloGain >= 0 ? 'text-brand-primary' : 'text-white/40'}`}>
                               {stats.eloGain >= 0 ? '+' : ''}{stats.eloGain}
                             </span>
-                            <span className="text-[8px] font-bold text-slate-400 uppercase">Pontos</span>
+                            <span className="text-[8px] font-bold text-white/40 uppercase">Pontos</span>
                           </div>
                         </td>
                       </tr>
@@ -970,7 +1024,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
                 {[...players].filter(p => topStats.dailyStats[p.id]?.matches > 0).length === 0 && (
                   <tr>
                     <td colSpan={6} className="px-6 py-12 text-center">
-                      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Nenhuma partida registrada para este dia</p>
+                      <p className="text-xs font-bold text-white/40 uppercase tracking-widest">Nenhuma partida registrada para este dia</p>
                     </td>
                   </tr>
                 )}
@@ -994,10 +1048,14 @@ export const RankingView: React.FC<RankingViewProps> = ({
             setModalTarget('selected');
             setIsListModalOpen(true);
           }}
-          className="w-full bg-white border border-slate-200 text-slate-600 px-6 py-5 rounded-[2rem] font-black text-sm uppercase tracking-widest flex items-center justify-between gap-3 hover:bg-slate-50 shadow-sm transition-all"
+          className={`w-full px-6 py-5 rounded-[2rem] font-black text-sm uppercase tracking-widest flex items-center justify-between gap-3 shadow-sm transition-all border ${
+            isDark 
+              ? 'bg-brand-secondary border-white/10 text-white hover:bg-white/5' 
+              : 'bg-black border border-brand-primary/20 text-white hover:bg-brand-secondary'
+          }`}
         >
           <div className="flex items-center gap-3">
-            <Users className="w-6 h-6 text-indigo-600" />
+            <Users className="w-6 h-6 text-brand-primary" />
             {selectedPlayer ? `Analisando: ${selectedPlayer.name || "Sócio sem nome"}` : 'Selecionar Sócio para Análise'}
           </div>
           <ChevronRight className="w-5 h-5 opacity-40" />
@@ -1011,32 +1069,32 @@ export const RankingView: React.FC<RankingViewProps> = ({
               className="space-y-8"
             >
               {/* Profile Card */}
-              <div className="bg-indigo-600 rounded-[3rem] p-8 text-white shadow-2xl shadow-indigo-200 relative overflow-hidden">
+              <div className="bg-black rounded-[3rem] p-8 text-white shadow-2xl relative overflow-hidden border border-brand-primary/20">
                 <div className="absolute top-0 right-0 p-12 opacity-10">
-                  <Trophy className="w-32 h-32 rotate-12" />
+                  <Trophy className="w-32 h-32 rotate-12 text-brand-primary" />
                 </div>
                 
                 <div className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
                   <div className="flex items-center gap-6">
-                    <div className="w-20 h-20 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center text-3xl font-black border-2 border-white/30">
+                    <div className="w-20 h-20 rounded-full bg-brand-secondary flex items-center justify-center text-3xl font-black border border-brand-primary/30">
                       {(selectedPlayer.name || "S").charAt(0)}
                     </div>
                     <div>
-                      <h3 className={`text-3xl font-black uppercase tracking-tighter ${selectedPlayer.isOfficialSetter ? 'text-rose-400' : ''}`}>{selectedPlayer.name || "Sócio sem nome"}</h3>
-                      <p className="text-indigo-200 text-xs font-bold uppercase tracking-[0.2em] mt-1">Sócio Nível Pro</p>
+                      <h3 className={`text-3xl font-black uppercase tracking-tighter ${selectedPlayer.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>{selectedPlayer.name || "Sócio sem nome"}</h3>
+                      <p className="text-brand-primary text-xs font-black uppercase tracking-[0.2em] mt-1">Sócio Nível Pro</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-4">
-                    <div className="bg-white/10 backdrop-blur-md px-6 py-4 rounded-3xl border border-white/20 text-center">
-                      <p className="text-4xl font-black font-mono">{selectedPlayer.elo}</p>
-                      <p className="text-[10px] font-black uppercase tracking-widest opacity-70">Ranking Global</p>
+                    <div className="bg-brand-secondary px-6 py-4 rounded-3xl border border-brand-primary/20 text-center">
+                      <p className="text-4xl font-black font-mono text-brand-primary">{selectedPlayer.elo}</p>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-white/40 mt-1">Ranking Global</p>
                     </div>
                     {userRole === 'ADMIN' && (
                       <button 
                         onClick={() => {
                           resetDailyMatches();
                         }}
-                        className="p-4 bg-white/10 backdrop-blur-md text-white hover:bg-white/20 rounded-2xl transition-all border border-white/20"
+                        className="p-4 bg-white/5 backdrop-blur-md text-white hover:bg-white/10 rounded-2xl transition-all border border-white/10"
                         title="Finalizar Dia"
                       >
                         <RotateCcw className="w-5 h-5" />
@@ -1046,17 +1104,17 @@ export const RankingView: React.FC<RankingViewProps> = ({
                 </div>
 
                 <div className="grid grid-cols-3 gap-4 mt-10">
-                  <div className="bg-white/5 p-4 rounded-2xl border border-white/10">
+                  <div className="bg-white/5 p-4 rounded-2xl border border-white/5">
                     <p className="text-[8px] font-black uppercase tracking-widest opacity-60 mb-1">Vitórias</p>
-                    <p className="text-xl font-black">{selectedPlayer.wins}</p>
+                    <p className="text-xl font-black text-brand-primary">{selectedPlayer.wins}</p>
                   </div>
-                  <div className="bg-white/5 p-4 rounded-2xl border border-white/10">
+                  <div className="bg-white/5 p-4 rounded-2xl border border-white/5">
                     <p className="text-[8px] font-black uppercase tracking-widest opacity-60 mb-1">Partidas</p>
-                    <p className="text-xl font-black">{selectedPlayer.matchesPlayed}</p>
+                    <p className="text-xl font-black text-brand-primary">{selectedPlayer.matchesPlayed}</p>
                   </div>
-                  <div className="bg-white/5 p-4 rounded-2xl border border-white/10">
+                  <div className="bg-white/5 p-4 rounded-2xl border border-white/5">
                     <p className="text-[8px] font-black uppercase tracking-widest opacity-60 mb-1">Aproveitamento</p>
-                    <p className="text-xl font-black">
+                    <p className="text-xl font-black text-brand-primary">
                       {selectedPlayer.matchesPlayed > 0 ? Math.round((selectedPlayer.wins / selectedPlayer.matchesPlayed) * 100) : 0}%
                     </p>
                   </div>
@@ -1064,29 +1122,29 @@ export const RankingView: React.FC<RankingViewProps> = ({
               </div>
 
               {/* Accumulated Results Card */}
-              <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
+              <div className={`${isDark ? 'bg-brand-secondary border-white/10' : 'bg-black border border-brand-primary/20'} p-8 rounded-[2.5rem] shadow-sm`}>
                 <div className="flex items-center gap-3 mb-8">
-                  <div className="p-2 bg-indigo-50 rounded-xl">
-                    <History className="w-5 h-5 text-indigo-600" />
+                  <div className={`p-2 rounded-xl ${isDark ? 'bg-white/5' : 'bg-brand-primary/10'}`}>
+                    <History className="w-5 h-5 text-brand-primary" />
                   </div>
-                  <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest">Resultados Acumulados</h4>
+                  <h4 className={`text-xs font-black uppercase tracking-widest ${isDark ? 'text-white' : 'text-white'}`}>Resultados Acumulados</h4>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                  <div className="p-6 bg-slate-50 rounded-[2rem] border border-slate-100">
-                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">Total Vitórias</p>
-                    <p className="text-3xl font-black text-emerald-600">{selectedPlayer.wins || 0}</p>
+                  <div className={`p-6 rounded-[2rem] border ${isDark ? 'bg-white/5 border-white/10' : 'bg-brand-secondary border border-brand-primary/20'}`}>
+                    <p className="text-[9px] font-black text-white/40 uppercase tracking-widest mb-2">Total Vitórias</p>
+                    <p className="text-3xl font-black text-brand-primary">{selectedPlayer.wins || 0}</p>
                   </div>
-                  <div className="p-6 bg-slate-50 rounded-[2rem] border border-slate-100">
-                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">Total Derrotas</p>
-                    <p className="text-3xl font-black text-rose-600">{selectedPlayer.losses || 0}</p>
+                  <div className={`p-6 rounded-[2rem] border ${isDark ? 'bg-white/5 border-white/10' : 'bg-brand-secondary border border-brand-primary/20'}`}>
+                    <p className="text-[9px] font-black text-white/40 uppercase tracking-widest mb-2">Total Derrotas</p>
+                    <p className="text-3xl font-black text-white/40">{selectedPlayer.losses || 0}</p>
                   </div>
-                  <div className="p-6 bg-slate-50 rounded-[2rem] border border-slate-100">
-                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">Total Partidas</p>
-                    <p className="text-3xl font-black text-slate-800">{selectedPlayer.matchesPlayed || 0}</p>
+                  <div className={`p-6 rounded-[2rem] border ${isDark ? 'bg-white/5 border-white/10' : 'bg-brand-secondary border border-brand-primary/20'}`}>
+                    <p className="text-[9px] font-black text-white/40 uppercase tracking-widest mb-2">Total Partidas</p>
+                    <p className={`text-3xl font-black ${isDark ? 'text-white/80' : 'text-white/80'}`}>{selectedPlayer.matchesPlayed || 0}</p>
                   </div>
-                  <div className="p-6 bg-slate-50 rounded-[2rem] border border-slate-100">
-                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">Saldo Vitórias</p>
-                    <p className={`text-3xl font-black ${(selectedPlayer.wins || 0) - (selectedPlayer.losses || 0) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                  <div className={`p-6 rounded-[2rem] border ${isDark ? 'bg-white/5 border-white/10' : 'bg-brand-secondary border border-brand-primary/20'}`}>
+                    <p className="text-[9px] font-black text-white/40 uppercase tracking-widest mb-2">Saldo Vitórias</p>
+                    <p className={`text-3xl font-black ${(selectedPlayer.wins || 0) - (selectedPlayer.losses || 0) >= 0 ? 'text-brand-primary' : 'text-white/40'}`}>
                       {(selectedPlayer.wins || 0) - (selectedPlayer.losses || 0)}
                     </p>
                   </div>
@@ -1096,35 +1154,54 @@ export const RankingView: React.FC<RankingViewProps> = ({
               {/* Charts Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 {/* ELO Evolution Chart */}
-                <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
-                  <div className="flex items-center gap-3 mb-8">
-                    <div className="p-2 bg-emerald-50 rounded-xl">
-                      <Activity className="w-5 h-5 text-emerald-600" />
+                <div className={`${isDark ? 'bg-brand-secondary border-white/10' : 'bg-black border border-brand-primary/20'} p-8 rounded-[2.5rem] shadow-sm`}>
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-brand-primary/10 rounded-xl">
+                        <Activity className="w-5 h-5 text-brand-primary" />
+                      </div>
+                      <h4 className={`text-xs font-black uppercase tracking-widest ${isDark ? 'text-white' : 'text-white'}`}>Evolução de ELO</h4>
                     </div>
-                    <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest">Evolução de ELO</h4>
+                    
+                    {/* Chart Menu: Time Range */}
+                    <div className="flex bg-white/5 p-1 rounded-xl border border-white/5">
+                      {(['7', '30', 'all'] as const).map((range) => (
+                        <button
+                          key={range}
+                          onClick={() => setTimeRange(range)}
+                          className={`px-3 py-1.5 rounded-lg text-[8px] font-black uppercase tracking-widest transition-all ${
+                            timeRange === range 
+                              ? 'bg-brand-primary text-brand-secondary shadow-sm' 
+                              : 'text-white/40 hover:text-brand-primary'
+                          }`}
+                        >
+                          {range === 'all' ? 'Tudo' : `${range}D`}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                   <div className="h-[250px] w-full">
                     <ResponsiveContainer width="100%" height="100%">
                       <AreaChart data={eloChartData}>
                         <defs>
                           <linearGradient id="colorElo" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.3}/>
-                            <stop offset="95%" stopColor="#4f46e5" stopOpacity={0}/>
+                            <stop offset="5%" stopColor="#F5C429" stopOpacity={0.3}/>
+                            <stop offset="95%" stopColor="#F5C429" stopOpacity={0}/>
                           </linearGradient>
                         </defs>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDark ? "rgba(255,255,255,0.05)" : "#E9ECEF"} />
                         <XAxis 
                           dataKey="date" 
                           axisLine={false} 
                           tickLine={false} 
-                          tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }}
+                          tick={{ fontSize: 10, fontWeight: 700, fill: isDark ? '#94a3b8' : '#4A4F5A' }}
                           dy={10}
                         />
                         <YAxis 
                           width={40}
                           axisLine={false}
                           tickLine={false}
-                          tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }}
+                          tick={{ fontSize: 10, fontWeight: 700, fill: isDark ? '#94a3b8' : '#4A4F5A' }}
                           domain={['dataMin - 50', 'dataMax + 50']}
                         />
                         <Tooltip 
@@ -1133,7 +1210,9 @@ export const RankingView: React.FC<RankingViewProps> = ({
                             border: 'none', 
                             boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
                             fontSize: '12px',
-                            fontWeight: 'bold'
+                            fontWeight: 'bold',
+                            backgroundColor: '#1E232D',
+                            color: '#fff'
                           }}
                         />
                         <Legend 
@@ -1147,7 +1226,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
                           name={selectedPlayer.name}
                           type="monotone" 
                           dataKey="elo" 
-                          stroke="#4f46e5" 
+                          stroke="#F5C429" 
                           strokeWidth={4}
                           fillOpacity={1} 
                           fill="url(#colorElo)" 
@@ -1157,7 +1236,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
                           name="Média do Grupo"
                           type="monotone" 
                           dataKey="groupAverage" 
-                          stroke="#94a3b8" 
+                          stroke="#4A4F5A" 
                           strokeWidth={2} 
                           strokeDasharray="5 5"
                           dot={false}
@@ -1169,44 +1248,78 @@ export const RankingView: React.FC<RankingViewProps> = ({
                 </div>
 
                 {/* Daily Performance Chart */}
-                <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
-                  <div className="flex items-center gap-3 mb-8">
-                    <div className="p-2 bg-indigo-50 rounded-xl">
-                      <TrendingUp className="w-5 h-5 text-indigo-600" />
+                <div className={`${isDark ? 'bg-brand-secondary border-white/10' : 'bg-black border border-brand-primary/20'} p-8 rounded-[2.5rem] shadow-sm`}>
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-brand-primary/10 rounded-xl">
+                        <TrendingUp className="w-5 h-5 text-brand-primary" />
+                      </div>
+                      <h4 className={`text-xs font-black uppercase tracking-widest ${isDark ? 'text-white' : 'text-white'}`}>
+                        {chartMetric === 'elo' ? 'Variação de ELO' : chartMetric === 'winrate' ? 'Aproveitamento Diário' : 'Partidas por Dia'}
+                      </h4>
                     </div>
-                    <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest">Desempenho Diário (Variação ELO)</h4>
+                    
+                    {/* Chart Menu: Metric */}
+                    <div className="flex bg-white/5 p-1 rounded-xl border border-white/5">
+                      {(['elo', 'winrate', 'matches'] as const).map((metric) => (
+                        <button
+                          key={metric}
+                          onClick={() => setChartMetric(metric)}
+                          className={`px-3 py-1.5 rounded-lg text-[8px] font-black uppercase tracking-widest transition-all ${
+                            chartMetric === metric 
+                              ? 'bg-brand-primary text-brand-secondary shadow-sm' 
+                              : 'text-white/40 hover:text-brand-primary'
+                          }`}
+                        >
+                          {metric === 'elo' ? 'ELO' : metric === 'winrate' ? 'Win%' : 'Jogos'}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                   <div className="h-[250px] w-full">
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={dailyPerformanceData}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDark ? "rgba(255,255,255,0.05)" : "#E9ECEF"} />
                         <XAxis 
                           dataKey="date" 
                           axisLine={false} 
                           tickLine={false} 
-                          tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }}
+                          tick={{ fontSize: 10, fontWeight: 700, fill: isDark ? '#94a3b8' : '#4A4F5A' }}
                           dy={10}
                         />
                         <YAxis 
                           width={40}
                           axisLine={false}
                           tickLine={false}
-                          tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }}
+                          tick={{ fontSize: 10, fontWeight: 700, fill: isDark ? '#94a3b8' : '#4A4F5A' }}
                         />
                         <Tooltip 
-                          cursor={{ fill: '#f8fafc' }}
+                          cursor={{ fill: isDark ? 'rgba(255,255,255,0.05)' : '#E9ECEF' }}
                           contentStyle={{ 
                             borderRadius: '16px', 
                             border: 'none', 
                             boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
                             fontSize: '12px',
-                            fontWeight: 'bold'
+                            fontWeight: 'bold',
+                            backgroundColor: '#1E232D',
+                            color: '#fff'
                           }}
-                          formatter={(value: number) => [`${value >= 0 ? '+' : ''}${value} Pontos`, 'Variação']}
+                          formatter={(value: number) => {
+                            if (chartMetric === 'elo') return [`${value >= 0 ? '+' : ''}${value} Pontos`, 'Variação'];
+                            if (chartMetric === 'winrate') return [`${value}%`, 'Aproveitamento'];
+                            return [`${value}`, 'Partidas'];
+                          }}
                         />
-                        <Bar dataKey="variation" radius={[8, 8, 0, 0]}>
+                        <Bar dataKey={chartMetric === 'elo' ? 'variation' : chartMetric === 'winrate' ? 'winRate' : 'matches'} radius={[8, 8, 0, 0]}>
                           {dailyPerformanceData.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={entry.variation >= 0 ? '#10b981' : '#f43f5e'} />
+                            <Cell 
+                              key={`cell-${index}`} 
+                              fill={
+                                chartMetric === 'elo' 
+                                  ? (entry.variation >= 0 ? '#F5C429' : '#4A4F5A')
+                                  : '#F5C429'
+                              } 
+                            />
                           ))}
                         </Bar>
                       </BarChart>
@@ -1215,26 +1328,26 @@ export const RankingView: React.FC<RankingViewProps> = ({
                 </div>
 
                 {/* Win/Loss Evolution Chart */}
-                <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
+                <div className={`${isDark ? 'bg-brand-secondary border-white/10' : 'bg-black border border-brand-primary/20'} p-8 rounded-[2.5rem] shadow-sm`}>
                   <div className="flex items-center gap-3 mb-8">
-                    <div className="p-2 bg-emerald-50 rounded-xl">
-                      <History className="w-5 h-5 text-emerald-600" />
+                    <div className="p-2 bg-brand-primary/10 rounded-xl">
+                      <History className="w-5 h-5 text-brand-primary" />
                     </div>
-                    <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest">Evolução de Vitórias e Derrotas</h4>
+                    <h4 className={`text-xs font-black uppercase tracking-widest ${isDark ? 'text-white' : 'text-white'}`}>Evolução de Vitórias e Derrotas</h4>
                   </div>
-                  <WinLossChart matches={matches} playerId={selectedPlayer.id} />
+                  <WinLossChart matches={matches} playerId={selectedPlayer.id} isDark={isDark} />
                 </div>
 
                 {/* Performance Trends Line Charts */}
-                <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm flex flex-col">
+                <div className={`${isDark ? 'bg-brand-secondary border-white/10' : 'bg-black border border-brand-primary/20'} p-8 rounded-[2.5rem] shadow-sm flex flex-col`}>
                   <div className="flex items-center justify-between mb-8">
                     <div className="flex items-center gap-3">
-                      <div className="p-2 bg-indigo-50 rounded-xl">
-                        <TrendingUp className="w-5 h-5 text-indigo-600" />
+                      <div className="p-2 bg-brand-primary/10 rounded-xl">
+                        <TrendingUp className="w-5 h-5 text-brand-primary" />
                       </div>
-                      <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest">Tendência de Aproveitamento</h4>
+                      <h4 className={`text-xs font-black uppercase tracking-widest ${isDark ? 'text-white' : 'text-white'}`}>Tendência de Aproveitamento</h4>
                     </div>
-                    <div className="px-3 py-1 bg-emerald-50 text-emerald-600 rounded-full text-[10px] font-black uppercase">
+                    <div className="px-3 py-1 bg-brand-primary/10 text-brand-primary rounded-full text-[10px] font-black uppercase">
                       Últimas 15 Partidas
                     </div>
                   </div>
@@ -1242,50 +1355,58 @@ export const RankingView: React.FC<RankingViewProps> = ({
                   <div className="flex-1 min-h-[250px] w-full">
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={winRateHistory}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDark ? "rgba(255,255,255,0.05)" : "#E9ECEF"} />
                         <XAxis 
                           dataKey="match" 
                           axisLine={false} 
                           tickLine={false} 
-                          tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }}
-                          label={{ value: 'Partida', position: 'insideBottom', offset: -5, fontSize: 10, fontWeight: 800, fill: '#cbd5e1' }}
+                          tick={{ fontSize: 10, fontWeight: 700, fill: isDark ? '#94a3b8' : '#4A4F5A' }}
+                          label={{ value: 'Partida', position: 'insideBottom', offset: -5, fontSize: 10, fontWeight: 800, fill: isDark ? '#94a3b8' : '#4A4F5A' }}
                         />
                         <YAxis 
                           domain={[0, 100]}
                           axisLine={false} 
                           tickLine={false} 
-                          tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }}
+                          tick={{ fontSize: 10, fontWeight: 700, fill: isDark ? '#94a3b8' : '#4A4F5A' }}
                           tickFormatter={(val) => `${val}%`}
                         />
                         <Tooltip 
-                          contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontSize: '12px', fontWeight: 'bold' }}
+                          contentStyle={{ 
+                            borderRadius: '16px', 
+                            border: 'none', 
+                            boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', 
+                            fontSize: '12px', 
+                            fontWeight: 'bold',
+                            backgroundColor: '#1E232D',
+                            color: '#fff'
+                          }}
                           formatter={(value) => [`${value}%`, 'Aproveitamento']}
                           labelFormatter={(label) => `Partida #${label}`}
                         />
                         <Line 
                           type="monotone" 
                           dataKey="winRate" 
-                          stroke="#4f46e5" 
+                          stroke="#F5C429" 
                           strokeWidth={4}
-                          dot={{ r: 4, fill: '#4f46e5', strokeWidth: 2, stroke: '#fff' }}
+                          dot={{ r: 4, fill: '#F5C429', strokeWidth: 2, stroke: isDark ? '#1E232D' : '#fff' }}
                           activeDot={{ r: 6, strokeWidth: 0 }}
                           animationDuration={1500}
                         />
-                        <ReferenceLine y={50} stroke="#cbd5e1" strokeDasharray="3 3" label={{ value: 'Equilíbrio', position: 'right', fill: '#cbd5e1', fontSize: 8, fontWeight: 800 }} />
+                        <ReferenceLine y={50} stroke={isDark ? "rgba(255,255,255,0.2)" : "#4A4F5A"} strokeDasharray="3 3" label={{ value: 'Equilíbrio', position: 'right', fill: isDark ? '#94a3b8' : '#4A4F5A', fontSize: 8, fontWeight: 800 }} />
                       </LineChart>
                     </ResponsiveContainer>
                   </div>
                   
-                  <div className="mt-8 pt-6 border-t border-slate-50 grid grid-cols-2 gap-4">
-                    <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Pico de Aproveitamento</p>
-                      <p className="text-xl font-black text-indigo-600">
+                  <div className={`mt-8 pt-6 border-t grid grid-cols-2 gap-4 ${isDark ? 'border-white/5' : 'border-brand-primary/20'}`}>
+                    <div className={`p-4 rounded-2xl border ${isDark ? 'bg-white/5 border-white/10' : 'bg-brand-secondary border-brand-primary/20'}`}>
+                      <p className="text-[9px] font-black text-white/40 uppercase tracking-widest mb-1">Pico de Aproveitamento</p>
+                      <p className="text-xl font-black text-brand-primary">
                         {winRateHistory.length > 0 ? Math.max(...winRateHistory.map(h => h.winRate)) : 0}%
                       </p>
                     </div>
-                    <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Consistência</p>
-                      <p className="text-xl font-black text-emerald-600">
+                    <div className={`p-4 rounded-2xl border ${isDark ? 'bg-white/5 border-white/10' : 'bg-brand-secondary border-brand-primary/20'}`}>
+                      <p className="text-[9px] font-black text-white/40 uppercase tracking-widest mb-1">Consistência</p>
+                      <p className="text-xl font-black text-brand-primary">
                         {selectedPlayer.matchesPlayed > 10 ? 'Alta' : 'Em Evolução'}
                       </p>
                     </div>
@@ -1296,8 +1417,8 @@ export const RankingView: React.FC<RankingViewProps> = ({
               {/* Advanced Stats & Win/Loss Distribution */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                 {/* Win/Loss Donut */}
-                <div className="md:col-span-1 bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm flex flex-col items-center justify-center">
-                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-6 w-full text-center">Distribuição de Resultados</h4>
+                <div className={`md:col-span-1 p-8 rounded-[2.5rem] shadow-sm flex flex-col items-center justify-center border ${isDark ? 'bg-brand-secondary border-white/10' : 'bg-black border-brand-primary/20'}`}>
+                  <h4 className="text-[10px] font-black text-white/40 uppercase tracking-widest mb-6 w-full text-center">Distribuição de Resultados</h4>
                   <div className="h-[180px] w-full relative">
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
@@ -1315,40 +1436,40 @@ export const RankingView: React.FC<RankingViewProps> = ({
                           ))}
                         </Pie>
                         <Tooltip 
-                          contentStyle={{ borderRadius: '16px', border: 'none', fontWeight: 'bold' }}
+                          contentStyle={{ borderRadius: '16px', border: 'none', fontWeight: 'bold', backgroundColor: '#1E232D', color: '#fff' }}
                         />
                       </PieChart>
                     </ResponsiveContainer>
                     <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                      <p className="text-2xl font-black text-slate-800">{selectedPlayer.matchesPlayed}</p>
-                      <p className="text-[8px] font-black text-slate-400 uppercase">Partidas</p>
+                      <p className={`text-2xl font-black ${isDark ? 'text-white' : 'text-white'}`}>{selectedPlayer.matchesPlayed}</p>
+                      <p className="text-[8px] font-black text-white/40 uppercase">Partidas</p>
                     </div>
                   </div>
                   <div className="flex gap-6 mt-4">
                     <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 rounded-full bg-emerald-500" />
-                      <span className="text-[10px] font-bold text-slate-600">{selectedPlayer.wins}V</span>
+                      <div className="w-2 h-2 rounded-full bg-brand-primary" />
+                      <span className="text-[10px] font-bold text-white/40">{selectedPlayer.wins}V</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 rounded-full bg-rose-500" />
-                      <span className="text-[10px] font-bold text-slate-600">{selectedPlayer.losses}D</span>
+                      <div className="w-2 h-2 rounded-full bg-brand-accent" />
+                      <span className="text-[10px] font-bold text-white/40">{selectedPlayer.losses}D</span>
                     </div>
                   </div>
                 </div>
 
                 {/* Efficiency Cards */}
                 <div className="md:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm relative overflow-hidden group flex flex-col">
+                  <div className={`${isDark ? 'bg-brand-secondary border-white/10' : 'bg-black border-brand-primary/20'} p-8 rounded-[2.5rem] shadow-sm relative overflow-hidden group flex flex-col`}>
                     <div className="relative z-10">
-                      <div className="absolute top-0 right-0 opacity-10 group-hover:scale-110 transition-transform text-indigo-600">
+                      <div className="absolute top-0 right-0 opacity-10 group-hover:scale-110 transition-transform text-brand-primary">
                         <Activity className="w-16 h-16" />
                       </div>
-                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-4">Impacto por Jogo</p>
+                      <p className="text-[9px] font-black text-white/40 uppercase tracking-widest mb-4">Impacto por Jogo</p>
                       <div className="flex items-baseline gap-2">
-                        <h3 className="text-3xl font-black text-slate-800">{advancedStats?.avgEloChange.toFixed(1)}</h3>
-                        <span className="text-xs font-bold text-slate-400 uppercase">ELO / Partida</span>
+                        <h3 className="text-3xl font-black text-brand-primary">{advancedStats?.avgEloChange.toFixed(1)}</h3>
+                        <span className="text-xs font-bold text-white/40 uppercase">ELO / Partida</span>
                       </div>
-                      <p className="text-[10px] font-bold text-slate-500 mt-2">Média de crescimento histórico</p>
+                      <p className="text-[10px] font-bold text-white/40 mt-2">Média de crescimento histórico</p>
                     </div>
                     
                     <div className="h-24 mt-6 -mx-4">
@@ -1359,9 +1480,9 @@ export const RankingView: React.FC<RankingViewProps> = ({
                             radius={[4, 4, 0, 0]}
                           >
                             {advancedStats?.impactHistory.map((entry: any, index: number) => (
-                              <Cell 
+                             <Cell 
                                 key={`cell-${index}`} 
-                                fill={entry.impact > 0 ? '#6366f1' : '#f43f5e'} 
+                                fill={entry.impact > 0 ? '#F5C429' : '#4A4F5A'} 
                                 fillOpacity={0.4}
                               />
                             ))}
@@ -1373,10 +1494,10 @@ export const RankingView: React.FC<RankingViewProps> = ({
 
                   <div className={`p-8 rounded-[2.5rem] relative overflow-hidden group border ${
                     advancedStats?.streakType === 'win' 
-                      ? 'bg-emerald-50 border-emerald-100 text-emerald-900' 
+                      ? 'bg-brand-primary/10 border-brand-primary/20 text-brand-primary' 
                       : advancedStats?.streakType === 'loss'
-                      ? 'bg-rose-50 border-rose-100 text-rose-900'
-                      : 'bg-slate-50 border-slate-100 text-slate-900'
+                      ? 'bg-brand-accent/10 border-brand-accent/20 text-brand-accent'
+                      : `${isDark ? 'bg-white/5 border-white/10 text-white' : 'bg-brand-light border-brand-accent/10 text-brand-secondary'}`
                   }`}>
                     <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
                       {advancedStats?.streakType === 'win' ? <Sparkles className="w-16 h-16" /> : <RotateCcw className="w-16 h-16" />}
@@ -1389,7 +1510,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
                       </span>
                     </div>
                     <div className="flex items-center gap-2 mt-2">
-                      <div className={`w-2 h-2 rounded-full ${advancedStats?.streakType === 'win' ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                      <div className={`w-2 h-2 rounded-full ${advancedStats?.streakType === 'win' ? 'bg-brand-primary' : 'bg-brand-accent'}`} />
                       <p className="text-[10px] font-bold opacity-70">Ritmo de jogo atual</p>
                     </div>
                   </div>
@@ -1398,51 +1519,51 @@ export const RankingView: React.FC<RankingViewProps> = ({
 
               {/* Synergy & Rivalry */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="bg-emerald-50/50 p-6 rounded-[2rem] border border-emerald-100">
-                  <h4 className="text-[10px] font-black text-emerald-700 uppercase tracking-widest mb-4">Sinergia Positiva</h4>
+                <div className={`p-6 rounded-[2rem] border ${isDark ? 'bg-brand-primary/5 border-brand-primary/10' : 'bg-black border-brand-primary/20'}`}>
+                  <h4 className="text-[10px] font-black text-brand-primary uppercase tracking-widest mb-4">Sinergia Positiva</h4>
                   <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center shadow-sm">
-                      <ArrowUpRight className="w-5 h-5 text-emerald-500" />
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm ${isDark ? 'bg-white/5' : 'bg-brand-secondary border border-brand-primary/20'}`}>
+                      <ArrowUpRight className="w-5 h-5 text-brand-primary" />
                     </div>
                     <div>
-                      <p className="font-black text-slate-800 uppercase tracking-tight text-sm">
+                      <p className={`font-black uppercase tracking-tight text-sm ${isDark ? 'text-white' : 'text-white'}`}>
                         {playerRelationships.synergy?.name || 'Parceiro Ideal'}
                       </p>
-                      <p className="text-[10px] font-bold text-emerald-600">
+                      <p className="text-[10px] font-bold text-brand-primary">
                         {playerRelationships.synergy ? `${playerRelationships.synergy.wins} vitórias juntos` : 'Sem dados'}
                       </p>
                     </div>
                   </div>
                 </div>
 
-                <div className="bg-rose-50/50 p-6 rounded-[2rem] border border-rose-100">
-                  <h4 className="text-[10px] font-black text-rose-700 uppercase tracking-widest mb-4">Sinergia Negativa</h4>
+                <div className={`p-6 rounded-[2rem] border ${isDark ? 'bg-brand-accent/5 border-brand-accent/10' : 'bg-black border-brand-primary/20'}`}>
+                  <h4 className="text-[10px] font-black text-white/40 uppercase tracking-widest mb-4">Sinergia Negativa</h4>
                   <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center shadow-sm">
-                      <TrendingDown className="w-5 h-5 text-rose-500" />
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm ${isDark ? 'bg-white/5' : 'bg-brand-secondary border border-brand-primary/20'}`}>
+                      <TrendingDown className="w-5 h-5 text-white/40" />
                     </div>
                     <div>
-                      <p className="font-black text-slate-800 uppercase tracking-tight text-sm">
+                      <p className={`font-black uppercase tracking-tight text-sm ${isDark ? 'text-white' : 'text-white'}`}>
                         {playerRelationships.negativeSynergy?.name || 'Parceiro Difícil'}
                       </p>
-                      <p className="text-[10px] font-bold text-rose-600">
+                      <p className="text-[10px] font-bold text-white/40">
                         {playerRelationships.negativeSynergy ? `${playerRelationships.negativeSynergy.losses} derrotas juntos` : 'Sem dados'}
                       </p>
                     </div>
                   </div>
                 </div>
 
-                <div className="bg-amber-50/50 p-6 rounded-[2rem] border border-amber-100">
-                  <h4 className="text-[10px] font-black text-amber-700 uppercase tracking-widest mb-4">Maior Rival</h4>
+                <div className={`p-6 rounded-[2rem] border ${isDark ? 'bg-brand-primary/5 border-brand-primary/10' : 'bg-black border-brand-primary/20'}`}>
+                  <h4 className="text-[10px] font-black text-brand-primary uppercase tracking-widest mb-4">Maior Rival</h4>
                   <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center shadow-sm">
-                      <Swords className="w-5 h-5 text-amber-500" />
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm ${isDark ? 'bg-white/5' : 'bg-brand-secondary border border-brand-primary/20'}`}>
+                      <Swords className="w-5 h-5 text-brand-primary" />
                     </div>
                     <div>
-                      <p className="font-black text-slate-800 uppercase tracking-tight text-sm">
+                      <p className={`font-black uppercase tracking-tight text-sm ${isDark ? 'text-white' : 'text-white'}`}>
                         {playerRelationships.rivalry?.name || 'Nenhum Rival'}
                       </p>
-                      <p className="text-[10px] font-bold text-amber-600">
+                      <p className="text-[10px] font-bold text-brand-primary">
                         {playerRelationships.rivalry ? `${playerRelationships.rivalry.losses} derrotas contra` : 'Sem histórico de confrontos'}
                       </p>
                     </div>
@@ -1451,13 +1572,13 @@ export const RankingView: React.FC<RankingViewProps> = ({
               </div>
 
               {/* Interactive Comparison Section */}
-              <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
+              <div className={`${isDark ? 'bg-brand-secondary border-white/10' : 'bg-black border border-brand-primary/20'} p-8 rounded-[2.5rem] shadow-sm`}>
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
                   <div className="flex items-center gap-3">
-                    <div className="p-2 bg-indigo-50 rounded-xl">
-                      <Activity className="w-5 h-5 text-indigo-600" />
+                    <div className={`p-2 rounded-xl ${isDark ? 'bg-white/5' : 'bg-brand-primary/10'}`}>
+                      <Activity className="w-5 h-5 text-brand-primary" />
                     </div>
-                    <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest">Comparativo de Performance</h4>
+                    <h4 className={`text-xs font-black uppercase tracking-widest ${isDark ? 'text-white' : 'text-white'}`}>Comparativo de Performance</h4>
                   </div>
                   <div className="flex gap-2">
                     <button 
@@ -1465,7 +1586,9 @@ export const RankingView: React.FC<RankingViewProps> = ({
                         setModalTarget('comparison');
                         setIsListModalOpen(true);
                       }}
-                      className="px-4 py-2 bg-slate-100 hover:bg-slate-200 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-600 transition-all flex items-center gap-2"
+                      className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${
+                        isDark ? 'bg-white/5 hover:bg-white/10 text-white/60' : 'bg-brand-secondary border border-brand-primary/20 hover:bg-brand-primary/10 text-white/60'
+                      }`}
                     >
                       <Users className="w-3 h-3" />
                       {comparisonPlayer ? `Comparar com: ${comparisonPlayer.name}` : 'Comparar com Sócio'}
@@ -1473,7 +1596,9 @@ export const RankingView: React.FC<RankingViewProps> = ({
                     {comparisonPlayer && (
                       <button 
                         onClick={() => setComparisonPlayerId(null)}
-                        className="p-2 bg-slate-100 hover:bg-rose-50 hover:text-rose-600 rounded-xl text-slate-400 transition-all"
+                        className={`p-2 rounded-xl transition-all ${
+                          isDark ? 'bg-white/5 hover:bg-red-500/20 text-red-500' : 'bg-brand-light hover:bg-brand-primary/10 hover:text-brand-primary text-brand-accent'
+                        }`}
                       >
                         <RotateCcw className="w-3 h-3" />
                       </button>
@@ -1484,38 +1609,40 @@ export const RankingView: React.FC<RankingViewProps> = ({
                 <div className="h-[300px] w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={comparisonData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDark ? "rgba(255,255,255,0.05)" : "#E9ECEF"} />
                       <XAxis 
                         dataKey="subject" 
                         axisLine={false} 
                         tickLine={false} 
-                        tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }}
+                        tick={{ fontSize: 10, fontWeight: 700, fill: isDark ? '#94a3b8' : '#4A4F5A' }}
                       />
                       <YAxis hide />
                       <Tooltip 
-                        cursor={{ fill: '#f8fafc' }}
+                        cursor={{ fill: isDark ? 'rgba(255,255,255,0.05)' : '#E9ECEF' }}
                         contentStyle={{ 
                           borderRadius: '16px', 
                           border: 'none', 
                           boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
                           fontSize: '12px',
-                          fontWeight: 'bold'
+                          fontWeight: 'bold',
+                          backgroundColor: '#1E232D',
+                          color: '#fff'
                         }}
                       />
-                      <Bar name={selectedPlayer.name} dataKey="A" fill="#4f46e5" radius={[6, 6, 0, 0]} barSize={30} />
-                      <Bar name={comparisonPlayer?.name || 'Média Grupo'} dataKey="B" fill="#94a3b8" radius={[6, 6, 0, 0]} barSize={30} />
+                      <Bar name={selectedPlayer.name} dataKey="A" fill="#F5C429" radius={[6, 6, 0, 0]} barSize={30} />
+                      <Bar name={comparisonPlayer?.name || 'Média Grupo'} dataKey="B" fill={isDark ? '#475569' : '#4A4F5A'} radius={[6, 6, 0, 0]} barSize={30} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
 
                 <div className="grid grid-cols-3 gap-4 mt-8">
                   {comparisonData.map((d, i) => (
-                    <div key={i} className="text-center p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                      <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-2">{d.subject}</p>
+                    <div key={i} className={`text-center p-4 rounded-2xl border ${isDark ? 'bg-white/5 border-white/10' : 'bg-brand-secondary border-brand-primary/20'}`}>
+                      <p className="text-[8px] font-black text-white/40 uppercase tracking-widest mb-2">{d.subject}</p>
                       <div className="flex justify-center items-center gap-2">
-                        <span className="text-sm font-black text-indigo-600">{Math.round(d.A)}</span>
-                        <span className="text-[10px] font-bold text-slate-300">vs</span>
-                        <span className="text-sm font-black text-slate-400">{Math.round(d.B)}</span>
+                        <span className="text-sm font-black text-brand-primary">{Math.round(d.A)}</span>
+                        <span className="text-[10px] font-bold text-white/40">vs</span>
+                        <span className={`text-sm font-black ${isDark ? 'text-white/60' : 'text-white'}`}>{Math.round(d.B)}</span>
                       </div>
                     </div>
                   ))}
@@ -1523,12 +1650,12 @@ export const RankingView: React.FC<RankingViewProps> = ({
               </div>
             </motion.div>
           ) : (
-            <div className="h-full flex flex-col items-center justify-center text-center p-12 bg-slate-50 rounded-[3rem] border border-dashed border-slate-200">
-              <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center shadow-sm mb-6">
-                <Users className="w-10 h-10 text-slate-300" />
+            <div className="h-full flex flex-col items-center justify-center text-center p-12 bg-black rounded-[3rem] border border-dashed border-brand-primary/20">
+              <div className="w-20 h-20 bg-brand-secondary rounded-full flex items-center justify-center shadow-sm mb-6 border border-brand-primary/20">
+                <Users className="w-10 h-10 text-white/40" />
               </div>
-              <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Selecione um Sócio</h3>
-              <p className="text-sm font-bold text-slate-400 mt-2">Clique em um jogador na lista para ver sua análise detalhada.</p>
+              <h3 className="text-xl font-black text-white uppercase tracking-tight">Selecione um Sócio</h3>
+              <p className="text-sm font-bold text-white/40 mt-2">Clique em um jogador na lista para ver sua análise detalhada.</p>
             </div>
           )}
         </div>
@@ -1545,46 +1672,54 @@ export const RankingView: React.FC<RankingViewProps> = ({
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setIsListModalOpen(false)}
-              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
             />
             <motion.div 
               initial={{ opacity: 0, scale: 0.9, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="relative w-full max-w-2xl bg-white rounded-[3rem] shadow-2xl overflow-hidden flex flex-col max-h-[80vh]"
+              className={`relative w-full max-w-2xl rounded-[3rem] shadow-2xl overflow-hidden flex flex-col max-h-[80vh] border ${
+                isDark ? 'bg-brand-secondary border-white/10' : 'bg-black border-brand-primary/20'
+              }`}
             >
-              <div className="p-8 border-b border-slate-100 bg-slate-50/50">
+              <div className={`p-8 border-b ${isDark ? 'bg-white/5 border-white/10' : 'bg-brand-secondary border-brand-primary/20'}`}>
                 <div className="flex justify-between items-center mb-6">
                   <div>
-                    <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tighter">Lista de Sócios</h3>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">{(players?.length || 0)} Atletas Registrados</p>
+                    <h3 className={`text-2xl font-black uppercase tracking-tighter ${isDark ? 'text-white' : 'text-white'}`}>Lista de Sócios</h3>
+                    <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest mt-1">{(players?.length || 0)} Atletas Registrados</p>
                   </div>
                   <button 
                     onClick={() => {
                       setIsListModalOpen(false);
                       setModalSearchQuery('');
                     }}
-                    className="p-3 hover:bg-white rounded-2xl transition-colors shadow-sm"
+                    className={`p-3 rounded-2xl transition-colors shadow-sm ${
+                      isDark ? 'bg-white/5 hover:bg-white/10 text-white/60' : 'hover:bg-white text-brand-accent'
+                    }`}
                   >
-                    <RotateCcw className="w-5 h-5 text-slate-400 rotate-45" />
+                    <X className="w-5 h-5" />
                   </button>
                 </div>
 
                 <div className="relative">
-                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
                   <input 
                     type="text" 
                     placeholder="Buscar por nome..."
                     value={modalSearchQuery}
                     onChange={(e) => setModalSearchQuery(e.target.value)}
-                    className="w-full pl-12 pr-6 py-4 bg-white border border-slate-200 rounded-2xl text-sm font-bold focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all outline-none"
+                    className={`w-full pl-12 pr-6 py-4 border rounded-2xl text-sm font-bold focus:ring-2 focus:ring-brand-primary focus:border-transparent transition-all outline-none ${
+                      isDark ? 'bg-white/5 border-white/10 text-white placeholder:text-white/20' : 'bg-black border-brand-primary/20 text-white placeholder:text-white/40'
+                    }`}
                   />
                   {modalSearchQuery && (
                     <button 
                       onClick={() => setModalSearchQuery('')}
-                      className="absolute right-4 top-1/2 -translate-y-1/2 p-1 hover:bg-slate-100 rounded-full transition-colors"
+                      className={`absolute right-4 top-1/2 -translate-y-1/2 p-1 rounded-full transition-colors ${
+                        isDark ? 'hover:bg-white/10' : 'hover:bg-brand-primary/10'
+                      }`}
                     >
-                      <RotateCcw className="w-3 h-3 text-slate-400" />
+                      <RotateCcw className="w-3 h-3 text-white/40" />
                     </button>
                   )}
                 </div>
@@ -1616,15 +1751,21 @@ export const RankingView: React.FC<RankingViewProps> = ({
                               window.scrollTo({ top: 400, behavior: 'smooth' });
                             }
                           }}
-                          className={`flex items-center gap-4 p-4 rounded-2xl border transition-all text-left ${isSelected ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg shadow-indigo-100' : 'bg-white border-slate-100 hover:border-indigo-200 text-slate-700'}`}
+                          className={`flex items-center gap-4 p-4 rounded-2xl border transition-all text-left ${
+                            isSelected 
+                              ? 'bg-brand-primary border-brand-primary text-black shadow-lg shadow-brand-primary/20' 
+                              : `${isDark ? 'bg-white/5 border-white/10 hover:border-brand-primary/50 text-white' : 'bg-black border-brand-primary/20 hover:border-brand-primary/50 text-white'}`
+                          }`}
                         >
-                          <div className={`w-10 h-10 rounded-full flex items-center justify-center font-black ${isSelected ? 'bg-white/20' : 'bg-slate-100'}`}>
+                          <div className={`w-10 h-10 rounded-full flex items-center justify-center font-black ${
+                            isSelected ? 'bg-black/20 text-black' : `${isDark ? 'bg-white/5 text-white/40' : 'bg-brand-secondary text-white/40'}`
+                          }`}>
                             {player.name.charAt(0)}
                           </div>
                           <div>
-                            <p className={`font-black uppercase tracking-tight text-sm ${!isSelected && player.isOfficialSetter ? 'text-rose-600' : ''}`}>{player.name}</p>
-                            <p className={`text-[9px] font-bold uppercase ${isSelected ? 'text-indigo-100' : 'text-slate-400'}`}>
-                              ELO: {player.elo} • {player.wins}V • Impacto: {((player.elo - 1000) / (player.matchesPlayed || 1)).toFixed(1)}
+                            <p className={`font-black uppercase tracking-tight text-sm ${!isSelected && player.isOfficialSetter ? 'text-brand-primary' : ''}`}>{player.name}</p>
+                            <p className={`text-[9px] font-bold uppercase ${isSelected ? 'text-black/80' : 'text-white/40'}`}>
+                              {translateGender(player.gender)} • ELO: {player.elo} • {player.wins}V • Impacto: {((player.elo - 1000) / (player.matchesPlayed || 1)).toFixed(1)}
                             </p>
                           </div>
                         </button>

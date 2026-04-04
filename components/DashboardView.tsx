@@ -68,7 +68,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   return (
     <div 
-      className="relative space-y-8 animate-in fade-in duration-500"
+      className="relative space-y-10 animate-in fade-in duration-700"
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
@@ -82,84 +82,104 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           transition: isPulling ? 'none' : 'transform 0.3s ease, opacity 0.3s ease'
         }}
       >
-        <div className="bg-white p-2 rounded-full shadow-lg border border-slate-200">
-          <RotateCcw className={`w-6 h-6 text-emerald-600 ${isSyncing ? 'animate-spin' : ''}`} />
+        <div className="bg-white p-2 rounded-full shadow-lg border border-brand-primary/20">
+          <RotateCcw className={`w-6 h-6 text-brand-primary ${isSyncing ? 'animate-spin' : ''}`} />
         </div>
       </div>
+
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
-        <div>
-          <h2 className="text-4xl font-black text-slate-900 uppercase tracking-tighter">Painel</h2>
-          <p className="text-sm font-bold text-slate-400 uppercase tracking-widest mt-2">Visão geral da temporada</p>
+        <div className="space-y-2">
+          <h2 className="text-5xl font-black text-brand-primary uppercase tracking-tighter leading-none">Painel de Elite</h2>
+          <p className="text-sm font-bold text-brand-accent uppercase tracking-[0.3em]">Visão geral da temporada atual</p>
         </div>
         {userRole === 'ADMIN' && (
           <button 
             onClick={generateDailySummary}
             disabled={isNarratingSummary}
-            className="w-full md:w-auto bg-indigo-600 text-white px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-indigo-700 shadow-xl shadow-indigo-100 transition-all disabled:opacity-50"
+            className="w-full md:w-auto bg-brand-primary text-brand-secondary px-10 py-5 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 hover:scale-105 shadow-2xl shadow-brand-primary/20 transition-all disabled:opacity-50 group"
           >
-            <Sparkles className={`w-5 h-5 ${isNarratingSummary ? 'animate-spin' : ''}`} />
+            <Sparkles className={`w-5 h-5 group-hover:rotate-12 transition-transform ${isNarratingSummary ? 'animate-spin' : ''}`} />
             {isNarratingSummary ? 'Gerando Resumo...' : 'Resumo IA do Dia'}
           </button>
         )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="bg-white p-8 rounded-[2rem] border border-slate-200 shadow-sm relative overflow-hidden group">
-          <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
-            <Trophy className="w-16 h-16 text-indigo-600" />
+        <div className="bg-white p-8 rounded-[2.5rem] border border-brand-accent/10 shadow-xl relative overflow-hidden group hover:border-brand-primary/30 transition-all">
+          <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 group-hover:scale-110 transition-all duration-500">
+            <Trophy className="w-20 h-20 text-brand-primary" />
           </div>
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4">MVP da Temporada</p>
-          <h3 className="text-2xl font-black text-slate-800">{mvp?.name || '-'}</h3>
-          <p className="text-indigo-600 font-black text-sm mt-1 uppercase tracking-widest">{mvp?.wins || 0} Vitórias</p>
+          <p className="text-[10px] font-black text-brand-accent uppercase tracking-[0.2em] mb-4">MVP da Temporada</p>
+          <h3 className="text-2xl font-black text-brand-secondary uppercase tracking-tight">{mvp?.name || '-'}</h3>
+          <div className="flex items-center gap-2 mt-2">
+            <span className="text-brand-primary font-black text-lg">{mvp?.wins || 0}</span>
+            <span className="text-[10px] font-black text-brand-accent uppercase tracking-widest">Vitórias</span>
+          </div>
         </div>
 
-        <div className="bg-white p-8 rounded-[2rem] border border-slate-200 shadow-sm relative overflow-hidden group">
-          <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
-            <Target className="w-16 h-16 text-amber-600" />
+        <div className="bg-white p-8 rounded-[2.5rem] border border-brand-accent/10 shadow-xl relative overflow-hidden group hover:border-brand-primary/30 transition-all">
+          <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 group-hover:scale-110 transition-all duration-500">
+            <Target className="w-20 h-20 text-brand-primary" />
           </div>
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4">Melhor Levantador</p>
-          <h3 className="text-2xl font-black text-slate-800">{bestSetter?.name || '-'}</h3>
-          <p className="text-amber-600 font-black text-sm mt-1 uppercase tracking-widest">{bestSetter?.wins || 0} Vitórias</p>
+          <p className="text-[10px] font-black text-brand-accent uppercase tracking-[0.2em] mb-4">Melhor Levantador</p>
+          <h3 className="text-2xl font-black text-brand-secondary uppercase tracking-tight">{bestSetter?.name || '-'}</h3>
+          <div className="flex items-center gap-2 mt-2">
+            <span className="text-brand-primary font-black text-lg">{bestSetter?.wins || 0}</span>
+            <span className="text-[10px] font-black text-brand-accent uppercase tracking-widest">Vitórias</span>
+          </div>
         </div>
 
-        <div className="bg-white p-8 rounded-[2rem] border border-slate-200 shadow-sm relative overflow-hidden group">
-          <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
-            <Zap className="w-16 h-16 text-emerald-600" />
+        <div className="bg-white p-8 rounded-[2.5rem] border border-brand-accent/10 shadow-xl relative overflow-hidden group hover:border-brand-primary/30 transition-all">
+          <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 group-hover:scale-110 transition-all duration-500">
+            <Zap className="w-20 h-20 text-brand-primary" />
           </div>
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4">Melhor do Ranking ELO</p>
-          <h3 className="text-2xl font-black text-slate-800">{topElo?.name || '-'}</h3>
-          <p className="text-emerald-600 font-black text-sm mt-1 uppercase tracking-widest">{topElo?.elo || 0} Pontos</p>
+          <p className="text-[10px] font-black text-brand-accent uppercase tracking-[0.2em] mb-4">Líder do Ranking</p>
+          <h3 className="text-2xl font-black text-brand-secondary uppercase tracking-tight">{topElo?.name || '-'}</h3>
+          <div className="flex items-center gap-2 mt-2">
+            <span className="text-brand-primary font-black text-lg">{Math.round(topElo?.elo || 0)}</span>
+            <span className="text-[10px] font-black text-brand-accent uppercase tracking-widest">ELO</span>
+          </div>
         </div>
 
-        <div className="bg-white p-8 rounded-[2rem] border border-slate-200 shadow-sm relative overflow-hidden group">
-          <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
-            <Users className="w-16 h-16 text-slate-600" />
+        <div className="bg-white p-8 rounded-[2.5rem] border border-brand-accent/10 shadow-xl relative overflow-hidden group hover:border-brand-primary/30 transition-all">
+          <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 group-hover:scale-110 transition-all duration-500">
+            <Users className="w-20 h-20 text-brand-primary" />
           </div>
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4">Sócios Ativos</p>
-          <h3 className="text-2xl font-black text-slate-800">{activePlayers}</h3>
-          <p className="text-slate-600 font-black text-sm mt-1 uppercase tracking-widest">Em Quadra</p>
+          <p className="text-[10px] font-black text-brand-accent uppercase tracking-[0.2em] mb-4">Sócios Ativos</p>
+          <h3 className="text-2xl font-black text-brand-secondary uppercase tracking-tight">{activePlayers}</h3>
+          <div className="flex items-center gap-2 mt-2">
+            <span className="text-brand-primary font-black text-lg">{(players?.length || 0)}</span>
+            <span className="text-[10px] font-black text-brand-accent uppercase tracking-widest">Cadastrados</span>
+          </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
         <div className="lg:col-span-2 space-y-6">
           <div className="flex justify-between items-center">
-            <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight">Líderes de ELO</h3>
-            <button className="text-[10px] font-black text-indigo-600 uppercase tracking-widest flex items-center gap-2 hover:gap-3 transition-all">Ver Ranking Completo <ArrowRight className="w-3 h-3" /></button>
+            <h3 className="text-2xl font-black text-brand-primary uppercase tracking-tighter">Top 5 Guerreiros</h3>
+            <button className="text-[10px] font-black text-brand-secondary bg-brand-primary px-6 py-3 rounded-xl uppercase tracking-widest flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-brand-primary/20">
+              Ranking <ArrowRight className="w-4 h-4" />
+            </button>
           </div>
-          <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden">
+          <div className="bg-white rounded-[2.5rem] border border-brand-accent/10 shadow-2xl overflow-hidden">
             {[...players].sort((a, b) => b.elo - a.elo).slice(0, 5).map((player, idx) => (
-              <div key={player.id} className="flex items-center justify-between p-6 border-b border-slate-100 last:border-0 hover:bg-slate-50 transition-colors">
-                <div className="flex items-center gap-6">
-                  <span className="text-2xl font-black text-slate-200 w-8 italic">#{idx + 1}</span>
-                  <div>
-                    <p className="font-black text-slate-800">{player.name}</p>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{player.wins}V - {player.losses}D</p>
+              <div key={player.id} className="flex items-center justify-between p-8 border-b border-brand-light last:border-0 hover:bg-brand-light/50 transition-all group">
+                <div className="flex items-center gap-8">
+                  <span className="text-4xl font-black text-brand-accent/10 w-12 italic group-hover:text-brand-primary/20 transition-colors">#{idx + 1}</span>
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-full bg-brand-secondary flex items-center justify-center text-brand-primary font-black text-lg border-2 border-brand-primary/20">
+                      {player.name.charAt(0)}
+                    </div>
+                    <div>
+                      <p className="font-black text-brand-secondary text-lg uppercase tracking-tight">{player.name}</p>
+                      <p className="text-[10px] font-bold text-brand-accent uppercase tracking-widest mt-1">{player.wins}V - {player.losses}D • {player.matchesPlayed} Partidas</p>
+                    </div>
                   </div>
                 </div>
                 <div className="text-right">
-                  <p className="text-xl font-black text-indigo-600 font-mono">{player.elo}</p>
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">ELO</p>
+                  <p className="text-3xl font-black text-brand-primary tracking-tighter leading-none">{Math.round(player.elo)}</p>
+                  <p className="text-[10px] font-black text-brand-accent uppercase tracking-widest mt-1">ELO</p>
                 </div>
               </div>
             ))}
@@ -167,42 +187,51 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
 
         <div className="space-y-6">
-          <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight">Últimas Partidas</h3>
+          <h3 className="text-2xl font-black text-brand-primary uppercase tracking-tighter">Histórico Recente</h3>
           <div className="space-y-4">
-            {matches.slice(0, 5).map(match => (
-              <div key={match.id} className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-3">
-                <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-slate-400">
+            {matches.slice(0, 4).map(match => (
+              <div key={match.id} className="bg-white p-8 rounded-[2.5rem] border border-brand-accent/10 shadow-xl space-y-6 hover:border-brand-primary/20 transition-all group">
+                <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-[0.2em] text-brand-accent">
                   <div className="flex items-center gap-2">
-                    <span>{new Date(match.timestamp).toLocaleDateString('pt-BR')}</span>
+                    <span className="text-brand-secondary">{new Date(match.timestamp).toLocaleDateString('pt-BR')}</span>
                     {match.startTime && (
-                      <span className="text-slate-300">• {formatHour(match.startTime)} - {formatHour(match.endTime)}</span>
+                      <span className="opacity-40">• {formatHour(match.startTime)}</span>
                     )}
                   </div>
-                  <span className="text-indigo-600">
+                  <span className="px-2 py-1 bg-brand-light rounded-lg text-brand-primary">
                     {match.mode === 'QUICK' ? 'Rápida' : match.mode === 'SCORE' ? 'Pontuada' : 'Sequencial'}
                   </span>
                 </div>
-                <div className="flex items-center justify-between gap-4">
-                  <div className={`flex-1 text-center p-2 rounded-xl ${match.winner === 'A' ? 'bg-indigo-50 border border-indigo-100' : ''}`}>
-                    {match.mode !== 'QUICK' ? (
-                      <p className={`text-lg font-black ${match.winner === 'A' ? 'text-indigo-600' : 'text-slate-400'}`}>{match.scoreA}</p>
-                    ) : (
-                      <div className="h-7 flex items-center justify-center">
-                        {match.winner === 'A' && <Trophy className="w-4 h-4 text-emerald-500" />}
-                      </div>
-                    )}
-                    <p className="text-[8px] font-black text-slate-400 uppercase tracking-tighter">Time A</p>
+                
+                <div className="flex items-center justify-between gap-6">
+                  <div className="flex-1 text-center space-y-2">
+                    <div className={`py-4 rounded-2xl transition-all ${match.winner === 'A' ? 'bg-brand-primary/10 border border-brand-primary/20 scale-110 shadow-lg shadow-brand-primary/5' : 'bg-brand-light/50 border border-transparent opacity-40'}`}>
+                      {match.mode !== 'QUICK' ? (
+                        <p className={`text-3xl font-black ${match.winner === 'A' ? 'text-brand-primary' : 'text-brand-secondary'}`}>{match.scoreA}</p>
+                      ) : (
+                        <div className="h-9 flex items-center justify-center">
+                          {match.winner === 'A' && <Trophy className="w-6 h-6 text-brand-primary animate-bounce" />}
+                        </div>
+                      )}
+                    </div>
+                    <p className="text-[10px] font-black text-brand-accent uppercase tracking-widest">Time A</p>
                   </div>
-                  <span className="text-slate-300 font-black italic">VS</span>
-                  <div className={`flex-1 text-center p-2 rounded-xl ${match.winner === 'B' ? 'bg-indigo-50 border border-indigo-100' : ''}`}>
-                    {match.mode !== 'QUICK' ? (
-                      <p className={`text-lg font-black ${match.winner === 'B' ? 'text-indigo-600' : 'text-slate-400'}`}>{match.scoreB}</p>
-                    ) : (
-                      <div className="h-7 flex items-center justify-center">
-                        {match.winner === 'B' && <Trophy className="w-4 h-4 text-emerald-500" />}
-                      </div>
-                    )}
-                    <p className="text-[8px] font-black text-slate-400 uppercase tracking-tighter">Time B</p>
+                  
+                  <div className="flex flex-col items-center gap-1">
+                    <span className="text-brand-accent/20 font-black italic text-sm">VS</span>
+                  </div>
+                  
+                  <div className="flex-1 text-center space-y-2">
+                    <div className={`py-4 rounded-2xl transition-all ${match.winner === 'B' ? 'bg-brand-primary/10 border border-brand-primary/20 scale-110 shadow-lg shadow-brand-primary/5' : 'bg-brand-light/50 border border-transparent opacity-40'}`}>
+                      {match.mode !== 'QUICK' ? (
+                        <p className={`text-3xl font-black ${match.winner === 'B' ? 'text-brand-primary' : 'text-brand-secondary'}`}>{match.scoreB}</p>
+                      ) : (
+                        <div className="h-9 flex items-center justify-center">
+                          {match.winner === 'B' && <Trophy className="w-6 h-6 text-brand-primary animate-bounce" />}
+                        </div>
+                      )}
+                    </div>
+                    <p className="text-[10px] font-black text-brand-accent uppercase tracking-widest">Time B</p>
                   </div>
                 </div>
               </div>

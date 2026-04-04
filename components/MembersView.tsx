@@ -101,142 +101,118 @@ export const MembersView: React.FC<MembersViewProps> = ({
           transition: isPulling ? 'none' : 'transform 0.3s ease, opacity 0.3s ease'
         }}
       >
-        <div className="bg-white p-2 rounded-full shadow-lg border border-slate-200">
-          <RotateCcw className={`w-6 h-6 text-emerald-600 ${isSyncing ? 'animate-spin' : ''}`} />
+        <div className="bg-white p-2 rounded-full shadow-lg border border-brand-accent/20">
+          <RotateCcw className={`w-6 h-6 text-brand-primary ${isSyncing ? 'animate-spin' : ''}`} />
         </div>
       </div>
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
         <div>
-          <h2 className="text-4xl font-black text-slate-900 uppercase tracking-tighter">Gestão da Base</h2>
-          <p className="text-sm font-bold text-slate-400 uppercase tracking-widest mt-2">Total de {(players?.length || 0)} sócios cadastrados</p>
+          <h2 className="text-4xl font-black text-brand-primary uppercase tracking-tighter">Gestão de Sócios</h2>
+          <p className="text-sm font-bold text-brand-accent uppercase tracking-widest mt-2">Total de {(players?.length || 0)} membros ativos</p>
         </div>
         <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
           {userRole === 'ADMIN' && repairDatabase && (
             <button 
               onClick={repairDatabase} 
-              className="flex-1 md:flex-none bg-amber-50 text-amber-600 px-6 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-amber-100 transition-all border border-amber-100"
+              className="flex-1 md:flex-none bg-white text-brand-accent px-6 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-brand-light transition-all border border-brand-accent/20 shadow-sm"
             >
               <RotateCcw className="w-5 h-5" />
-              Reparar Banco
-            </button>
-          )}
-          {userRole === 'ADMIN' && (players?.length || 0) > 0 && (
-            <button 
-              onClick={clearAllPlayers} 
-              className="flex-1 md:flex-none bg-rose-50 text-rose-600 px-6 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-rose-100 transition-all border border-rose-100"
-            >
-              <Trash2 className="w-5 h-5" />
-              Limpar
+              Reparar
             </button>
           )}
           {userRole === 'ADMIN' && (
-            <button onClick={() => { setEditingPlayer(null); setIsFormOpen(true); }} className="flex-1 md:flex-none bg-indigo-600 text-white px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-indigo-700 shadow-xl shadow-indigo-100 transition-all"><UserPlus className="w-5 h-5" />Novo Sócio</button>
+            <button onClick={() => { setEditingPlayer(null); setIsFormOpen(true); }} className="flex-1 md:flex-none bg-brand-primary text-brand-secondary px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 hover:scale-105 shadow-xl shadow-brand-primary/20 transition-all"><UserPlus className="w-5 h-5" />Novo Sócio</button>
           )}
         </div>
       </div>
 
       {/* Desktop Table View */}
-      <div className="hidden md:block bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden">
+      <div className="hidden md:block bg-white rounded-[2rem] border border-brand-accent/10 shadow-xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
-            <thead className="bg-slate-50 border-b border-slate-200">
+            <thead className="bg-brand-secondary border-b border-brand-accent/20">
               <tr>
                 <th 
                   onClick={() => handleSort('name')}
-                  className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest cursor-pointer hover:text-indigo-600 transition-colors"
+                  className="px-8 py-6 text-[10px] font-black text-brand-primary uppercase tracking-widest cursor-pointer hover:opacity-80 transition-colors"
                 >
                   <div className="flex items-center gap-2">
                     Sócio
                     {sortConfig.key === 'name' && (
-                      <span className="text-indigo-600">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
+                      <span className="text-brand-primary">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
                     )}
                   </div>
                 </th>
                 {userRole === 'ADMIN' && (
-                  <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Email</th>
+                  <th className="px-8 py-6 text-[10px] font-black text-brand-primary uppercase tracking-widest">Email</th>
                 )}
-                <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Posição</th>
-                <th 
-                  onClick={() => handleSort('gender')}
-                  className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center cursor-pointer hover:text-indigo-600 transition-colors"
-                >
-                  <div className="flex items-center justify-center gap-2">
-                    Gênero
-                    {sortConfig.key === 'gender' && (
-                      <span className="text-indigo-600">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
-                    )}
-                  </div>
-                </th>
-                <th 
-                  onClick={() => handleSort('joinedAt')}
-                  className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center cursor-pointer hover:text-indigo-600 transition-colors"
-                >
-                  <div className="flex items-center justify-center gap-2">
-                    Entrada
-                    {sortConfig.key === 'joinedAt' && (
-                      <span className="text-indigo-600">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
-                    )}
-                  </div>
-                </th>
+                <th className="px-8 py-6 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">Gênero</th>
+                <th className="px-8 py-6 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">Posição</th>
                 <th 
                   onClick={() => handleSort('elo')}
-                  className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center cursor-pointer hover:text-indigo-600 transition-colors"
+                  className="px-8 py-6 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center cursor-pointer hover:opacity-80 transition-colors"
                 >
                   <div className="flex items-center justify-center gap-2">
-                    Ranking ELO
+                    ELO
                     {sortConfig.key === 'elo' && (
-                      <span className="text-indigo-600">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
+                      <span className="text-brand-primary">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
                     )}
                   </div>
                 </th>
-                <th 
-                  onClick={() => handleSort('matchesPlayed')}
-                  className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center cursor-pointer hover:text-indigo-600 transition-colors"
-                >
-                  <div className="flex items-center justify-center gap-2">
-                    Partidas
-                    {sortConfig.key === 'matchesPlayed' && (
-                      <span className="text-indigo-600">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
-                    )}
-                  </div>
-                </th>
-                <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Ações</th>
+                <th className="px-8 py-6 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">Status</th>
+                {userRole === 'ADMIN' && (
+                  <th className="px-8 py-6 text-[10px] font-black text-brand-primary uppercase tracking-widest text-right">Ações</th>
+                )}
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-brand-light">
               {sortedPlayers.map(player => (
-                <tr key={player.id} className="hover:bg-slate-50/50 transition-colors group">
+                <tr key={player.id} className="hover:bg-brand-light/50 transition-colors group">
                   <td className="px-8 py-5">
-                    <p className={`font-black ${player.isOfficialSetter ? 'text-rose-600' : 'text-slate-700'}`}>{player.name || "Sócio sem nome"}</p>
-                    <p className="text-[10px] text-slate-400 font-bold uppercase">{player.matchesPlayed} partidas totais</p>
+                    <p className={`font-black ${player.isOfficialSetter ? 'text-brand-primary' : 'text-brand-secondary'}`}>{player.name || "Sócio sem nome"}</p>
+                    <p className="text-[10px] text-brand-accent font-bold uppercase">{player.matchesPlayed} partidas totais</p>
                   </td>
                   {userRole === 'ADMIN' && (
                     <td className="px-8 py-5">
-                      <p className="text-xs font-bold text-slate-500">{player.email || '-'}</p>
+                      <p className="text-xs font-bold text-brand-accent">{player.email || '-'}</p>
                     </td>
                   )}
-                  <td className="px-8 py-5 text-center">
-                    {player.isOfficialSetter ? (
-                      <span className="bg-amber-100 text-amber-700 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest">Levantador</span>
-                    ) : (
-                      <span className="text-slate-300 font-bold text-xs">-</span>
-                    )}
+                  <td className="px-8 py-6 text-center">
+                    <span className="text-xs font-bold text-brand-accent">{translateGender(player.gender)}</span>
                   </td>
-                  <td className="px-8 py-5 text-center text-[10px] font-bold text-slate-500 uppercase">{translateGender(player.gender)}</td>
-                  <td className="px-8 py-5 text-center text-[10px] font-bold text-slate-500 uppercase">
-                    {player.joinedAt ? new Date(player.joinedAt + 'T00:00:00').toLocaleDateString('pt-BR') : '-'}
+                  <td className="px-8 py-6 text-center">
+                    <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${player.isOfficialSetter ? 'bg-brand-primary/20 text-brand-primary border border-brand-primary/30' : 'bg-brand-light text-brand-accent'}`}>
+                      {player.isOfficialSetter ? 'Levantador' : 'Atleta'}
+                    </span>
                   </td>
-                  <td className="px-8 py-5 text-center font-mono text-sm font-black text-indigo-600">{player.elo}</td>
-                  <td className="px-8 py-5 text-center font-mono text-sm font-black text-slate-600">{player.matchesPlayed}</td>
-                  <td className="px-8 py-5 text-right">
-                    {userRole === 'ADMIN' ? (
-                      <div className="flex justify-end gap-2">
-                        <button onClick={() => { setEditingPlayer(player); setIsFormOpen(true); }} className="p-2.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all" title="Editar"><Edit2 className="w-4 h-4" /></button>
-                        <button onClick={() => deletePlayer(player.id)} className="p-2.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all" title="Excluir"><Trash2 className="w-4 h-4" /></button>
-                      </div>
-                    ) : (
-                      <span className="text-[10px] text-slate-300 font-bold uppercase tracking-widest">Somente Leitura</span>
-                    )}
+                  <td className="px-8 py-6 text-center">
+                    <span className="font-black text-brand-secondary">{Math.round(player.elo)}</span>
+                  </td>
+                  <td className="px-8 py-6 text-center">
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-600 text-[10px] font-black uppercase tracking-widest border border-emerald-100">
+                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
+                      Ativo
+                    </span>
+                  </td>
+                  <td className="px-8 py-6 text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      <button 
+                        onClick={() => { setEditingPlayer(player); setIsFormOpen(true); }}
+                        className="p-2 text-brand-accent hover:text-brand-primary hover:bg-brand-primary/10 rounded-xl transition-all"
+                      >
+                        <Edit2 className="w-4 h-4" />
+                      </button>
+                      <button 
+                        onClick={() => {
+                          if (window.confirm(`Deseja realmente excluir ${player.name}?`)) {
+                            deletePlayer(player.id);
+                          }
+                        }}
+                        className="p-2 text-brand-accent hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -248,39 +224,50 @@ export const MembersView: React.FC<MembersViewProps> = ({
       {/* Mobile Card View */}
       <div className="md:hidden space-y-4">
         {sortedPlayers.map(player => (
-          <div key={player.id} className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm space-y-4">
-            <div className="flex justify-between items-start">
-              <div>
-                <h4 className={`text-xl font-black ${player.isOfficialSetter ? 'text-rose-600' : 'text-slate-800'}`}>{player.name || "Sócio sem nome"}</h4>
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">{player.matchesPlayed} partidas totais</p>
+          <div key={player.id} className="bg-white p-6 rounded-[2.5rem] border border-brand-accent/10 shadow-xl space-y-6 relative overflow-hidden group">
+            <div className="absolute top-0 right-0 w-32 h-32 bg-brand-primary/5 rounded-full -mr-16 -mt-16 transition-transform group-hover:scale-150 duration-700"></div>
+            
+            <div className="flex justify-between items-start relative z-10">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-full bg-brand-secondary flex items-center justify-center text-brand-primary font-black text-lg border-2 border-brand-primary/20">
+                  {player.name.charAt(0)}
+                </div>
+                <div>
+                  <h4 className="text-xl font-black text-brand-secondary uppercase tracking-tight leading-none">{player.name}</h4>
+                  <div className="flex items-center gap-2 mt-2">
+                    <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest ${player.isOfficialSetter ? 'bg-brand-primary/20 text-brand-primary' : 'bg-brand-light text-brand-accent'}`}>
+                      {translateGender(player.gender)}
+                    </span>
+                    <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest ${player.isOfficialSetter ? 'bg-brand-primary/20 text-brand-primary' : 'bg-brand-light text-brand-accent'}`}>
+                      {player.isOfficialSetter ? 'Levantador' : 'Atleta'}
+                    </span>
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600 text-[8px] font-black uppercase tracking-widest border border-emerald-100">
+                      Ativo
+                    </span>
+                  </div>
+                </div>
               </div>
               <div className="text-right">
-                <p className="text-2xl font-black text-indigo-600 font-mono">{player.elo}</p>
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">ELO Rank</p>
+                <p className="text-2xl font-black text-brand-primary tracking-tighter leading-none">{Math.round(player.elo)}</p>
+                <p className="text-[8px] font-black text-brand-accent uppercase tracking-widest mt-1">ELO Rank</p>
               </div>
             </div>
             
-            <div className="flex flex-wrap gap-2">
-              {player.isOfficialSetter && (
-                <span className="bg-amber-100 text-amber-700 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border border-amber-200">Levantador</span>
-              )}
-              <span className="bg-slate-100 text-slate-600 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border border-slate-200">{translateGender(player.gender)}</span>
-              <span className="bg-slate-100 text-slate-600 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border border-slate-200">
-                Entrada: {player.joinedAt ? new Date(player.joinedAt + 'T00:00:00').toLocaleDateString('pt-BR') : '-'}
-              </span>
-            </div>
-
             {userRole === 'ADMIN' && (
-              <div className="flex gap-3 pt-2 border-t border-slate-100">
+              <div className="flex gap-3 pt-4 border-t border-brand-light relative z-10">
                 <button 
                   onClick={() => { setEditingPlayer(player); setIsFormOpen(true); }} 
-                  className="flex-1 flex items-center justify-center gap-2 py-3 bg-indigo-50 text-indigo-600 rounded-xl font-black text-xs uppercase tracking-widest"
+                  className="flex-1 flex items-center justify-center gap-2 py-4 bg-brand-light text-brand-accent rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-brand-primary/10 hover:text-brand-primary transition-all"
                 >
                   <Edit2 className="w-4 h-4" /> Editar
                 </button>
                 <button 
-                  onClick={() => deletePlayer(player.id)} 
-                  className="flex-1 flex items-center justify-center gap-2 py-3 bg-rose-50 text-rose-600 rounded-xl font-black text-xs uppercase tracking-widest"
+                  onClick={() => {
+                    if (window.confirm(`Deseja realmente excluir ${player.name}?`)) {
+                      deletePlayer(player.id);
+                    }
+                  }} 
+                  className="flex-1 flex items-center justify-center gap-2 py-4 bg-rose-50 text-rose-500 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-100 transition-all"
                 >
                   <Trash2 className="w-4 h-4" /> Excluir
                 </button>

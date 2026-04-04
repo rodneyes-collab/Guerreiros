@@ -80,24 +80,9 @@ export const useAuth = () => {
         setUser(u);
         setIsAuthReady(true);
       } else {
-        // Check for member session
-        const storedMember = window.localStorage.getItem('memberUser');
-        console.log('useAuth: Checking localStorage for memberUser', !!storedMember);
-        if (storedMember) {
-          try {
-            const memberData = JSON.parse(storedMember);
-            setUser(memberData);
-          } catch (e) {
-            console.error('useAuth: Error parsing memberUser', e);
-            setUser(null);
-          }
-        } else {
-          setUser(null);
-        }
-        setIsAuthReady(true);
-      }
-      if (!u && !window.localStorage.getItem('memberUser')) {
+        setUser(null);
         setUserRole(null);
+        setIsAuthReady(true);
       }
     });
 
@@ -114,20 +99,6 @@ export const useAuth = () => {
     }
 
     console.log('useAuth: User changed', user.uid);
-
-    // Mock member/admin role
-    if (user.uid?.startsWith('member_') || user.uid?.startsWith('admin_')) {
-      console.log('useAuth: Member/Admin login detected');
-      const isAdminEmail = user.email?.toLowerCase() === 'rodneyes@gmail.com';
-      const playerProfile = players.find(p => p.email?.toLowerCase() === user.email?.toLowerCase());
-      
-      const newRole = (isAdminEmail || playerProfile?.isAdmin) ? 'ADMIN' : 'MEMBER';
-      if (userRole !== newRole) {
-        setUserRole(newRole);
-      }
-      setIsRoleLoading(false);
-      return;
-    }
 
     const userRef = doc(db, 'users', user.uid);
     setIsRoleLoading(true);
@@ -181,19 +152,6 @@ export const useAuth = () => {
       unsubscribeUserDoc();
     };
   }, [user?.uid, user?.email]); // Only depend on user identity
-
-  // Separate effect for mock role updates when players change
-  useEffect(() => {
-    if (user && (user.uid?.startsWith('member_') || user.uid?.startsWith('admin_'))) {
-      const isAdminEmail = user.email?.toLowerCase() === 'rodneyes@gmail.com';
-      const playerProfile = players.find(p => p.email?.toLowerCase() === user.email?.toLowerCase());
-      const newRole = (isAdminEmail || playerProfile?.isAdmin) ? 'ADMIN' : 'MEMBER';
-      
-      if (userRole !== newRole) {
-        setUserRole(newRole);
-      }
-    }
-  }, [players, user, userRole, setUserRole]);
 
   // Link user to player profile
   useEffect(() => {

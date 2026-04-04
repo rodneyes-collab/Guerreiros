@@ -28,6 +28,7 @@ interface AppState {
   currentPlayer: Player | null;
   pendingRequests: any[];
   usageStats: UsageStats;
+  monthlyUsageStats: UsageStats;
   syncTrigger: number;
   dateKey: string;
   
@@ -95,6 +96,7 @@ interface AppState {
   setCurrentPlayer: (player: Player | null) => void;
   setPendingRequests: (requests: any[]) => void;
   setUsageStats: (stats: UsageStats) => void;
+  setMonthlyUsageStats: (stats: UsageStats) => void;
   setGenerationResult: (result: GenerationResult | null) => void;
   setTournaments: (tournaments: Tournament[] | ((prev: Tournament[]) => Tournament[])) => void;
   setActiveTournament: (tournament: Tournament | null) => void;
@@ -163,6 +165,7 @@ export const useStore = create<AppState>((set) => ({
   currentPlayer: null,
   pendingRequests: [],
   usageStats: { reads: 0, writes: 0, aiCalls: 0, lastUpdate: '' },
+  monthlyUsageStats: { reads: 0, writes: 0, aiCalls: 0, lastUpdate: '' },
   syncTrigger: 0,
   dateKey: '',
   generationResult: null,
@@ -240,6 +243,7 @@ export const useStore = create<AppState>((set) => ({
   setCurrentPlayer: (currentPlayer) => set({ currentPlayer }),
   setPendingRequests: (pendingRequests) => set({ pendingRequests }),
   setUsageStats: (usageStats) => set({ usageStats }),
+  setMonthlyUsageStats: (monthlyUsageStats) => set({ monthlyUsageStats }),
   setGenerationResult: (generationResult) => set({ generationResult }),
   setTournaments: (tournaments) => set((state) => ({ 
     tournaments: typeof tournaments === 'function' ? tournaments(state.tournaments) : tournaments 

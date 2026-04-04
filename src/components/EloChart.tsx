@@ -4,13 +4,14 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 interface EloChartProps {
   history: { date: string; elo: number; groupAverage?: number }[];
   averageElo?: number;
+  isDark?: boolean;
 }
 
-export const EloChart: React.FC<EloChartProps> = ({ history, averageElo }) => {
+export const EloChart: React.FC<EloChartProps> = ({ history, averageElo, isDark = false }) => {
   if (!history || history.length === 0) {
     return (
-      <div className="h-48 flex items-center justify-center bg-slate-50 rounded-2xl border border-dashed border-slate-200">
-        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Sem histórico de ELO disponível</p>
+      <div className={`h-48 flex items-center justify-center rounded-2xl border border-dashed ${isDark ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'}`}>
+        <p className={`text-xs font-bold uppercase tracking-widest ${isDark ? 'text-white/40' : 'text-slate-400'}`}>Sem histórico de ELO disponível</p>
       </div>
     );
   }
@@ -24,12 +25,12 @@ export const EloChart: React.FC<EloChartProps> = ({ history, averageElo }) => {
     <div className="h-64 w-full">
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={data} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+          <CartesianGrid strokeDasharray="3 3" stroke={isDark ? "rgba(255,255,255,0.05)" : "rgba(74, 79, 90, 0.1)"} vertical={false} />
           <XAxis 
             dataKey="date" 
             axisLine={false} 
             tickLine={false} 
-            tick={{ fill: '#94a3b8', fontSize: 10, fontWeight: 'bold' }}
+            tick={{ fill: isDark ? '#94a3b8' : '#4A4F5A', fontSize: 10, fontWeight: 'bold' }}
             tickFormatter={(val) => {
               if (val === 'Início') return val;
               try {
@@ -43,17 +44,19 @@ export const EloChart: React.FC<EloChartProps> = ({ history, averageElo }) => {
             domain={['auto', 'auto']} 
             axisLine={false} 
             tickLine={false} 
-            tick={{ fill: '#94a3b8', fontSize: 10, fontWeight: 'bold' }}
+            tick={{ fill: isDark ? '#94a3b8' : '#4A4F5A', fontSize: 10, fontWeight: 'bold' }}
           />
           <Tooltip 
             contentStyle={{ 
-              backgroundColor: '#fff', 
+              backgroundColor: '#1E232D', 
               borderRadius: '1rem', 
-              border: '1px solid #e2e8f0',
-              boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
+              border: '1px solid rgba(245, 196, 41, 0.2)',
+              boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.3)',
               fontSize: '12px',
-              fontWeight: 'bold'
+              fontWeight: 'bold',
+              color: '#fff'
             }}
+            itemStyle={{ color: '#F5C429' }}
             labelFormatter={(val) => {
               if (val === 'Início') return val;
               return new Date(val + 'T00:00:00').toLocaleDateString('pt-BR');
@@ -62,12 +65,12 @@ export const EloChart: React.FC<EloChartProps> = ({ history, averageElo }) => {
           {averageElo && (
             <ReferenceLine 
               y={averageElo} 
-              stroke="#94a3b8" 
+              stroke={isDark ? '#475569' : '#4A4F5A'} 
               strokeDasharray="3 3" 
               label={{ 
                 value: `Média: ${averageElo}`, 
                 position: 'right', 
-                fill: '#94a3b8', 
+                fill: isDark ? '#94a3b8' : '#4A4F5A', 
                 fontSize: 10, 
                 fontWeight: 'bold' 
               }} 
@@ -77,16 +80,16 @@ export const EloChart: React.FC<EloChartProps> = ({ history, averageElo }) => {
             name="Sócio"
             type="monotone" 
             dataKey="elo" 
-            stroke="#4f46e5" 
+            stroke="#F5C429" 
             strokeWidth={4} 
-            dot={{ r: 4, fill: '#4f46e5', strokeWidth: 2, stroke: '#fff' }}
+            dot={{ r: 4, fill: '#F5C429', strokeWidth: 2, stroke: isDark ? '#1E232D' : '#fff' }}
             activeDot={{ r: 6, strokeWidth: 0 }}
           />
           <Line 
             name="Média Grupo"
             type="monotone" 
             dataKey="groupAverage" 
-            stroke="#94a3b8" 
+            stroke={isDark ? '#475569' : '#4A4F5A'} 
             strokeWidth={2} 
             strokeDasharray="5 5"
             dot={false}

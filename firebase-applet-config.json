@@ -3,7 +3,6 @@
   "appId": "1:238897290870:web:d2226b2375996408254957",
   "apiKey": "AIzaSyAFHrfcQKfl1MMEH97JFujGvZ4ngvsCVys",
   "authDomain": "volleyclub-manager.firebaseapp.com",
-  "firestoreDatabaseId": "(default)",
   "storageBucket": "volleyclub-manager.firebasestorage.app",
   "messagingSenderId": "238897290870",
   "measurementId": ""

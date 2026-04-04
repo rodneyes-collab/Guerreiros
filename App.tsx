@@ -50,6 +50,7 @@ import { ExpenseForm } from './components/ExpenseForm';
 import { LoginView } from './src/components/LoginView';
 import { AccessRequestView } from './src/components/AccessRequestView';
 import { CourtDiagram } from './src/components/CourtDiagram';
+import { Logo } from './src/components/Logo';
 import { clearOldStorage } from './services/geminiService';
 
 const App: React.FC = () => {
@@ -76,6 +77,7 @@ const App: React.FC = () => {
     isNarratingSummary,
     createDataSnapshot,
     handleLogout,
+    handleGoogleLogin,
     handleMagicLink,
     handleRequestAccess,
     handleGenerate,
@@ -88,7 +90,6 @@ const App: React.FC = () => {
     onApproveRequest,
     onRejectRequest,
     triggerSync,
-    recalculateStats,
     recalculateDailyStats,
     registerAttendance,
     removeAttendance,
@@ -97,7 +98,6 @@ const App: React.FC = () => {
     deletePlayer,
     clearAllPlayers,
     repairDatabase,
-    initializeEloHistory,
     updateQuotaSettings,
     savePlayer,
     savePayment,
@@ -113,6 +113,8 @@ const App: React.FC = () => {
     deletePayment,
     handleScanAnomalies,
     fixDatabaseAnomalies,
+    recalculateStats,
+    initializeEloHistory,
     startTournament,
     recordTournamentMatch,
     endTournament,
@@ -348,7 +350,6 @@ const App: React.FC = () => {
   // --- Navigation Items ---
   const navItems = useMemo(() => [
     { id: 'presence', label: 'Presença', icon: ClipboardCheck, adminOnly: false },
-    { id: 'attendance_report', label: 'Relatório', icon: BarChart3, adminOnly: false },
     { id: 'generation', label: 'Partida', icon: Swords, adminOnly: false },
     { id: 'tournament', label: 'Torneio', icon: Trophy, adminOnly: false },
     { id: 'history', label: 'Histórico', icon: History, adminOnly: false },
@@ -362,12 +363,17 @@ const App: React.FC = () => {
   // --- Security Redirect ---
   useEffect(() => {
     if (isAuthReady && userRole) {
-      const isRestricted = navItems.every(item => item.id !== viewMode);
+      const validViews = [...navItems.map(item => item.id), 'attendance_report'];
+      const isRestricted = !validViews.includes(viewMode);
       if (isRestricted) {
         setViewMode('generation');
       }
     }
   }, [userRole, viewMode, navItems, isAuthReady, setViewMode]);
+
+  const isDarkView = useMemo(() => {
+    return ['generation', 'members', 'dashboard', 'admin'].includes(viewMode);
+  }, [viewMode]);
 
   // --- Helper Functions (Remaining in App for View Logic) ---
   const handleSwapClick = (source: 'A' | 'B' | 'Bench', playerId: string) => {
@@ -475,9 +481,7 @@ const App: React.FC = () => {
           animate={{ opacity: 1, scale: 1 }}
           className="text-center space-y-6"
         >
-          <div className="w-24 h-24 bg-white/10 rounded-full flex items-center justify-center mx-auto mb-8">
-            <LogOut className="w-12 h-12 text-white" />
-          </div>
+          <Logo size="lg" className="mx-auto mb-8" />
           <h1 className="text-4xl font-black uppercase tracking-tighter italic">
             Até breve!
           </h1>
@@ -485,7 +489,7 @@ const App: React.FC = () => {
             Sua sessão foi encerrada com segurança.
           </p>
           <div className="pt-8">
-            <div className="w-12 h-1 bg-indigo-500 mx-auto rounded-full animate-pulse" />
+            <div className="w-12 h-1 bg-amber-500 mx-auto rounded-full animate-pulse" />
           </div>
         </motion.div>
       </div>
@@ -495,9 +499,18 @@ const App: React.FC = () => {
   if (!isAuthReady || (user && isRoleLoading)) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-10 h-10 border-4 border-emerald-600 border-t-transparent rounded-full animate-spin" />
-          <p className="text-slate-400 font-black uppercase tracking-[0.3em] text-[10px] animate-pulse">Carregando...</p>
+        <div className="flex flex-col items-center gap-6">
+          <motion.div 
+            animate={{ scale: [1, 1.05, 1] }}
+            transition={{ duration: 2, repeat: Infinity }}
+            className="mx-auto"
+          >
+            <Logo size="lg" />
+          </motion.div>
+          <div className="flex flex-col items-center gap-2">
+            <div className="w-10 h-10 border-4 border-amber-600 border-t-transparent rounded-full animate-spin" />
+            <p className="text-slate-400 font-black uppercase tracking-[0.3em] text-[10px] animate-pulse">Carregando...</p>
+          </div>
         </div>
       </div>
     );
@@ -511,6 +524,7 @@ const App: React.FC = () => {
         isSendingMagicLink={isSendingMagicLink}
         isLoggingIn={isLoggingIn}
         handleMagicLink={handleMagicLink}
+        handleGoogleLogin={handleGoogleLogin}
       />
     );
   }
@@ -531,84 +545,89 @@ const App: React.FC = () => {
 
   return (
     <ErrorBoundary>
-      <div className="min-h-screen bg-slate-50 pb-32 sm:pb-0 sm:pl-24">
+      <div className={`min-h-screen transition-colors duration-500 pb-20 sm:pb-0 sm:pl-28 ${isDarkView ? 'bg-black' : 'bg-brand-light'}`}>
         {/* Header */}
-        <header className="sticky top-0 z-30 bg-white/80 backdrop-blur-xl border-b border-slate-200 px-6 py-4 sm:px-12 sm:py-6">
-          <div className="max-w-7xl mx-auto flex justify-between items-center">
-            <div className="flex items-center gap-4 sm:gap-6">
-              <div className="w-10 h-10 sm:w-14 sm:h-14 bg-indigo-600 rounded-2xl sm:rounded-3xl flex items-center justify-center shadow-xl shadow-indigo-500/20 rotate-3">
-                <Zap className="w-5 h-5 sm:w-8 h-8 text-white fill-white" />
+        <header className="sticky top-0 z-30 bg-black relative overflow-hidden px-4 py-4 sm:px-12 sm:py-12 shadow-2xl shadow-black/50 border-b border-white/5">
+          {/* Header Background Image with Overlay */}
+          <div className="absolute inset-0 z-0">
+            <img 
+              src="https://images.unsplash.com/photo-1592656094267-764a45160876?auto=format&fit=crop&q=80&w=2000" 
+              alt="Volleyball Background" 
+              className="w-full h-full object-cover opacity-5 scale-110 blur-[4px]"
+              referrerPolicy="no-referrer"
+            />
+            <div className="absolute inset-0 bg-gradient-to-r from-black via-black/95 to-transparent"></div>
+            <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/80"></div>
+          </div>
+
+          <div className="max-w-7xl mx-auto flex justify-between items-center relative z-10">
+            <div className="flex items-center gap-3 sm:gap-10">
+              <div className="relative group">
+                <div className="absolute -inset-4 bg-brand-primary/10 rounded-full blur-3xl group-hover:bg-brand-primary/20 transition-all duration-500"></div>
+                <Logo size="sm" className="!w-10 !h-10 sm:!w-24 sm:!h-24 -rotate-3 hover:rotate-0 transition-transform duration-500 relative z-10" />
               </div>
               <div>
-                <h1 className="text-xl sm:text-3xl font-black text-slate-900 tracking-tighter uppercase leading-none">Guerreiros Volleyball Club</h1>
-                <div className="flex items-center gap-2 mt-1 sm:mt-2">
-                  <div className={`w-2 h-2 rounded-full ${dbStatus === 'idle' ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`}></div>
-                  <p className="text-[8px] sm:text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                <h1 className="text-lg sm:text-5xl font-black text-white tracking-tighter uppercase leading-none drop-shadow-2xl">
+                  Guerreiros <span className="text-brand-primary">Volleyball</span> Club
+                </h1>
+                <div className="flex items-center gap-2 sm:gap-3 mt-1 sm:mt-4">
+                  <div className={`w-2 h-2 sm:w-3 sm:h-3 rounded-full shadow-[0_0_12px_rgba(245,196,41,0.5)] ${dbStatus === 'idle' ? 'bg-brand-primary' : 'bg-brand-primary animate-pulse'}`}></div>
+                  <p className="text-[8px] sm:text-xs font-black text-brand-primary uppercase tracking-[0.3em] drop-shadow-md">
                     {dbStatus === 'idle' ? 'Sistema Online' : 'Sincronizando...'}
-                    {useStore.getState().dateKey && ` | KEY: ${useStore.getState().dateKey}`}
                   </p>
                 </div>
               </div>
             </div>
 
-            <div className="flex items-center gap-3 sm:gap-6">
+            <div className="flex items-center gap-3 sm:gap-8">
               <button 
                 onClick={() => {
                   forceSync();
                   showNotification('Sincronização forçada iniciada...', 'info');
                 }}
-                className={`p-3 sm:p-4 rounded-2xl transition-all ${isSyncing ? 'bg-indigo-50 text-indigo-600 animate-spin' : 'bg-slate-100 text-slate-600 hover:bg-indigo-50 hover:text-indigo-600'}`}
+                className={`p-2.5 sm:p-5 rounded-xl sm:rounded-2xl transition-all border-2 ${isSyncing ? 'bg-brand-primary/20 border-brand-primary text-brand-primary animate-spin' : 'bg-white/5 text-white/80 hover:bg-brand-primary/20 hover:text-brand-primary border-white/10 hover:border-brand-primary/50'}`}
                 title="Sincronizar Agora"
                 disabled={isSyncing}
               >
-                <Database className="w-5 h-5 sm:w-6 h-6" />
+                <Database className="w-5 h-5 sm:w-8 sm:h-8" />
               </button>
               <div className="hidden sm:flex flex-col items-end">
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Bem-vindo,</p>
-                <div className="flex items-center gap-2">
-                  <p className="text-sm font-black text-slate-900 uppercase tracking-tight flex items-center gap-2">
+                <p className="text-xs font-black text-white/40 uppercase tracking-[0.2em] mb-1">Atleta</p>
+                <div className="flex items-center gap-3">
+                  <p className="text-lg font-black text-white uppercase tracking-tight flex items-center gap-2">
                     {currentPlayer?.name || user.displayName || 'Atleta'}
-                    {userRole === 'ADMIN' && <CheckCircle2 className="w-4 h-4 text-indigo-600" />}
+                    {userRole === 'ADMIN' && <CheckCircle2 className="w-5 h-5 text-brand-primary" />}
                   </p>
-                  {currentPlayer && (
-                    <button 
-                      onClick={() => { setEditingPlayer(currentPlayer); setIsFormOpen(true); }}
-                      className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
-                      title="Editar meu perfil"
-                    >
-                      <Edit2 className="w-3.5 h-3.5" />
-                    </button>
-                  )}
                 </div>
               </div>
               <button 
                 onClick={handleLogout}
-                className="p-3 sm:p-4 rounded-2xl bg-slate-100 text-slate-600 hover:bg-rose-50 hover:text-rose-600 transition-all group"
+                className="p-2.5 sm:p-5 rounded-xl sm:rounded-2xl bg-white/5 text-white/60 hover:bg-rose-500/20 hover:text-rose-500 border border-white/10 hover:border-rose-500/50 transition-all group"
                 title="Sair"
               >
-                <LogOut className="w-5 h-5 sm:w-6 h-6 group-hover:-translate-x-1 transition-transform" />
+                <LogOut className="w-5 h-5 sm:w-8 sm:h-8 group-hover:-translate-x-1 transition-transform" />
               </button>
             </div>
           </div>
         </header>
 
         {/* Sidebar Navigation */}
-        <nav className="fixed bottom-0 left-0 w-full sm:w-24 sm:h-full bg-white border-t sm:border-t-0 sm:border-r border-slate-200 z-40 flex sm:flex-col items-center overflow-x-auto sm:overflow-x-visible justify-start sm:justify-center gap-2 p-4 sm:p-0 scrollbar-hide">
+        <nav className="fixed bottom-0 left-0 w-full sm:w-28 sm:h-full bg-black border-t sm:border-t-0 sm:border-r border-white/5 z-40 flex sm:flex-col items-center overflow-x-auto sm:overflow-x-visible justify-start sm:justify-center gap-2 sm:gap-4 p-2 sm:p-0 scrollbar-hide shadow-2xl">
           {navItems.map((item) => (
             <button
               key={item.id}
               onClick={() => setViewMode(item.id as any)}
-              className={`flex flex-col items-center gap-1 p-3 sm:p-4 rounded-2xl transition-all relative group flex-shrink-0 ${
+              className={`flex flex-col items-center gap-1 sm:gap-2 p-2.5 sm:p-6 rounded-2xl sm:rounded-3xl transition-all relative group flex-shrink-0 ${
                 viewMode === item.id 
-                  ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30 scale-110' 
-                  : 'text-slate-400 hover:bg-slate-50 hover:text-slate-600'
+                  ? 'bg-brand-primary text-brand-secondary shadow-2xl shadow-brand-primary/30 scale-110' 
+                  : 'text-white/40 hover:bg-white/5 hover:text-white'
               }`}
             >
-              <item.icon className="w-6 h-6 sm:w-7 h-7" />
+              <item.icon className="w-5 h-5 sm:w-9 sm:h-9" />
               <span className={`text-[8px] font-black uppercase tracking-tighter sm:hidden`}>{item.label}</span>
               
               {/* Tooltip Desktop */}
-              <div className="absolute left-full ml-4 px-3 py-2 bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity hidden sm:block whitespace-nowrap">
+              <div className="absolute left-full ml-6 px-4 py-3 bg-brand-primary text-brand-secondary text-[10px] font-black uppercase tracking-[0.2em] rounded-xl opacity-0 group-hover:opacity-100 pointer-events-none transition-all translate-x-[-10px] group-hover:translate-x-0 shadow-2xl hidden sm:block whitespace-nowrap z-50">
                 {item.label}
               </div>
             </button>
@@ -631,11 +650,12 @@ const App: React.FC = () => {
               resetDailyMatches={handleFinishDay}
               availablePlayers={players}
               preConfirmations={preConfirmations}
+              setViewMode={setViewMode}
             />
           )}
 
           {viewMode === 'attendance_report' && (
-            <AttendanceReportView />
+            <AttendanceReportView setViewMode={setViewMode} />
           )}
 
           {viewMode === 'generation' && (
@@ -660,9 +680,9 @@ const App: React.FC = () => {
               {generationResult && (
                 <div className="animate-in fade-in slide-in-from-bottom-8 duration-700">
                   <div className="flex items-center gap-4 mb-8">
-                    <div className="h-px flex-grow bg-slate-200"></div>
-                    <h2 className="text-sm font-black text-slate-400 uppercase tracking-[0.3em]">Posicionamento Tático</h2>
-                    <div className="h-px flex-grow bg-slate-200"></div>
+                    <div className="h-px flex-grow bg-white/10"></div>
+                    <h2 className="text-sm font-black text-white/40 uppercase tracking-[0.3em]">Posicionamento Tático</h2>
+                    <div className="h-px flex-grow bg-white/10"></div>
                   </div>
                   <CourtDiagram teamA={generationResult.teamA} teamB={generationResult.teamB} />
                 </div>
@@ -715,6 +735,7 @@ const App: React.FC = () => {
               handleAnnounceSummary={handleAnnounce}
               isNarratingSummary={isNarratingSummary}
               resetDailyMatches={handleFinishDay}
+              isDark={isDarkView}
             />
           )}
 
@@ -725,8 +746,8 @@ const App: React.FC = () => {
               resetDailyStats={handleFinishDay}
               resetElo={resetElo}
               triggerSync={triggerSync}
-              recalculateStats={recalculateStats}
               recalculateDailyStats={recalculateDailyStats}
+              recalculateStats={recalculateStats}
               repairDatabase={repairDatabase}
               initializeEloHistory={initializeEloHistory}
               updateQuotaSettings={updateQuotaSettings}

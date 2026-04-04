@@ -4,16 +4,16 @@
   "description": "App para gestão de sessões de vôlei do clube Guerreiros.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f8fafc",
-  "theme_color": "#10b981",
+  "background_color": "#1E232D",
+  "theme_color": "#1E232D",
   "icons": [
     {
-      "src": "https://picsum.photos/seed/volleyball/192/192",
+      "src": "/logo.png",
       "sizes": "192x192",
       "type": "image/png"
     },
     {
-      "src": "https://picsum.photos/seed/volleyball/512/512",
+      "src": "/logo.png",
       "sizes": "512x512",
       "type": "image/png"
     }

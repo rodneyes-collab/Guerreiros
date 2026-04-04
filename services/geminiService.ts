@@ -263,7 +263,7 @@ export const verifyRules = async (
     saveCache(analysisCache);
     return auditResult;
   } catch (error: any) {
-    return `Auditoria SpikeGen: Escalação validada. Equilíbrio ${balanceLevel} garantido por algoritmos de ELO e regras de rodízio.`;
+    return `Auditoria Guerreiros Volei: Escalação validada. Equilíbrio ${balanceLevel} garantido por algoritmos de ELO e regras de rodízio.`;
   }
 };
 

@@ -32,14 +32,14 @@ export const CourtDiagram: React.FC<CourtDiagramProps> = ({ teamA, teamB }) => {
   const PlayerCircle = ({ p, pos, isTeamB = false, isHighlighted = false }: { p: Player | undefined; pos: string; isTeamB?: boolean; isHighlighted?: boolean }) => (
     <div className={`flex flex-col items-center gap-1 transition-all duration-500 ${isComparisonMode && !isHighlighted ? 'opacity-20 scale-90 grayscale' : 'opacity-100 scale-100'}`}>
       <div className={`w-12 h-12 sm:w-14 sm:h-14 rounded-full border-4 flex items-center justify-center shadow-lg transition-transform hover:scale-110 ${
-        isTeamB ? 'bg-rose-500 border-rose-200' : 'bg-indigo-600 border-indigo-200'
-      } ${isHighlighted || isComparisonMode ? 'ring-4 ring-amber-400 ring-offset-2' : ''}`}>
-        <span className="text-[12px] font-black text-white uppercase tracking-tighter">
+        isTeamB ? 'bg-white border-white/50 text-brand-secondary' : 'bg-brand-primary border-brand-primary/50 text-brand-secondary'
+      } ${isHighlighted || isComparisonMode ? 'ring-4 ring-brand-primary/50 ring-offset-2 ring-offset-brand-secondary' : ''}`}>
+        <span className="text-[12px] font-black uppercase tracking-tighter">
           {p?.name ? p.name.split(' ')[0].substring(0, 4) : '---'}
         </span>
       </div>
-      <div className="bg-white/90 backdrop-blur px-3 py-1 rounded-full shadow-sm border border-slate-100">
-        <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest text-center">Pos {pos}</p>
+      <div className="bg-brand-secondary/90 backdrop-blur px-3 py-1 rounded-full shadow-sm border border-brand-primary/20">
+        <p className="text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">Pos {pos}</p>
       </div>
     </div>
   );
@@ -53,9 +53,9 @@ export const CourtDiagram: React.FC<CourtDiagramProps> = ({ teamA, teamB }) => {
     return (
       <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
         <div className={`flex flex-col items-center gap-1 transition-opacity duration-500 ${isComparisonMode ? 'opacity-100' : 'opacity-0'}`}>
-          <div className={`${height} w-[2px] ${isCritical ? 'bg-rose-400' : 'bg-amber-400/50'} dashed-line`}></div>
+          <div className={`${height} w-[2px] ${isCritical ? 'bg-red-500' : 'bg-brand-primary/50'} dashed-line`}></div>
           <div className={`px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-tighter shadow-sm border ${
-            isCritical ? 'bg-rose-500 text-white border-rose-400' : 'bg-amber-400 text-slate-900 border-amber-300'
+            isCritical ? 'bg-red-500 text-white border-red-400' : 'bg-brand-primary text-brand-secondary border-brand-primary/50'
           }`}>
             {diff > 0 ? `+${diff}` : diff} ELO
           </div>
@@ -65,22 +65,22 @@ export const CourtDiagram: React.FC<CourtDiagramProps> = ({ teamA, teamB }) => {
   };
 
   return (
-    <div className="bg-white rounded-[3rem] p-8 sm:p-12 shadow-sm border-2 border-slate-100 relative overflow-hidden">
+    <div className="bg-brand-secondary rounded-[3rem] p-8 sm:p-12 shadow-2xl border border-brand-primary/20 relative overflow-hidden">
       <button 
         onClick={() => setIsComparisonMode(!isComparisonMode)}
         className={`absolute top-6 right-6 z-20 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 border ${
           isComparisonMode 
-            ? 'bg-amber-400 text-slate-900 border-amber-300 shadow-lg shadow-amber-400/20' 
-            : 'bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200'
+            ? 'bg-brand-primary text-brand-secondary border-brand-primary shadow-lg shadow-brand-primary/20' 
+            : 'bg-white/5 text-white/60 border-white/10 hover:bg-white/10 hover:text-white'
         }`}
       >
         <Swords className="w-3 h-3" />
         {isComparisonMode ? 'Modo Normal' : 'Ver Duelos'}
       </button>
 
-      <div className="absolute inset-0 opacity-10 pointer-events-none">
-        <div className="absolute top-1/2 left-0 w-full h-1 bg-white"></div>
-        <div className="absolute top-0 left-1/2 w-1 h-full bg-white"></div>
+      <div className="absolute inset-0 opacity-5 pointer-events-none">
+        <div className="absolute top-1/2 left-0 w-full h-1 bg-brand-primary"></div>
+        <div className="absolute top-0 left-1/2 w-1 h-full bg-brand-primary"></div>
       </div>
 
       <div className="relative z-10 flex flex-col items-center gap-12">
@@ -122,9 +122,9 @@ export const CourtDiagram: React.FC<CourtDiagramProps> = ({ teamA, teamB }) => {
         </div>
 
         <div className="w-full flex items-center gap-4">
-          <div className="h-[2px] flex-grow bg-gradient-to-r from-transparent via-amber-400 to-transparent"></div>
-          <span className="text-[10px] font-black text-amber-400 uppercase tracking-[0.5em]">Rede</span>
-          <div className="h-[2px] flex-grow bg-gradient-to-r from-transparent via-amber-400 to-transparent"></div>
+          <div className="h-[2px] flex-grow bg-gradient-to-r from-transparent via-brand-primary to-transparent"></div>
+          <span className="text-[10px] font-black text-brand-primary uppercase tracking-[0.5em]">Rede</span>
+          <div className="h-[2px] flex-grow bg-gradient-to-r from-transparent via-brand-primary to-transparent"></div>
         </div>
 
         <div className="grid grid-cols-3 gap-x-12 gap-y-8">
@@ -138,8 +138,8 @@ export const CourtDiagram: React.FC<CourtDiagramProps> = ({ teamA, teamB }) => {
       </div>
 
       <div className="mt-12 flex justify-center">
-        <div className="bg-slate-50 backdrop-blur px-6 py-3 rounded-2xl border border-slate-200">
-          <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest text-center">
+        <div className="bg-brand-primary/5 backdrop-blur px-6 py-3 rounded-2xl border border-brand-primary/20">
+          <p className="text-[10px] font-black text-brand-primary/80 uppercase tracking-widest text-center">
             Estratégia: Levantador fixo na Posição 3. Demais jogadores distribuídos por ELO para equilíbrio na rede.
           </p>
         </div>

@@ -95,7 +95,7 @@ export const useAppLogic = () => {
   const resetElo = async () => {
     showConfirmModal(
       'Resetar ELO de Todos',
-      'Deseja resetar o ELO de TODOS os sócios para 1200? Esta ação é irreversível.',
+      'Deseja resetar o ELO de TODOS os sócios para 1200 e limpar o histórico de evolução? Esta ação é irreversível.',
       async () => {
         try {
           setIsSyncing(true);
@@ -104,14 +104,25 @@ export const useAppLogic = () => {
           
           players.forEach(p => {
             if (p.id) {
-              batch.set(doc(db, 'players', p.id), { elo: 1200 }, { merge: true });
+              batch.set(doc(db, 'players', p.id), { 
+                elo: 1200,
+                eloHistory: [],
+                dailyResults: [],
+                dailyEloGain: 0
+              }, { merge: true });
             }
           });
           
           await batch.commit();
           await trackUsage(0, players.length);
-          setPlayers(players.map(p => ({ ...p, elo: 1200 })));
-          showNotification('ELO de todos os sócios resetado para 1200.', 'success');
+          setPlayers(players.map(p => ({ 
+            ...p, 
+            elo: 1200,
+            eloHistory: [],
+            dailyResults: [],
+            dailyEloGain: 0
+          })));
+          showNotification('ELO e histórico de evolução de todos os sócios resetados.', 'success');
         } catch (error) {
           handleFirestoreError(error, OperationType.WRITE, 'reset-elo');
         } finally {
@@ -565,7 +576,7 @@ export const useAppLogic = () => {
   const clearAllHistory = async () => {
     showConfirmModal(
       'Apagar Todo o Histórico',
-      'CUIDADO: Isso irá excluir TODAS as partidas registradas E zerar as estatísticas de todos os sócios (partidas, vitórias, derrotas). Esta ação é irreversível. Deseja continuar?',
+      'CUIDADO: Isso irá excluir TODAS as partidas registradas E zerar as estatísticas de todos os sócios (ELO, partidas, vitórias, derrotas, gráficos). Esta ação é irreversível. Deseja continuar?',
       async () => {
         try {
           setIsSyncing(true);
@@ -583,6 +594,8 @@ export const useAppLogic = () => {
           players.forEach(p => {
             if (p.id) {
               batch.set(doc(db, 'players', p.id), {
+                elo: 1200,
+                eloHistory: [],
                 matchesPlayed: 0,
                 wins: 0,
                 losses: 0,
@@ -603,6 +616,8 @@ export const useAppLogic = () => {
           // Update local state
           setPlayers(players.map(p => ({
             ...p,
+            elo: 1200,
+            eloHistory: [],
             matchesPlayed: 0,
             wins: 0,
             losses: 0,
@@ -722,7 +737,7 @@ export const useAppLogic = () => {
   const clearMatchesOnly = async () => {
     showConfirmModal(
       'Zerar Histórico de Partidas',
-      'Deseja excluir TODAS as partidas registradas? As estatísticas dos sócios (ELO, vitórias, derrotas) NÃO serão alteradas. Esta ação é irreversível.',
+      'Deseja excluir TODAS as partidas registradas e limpar os gráficos de evolução? O ELO atual e o total de vitórias/derrotas serão mantidos. Esta ação é irreversível.',
       async () => {
         try {
           setIsSyncing(true);
@@ -735,10 +750,34 @@ export const useAppLogic = () => {
             batch.delete(doc(db, 'matches', m.id));
           });
           
+          // Limpar histórico de ELO e resultados diários para os gráficos
+          players.forEach(p => {
+            if (p.id) {
+              batch.set(doc(db, 'players', p.id), {
+                eloHistory: [],
+                dailyResults: [],
+                dailyMatches: 0,
+                dailyWins: 0,
+                dailyLosses: 0,
+                dailyEloGain: 0
+              }, { merge: true });
+            }
+          });
+          
           await batch.commit();
           setMatches([]);
           
-          showNotification('Todo o histórico de partidas foi excluído.', 'success');
+          setPlayers(players.map(p => ({
+            ...p,
+            eloHistory: [],
+            dailyResults: [],
+            dailyMatches: 0,
+            dailyWins: 0,
+            dailyLosses: 0,
+            dailyEloGain: 0
+          })));
+          
+          showNotification('Todo o histórico de partidas e gráficos foram excluídos.', 'success');
         } catch (error) {
           handleFirestoreError(error, OperationType.WRITE, 'matches-clear-only');
         } finally {
@@ -865,6 +904,13 @@ export const useAppLogic = () => {
 
           sortedAtt.forEach((attData, index) => {
             const fullPlayer = players.find(p => p.id === attData.id);
+            
+            if (fullPlayer && (!fullPlayer.name || fullPlayer.name.trim() === '')) {
+              batch.delete(doc(db, 'attendance', dateKey, 'players', attData.id));
+              deletedCount++;
+              return;
+            }
+
             const updates: any = {};
             let needsUpdate = false;
 
@@ -1061,6 +1107,7 @@ export const useAppLogic = () => {
 
   const refreshPlayers = async () => {
     showNotification('Sincronizando dados...', 'info');
+    useStore.setState(state => ({ syncTrigger: state.syncTrigger + 1 }));
   };
 
   const fixDatabaseAnomalies = async () => {
@@ -1171,6 +1218,22 @@ export const useAppLogic = () => {
     }
   };
 
+  const handleGoogleLogin = async () => {
+    try {
+      setIsLoggingIn(true);
+      await signInWithPopup(auth, googleProvider);
+    } catch (error: any) {
+      console.error('Erro no login com Google:', error);
+      if (error.code === 'auth/popup-closed-by-user') {
+        showNotification('Login cancelado.', 'info');
+      } else {
+        showNotification('Erro ao fazer login com Google.', 'error');
+      }
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
   const handleMagicLink = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!magicLinkEmail || isSendingMagicLink) return;
@@ -1187,14 +1250,12 @@ export const useAppLogic = () => {
       const player = players.find(p => p.email?.trim().toLowerCase() === trimmedEmail);
       
       if (player || isAdminEmail) {
-        // Simular login de sócio ou admin
-        const memberUser = {
-          uid: player ? `member_${player.id}` : `admin_${Date.now()}`,
-          email: trimmedEmail,
-          displayName: player ? player.name : 'Administrador',
-          isMember: true
+        const actionCodeSettings = {
+          url: window.location.origin,
+          handleCodeInApp: true,
         };
-        window.localStorage.setItem('memberUser', JSON.stringify(memberUser));
+        await sendSignInLinkToEmail(auth, trimmedEmail, actionCodeSettings);
+        window.localStorage.setItem('emailForSignIn', trimmedEmail);
         
         // Save to recent logins
         try {
@@ -1205,22 +1266,13 @@ export const useAppLogic = () => {
           console.error('Error saving recent logins', e);
         }
         
-        // Update store directly
-        setUser(memberUser as any);
-        if (player) {
-          setCurrentPlayer(player);
-        }
-        
-        const isActuallyAdmin = isAdminEmail || player?.isAdmin;
-        setUserRole(isActuallyAdmin ? 'ADMIN' : 'MEMBER');
-        
-        showNotification('Bem-vindo, ' + (player ? player.name : 'Administrador') + '!', 'success');
+        showNotification('Link de acesso enviado! Verifique seu e-mail.', 'success');
       } else {
         showNotification('E-mail não encontrado na lista de sócios.', 'error');
       }
     } catch (error) {
-      console.error('Erro ao fazer login:', error);
-      showNotification('Erro ao validar acesso.', 'error');
+      console.error('Erro ao enviar link mágico:', error);
+      showNotification('Erro ao enviar link de acesso.', 'error');
     } finally {
       setIsSendingMagicLink(false);
     }
@@ -2255,6 +2307,7 @@ export const useAppLogic = () => {
     fixDatabaseAnomalies,
     handleScanAnomalies,
     handleLogout,
+    handleGoogleLogin,
     handleMagicLink,
     handleRequestAccess,
     handleGenerate,

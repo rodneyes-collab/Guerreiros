@@ -66,7 +66,7 @@ service cloud.firestore {
         'dailyEloGain', 'wins', 'losses', 'eloHistory', 'isAdmin', 
         'joinedAt', 'playedLastMatch', 'birthDate', 'updatedAt', 'uid', 'dailyResults',
         'arrivalOrder', 'isPresent', 'timestamp', 'status', 'createdAt',
-        'role', 'position', 'level'
+        'role', 'position', 'level', 'consecutiveBenched', 'reads', 'lastReadUpdate'
       ];
       return hasOnlyAllowedFields(data, allowedFields) &&
              (!('id' in data) || data.id is string) &&
@@ -97,7 +97,10 @@ service cloud.firestore {
              (!('joinedAt' in data) || data.joinedAt is string) &&
              (!('birthDate' in data) || data.birthDate is string) &&
              (!('updatedAt' in data) || data.updatedAt is string) &&
-             (!('uid' in data) || data.uid is string);
+             (!('uid' in data) || data.uid is string) &&
+             (!('consecutiveBenched' in data) || data.consecutiveBenched is int) &&
+             (!('reads' in data) || data.reads is int) &&
+             (!('lastReadUpdate' in data) || data.lastReadUpdate is string);
     }
 
     function isValidMatch(data) {
@@ -138,13 +141,13 @@ service cloud.firestore {
     }
 
     match /players/{playerId} {
-      allow read, list: if true;
+      allow read: if true;
       allow create, update: if isAdmin() && isValidPlayer(request.resource.data);
       allow delete: if isAdmin();
     }
 
     match /matches/{matchId} {
-      allow read, list: if true;
+      allow read: if true;
       allow create, update: if isAdmin() && isValidMatch(request.resource.data);
       allow delete: if isAdmin();
     }
@@ -154,7 +157,7 @@ service cloud.firestore {
       allow write: if isAdmin();
       
       match /players/{playerId} {
-        allow read, list: if true;
+        allow read: if true;
         allow create, update: if isAdmin() && isValidPlayer(request.resource.data);
         // Allow users to update their own attendance (e.g. playedLastMatch)
         allow update: if isAuthenticated() && 
@@ -165,25 +168,35 @@ service cloud.firestore {
     }
 
     match /metadata/{key} {
-      allow read, list: if true;
+      allow read: if true;
       allow write: if isAdmin();
     }
 
     match /payments/{paymentId} {
-      allow read, list: if true;
+      allow read: if true;
       allow create, update: if isAdmin() && isValidPayment(request.resource.data);
       allow delete: if isAdmin();
     }
 
+    match /expenses/{expenseId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
     match /tournaments/{tournamentId} {
-      allow read, list: if true;
+      allow read: if true;
       allow create, update: if isAdmin();
       allow delete: if isAdmin();
     }
 
-    match /preConfirmations/{playerId} {
-      allow read, list: if true;
+    match /preConfirmations/{date} {
+      allow read: if true;
       allow write: if isAuthenticated();
+      
+      match /players/{playerId} {
+        allow read: if true;
+        allow write: if isAuthenticated();
+      }
     }
 
     match /test/connection {

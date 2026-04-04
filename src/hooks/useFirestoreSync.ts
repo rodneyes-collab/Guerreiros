@@ -12,6 +12,7 @@ import {
   setDoc, 
   updateDoc,
   writeBatch,
+  increment,
   OperationType,
   handleFirestoreError,
   auth,
@@ -62,23 +63,30 @@ export const useFirestoreSync = () => {
 
     const trackUsage = async () => {
       const date = getFirestoreDateKey();
+      const monthKey = date.slice(0, 7); // YYYY-MM
       const usageRef = doc(db, 'metadata', 'usage');
+      const monthlyUsageRef = doc(db, 'metadata', `usage_${monthKey}`);
       
       try {
-        // Increment global usage
+        // Increment global daily usage
         const usageSnap = await getDoc(usageRef);
         let currentUsage = usageSnap.exists() ? usageSnap.data() as UsageStats : { reads: 0, writes: 0, lastUpdate: date };
         
         // Reset if new day (sync with Google's reset)
         if (currentUsage.lastUpdate !== date) {
-          currentUsage = { reads: 0, writes: 0, lastUpdate: date };
+          await setDoc(usageRef, { reads: 15, writes: 0, aiCalls: 0, lastUpdate: date });
+        } else {
+          await updateDoc(usageRef, { reads: increment(15), lastUpdate: date });
         }
-        
-        await setDoc(usageRef, cleanObject({
-          ...currentUsage,
-          reads: (currentUsage.reads || 0) + 15, // Estimate 15 reads per session load
-          lastUpdate: date
-        }), { merge: true });
+
+        // Increment global monthly usage
+        try {
+          await updateDoc(monthlyUsageRef, { reads: increment(15), lastUpdate: date });
+        } catch (e: any) {
+          if (e.code === 'not-found') {
+            await setDoc(monthlyUsageRef, { reads: 15, writes: 0, aiCalls: 0, lastUpdate: date });
+          }
+        }
 
         // Increment per-player usage
         if (currentPlayer) {
@@ -145,6 +153,7 @@ export const useFirestoreSync = () => {
     let unsubscribeSystem: (() => void) | undefined;
     let unsubscribeCurrentMatch: (() => void) | undefined;
     let unsubscribeUsage: (() => void) | undefined;
+    let unsubscribeMonthlyUsage: (() => void) | undefined;
     let unsubscribePreConfirmations: (() => void) | undefined;
     let unsubscribeSynergy: (() => void) | undefined;
     let unsubscribeNegativeSynergy: (() => void) | undefined;
@@ -170,6 +179,7 @@ export const useFirestoreSync = () => {
         setPlayers(list.sort((a, b) => (a.name || '').localeCompare(b.name || '')));
       }, (err) => {
         console.error('Firestore Sync Error (Players):', err);
+        useStore.getState().showNotification('Erro ao carregar jogadores: ' + err.message, 'error');
       });
 
       // System Metadata Sync
@@ -199,6 +209,15 @@ export const useFirestoreSync = () => {
         console.error('Firestore Sync Error (Usage):', err);
       });
 
+      const monthKey = dateKey.slice(0, 7);
+      unsubscribeMonthlyUsage = onSnapshot(doc(db, 'metadata', `usage_${monthKey}`), (snapshot) => {
+        if (snapshot.exists()) {
+          useStore.getState().setMonthlyUsageStats(snapshot.data() as UsageStats);
+        }
+      }, (err) => {
+        console.error('Firestore Sync Error (Monthly Usage):', err);
+      });
+
       // Attendance Sync
       unsubscribeAttendance = onSnapshot(collection(db, 'attendance', dateKey, 'players'), (snapshot) => {
         const list: Player[] = [];
@@ -208,8 +227,10 @@ export const useFirestoreSync = () => {
         console.error('Firestore Sync Error (Attendance):', err);
       });
 
-      // Matches Sync
-      unsubscribeMatches = onSnapshot(collection(db, 'matches'), (snapshot) => {
+      // Matches Sync (Limit to last 60 days)
+      const sixtyDaysAgo = Date.now() - (60 * 24 * 60 * 60 * 1000);
+      const matchesQuery = query(collection(db, 'matches'), where('timestamp', '>=', sixtyDaysAgo));
+      unsubscribeMatches = onSnapshot(matchesQuery, (snapshot) => {
         const list: Match[] = [];
         snapshot.forEach((doc) => list.push({ ...doc.data(), id: doc.id } as Match));
         setMatches(list.sort((a, b) => a.timestamp - b.timestamp));
@@ -255,6 +276,7 @@ export const useFirestoreSync = () => {
         setPayments(list);
       }, (err) => {
         console.error('Firestore Sync Error (Payments):', err);
+        useStore.getState().showNotification('Erro ao carregar pagamentos: ' + err.message, 'error');
       });
 
       // Expenses Sync
@@ -306,6 +328,7 @@ export const useFirestoreSync = () => {
       if (unsubscribeSystem) unsubscribeSystem();
       if (unsubscribeCurrentMatch) unsubscribeCurrentMatch();
       if (unsubscribeUsage) unsubscribeUsage();
+      if (unsubscribeMonthlyUsage) unsubscribeMonthlyUsage();
       if (unsubscribePreConfirmations) unsubscribePreConfirmations();
       if (unsubscribeSynergy) unsubscribeSynergy();
       if (unsubscribeNegativeSynergy) unsubscribeNegativeSynergy();
@@ -317,7 +340,8 @@ export const useFirestoreSync = () => {
     };
   }, [user, userRole, syncTrigger, setPlayers, setAttendance, setPendingRequests, setMatches, setSystemMetadata, setGenerationResult, setUsageStats, setPreConfirmations, setSynergy, setNegativeSynergy, setRivalry, setTournaments, setActiveTournament, setIsSyncing, setIsInitialLoading, setPayments]);
 
-  // Initialize eloHistory for the current user if missing
+  // Initialize eloHistory for the current user if missing - REMOVED to allow full reset
+  /*
   useEffect(() => {
     if (!user || !players || players.length === 0) return;
     
@@ -329,4 +353,5 @@ export const useFirestoreSync = () => {
       }).catch(err => console.error("Erro ao inicializar histórico de ELO:", err));
     }
   }, [user, players]);
+  */
 };

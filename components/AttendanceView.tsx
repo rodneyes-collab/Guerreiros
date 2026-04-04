@@ -11,7 +11,8 @@ import {
   Plus,
   MapPin,
   CheckCircle2,
-  Calendar
+  Calendar,
+  BarChart3
 } from 'lucide-react';
 
 interface AttendanceViewProps {
@@ -27,6 +28,7 @@ interface AttendanceViewProps {
   isGameDay: boolean;
   onToggleIntention: (player: Player) => Promise<void>;
   userRole: 'ADMIN' | 'MEMBER' | null;
+  setViewMode: (mode: any) => void;
 }
 
 export const AttendanceView: React.FC<AttendanceViewProps> = ({
@@ -40,7 +42,8 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
   isIntentionPhase,
   isGameDay,
   onToggleIntention,
-  userRole
+  userRole,
+  setViewMode
 }) => {
   const { attendance, preConfirmations, isSyncing } = useStore();
   const [startY, setStartY] = React.useState(0);
@@ -78,7 +81,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
 
   return (
     <div 
-      className="relative grid grid-cols-1 lg:grid-cols-12 gap-6 md:gap-8 animate-in fade-in slide-in-from-bottom-4 duration-500"
+      className="relative grid grid-cols-1 lg:grid-cols-12 gap-8 md:gap-10 animate-in fade-in slide-in-from-bottom-6 duration-700"
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
@@ -92,8 +95,8 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
           transition: isPulling ? 'none' : 'transform 0.3s ease, opacity 0.3s ease'
         }}
       >
-        <div className="bg-white p-2 rounded-full shadow-lg border border-slate-200">
-          <RotateCcw className={`w-6 h-6 text-emerald-600 ${isSyncing ? 'animate-spin' : ''}`} />
+        <div className="bg-white p-2 rounded-full shadow-xl border border-brand-primary/20">
+          <RotateCcw className={`w-6 h-6 text-brand-primary ${isSyncing ? 'animate-spin' : ''}`} />
         </div>
       </div>
 
@@ -102,35 +105,57 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
         <>
           {/* Admin Override Badge */}
           {userRole === 'ADMIN' && !isGameDay && (
-            <div className="lg:col-span-12 bg-emerald-600 text-white px-6 py-2 rounded-full text-xs font-black uppercase tracking-widest inline-block text-center mb-4">
+            <div className="lg:col-span-12 bg-brand-primary text-brand-secondary px-10 py-4 rounded-2xl text-xs font-black uppercase tracking-[0.3em] inline-block text-center mb-6 shadow-2xl shadow-brand-primary/20 border border-brand-primary/30">
               Modo Administrador: Gestão de Presença (Fora do Ciclo)
             </div>
           )}
 
-          <div className="lg:col-span-4 space-y-6">
-            <section className="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden">
-              <div className="p-6 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+          <div className="lg:col-span-4 space-y-8">
+            <section className="bg-black rounded-[2.5rem] border border-brand-primary/20 shadow-2xl overflow-hidden group">
+              <div className="p-8 bg-brand-secondary border-b border-brand-primary/20 flex items-center justify-between">
                 <div>
-                  <h2 className="font-black text-slate-800 uppercase text-base tracking-widest flex items-center gap-2">
-                    <ClipboardCheck className="w-6 h-6 text-emerald-600" />
-                    Presença
+                  <h2 className="font-black text-white uppercase text-lg tracking-tighter flex items-center gap-3">
+                    <ClipboardCheck className="w-7 h-7 text-brand-primary" />
+                    Lista de Elite
                   </h2>
-                  <p className="text-xs text-slate-500 font-bold uppercase mt-1">{attendance.length} confirmados</p>
+                  <p className="text-[10px] text-brand-primary font-black uppercase tracking-widest mt-1.5">{attendance.length} Guerreiros Confirmados</p>
                 </div>
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => setViewMode('attendance_report')} 
+                    title="Ver Relatório de Presença" 
+                    className="p-3 text-white/40 hover:text-brand-primary hover:bg-brand-primary/10 rounded-xl transition-all group/btn"
+                  >
+                    <BarChart3 className="w-6 h-6 group-hover/btn:scale-110 transition-transform"/>
+                  </button>
                   {userRole === 'ADMIN' && (
                     <>
-                      <button onClick={clearAttendance} title="Limpar lista" className="p-3 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"><Trash2 className="w-6 h-6"/></button>
-                      <button onClick={resetDailyMatches} title="Finalizar dia" className="p-3 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"><RotateCcw className="w-6 h-6"/></button>
+                      <button 
+                        onClick={clearAttendance} 
+                        title="Limpar lista" 
+                        className="p-3 text-white/40 hover:text-red-400 hover:bg-red-500/10 rounded-xl transition-all group/btn"
+                      >
+                        <Trash2 className="w-6 h-6 group-hover/btn:scale-110 transition-transform"/>
+                      </button>
+                      <button 
+                        onClick={resetDailyMatches} 
+                        title="Finalizar dia" 
+                        className="p-3 text-white/40 hover:text-brand-primary hover:bg-brand-primary/10 rounded-xl transition-all group/btn"
+                      >
+                        <RotateCcw className="w-6 h-6 group-hover/btn:rotate-180 transition-transform duration-500"/>
+                      </button>
                     </>
                   )}
                 </div>
               </div>
-              <div className="p-4 space-y-4 max-h-[60vh] lg:max-h-[500px] overflow-y-auto">
+              <div className="p-6 space-y-5 max-h-[60vh] lg:max-h-[600px] overflow-y-auto scrollbar-hide">
                 {attendance.length === 0 ? (
-                  <div className="text-center py-16">
-                    <Users className="w-20 h-20 text-slate-100 mx-auto mb-4" />
-                    <p className="text-slate-400 text-lg italic">Ninguém confirmou ainda...</p>
+                  <div className="text-center py-24 space-y-6">
+                    <div className="relative inline-block">
+                      <div className="absolute inset-0 bg-brand-primary/10 blur-2xl rounded-full"></div>
+                      <Users className="w-24 h-24 text-white/20 relative z-10 mx-auto opacity-40" />
+                    </div>
+                    <p className="text-white/40 text-lg font-black uppercase tracking-widest italic">Aguardando convocações...</p>
                   </div>
                 ) : (
                   [...attendance]
@@ -140,67 +165,76 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                       const displayName = player.name || fullPlayer?.name || "Sócio sem nome";
                       
                       return (
-                        <div key={player.id || `attendance-${idx}`} className={`flex items-center justify-between p-4 sm:p-6 rounded-2xl border transition-all group shadow-sm hover:shadow-md ${player.gender === Gender.FEMALE ? 'bg-pink-50/30 border-pink-100 hover:border-pink-200' : 'bg-white border-slate-100 hover:border-emerald-200'}`}>
-                          <div className="flex items-center gap-3 sm:gap-5">
-                            <span className="text-sm sm:text-lg font-black text-emerald-500 w-6 sm:w-8">#{player.arrivalOrder}</span>
+                        <div key={player.id || `attendance-${idx}`} className={`flex items-center justify-between p-6 rounded-[2rem] border transition-all group shadow-sm hover:shadow-xl hover:-translate-y-1 bg-brand-secondary border-brand-primary/20 hover:border-brand-primary/50`}>
+                          <div className="flex items-center gap-5">
+                            <span className="text-2xl font-black text-brand-primary/40 w-10 italic group-hover:text-brand-primary transition-colors">#{player.arrivalOrder}</span>
                             <div>
-                              <p className={`text-lg sm:text-2xl font-black flex items-center gap-2 leading-tight ${player.isOfficialSetter ? 'text-rose-600' : 'text-slate-800'}`}>
+                              <p className={`text-2xl font-black flex items-center gap-3 leading-none uppercase tracking-tight ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
                                 {displayName}
-                                {player.isOfficialSetter && <span className="text-[10px] sm:text-[12px] font-black uppercase bg-rose-100 text-rose-600 px-2.5 py-1 rounded-full border border-rose-200">Levantador</span>}
+                                {player.isOfficialSetter && <span className="text-[10px] font-black uppercase bg-brand-primary/10 text-brand-primary px-3 py-1 rounded-full border border-brand-primary/20">Levantador</span>}
                               </p>
-                              <div className="flex flex-wrap items-center gap-1.5 sm:gap-3 mt-1.5 sm:mt-3">
-                                <span className="text-xs sm:text-base font-black text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100">
+                              <div className="flex flex-wrap items-center gap-3 mt-3">
+                                <span className="text-xs font-black text-brand-primary bg-brand-primary/10 px-3 py-1 rounded-lg border border-brand-primary/20">
+                                  {translateGender(player.gender)}
+                                </span>
+                                <span className="text-xs font-black text-brand-primary bg-brand-primary/10 px-3 py-1 rounded-lg border border-brand-primary/20">
                                   {player.dailyWins}V - {player.dailyLosses}D
                                 </span>
-                                <span className="text-xs sm:text-base text-slate-600 font-black uppercase tracking-wider">ELO {player.elo}</span>
-                                {player.playedLastMatch && <span className="text-[10px] sm:text-[12px] font-black uppercase bg-blue-50 text-blue-600 px-2.5 py-1 rounded-full border border-blue-100">Jogou Última</span>}
-                                {(player.consecutiveBenched || 0) > 0 && <span className="text-[10px] sm:text-[12px] font-black uppercase bg-amber-50 text-amber-600 px-2.5 py-1 rounded-full border border-amber-100">Banco: {player.consecutiveBenched}</span>}
+                                <span className="text-[10px] text-white/60 font-black uppercase tracking-[0.2em]">ELO {Math.round(player.elo)}</span>
+                                {player.playedLastMatch && <span className="text-[10px] font-black uppercase bg-brand-primary/10 text-brand-primary px-3 py-1 rounded-full border border-brand-primary/20">Jogou Última</span>}
+                                {(player.consecutiveBenched || 0) > 0 && <span className="text-[10px] font-black uppercase bg-white/10 text-white/80 px-3 py-1 rounded-full border border-white/20">Banco: {player.consecutiveBenched}</span>}
                               </div>
                             </div>
                           </div>
                           {userRole === 'ADMIN' && (
-                            <button onClick={() => removeAttendance(player.id)} className="p-3 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all"><X className="w-7 h-7" /></button>
+                            <button 
+                              onClick={() => removeAttendance(player.id)} 
+                              className="p-3 text-white/20 hover:text-red-400 hover:bg-red-500/10 rounded-xl transition-all"
+                            >
+                              <X className="w-8 h-8" />
+                            </button>
                           )}
                         </div>
                       );
                     })
                 )}
               </div>
-              <div className="p-6 bg-slate-50 border-t border-slate-200">
-                <p className="text-sm text-slate-500 font-bold uppercase text-center italic leading-relaxed">
+              <div className="p-8 bg-black border-t border-brand-primary/20">
+                <p className="text-xs text-white/40 font-black uppercase text-center italic leading-relaxed tracking-widest">
                   {attendance.length < 12 
-                    ? `Mínimo de 12 jogadores para escalar (Faltam ${12 - attendance.length})` 
-                    : "Vá para a aba Partida para escalar o jogo"}
+                    ? `Mínimo de 12 guerreiros para escalar (Faltam ${12 - attendance.length})` 
+                    : "Elite convocada. Vá para a aba Partida para escalar."}
                 </p>
               </div>
             </section>
           </div>
 
-          <div className="lg:col-span-8 space-y-6">
-            <div className="bg-white p-6 md:p-8 rounded-[2rem] border border-slate-200 shadow-sm">
-              <div className="flex items-center justify-between mb-6">
-                <div>
-                  <h3 className="text-base font-black text-slate-500 uppercase tracking-[0.2em]">Sócios Disponíveis</h3>
-                  <p className="text-[10px] font-bold text-slate-400 uppercase mt-1">
-                    {userRole === 'ADMIN' ? 'Todos os sócios ativos' : 'Visualização restrita para administradores'}
+          <div className="lg:col-span-8 space-y-8">
+            <div className="bg-black p-10 rounded-[2.5rem] border border-brand-primary/20 shadow-2xl">
+              <div className="flex items-center justify-between mb-10">
+                <div className="space-y-2">
+                  <h3 className="text-3xl font-black text-white uppercase tracking-tighter">Guerreiros Disponíveis</h3>
+                  <p className="text-[10px] font-black text-brand-primary uppercase tracking-[0.3em]">
+                    {userRole === 'ADMIN' ? 'Selecione para convocar ao campo' : 'Visualização restrita para o comando'}
                   </p>
                 </div>
-                <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase">
-                  <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div>
-                  {(availablePlayers || []).length} Sócios
+                <div className="flex items-center gap-3 text-xs font-black text-brand-primary uppercase tracking-widest bg-brand-primary/10 px-5 py-3 rounded-2xl border border-brand-primary/20">
+                  <div className="w-3 h-3 rounded-full bg-brand-primary animate-pulse shadow-[0_0_12px_rgba(245,196,41,0.8)]"></div>
+                  {(availablePlayers || []).length} Sócios Ativos
                 </div>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {userRole !== 'ADMIN' ? (
-                  <div className="col-span-full py-20 text-center bg-slate-50 rounded-3xl border border-dashed border-slate-200">
-                    <Users className="w-12 h-12 text-slate-200 mx-auto mb-4" />
-                    <p className="text-slate-400 text-sm font-bold uppercase tracking-widest">Apenas administradores podem realizar check-in.</p>
+                  <div className="col-span-full py-32 text-center bg-brand-secondary/50 rounded-[2.5rem] border-2 border-dashed border-brand-primary/20 space-y-6">
+                    <Users className="w-20 h-20 text-white/20 mx-auto" />
+                    <p className="text-white/40 text-sm font-black uppercase tracking-[0.3em] max-w-md mx-auto leading-relaxed">Apenas o comando administrativo pode realizar convocações diretas.</p>
                   </div>
                 ) : (availablePlayers || [])
                   .filter(p => !attendance.some(a => a.id === p.id))
                   .length === 0 ? (
-                  <div className="col-span-full py-20 text-center">
-                    <p className="text-slate-400 text-lg italic">Nenhum sócio disponível para check-in no momento.</p>
+                  <div className="col-span-full py-32 text-center space-y-4">
+                    <CheckCircle2 className="w-20 h-20 text-brand-primary/20 mx-auto" />
+                    <p className="text-white/60 text-xl font-black uppercase tracking-tighter italic">Todos os guerreiros já estão em campo!</p>
                   </div>
                 ) : (
                   (availablePlayers || [])
@@ -210,16 +244,18 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                       <button 
                         key={player.id || `available-${idx}`} 
                         onClick={() => registerAttendance(player)} 
-                        className={`flex items-center justify-between p-6 rounded-2xl border hover:shadow-lg transition-all text-left group ${player.gender === Gender.FEMALE ? 'bg-pink-50/30 border-pink-100 hover:border-pink-300 hover:bg-pink-50' : 'bg-slate-50/50 border-slate-100 hover:border-emerald-300 hover:bg-emerald-50/50'}`}
+                        className={`flex items-center justify-between p-8 rounded-[2rem] border hover:shadow-2xl transition-all text-left group hover:-translate-y-1 bg-brand-secondary border-brand-primary/20 hover:border-brand-primary/50`}
                       >
-                        <div>
-                          <p className={`text-xl font-black flex items-center gap-2 ${player.isOfficialSetter ? 'text-rose-600' : 'text-slate-800'}`}>
+                        <div className="space-y-3">
+                          <p className={`text-2xl font-black flex items-center gap-3 leading-none uppercase tracking-tight ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
                             {player.name || "Sócio sem nome"}
-                            {player.isOfficialSetter && <span className="text-[11px] font-black uppercase bg-rose-100 text-rose-600 px-3 py-1.5 rounded-full border border-rose-200">Levantador</span>}
+                            {player.isOfficialSetter && <span className="text-[10px] font-black uppercase bg-brand-primary/10 text-brand-primary px-3 py-1 rounded-full border border-brand-primary/20">Levantador</span>}
                           </p>
-                          <p className="text-sm text-slate-500 font-bold uppercase tracking-wider mt-2">Jogos Hoje: <span className="text-indigo-600">{player.dailyMatches}</span> • <span className="text-emerald-600 font-black">{player.elo} ELO</span></p>
+                          <p className="text-[10px] text-white/60 font-black uppercase tracking-[0.2em]">
+                            {translateGender(player.gender)} • Jogos Hoje: <span className="text-brand-primary">{player.dailyMatches}</span> • <span className="text-white font-black">{Math.round(player.elo)} ELO</span>
+                          </p>
                         </div>
-                        <div className="p-3 bg-white text-slate-300 group-hover:bg-emerald-600 group-hover:text-white rounded-xl shadow-sm transition-all border border-slate-100"><Plus className="w-7 h-7" /></div>
+                        <div className="p-4 bg-brand-primary/10 text-brand-primary group-hover:bg-brand-primary group-hover:text-brand-secondary rounded-2xl shadow-xl transition-all border border-brand-primary/20 group-hover:scale-110"><Plus className="w-8 h-8" /></div>
                       </button>
                     ))
                 )}
@@ -231,23 +267,23 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
 
       {/* PHASE: OFF-CYCLE (Fri-Wed) - Hidden for Admin */}
       {!isGameDay && userRole !== 'ADMIN' && (
-        <div className="lg:col-span-12 py-32 text-center space-y-8 animate-in zoom-in duration-700">
+        <div className="lg:col-span-12 py-40 text-center space-y-10 animate-in zoom-in duration-1000">
           <div className="relative inline-block">
-            <div className="absolute inset-0 bg-indigo-500/20 blur-3xl rounded-full"></div>
-            <Calendar className="w-32 h-32 text-slate-200 relative z-10 mx-auto" />
+            <div className="absolute inset-0 bg-brand-primary/30 blur-[100px] rounded-full animate-pulse"></div>
+            <Calendar className="w-40 h-40 text-brand-primary relative z-10 mx-auto drop-shadow-2xl" />
           </div>
-          <div className="space-y-4">
-            <h2 className="text-5xl font-black text-slate-900 tracking-tighter uppercase">Fim de Ciclo</h2>
-            <p className="text-xl text-slate-500 font-bold uppercase tracking-widest max-w-2xl mx-auto leading-relaxed">
-              As partidas acontecem às quintas-feiras. 
+          <div className="space-y-6">
+            <h2 className="text-7xl font-black text-brand-secondary tracking-tighter uppercase leading-none">Descanso dos Guerreiros</h2>
+            <p className="text-2xl text-brand-accent font-black uppercase tracking-[0.4em] max-w-3xl mx-auto leading-relaxed">
+              As batalhas acontecem às <span className="text-brand-primary">quintas-feiras</span>. 
               <br />
-              A lista de presença abre na <span className="text-indigo-600">Quinta-feira</span>.
+              Prepare-se para a próxima convocação.
             </p>
           </div>
-          <div className="flex justify-center gap-4">
-            <div className="px-8 py-4 bg-indigo-600 rounded-2xl shadow-xl shadow-indigo-200">
-              <p className="text-[10px] font-black text-indigo-200 uppercase tracking-widest mb-1">Próximo Jogo</p>
-              <p className="text-lg font-black text-white uppercase">Quinta-feira</p>
+          <div className="flex justify-center gap-6">
+            <div className="px-12 py-6 bg-brand-secondary rounded-[2rem] shadow-2xl border border-brand-primary/20">
+              <p className="text-[10px] font-black text-brand-primary uppercase tracking-[0.3em] mb-2">Próxima Batalha</p>
+              <p className="text-2xl font-black text-white uppercase tracking-tighter">Quinta-feira</p>
             </div>
           </div>
         </div>

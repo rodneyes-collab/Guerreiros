@@ -27,12 +27,12 @@ export const Notification: React.FC = () => {
           <div className={`p-4 rounded-2xl shadow-2xl border flex items-start gap-4 ${
             notification.type === 'success' ? 'bg-emerald-50 border-emerald-100 text-emerald-800' :
             notification.type === 'error' ? 'bg-rose-50 border-rose-100 text-rose-800' :
-            'bg-indigo-50 border-indigo-100 text-indigo-800'
+            'bg-brand-light border-brand-accent/20 text-brand-secondary'
           }`}>
             <div className="shrink-0 mt-0.5">
               {notification.type === 'success' && <CheckCircle className="w-5 h-5 text-emerald-500" />}
               {notification.type === 'error' && <AlertCircle className="w-5 h-5 text-rose-500" />}
-              {notification.type === 'info' && <Info className="w-5 h-5 text-indigo-500" />}
+              {notification.type === 'info' && <Info className="w-5 h-5 text-brand-primary" />}
             </div>
             <div className="flex-1">
               <p className="text-sm font-bold leading-tight">{notification.message}</p>

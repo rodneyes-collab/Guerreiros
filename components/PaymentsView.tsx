@@ -1,6 +1,7 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../store';
 import { Payment, PaymentStatus, Expense } from '../types';
+import { db, doc, updateDoc } from '../firebase';
 import { 
   Trash2, 
   Plus, 
@@ -43,9 +44,17 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
   const [tempFee, setTempFee] = useState(systemMetadata.monthlyFee || 0);
 
   const uniqueMonths = useMemo(() => {
-    const months = new Set([...payments.map(p => p.month), ...expenses.map(e => e.month)]);
-    return Array.from(months).sort();
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    const months = new Set([currentMonth, ...payments.map(p => p.month), ...expenses.map(e => e.month)]);
+    return Array.from(months).sort((a, b) => b.localeCompare(a));
   }, [payments, expenses]);
+
+  const formatMonth = (m: string) => {
+    if (!m) return '';
+    const [year, month] = m.split('-');
+    const monthName = new Date(parseInt(year), parseInt(month) - 1).toLocaleDateString('pt-BR', { month: 'long' });
+    return `${monthName.charAt(0).toUpperCase() + monthName.slice(1)}/${year}`;
+  };
 
   const uniquePlayers = useMemo(() => {
     const players = new Set(payments.map(p => p.playerName));
@@ -92,6 +101,57 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
     };
   }, [filteredPayments, filteredExpenses, players.length, systemMetadata.monthlyFee, filterMonth]);
 
+  useEffect(() => {
+    const migrateData = async () => {
+      const monthMap: Record<string, string> = {
+        'janeiro': '01', 'fevereiro': '02', 'março': '03', 'marco': '03',
+        'abril': '04', 'maio': '05', 'junho': '06', 'julho': '07',
+        'agosto': '08', 'setembro': '09', 'outubro': '10', 'novembro': '11', 'dezembro': '12'
+      };
+
+      const getNewMonth = (oldMonth: string) => {
+        if (!oldMonth || oldMonth.match(/^\d{4}-\d{2}$/)) return null;
+        const parts = oldMonth.toLowerCase().split('/');
+        if (parts.length === 2) {
+          const m = monthMap[parts[0].trim()];
+          const y = parts[1].trim();
+          if (m && y.length === 4) return `${y}-${m}`;
+        }
+        return null;
+      };
+
+      let hasMigrations = false;
+
+      for (const p of payments) {
+        const newMonth = getNewMonth(p.month);
+        if (newMonth) {
+          try {
+            await updateDoc(doc(db, 'payments', p.id), { month: newMonth });
+            hasMigrations = true;
+          } catch (e) { console.error(e); }
+        }
+      }
+
+      for (const e of expenses) {
+        const newMonth = getNewMonth(e.month);
+        if (newMonth) {
+          try {
+            await updateDoc(doc(db, 'expenses', e.id), { month: newMonth });
+            hasMigrations = true;
+          } catch (err) { console.error(err); }
+        }
+      }
+      
+      if (hasMigrations) {
+        console.log("Migração de meses concluída com sucesso.");
+      }
+    };
+
+    if (userRole === 'ADMIN') {
+      migrateData();
+    }
+  }, [payments, expenses, userRole]);
+
   const handleUpdateFee = () => {
     updateMonthlyFee(tempFee);
     setIsEditingFee(false);
@@ -125,29 +185,29 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
     <div className="space-y-8 animate-in fade-in duration-500">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
         <div>
-          <h2 className="text-4xl font-black text-slate-900 uppercase tracking-tighter">Financeiro</h2>
-          <p className="text-sm font-bold text-slate-400 uppercase tracking-widest mt-2">Gestão de mensalidades e despesas</p>
+          <h2 className="text-4xl font-black text-brand-secondary uppercase tracking-tighter">Financeiro</h2>
+          <p className="text-sm font-bold text-brand-accent uppercase tracking-widest mt-2">Gestão de mensalidades e despesas</p>
         </div>
         <div className="flex flex-col sm:flex-row gap-4 w-full md:w-auto">
           {userRole === 'ADMIN' && (
-            <div className="bg-white px-6 py-3 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
+            <div className="bg-white px-6 py-3 rounded-2xl border border-brand-accent/20 shadow-sm flex items-center gap-4">
               <div className="space-y-0.5">
-                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Valor Mensalidade</p>
+                <p className="text-[9px] font-black text-brand-accent uppercase tracking-widest">Valor Mensalidade</p>
                 {isEditingFee ? (
                   <div className="flex items-center gap-2">
                     <input
                       type="number"
                       value={tempFee}
                       onChange={e => setTempFee(parseFloat(e.target.value))}
-                      className="w-20 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 font-black text-sm outline-none"
+                      className="w-20 bg-brand-light border border-brand-accent/20 rounded-lg px-2 py-1 font-black text-sm outline-none"
                     />
                     <button onClick={handleUpdateFee} className="text-emerald-500 hover:scale-110 transition-transform"><CheckCircle2 className="w-5 h-5" /></button>
                     <button onClick={() => { setIsEditingFee(false); setTempFee(systemMetadata.monthlyFee || 0); }} className="text-rose-500 hover:scale-110 transition-transform"><X className="w-5 h-5" /></button>
                   </div>
                 ) : (
                   <div className="flex items-center gap-3">
-                    <p className="text-lg font-black text-slate-700 font-mono">R$ {(systemMetadata.monthlyFee || 0).toFixed(2)}</p>
-                    <button onClick={() => setIsEditingFee(true)} className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"><Edit2 className="w-3.5 h-3.5" /></button>
+                    <p className="text-lg font-black text-brand-secondary font-mono">R$ {(systemMetadata.monthlyFee || 0).toFixed(2)}</p>
+                    <button onClick={() => setIsEditingFee(true)} className="p-1.5 text-brand-accent hover:text-brand-primary hover:bg-brand-light rounded-lg transition-all"><Edit2 className="w-3.5 h-3.5" /></button>
                   </div>
                 )}
               </div>
@@ -164,7 +224,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                   setIsExpenseFormOpen(true);
                 }
               }} 
-              className="bg-indigo-600 text-white px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-indigo-700 shadow-xl shadow-indigo-100 transition-all"
+              className="bg-brand-primary text-brand-secondary px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-brand-primary/90 shadow-xl shadow-brand-primary/10 transition-all"
             >
               <Plus className="w-5 h-5" />
               {activeTab === 'RECEIPTS' ? 'Novo Lançamento' : 'Nova Despesa'}
@@ -174,13 +234,13 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-2 p-1.5 bg-slate-100 rounded-[1.5rem] w-fit">
+      <div className="flex gap-2 p-1.5 bg-brand-light rounded-[1.5rem] w-fit">
         <button
           onClick={() => setActiveTab('RECEIPTS')}
           className={`px-8 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${
             activeTab === 'RECEIPTS' 
-              ? 'bg-white text-indigo-600 shadow-sm' 
-              : 'text-slate-400 hover:text-slate-600'
+              ? 'bg-white text-brand-primary shadow-sm' 
+              : 'text-brand-accent hover:text-brand-secondary'
           }`}
         >
           Mensalidades
@@ -189,8 +249,8 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
           onClick={() => setActiveTab('EXPENSES')}
           className={`px-8 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${
             activeTab === 'EXPENSES' 
-              ? 'bg-white text-indigo-600 shadow-sm' 
-              : 'text-slate-400 hover:text-slate-600'
+              ? 'bg-white text-brand-primary shadow-sm' 
+              : 'text-brand-accent hover:text-brand-secondary'
           }`}
         >
           Despesas do Clube
@@ -199,8 +259,8 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
           onClick={() => setActiveTab('COMPLIANCE')}
           className={`px-8 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${
             activeTab === 'COMPLIANCE' 
-              ? 'bg-white text-indigo-600 shadow-sm' 
-              : 'text-slate-400 hover:text-slate-600'
+              ? 'bg-white text-brand-primary shadow-sm' 
+              : 'text-brand-accent hover:text-brand-secondary'
           }`}
         >
           Adimplência
@@ -209,49 +269,51 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
 
       {/* Financial Summary Dashboard */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Recebido</p>
+        <div className="bg-white p-6 rounded-[2rem] border border-brand-accent/20 shadow-sm">
+          <p className="text-[10px] font-black text-brand-accent uppercase tracking-widest mb-1">Total Recebido</p>
           <p className="text-2xl font-black text-emerald-600 font-mono">R$ {summary.paid.toFixed(2)}</p>
         </div>
-        <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Despesas</p>
+        <div className="bg-white p-6 rounded-[2rem] border border-brand-accent/20 shadow-sm">
+          <p className="text-[10px] font-black text-brand-accent uppercase tracking-widest mb-1">Total Despesas</p>
           <p className="text-2xl font-black text-rose-600 font-mono">R$ {summary.expenses.toFixed(2)}</p>
         </div>
-        <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Saldo Atual</p>
-          <p className={`text-2xl font-black font-mono ${summary.balance >= 0 ? 'text-indigo-600' : 'text-rose-600'}`}>
+        <div className="bg-white p-6 rounded-[2rem] border border-brand-accent/20 shadow-sm">
+          <p className="text-[10px] font-black text-brand-accent uppercase tracking-widest mb-1">Saldo Atual</p>
+          <p className={`text-2xl font-black font-mono ${summary.balance >= 0 ? 'text-brand-primary' : 'text-rose-600'}`}>
             R$ {summary.balance.toFixed(2)}
           </p>
         </div>
         {filterMonth && (
-          <div className="bg-indigo-50 p-6 rounded-[2rem] border border-indigo-100 shadow-sm">
-            <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Orçamento Mensal ({filterMonth})</p>
+          <div className="bg-brand-light p-6 rounded-[2rem] border border-brand-accent/10 shadow-sm">
+            <p className="text-[10px] font-black text-brand-accent uppercase tracking-widest mb-1">Orçamento Mensal ({formatMonth(filterMonth)})</p>
             <div className="flex justify-between items-end">
-              <p className="text-2xl font-black text-indigo-600 font-mono">R$ {summary.budget.toFixed(2)}</p>
-              <p className="text-[10px] font-bold text-indigo-400 mb-1">Pend: R$ {(summary.budget - summary.paid).toFixed(2)}</p>
+              <p className="text-2xl font-black text-brand-primary font-mono">R$ {summary.budget.toFixed(2)}</p>
+              <p className="text-[10px] font-bold text-brand-accent mb-1">Pend: R$ {(summary.budget - summary.paid).toFixed(2)}</p>
             </div>
           </div>
         )}
       </div>
 
       {/* Filters */}
-      <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex flex-wrap gap-4 items-end">
+      <div className="bg-white p-6 rounded-[2rem] border border-brand-accent/20 shadow-sm flex flex-wrap gap-4 items-end">
         <div className="flex-1 min-w-[200px] space-y-2">
-          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex items-center gap-2">
+          <label className="text-[10px] font-black text-brand-accent uppercase tracking-widest ml-1 flex items-center gap-2">
             <Filter className="w-3 h-3" /> Mês de Referência
           </label>
           <select
             value={filterMonth}
             onChange={e => setFilterMonth(e.target.value)}
-            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700 text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all appearance-none"
+            className="w-full px-4 py-3 bg-brand-light border border-brand-accent/20 rounded-xl font-bold text-brand-secondary text-sm outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all appearance-none"
           >
             <option value="">Todos os meses</option>
-            {uniqueMonths.map(m => <option key={m} value={m}>{m}</option>)}
+            {uniqueMonths.map(m => (
+              <option key={m} value={m}>{formatMonth(m)}</option>
+            ))}
           </select>
         </div>
 
         <div className="flex-1 min-w-[200px] space-y-2">
-          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex items-center gap-2">
+          <label className="text-[10px] font-black text-brand-accent uppercase tracking-widest ml-1 flex items-center gap-2">
             <Clock className="w-3 h-3" /> Data Específica
           </label>
           <div className="relative">
@@ -259,12 +321,12 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
               type="date"
               value={filterDate}
               onChange={e => setFilterDate(e.target.value)}
-              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700 text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all appearance-none"
+              className="w-full px-4 py-3 bg-brand-light border border-brand-accent/20 rounded-xl font-bold text-brand-secondary text-sm outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all appearance-none"
             />
             {filterDate && (
               <button 
                 onClick={() => setFilterDate('')}
-                className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-rose-500 transition-colors"
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-brand-accent hover:text-rose-500 transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -275,13 +337,13 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
         {activeTab === 'RECEIPTS' && (
           <>
             <div className="flex-1 min-w-[200px] space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex items-center gap-2">
+              <label className="text-[10px] font-black text-brand-accent uppercase tracking-widest ml-1 flex items-center gap-2">
                 <Filter className="w-3 h-3" /> Sócio
               </label>
               <select
                 value={filterPlayer}
                 onChange={e => setFilterPlayer(e.target.value)}
-                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700 text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all appearance-none"
+                className="w-full px-4 py-3 bg-brand-light border border-brand-accent/20 rounded-xl font-bold text-brand-secondary text-sm outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all appearance-none"
               >
                 <option value="">Todos os sócios</option>
                 {uniquePlayers.map(p => <option key={p} value={p}>{p}</option>)}
@@ -289,13 +351,13 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
             </div>
 
             <div className="flex-1 min-w-[200px] space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex items-center gap-2">
+              <label className="text-[10px] font-black text-brand-accent uppercase tracking-widest ml-1 flex items-center gap-2">
                 <Filter className="w-3 h-3" /> Status
               </label>
               <select
                 value={filterStatus}
                 onChange={e => setFilterStatus(e.target.value as PaymentStatus | '')}
-                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700 text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all appearance-none"
+                className="w-full px-4 py-3 bg-brand-light border border-brand-accent/20 rounded-xl font-bold text-brand-secondary text-sm outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all appearance-none"
               >
                 <option value="">Todos os status</option>
                 <option value={PaymentStatus.PAID}>Pago</option>
@@ -309,7 +371,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
         {(filterMonth || filterPlayer || filterStatus) && (
           <button
             onClick={() => { setFilterMonth(''); setFilterPlayer(''); setFilterStatus(''); }}
-            className="p-3 bg-slate-100 text-slate-500 rounded-xl hover:bg-slate-200 transition-all"
+            className="p-3 bg-brand-light text-brand-accent rounded-xl hover:bg-brand-accent/10 transition-all"
             title="Limpar Filtros"
           >
             <X className="w-5 h-5" />
@@ -320,36 +382,36 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
       {activeTab === 'RECEIPTS' ? (
         <>
           {/* Desktop Table View - Receipts */}
-          <div className="hidden md:block bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden">
+          <div className="hidden md:block bg-white rounded-[2rem] border border-brand-accent/20 shadow-sm overflow-hidden">
             <table className="w-full text-left">
-              <thead className="bg-slate-50 border-b border-slate-200">
+              <thead className="bg-brand-light border-b border-brand-accent/20">
                 <tr>
-                  <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Sócio</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Mês/Ref</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Valor</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Forma</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Status</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Vencimento</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Ações</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-brand-accent uppercase tracking-widest">Sócio</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-brand-accent uppercase tracking-widest text-center">Mês/Ref</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-brand-accent uppercase tracking-widest text-center">Valor</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-brand-accent uppercase tracking-widest text-center">Forma</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-brand-accent uppercase tracking-widest text-center">Status</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-brand-accent uppercase tracking-widest text-center">Vencimento</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-brand-accent uppercase tracking-widest text-right">Ações</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-brand-light">
                 {filteredPayments.map(payment => (
-                  <tr key={payment.id} className="hover:bg-slate-50/50 transition-colors group">
+                  <tr key={payment.id} className="hover:bg-brand-light/50 transition-colors group">
                     <td className="px-8 py-5">
-                      <p className={`font-black ${payment.status === PaymentStatus.OVERDUE ? 'text-rose-600' : 'text-slate-700'}`}>
+                      <p className={`font-black ${payment.status === PaymentStatus.OVERDUE ? 'text-rose-600' : 'text-brand-secondary'}`}>
                         {payment.playerName}
                       </p>
                     </td>
-                    <td className="px-8 py-5 text-center text-[10px] font-bold text-slate-500 uppercase">{payment.month}</td>
-                    <td className="px-8 py-5 text-center font-mono text-sm font-black text-slate-700">R$ {payment.amount.toFixed(2)}</td>
+                    <td className="px-8 py-5 text-center text-[10px] font-bold text-brand-accent uppercase">{payment.month}</td>
+                    <td className="px-8 py-5 text-center font-mono text-sm font-black text-brand-secondary">R$ {payment.amount.toFixed(2)}</td>
                     <td className="px-8 py-5 text-center">
                       {payment.method ? (
-                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest bg-slate-100 px-2 py-1 rounded-lg border border-slate-200">
+                        <span className="text-[10px] font-bold text-brand-accent uppercase tracking-widest bg-brand-light px-2 py-1 rounded-lg border border-brand-accent/10">
                           {payment.method}
                         </span>
                       ) : (
-                        <span className="text-[10px] text-slate-300 italic">-</span>
+                        <span className="text-[10px] text-brand-accent/30 italic">-</span>
                       )}
                     </td>
                     <td className="px-8 py-5 text-center">
@@ -358,7 +420,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                         {translateStatus(payment.status)}
                       </span>
                     </td>
-                    <td className="px-8 py-5 text-center text-[10px] font-bold text-slate-500 uppercase">
+                    <td className="px-8 py-5 text-center text-[10px] font-bold text-brand-accent uppercase">
                       <div>{new Date(payment.dueDate + 'T00:00:00').toLocaleDateString('pt-BR')}</div>
                       {payment.status === PaymentStatus.PAID && payment.paymentDate && (
                         <div className="text-[8px] text-emerald-500 mt-1">Pago em: {new Date(payment.paymentDate + 'T00:00:00').toLocaleDateString('pt-BR')}</div>
@@ -367,11 +429,11 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                     <td className="px-8 py-5 text-right">
                       {userRole === 'ADMIN' ? (
                         <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button onClick={() => { setEditingPayment(payment); setIsPaymentFormOpen(true); }} className="p-2.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"><Edit2 className="w-4 h-4" /></button>
-                          <button onClick={() => deletePayment(payment.id)} className="p-2.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"><Trash2 className="w-4 h-4" /></button>
+                          <button onClick={() => { setEditingPayment(payment); setIsPaymentFormOpen(true); }} className="p-2.5 text-brand-accent hover:text-brand-primary hover:bg-brand-light rounded-xl transition-all"><Edit2 className="w-4 h-4" /></button>
+                          <button onClick={() => deletePayment(payment.id)} className="p-2.5 text-brand-accent hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"><Trash2 className="w-4 h-4" /></button>
                         </div>
                       ) : (
-                        <span className="text-[10px] text-slate-300 font-bold uppercase tracking-widest">Somente Leitura</span>
+                        <span className="text-[10px] text-brand-accent/30 font-bold uppercase tracking-widest">Somente Leitura</span>
                       )}
                     </td>
                   </tr>
@@ -380,8 +442,8 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
             </table>
             {filteredPayments.length === 0 && (
               <div className="p-20 text-center">
-                <CreditCard className="w-12 h-12 text-slate-200 mx-auto mb-4" />
-                <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">Nenhum lançamento encontrado</p>
+                <CreditCard className="w-12 h-12 text-brand-accent/20 mx-auto mb-4" />
+                <p className="text-sm font-bold text-brand-accent uppercase tracking-widest">Nenhum lançamento encontrado</p>
               </div>
             )}
           </div>
@@ -389,16 +451,16 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
           {/* Mobile Card View - Receipts */}
           <div className="md:hidden space-y-4">
             {filteredPayments.map(payment => (
-              <div key={payment.id} className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm space-y-4">
+              <div key={payment.id} className="bg-white p-6 rounded-[2rem] border border-brand-accent/20 shadow-sm space-y-4">
                 <div className="flex justify-between items-start">
                   <div>
-                    <h4 className={`text-xl font-black ${payment.status === PaymentStatus.OVERDUE ? 'text-rose-600' : 'text-slate-800'}`}>
+                    <h4 className={`text-xl font-black ${payment.status === PaymentStatus.OVERDUE ? 'text-rose-600' : 'text-brand-secondary'}`}>
                       {payment.playerName}
                     </h4>
-                    <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Referência: {payment.month}</p>
+                    <p className="text-xs font-bold text-brand-accent uppercase tracking-widest mt-1">Referência: {payment.month}</p>
                   </div>
                   <div className="text-right">
-                    <p className="text-2xl font-black text-slate-800 font-mono">R$ {payment.amount.toFixed(2)}</p>
+                    <p className="text-2xl font-black text-brand-secondary font-mono">R$ {payment.amount.toFixed(2)}</p>
                   </div>
                 </div>
                 
@@ -407,11 +469,11 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                     {getStatusIcon(payment.status)}
                     {translateStatus(payment.status)}
                   </span>
-                  <span className="bg-slate-100 text-slate-600 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border border-slate-200">
+                  <span className="bg-brand-light text-brand-secondary px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border border-brand-accent/10">
                     Vence em: {new Date(payment.dueDate + 'T00:00:00').toLocaleDateString('pt-BR')}
                   </span>
                   {payment.method && (
-                    <span className="bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border border-indigo-100">
+                    <span className="bg-brand-primary/10 text-brand-primary px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border border-brand-primary/20">
                       {payment.method}
                     </span>
                   )}
@@ -423,10 +485,10 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                 </div>
 
                 {userRole === 'ADMIN' && (
-                  <div className="flex gap-3 pt-2 border-t border-slate-100">
+                  <div className="flex gap-3 pt-2 border-t border-brand-light">
                     <button 
                       onClick={() => { setEditingPayment(payment); setIsPaymentFormOpen(true); }} 
-                      className="flex-1 flex items-center justify-center gap-2 py-3 bg-indigo-50 text-indigo-600 rounded-xl font-black text-xs uppercase tracking-widest"
+                      className="flex-1 flex items-center justify-center gap-2 py-3 bg-brand-light text-brand-primary rounded-xl font-black text-xs uppercase tracking-widest"
                     >
                       <Edit2 className="w-4 h-4" /> Editar
                     </button>
@@ -441,9 +503,9 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
               </div>
             ))}
             {filteredPayments.length === 0 && (
-              <div className="p-12 text-center bg-white rounded-[2rem] border border-slate-200">
-                <CreditCard className="w-10 h-10 text-slate-200 mx-auto mb-3" />
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Nenhum lançamento encontrado</p>
+              <div className="p-12 text-center bg-white rounded-[2rem] border border-brand-accent/20">
+                <CreditCard className="w-10 h-10 text-brand-accent/20 mx-auto mb-3" />
+                <p className="text-xs font-bold text-brand-accent uppercase tracking-widest">Nenhum lançamento encontrado</p>
               </div>
             )}
           </div>
@@ -451,42 +513,42 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
       ) : activeTab === 'EXPENSES' ? (
         <>
           {/* Desktop Table View - Expenses */}
-          <div className="hidden md:block bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden">
+          <div className="hidden md:block bg-white rounded-[2rem] border border-brand-accent/20 shadow-sm overflow-hidden">
             <table className="w-full text-left">
-              <thead className="bg-slate-50 border-b border-slate-200">
+              <thead className="bg-brand-light border-b border-brand-accent/20">
                 <tr>
-                  <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Descrição</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Categoria</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Mês/Ref</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Valor</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Data</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Ações</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-brand-accent uppercase tracking-widest">Descrição</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-brand-accent uppercase tracking-widest text-center">Categoria</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-brand-accent uppercase tracking-widest text-center">Mês/Ref</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-brand-accent uppercase tracking-widest text-center">Valor</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-brand-accent uppercase tracking-widest text-center">Data</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-brand-accent uppercase tracking-widest text-right">Ações</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-brand-light">
                 {filteredExpenses.map(expense => (
-                  <tr key={expense.id} className="hover:bg-slate-50/50 transition-colors group">
+                  <tr key={expense.id} className="hover:bg-brand-light/50 transition-colors group">
                     <td className="px-8 py-5">
-                      <p className="font-black text-slate-700">{expense.description}</p>
+                      <p className="font-black text-brand-secondary">{expense.description}</p>
                     </td>
                     <td className="px-8 py-5 text-center">
-                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest bg-slate-100 px-3 py-1 rounded-lg border border-slate-200">
+                      <span className="text-[10px] font-bold text-brand-accent uppercase tracking-widest bg-brand-light px-3 py-1 rounded-lg border border-brand-accent/10">
                         {expense.category}
                       </span>
                     </td>
-                    <td className="px-8 py-5 text-center text-[10px] font-bold text-slate-500 uppercase">{expense.month}</td>
+                    <td className="px-8 py-5 text-center text-[10px] font-bold text-brand-accent uppercase">{expense.month}</td>
                     <td className="px-8 py-5 text-center font-mono text-sm font-black text-rose-600">R$ {expense.amount.toFixed(2)}</td>
-                    <td className="px-8 py-5 text-center text-[10px] font-bold text-slate-500 uppercase">
+                    <td className="px-8 py-5 text-center text-[10px] font-bold text-brand-accent uppercase">
                       {new Date(expense.date + 'T00:00:00').toLocaleDateString('pt-BR')}
                     </td>
                     <td className="px-8 py-5 text-right">
                       {userRole === 'ADMIN' ? (
                         <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button onClick={() => { setEditingExpense(expense); setIsExpenseFormOpen(true); }} className="p-2.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"><Edit2 className="w-4 h-4" /></button>
-                          <button onClick={() => deleteExpense(expense.id)} className="p-2.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"><Trash2 className="w-4 h-4" /></button>
+                          <button onClick={() => { setEditingExpense(expense); setIsExpenseFormOpen(true); }} className="p-2.5 text-brand-accent hover:text-brand-primary hover:bg-brand-light rounded-xl transition-all"><Edit2 className="w-4 h-4" /></button>
+                          <button onClick={() => deleteExpense(expense.id)} className="p-2.5 text-brand-accent hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"><Trash2 className="w-4 h-4" /></button>
                         </div>
                       ) : (
-                        <span className="text-[10px] text-slate-300 font-bold uppercase tracking-widest">Somente Leitura</span>
+                        <span className="text-[10px] text-brand-accent/30 font-bold uppercase tracking-widest">Somente Leitura</span>
                       )}
                     </td>
                   </tr>
@@ -495,8 +557,8 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
             </table>
             {filteredExpenses.length === 0 && (
               <div className="p-20 text-center">
-                <DollarSign className="w-12 h-12 text-slate-200 mx-auto mb-4" />
-                <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">Nenhuma despesa encontrada</p>
+                <DollarSign className="w-12 h-12 text-brand-accent/20 mx-auto mb-4" />
+                <p className="text-sm font-bold text-brand-accent uppercase tracking-widest">Nenhuma despesa encontrada</p>
               </div>
             )}
           </div>
@@ -504,11 +566,11 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
           {/* Mobile Card View - Expenses */}
           <div className="md:hidden space-y-4">
             {filteredExpenses.map(expense => (
-              <div key={expense.id} className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm space-y-4">
+              <div key={expense.id} className="bg-white p-6 rounded-[2rem] border border-brand-accent/20 shadow-sm space-y-4">
                 <div className="flex justify-between items-start">
                   <div>
-                    <h4 className="text-xl font-black text-slate-800">{expense.description}</h4>
-                    <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">{expense.category} • {expense.month}</p>
+                    <h4 className="text-xl font-black text-brand-secondary">{expense.description}</h4>
+                    <p className="text-xs font-bold text-brand-accent uppercase tracking-widest mt-1">{expense.category} • {expense.month}</p>
                   </div>
                   <div className="text-right">
                     <p className="text-2xl font-black text-rose-600 font-mono">R$ {expense.amount.toFixed(2)}</p>
@@ -516,16 +578,16 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                 </div>
                 
                 <div className="flex flex-wrap gap-2">
-                  <span className="bg-slate-100 text-slate-600 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border border-slate-200">
+                  <span className="bg-brand-light text-brand-secondary px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border border-brand-accent/10">
                     Data: {new Date(expense.date + 'T00:00:00').toLocaleDateString('pt-BR')}
                   </span>
                 </div>
 
                 {userRole === 'ADMIN' && (
-                  <div className="flex gap-3 pt-2 border-t border-slate-100">
+                  <div className="flex gap-3 pt-2 border-t border-brand-light">
                     <button 
                       onClick={() => { setEditingExpense(expense); setIsExpenseFormOpen(true); }} 
-                      className="flex-1 flex items-center justify-center gap-2 py-3 bg-indigo-50 text-indigo-600 rounded-xl font-black text-xs uppercase tracking-widest"
+                      className="flex-1 flex items-center justify-center gap-2 py-3 bg-brand-light text-brand-primary rounded-xl font-black text-xs uppercase tracking-widest"
                     >
                       <Edit2 className="w-4 h-4" /> Editar
                     </button>
@@ -540,9 +602,9 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
               </div>
             ))}
             {filteredExpenses.length === 0 && (
-              <div className="p-12 text-center bg-white rounded-[2rem] border border-slate-200">
-                <DollarSign className="w-10 h-10 text-slate-200 mx-auto mb-3" />
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Nenhuma despesa encontrada</p>
+              <div className="p-12 text-center bg-white rounded-[2rem] border border-brand-accent/20">
+                <DollarSign className="w-10 h-10 text-brand-accent/20 mx-auto mb-3" />
+                <p className="text-xs font-bold text-brand-accent uppercase tracking-widest">Nenhuma despesa encontrada</p>
               </div>
             )}
           </div>
@@ -550,22 +612,22 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
       ) : (
         <>
           {/* Compliance View */}
-          <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden">
-            <div className="p-8 border-b border-slate-100 bg-slate-50/50">
+          <div className="bg-white rounded-[2rem] border border-brand-accent/20 shadow-sm overflow-hidden">
+            <div className="p-8 border-b border-brand-light bg-brand-light/50">
               <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <div>
-                  <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Relatório de Adimplência</h3>
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Status de todos os sócios para {filterMonth || 'todos os meses'}</p>
+                  <h3 className="text-xl font-black text-brand-secondary uppercase tracking-tight">Relatório de Adimplência</h3>
+                  <p className="text-xs font-bold text-brand-accent uppercase tracking-widest mt-1">Status de todos os sócios para {filterMonth ? formatMonth(filterMonth) : 'todos os meses'}</p>
                 </div>
                 <div className="flex flex-col sm:flex-row gap-4 w-full md:w-auto">
                   <div className="relative flex-1 sm:w-64">
-                    <Filter className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <Filter className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-brand-accent" />
                     <input
                       type="text"
                       placeholder="Buscar sócio..."
                       value={filterPlayer}
                       onChange={e => setFilterPlayer(e.target.value)}
-                      className="w-full bg-white border border-slate-200 rounded-2xl pl-11 pr-4 py-3 text-sm font-bold text-slate-700 placeholder:text-slate-400 outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all"
+                      className="w-full bg-white border border-brand-accent/20 rounded-2xl pl-11 pr-4 py-3 text-sm font-bold text-brand-secondary placeholder:text-brand-accent/50 outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all"
                     />
                   </div>
                   {filterMonth && (
@@ -582,9 +644,9 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                           {players.length - players.filter(player => payments.some(p => p.playerId === player.id && p.month === filterMonth && p.status === PaymentStatus.PAID)).length}
                         </p>
                       </div>
-                      <div className="text-center px-4 py-2 bg-indigo-50 rounded-xl border border-indigo-100 min-w-[100px]">
-                        <p className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">Total Pago</p>
-                        <p className="text-lg font-black text-indigo-700 font-mono">
+                      <div className="text-center px-4 py-2 bg-brand-light rounded-xl border border-brand-accent/10 min-w-[100px]">
+                        <p className="text-[10px] font-black text-brand-primary uppercase tracking-widest">Total Pago</p>
+                        <p className="text-lg font-black text-brand-primary font-mono">
                           R$ {payments.filter(p => p.month === filterMonth && p.status === PaymentStatus.PAID).reduce((acc, p) => acc + p.amount, 0).toFixed(0)}
                         </p>
                       </div>
@@ -596,16 +658,16 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
 
             <div className="overflow-x-auto">
               <table className="w-full text-left">
-                <thead className="bg-slate-50 border-b border-slate-200">
+                <thead className="bg-brand-light border-b border-brand-accent/20">
                   <tr>
-                    <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Sócio</th>
-                    <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Status ({filterMonth})</th>
-                    <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Valor</th>
-                    <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Data Pagto</th>
-                    <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Ações</th>
+                    <th className="px-8 py-5 text-[10px] font-black text-brand-accent uppercase tracking-widest">Sócio</th>
+                    <th className="px-8 py-5 text-[10px] font-black text-brand-accent uppercase tracking-widest text-center">Status ({formatMonth(filterMonth)})</th>
+                    <th className="px-8 py-5 text-[10px] font-black text-brand-accent uppercase tracking-widest text-center">Valor</th>
+                    <th className="px-8 py-5 text-[10px] font-black text-brand-accent uppercase tracking-widest text-center">Data Pagto</th>
+                    <th className="px-8 py-5 text-[10px] font-black text-brand-accent uppercase tracking-widest text-right">Ações</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
+                <tbody className="divide-y divide-brand-light">
                   {players
                     .filter(player => !filterPlayer || player.name.toLowerCase().includes(filterPlayer.toLowerCase()))
                     .sort((a, b) => a.name.localeCompare(b.name))
@@ -614,10 +676,10 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                       const status = payment ? payment.status : PaymentStatus.PENDING;
                       
                       return (
-                        <tr key={player.id} className="hover:bg-slate-50/50 transition-colors group">
+                        <tr key={player.id} className="hover:bg-brand-light/50 transition-colors group">
                           <td className="px-8 py-5">
-                            <p className="font-black text-slate-700">{player.name}</p>
-                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{player.gender === 'MALE' ? 'Sócio' : 'Sócia'}</p>
+                            <p className="font-black text-brand-secondary">{player.name}</p>
+                            <p className="text-[10px] text-brand-accent font-bold uppercase tracking-widest">{player.gender === 'MALE' ? 'Sócio' : 'Sócia'}</p>
                           </td>
                           <td className="px-8 py-5 text-center">
                             <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border ${getStatusColor(status)}`}>
@@ -625,10 +687,10 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                               {payment ? translateStatus(status) : 'Não Lançado'}
                             </span>
                           </td>
-                          <td className="px-8 py-5 text-center font-mono text-sm font-black text-slate-700">
+                          <td className="px-8 py-5 text-center font-mono text-sm font-black text-brand-secondary">
                             {payment ? `R$ ${payment.amount.toFixed(2)}` : '-'}
                           </td>
-                          <td className="px-8 py-5 text-center text-[10px] font-bold text-slate-500 uppercase">
+                          <td className="px-8 py-5 text-center text-[10px] font-bold text-brand-accent uppercase">
                             {payment?.paymentDate ? new Date(payment.paymentDate + 'T00:00:00').toLocaleDateString('pt-BR') : '-'}
                           </td>
                           <td className="px-8 py-5 text-right">
@@ -651,7 +713,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                                     setIsPaymentFormOpen(true);
                                   }
                                 }}
-                                className="p-2.5 text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all font-black text-[10px] uppercase tracking-widest"
+                                className="p-2.5 text-brand-primary hover:bg-brand-light rounded-xl transition-all font-black text-[10px] uppercase tracking-widest"
                               >
                                 {payment ? 'Editar' : 'Lançar'}
                               </button>

@@ -13,11 +13,21 @@ import {
   signOut,
   User 
 } from 'firebase/auth';
-import { getFirestore, collection, doc, updateDoc, onSnapshot, setDoc, deleteDoc, getDoc, getDocFromServer, getDocs, writeBatch, increment, query, where, orderBy, arrayUnion, addDoc, serverTimestamp, collectionGroup } from 'firebase/firestore';
+import { getFirestore, enableIndexedDbPersistence, collection, doc, updateDoc, onSnapshot, setDoc, deleteDoc, getDoc, getDocFromServer, getDocs, writeBatch, increment, query, where, orderBy, arrayUnion, addDoc, serverTimestamp, collectionGroup } from 'firebase/firestore';
 import firebaseConfig from './firebase-applet-config.json';
 
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
+
+// Enable offline persistence
+enableIndexedDbPersistence(db).catch((err) => {
+  if (err.code == 'failed-precondition') {
+    console.warn('Multiple tabs open, persistence can only be enabled in one tab at a a time.');
+  } else if (err.code == 'unimplemented') {
+    console.warn('The current browser does not support all of the features required to enable persistence');
+  }
+});
+
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 export const emailProvider = new EmailAuthProvider();
@@ -116,7 +126,10 @@ export const trackUsage = async (reads: number, writes: number) => {
   lastSyncTime = now;
 
   const today = getFirestoreDateKey();
+  const monthKey = today.slice(0, 7);
   const usageRef = doc(db, 'metadata', 'usage');
+  const monthlyUsageRef = doc(db, 'metadata', `usage_${monthKey}`);
+
   try {
     await updateDoc(usageRef, {
       reads: increment(readsToSync),
@@ -130,7 +143,6 @@ export const trackUsage = async (reads: number, writes: number) => {
       return;
     }
     try {
-      // Se o documento não existir, cria um novo
       await setDoc(usageRef, {
         reads: readsToSync,
         writes: writesToSync,
@@ -140,10 +152,20 @@ export const trackUsage = async (reads: number, writes: number) => {
       if (err?.code === 'resource-exhausted') {
         isQuotaExceeded = true;
       }
-      console.error('Erro crítico ao rastrear uso:', err);
-      // Devolve os valores para tentar novamente na próxima
       pendingReads += readsToSync;
       pendingWrites += writesToSync;
+    }
+  }
+
+  try {
+    await updateDoc(monthlyUsageRef, {
+      reads: increment(readsToSync),
+      writes: increment(writesToSync),
+      lastUpdate: today
+    });
+  } catch (e: any) {
+    if (e.code === 'not-found') {
+      await setDoc(monthlyUsageRef, { reads: readsToSync, writes: writesToSync, aiCalls: 0, lastUpdate: today });
     }
   }
 };
@@ -152,7 +174,10 @@ export const trackAIUsage = async (calls: number) => {
   if (isQuotaExceeded) return;
 
   const today = getFirestoreDateKey();
+  const monthKey = today.slice(0, 7);
   const usageRef = doc(db, 'metadata', 'usage');
+  const monthlyUsageRef = doc(db, 'metadata', `usage_${monthKey}`);
+
   try {
     await updateDoc(usageRef, {
       aiCalls: increment(calls),
@@ -166,6 +191,17 @@ export const trackAIUsage = async (calls: number) => {
       }, { merge: true });
     } catch (err) {
       console.error('Erro ao rastrear uso de IA:', err);
+    }
+  }
+
+  try {
+    await updateDoc(monthlyUsageRef, {
+      aiCalls: increment(calls),
+      lastUpdate: today
+    });
+  } catch (e: any) {
+    if (e.code === 'not-found') {
+      await setDoc(monthlyUsageRef, { reads: 0, writes: 0, aiCalls: calls, lastUpdate: today });
     }
   }
 };

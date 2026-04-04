@@ -18,23 +18,23 @@ export default defineConfig(({ mode }) => {
           registerType: 'autoUpdate',
           includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg'],
           manifest: {
-            name: 'SpikeGen - Gestão de Vôlei',
-            short_name: 'SpikeGen',
+            name: 'Guerreiros Volei',
+            short_name: 'Guerreiros Volei',
             description: 'Sistema de gestão de clubes de vôlei e geração de times equilibrados.',
             theme_color: '#064e3b',
             icons: [
               {
-                src: 'pwa-192x192.png',
+                src: 'logo.png',
                 sizes: '192x192',
                 type: 'image/png'
               },
               {
-                src: 'pwa-512x512.png',
+                src: 'logo.png',
                 sizes: '512x512',
                 type: 'image/png'
               },
               {
-                src: 'pwa-512x512.png',
+                src: 'logo.png',
                 sizes: '512x512',
                 type: 'image/png',
                 purpose: 'any maskable'

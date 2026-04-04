@@ -1,6 +1,6 @@
 {
-  "name": "SpikeGen - Gerador de Vôlei",
-  "short_name": "SpikeGen",
+  "name": "Guerreiros Volei",
+  "short_name": "Guerreiros Volei",
   "description": "Gerador de times e gestão de vôlei com IA",
   "start_url": "/",
   "display": "standalone",
@@ -8,12 +8,12 @@
   "theme_color": "#4f46e5",
   "icons": [
     {
-      "src": "https://picsum.photos/seed/volleyball/192/192",
+      "src": "/logo.png",
       "sizes": "192x192",
       "type": "image/png"
     },
     {
-      "src": "https://picsum.photos/seed/volleyball/512/512",
+      "src": "/logo.png",
       "sizes": "512x512",
       "type": "image/png"
     }

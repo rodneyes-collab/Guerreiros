@@ -54,8 +54,12 @@ export const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2
 
 export const translateGender = (gender: string) => {
   switch (gender) {
-    case 'M': return 'Masculino';
-    case 'F': return 'Feminino';
+    case 'MALE':
+    case 'M': 
+      return 'Masculino';
+    case 'FEMALE':
+    case 'F': 
+      return 'Feminino';
     default: return gender;
   }
 };

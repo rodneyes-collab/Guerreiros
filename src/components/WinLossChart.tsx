@@ -5,9 +5,10 @@ import { Match } from '../../types';
 interface WinLossChartProps {
   matches: Match[];
   playerId: string;
+  isDark?: boolean;
 }
 
-export const WinLossChart: React.FC<WinLossChartProps> = ({ matches, playerId }) => {
+export const WinLossChart: React.FC<WinLossChartProps> = ({ matches, playerId, isDark = false }) => {
   // Filtrar partidas que o jogador participou e ordenar por data
   const playerMatches = matches
     .filter(m => m.teamA.includes(playerId) || m.teamB.includes(playerId))
@@ -15,8 +16,8 @@ export const WinLossChart: React.FC<WinLossChartProps> = ({ matches, playerId })
 
   if (playerMatches.length === 0) {
     return (
-      <div className="h-48 flex items-center justify-center bg-slate-50 rounded-2xl border border-dashed border-slate-200">
-        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Sem histórico de partidas disponível</p>
+      <div className={`h-48 flex items-center justify-center ${isDark ? 'bg-white/5' : 'bg-brand-light/30'} rounded-2xl border border-dashed border-brand-accent/20`}>
+        <p className="text-xs font-bold text-brand-accent uppercase tracking-widest">Sem histórico de partidas disponível</p>
       </div>
     );
   }
@@ -54,12 +55,12 @@ export const WinLossChart: React.FC<WinLossChartProps> = ({ matches, playerId })
     <div className="h-64 w-full">
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+          <CartesianGrid strokeDasharray="3 3" stroke={isDark ? "rgba(255,255,255,0.05)" : "rgba(74, 79, 90, 0.1)"} vertical={false} />
           <XAxis 
             dataKey="date" 
             axisLine={false} 
             tickLine={false} 
-            tick={{ fill: '#94a3b8', fontSize: 10, fontWeight: 'bold' }}
+            tick={{ fill: isDark ? '#94a3b8' : '#4A4F5A', fontSize: 10, fontWeight: 'bold' }}
             tickFormatter={(val) => {
               if (val === 'Início') return val;
               try {
@@ -72,16 +73,17 @@ export const WinLossChart: React.FC<WinLossChartProps> = ({ matches, playerId })
           <YAxis 
             axisLine={false} 
             tickLine={false} 
-            tick={{ fill: '#94a3b8', fontSize: 10, fontWeight: 'bold' }}
+            tick={{ fill: isDark ? '#94a3b8' : '#4A4F5A', fontSize: 10, fontWeight: 'bold' }}
           />
           <Tooltip 
             contentStyle={{ 
-              backgroundColor: '#fff', 
+              backgroundColor: '#1E232D', 
               borderRadius: '1rem', 
-              border: '1px solid #e2e8f0',
-              boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
+              border: '1px solid rgba(245, 196, 41, 0.2)',
+              boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.3)',
               fontSize: '12px',
-              fontWeight: 'bold'
+              fontWeight: 'bold',
+              color: '#fff'
             }}
             labelFormatter={(val) => {
               if (val === 'Início') return val;
@@ -95,25 +97,26 @@ export const WinLossChart: React.FC<WinLossChartProps> = ({ matches, playerId })
               fontSize: '10px',
               fontWeight: 'bold',
               textTransform: 'uppercase',
-              letterSpacing: '0.05em'
+              letterSpacing: '0.05em',
+              color: isDark ? '#fff' : '#4A4F5A'
             }}
           />
           <Line 
             name="Vitórias"
             type="monotone" 
             dataKey="wins" 
-            stroke="#10b981" 
+            stroke="#F5C429" 
             strokeWidth={3} 
-            dot={{ r: 3, fill: '#10b981', strokeWidth: 2, stroke: '#fff' }}
+            dot={{ r: 3, fill: '#F5C429', strokeWidth: 2, stroke: isDark ? '#1E232D' : '#fff' }}
             activeDot={{ r: 5, strokeWidth: 0 }}
           />
           <Line 
             name="Derrotas"
             type="monotone" 
             dataKey="losses" 
-            stroke="#f43f5e" 
+            stroke={isDark ? '#475569' : '#4A4F5A'} 
             strokeWidth={3} 
-            dot={{ r: 3, fill: '#f43f5e', strokeWidth: 2, stroke: '#fff' }}
+            dot={{ r: 3, fill: isDark ? '#475569' : '#4A4F5A', strokeWidth: 2, stroke: isDark ? '#1E232D' : '#fff' }}
             activeDot={{ r: 5, strokeWidth: 0 }}
           />
         </LineChart>

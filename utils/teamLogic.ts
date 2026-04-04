@@ -30,13 +30,24 @@ export function getPriorityQueue(attendanceList: Player[], count: number = 12, m
   const selectedSetters = officialSetters.slice(0, maxSetters);
   const leftoverSetters = officialSetters.slice(maxSetters);
 
-  // Combine leftover setters with non-setters and sort by priority to fill remaining spots
-  // This ensures we always have 12 players if available
-  const remainingPool = [...leftoverSetters, ...nonSetters].sort(sortByPriority);
-
+  // To avoid having more than 2 official setters in a match, we prioritize non-setters.
+  // We only use leftover setters if we don't have enough non-setters to reach the required count.
   const neededCount = Math.max(0, count - selectedSetters.length);
-  const selectedOthers = remainingPool.slice(0, neededCount);
-  const remainingPlayers = remainingPool.slice(neededCount);
+  
+  let selectedOthers: Player[] = [];
+  let remainingPlayers: Player[] = [];
+
+  if (nonSetters.length >= neededCount) {
+    // We have enough non-setters, so we bench all leftover setters
+    selectedOthers = nonSetters.slice(0, neededCount);
+    remainingPlayers = [...nonSetters.slice(neededCount), ...leftoverSetters].sort(sortByPriority);
+  } else {
+    // We don't have enough non-setters, so we MUST use some leftover setters
+    selectedOthers = [...nonSetters];
+    const stillNeeded = neededCount - nonSetters.length;
+    selectedOthers.push(...leftoverSetters.slice(0, stillNeeded));
+    remainingPlayers = leftoverSetters.slice(stillNeeded);
+  }
 
   return {
     topPlayers: [...selectedSetters, ...selectedOthers],
@@ -212,29 +223,31 @@ export function substituteTournamentPlayer(tournament: Tournament, teamId: strin
 export function generateTeams(attendanceList: Player[]): GenerationResult {
   const { topPlayers: matchPool, remainingPlayers } = getPriorityQueue(attendanceList, 12, 2);
 
-  const poolSetters = matchPool.filter(p => p.isOfficialSetter);
-  const poolNonSetters = matchPool.filter(p => !p.isOfficialSetter).sort((a, b) => b.elo - a.elo);
+  // Shuffle matchPool to handle equal ELOs randomly and vary initial distribution
+  const shuffledPool = [...matchPool].sort(() => Math.random() - 0.5);
+
+  const poolSetters = shuffledPool.filter(p => p.isOfficialSetter);
+  const poolNonSetters = shuffledPool.filter(p => !p.isOfficialSetter).sort((a, b) => b.elo - a.elo);
 
   let setterA: Player | null = null;
   let setterB: Player | null = null;
   
   if (poolSetters.length >= 2) {
-    setterA = poolSetters[0];
-    setterB = poolSetters[1];
-    // If there were more than 2 setters (shouldn't happen with current getPriorityQueue), 
-    // treat them as regular players
+    // Randomly assign setters to A or B
+    const sIndices = [0, 1].sort(() => Math.random() - 0.5);
+    setterA = poolSetters[sIndices[0]];
+    setterB = poolSetters[sIndices[1]];
+    
     if (poolSetters.length > 2) {
       poolNonSetters.push(...poolSetters.slice(2));
       poolNonSetters.sort((a, b) => b.elo - a.elo);
     }
   } else if (poolSetters.length === 1) {
     setterA = poolSetters[0];
-    // Assign a temporary setter from the best non-setters
     if (poolNonSetters.length > 0) {
       setterB = poolNonSetters.shift()!;
     }
   } else {
-    // No official setters, assign two temporary ones
     if (poolNonSetters.length >= 2) {
       setterA = poolNonSetters.shift()!;
       setterB = poolNonSetters.shift()!;
@@ -250,14 +263,22 @@ export function generateTeams(attendanceList: Player[]): GenerationResult {
   const requiredA = setterA ? 5 : 6;
   const requiredB = setterB ? 5 : 6;
 
+  // Randomize initial team choice for the greedy distribution
+  const firstTeam = Math.random() > 0.5 ? 'A' : 'B';
+
   men.forEach((man) => {
     const eloA = playersA.reduce((sum, p) => sum + p.elo, 0) + (setterA?.elo || 0);
     const eloB = playersB.reduce((sum, p) => sum + p.elo, 0) + (setterB?.elo || 0);
 
-    if ((playersA.length < requiredA && (eloA <= eloB || playersB.length >= requiredB)) || playersB.length >= requiredB) {
+    const canAddToA = playersA.length < requiredA;
+    const canAddToB = playersB.length < requiredB;
+
+    if (canAddToA && (!canAddToB || eloA <= eloB)) {
       playersA.push(man);
-    } else {
+    } else if (canAddToB) {
       playersB.push(man);
+    } else if (canAddToA) {
+      playersA.push(man);
     }
   });
 
@@ -265,10 +286,15 @@ export function generateTeams(attendanceList: Player[]): GenerationResult {
     const eloA = playersA.reduce((sum, p) => sum + p.elo, 0) + (setterA?.elo || 0);
     const eloB = playersB.reduce((sum, p) => sum + p.elo, 0) + (setterB?.elo || 0);
 
-    if (playersA.length < requiredA && (eloA <= eloB || playersB.length >= requiredB)) {
+    const canAddToA = playersA.length < requiredA;
+    const canAddToB = playersB.length < requiredB;
+
+    if (canAddToA && (!canAddToB || eloA <= eloB)) {
       playersA.push(woman);
-    } else {
+    } else if (canAddToB) {
       playersB.push(woman);
+    } else if (canAddToA) {
+      playersA.push(woman);
     }
   });
 
@@ -286,12 +312,15 @@ export function generateTeams(attendanceList: Player[]): GenerationResult {
     improved = false;
     let bestDiff = Math.abs(currentEloA - currentEloB);
 
-    for (let i = 0; i < playersA.length; i++) {
-      for (let j = 0; j < playersB.length; j++) {
+    // Shuffle indices to explore different swap paths and avoid deterministic local optima
+    const indicesA = Array.from({ length: playersA.length }, (_, i) => i).sort(() => Math.random() - 0.5);
+    const indicesB = Array.from({ length: playersB.length }, (_, i) => i).sort(() => Math.random() - 0.5);
+
+    for (const i of indicesA) {
+      for (const j of indicesB) {
         const pA = playersA[i];
         const pB = playersB[j];
 
-        // Só troca se forem do mesmo gênero
         if (pA.gender === pB.gender) {
           const newEloA = currentEloA - pA.elo + pB.elo;
           const newEloB = currentEloB - pB.elo + pA.elo;
