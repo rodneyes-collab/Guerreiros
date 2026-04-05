@@ -3,6 +3,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useStore } from '../store';
 import { Player } from '../types';
 import { fetchAttendanceHistory, calculateAttendanceStats } from '../src/services/attendanceService';
+import { getFirestoreDateKey } from '../firebase';
 import { 
   Calendar, 
   Filter, 
@@ -21,7 +22,7 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
   const { players, userRole } = useStore();
   const [history, setHistory] = useState<Record<string, Player[]>>({});
   const [isLoading, setIsLoading] = useState(true);
-  const [filterMonth, setFilterMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [filterMonth, setFilterMonth] = useState(getFirestoreDateKey().slice(0, 7));
   const [filterDate, setFilterDate] = useState('');
   const [selectedPlayerId, setSelectedPlayerId] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
@@ -89,74 +90,74 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
       {/* Header & Filters */}
-      <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm space-y-8">
+      <div className="bg-brand-secondary/30 backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/10 shadow-2xl space-y-8">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
           <div className="flex items-center gap-4">
             {setViewMode && (
               <button 
                 onClick={() => setViewMode('presence')}
-                className="p-3 bg-brand-light hover:bg-brand-primary/10 text-brand-accent hover:text-brand-primary rounded-2xl transition-all"
+                className="p-3 bg-white/5 hover:bg-brand-primary/10 text-white/60 hover:text-brand-primary rounded-2xl transition-all border border-white/10"
               >
                 <ChevronRight className="w-6 h-6 rotate-180" />
               </button>
             )}
             <div>
-              <h2 className="text-3xl font-black text-brand-secondary uppercase tracking-tighter italic flex items-center gap-3">
+              <h2 className="text-3xl font-black text-brand-primary uppercase tracking-tighter italic flex items-center gap-3">
                 <BarChart3 className="w-8 h-8 text-brand-primary" />
                 Relatório de Presença
               </h2>
-              <p className="text-xs font-bold text-brand-accent uppercase tracking-widest mt-1">Análise de frequência dos sócios ao longo do tempo</p>
+              <p className="text-xs font-bold text-white/40 uppercase tracking-widest mt-1">Análise de frequência dos sócios ao longo do tempo</p>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-4 w-full md:w-auto">
-            <div className="flex items-center gap-2 bg-slate-50 px-4 py-2 rounded-2xl border border-slate-200 flex-1 md:flex-none">
-              <Users className="w-4 h-4 text-slate-400" />
+            <div className="flex items-center gap-2 bg-white/5 px-4 py-2 rounded-2xl border border-white/10 flex-1 md:flex-none">
+              <Users className="w-4 h-4 text-white/20" />
               <select 
                 value={selectedPlayerId} 
                 onChange={e => setSelectedPlayerId(e.target.value)}
-                className="bg-transparent border-none text-sm font-black text-slate-700 outline-none cursor-pointer w-full min-w-[150px]"
+                className="bg-transparent border-none text-sm font-black text-white outline-none cursor-pointer w-full min-w-[150px]"
               >
-                <option value="">Todos os Sócios</option>
+                <option value="" className="bg-brand-secondary text-white">Todos os Sócios</option>
                 {players.sort((a, b) => a.name.localeCompare(b.name)).map(p => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
+                  <option key={p.id} value={p.id} className="bg-brand-secondary text-white">{p.name}</option>
                 ))}
               </select>
               {selectedPlayerId && (
-                <button onClick={() => setSelectedPlayerId('')} className="text-slate-400 hover:text-rose-500 transition-colors">
+                <button onClick={() => setSelectedPlayerId('')} className="text-white/20 hover:text-rose-500 transition-colors">
                   <X className="w-4 h-4" />
                 </button>
               )}
             </div>
 
-            <div className="flex items-center gap-2 bg-slate-50 px-4 py-2 rounded-2xl border border-slate-200 flex-1 md:flex-none">
-              <Filter className="w-4 h-4 text-slate-400" />
+            <div className="flex items-center gap-2 bg-white/5 px-4 py-2 rounded-2xl border border-white/10 flex-1 md:flex-none">
+              <Filter className="w-4 h-4 text-white/20" />
               <select 
                 value={filterMonth} 
                 onChange={e => setFilterMonth(e.target.value)}
-                className="bg-transparent border-none text-sm font-black text-slate-700 outline-none cursor-pointer w-full"
+                className="bg-transparent border-none text-sm font-black text-white outline-none cursor-pointer w-full"
               >
-                <option value="">Todos os Meses</option>
+                <option value="" className="bg-brand-secondary text-white">Todos os Meses</option>
                 {uniqueMonths.map(m => {
                   const [year, month] = m.split('-');
                   const monthName = new Date(parseInt(year), parseInt(month) - 1).toLocaleDateString('pt-BR', { month: 'long' });
                   return (
-                    <option key={m} value={m}>{monthName.charAt(0).toUpperCase() + monthName.slice(1)}/{year}</option>
+                    <option key={m} value={m} className="bg-brand-secondary text-white">{monthName.charAt(0).toUpperCase() + monthName.slice(1)}/{year}</option>
                   );
                 })}
               </select>
             </div>
 
-            <div className="flex items-center gap-2 bg-slate-50 px-4 py-2 rounded-2xl border border-slate-200 flex-1 md:flex-none">
-              <Calendar className="w-4 h-4 text-slate-400" />
+            <div className="flex items-center gap-2 bg-white/5 px-4 py-2 rounded-2xl border border-white/10 flex-1 md:flex-none">
+              <Calendar className="w-4 h-4 text-white/20" />
               <input 
                 type="date"
                 value={filterDate} 
                 onChange={e => setFilterDate(e.target.value)}
-                className="bg-transparent border-none text-sm font-black text-slate-700 outline-none cursor-pointer w-full"
+                className="bg-transparent border-none text-sm font-black text-white outline-none cursor-pointer w-full [color-scheme:dark]"
               />
               {filterDate && (
-                <button onClick={() => setFilterDate('')} className="text-slate-400 hover:text-rose-500 transition-colors">
+                <button onClick={() => setFilterDate('')} className="text-white/20 hover:text-rose-500 transition-colors">
                   <X className="w-4 h-4" />
                 </button>
               )}
@@ -179,14 +180,14 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
         </div>
 
         {/* Search & Tabs */}
-        <div className="flex flex-col md:flex-row items-center justify-between gap-6 pt-6 border-t border-slate-100">
-          <div className="flex gap-2 p-1.5 bg-brand-light rounded-[1.5rem] w-full md:w-fit">
+        <div className="flex flex-col md:flex-row items-center justify-between gap-6 pt-6 border-t border-white/10">
+          <div className="flex gap-2 p-1.5 bg-white/5 rounded-[1.5rem] w-full md:w-fit border border-white/10">
             <button
               onClick={() => setActiveTab('PLAYERS')}
               className={`flex-1 md:flex-none px-8 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${
                 activeTab === 'PLAYERS' 
-                  ? 'bg-white text-brand-primary shadow-sm' 
-                  : 'text-brand-accent hover:text-brand-secondary'
+                  ? 'bg-brand-primary text-brand-secondary shadow-lg shadow-brand-primary/20' 
+                  : 'text-white/40 hover:text-white'
               }`}
             >
               Por Sócio
@@ -195,8 +196,8 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
               onClick={() => setActiveTab('SESSIONS')}
               className={`flex-1 md:flex-none px-8 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${
                 activeTab === 'SESSIONS' 
-                  ? 'bg-white text-brand-primary shadow-sm' 
-                  : 'text-brand-accent hover:text-brand-secondary'
+                  ? 'bg-brand-primary text-brand-secondary shadow-lg shadow-brand-primary/20' 
+                  : 'text-white/40 hover:text-white'
               }`}
             >
               Por Sessão
@@ -204,13 +205,13 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
           </div>
 
           <div className="relative w-full md:w-96">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-brand-accent" />
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20" />
             <input
               type="text"
               placeholder="Buscar sócio..."
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
-              className="w-full bg-brand-light border border-brand-accent/20 rounded-2xl pl-11 pr-4 py-3 text-sm font-bold text-brand-secondary placeholder:text-brand-accent outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all"
+              className="w-full bg-white/5 border border-white/10 rounded-2xl pl-11 pr-4 py-3 text-sm font-bold text-white placeholder:text-white/20 outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all"
             />
           </div>
         </div>
@@ -222,41 +223,41 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
           <p className="text-xs font-black text-brand-accent uppercase tracking-widest animate-pulse">Carregando histórico...</p>
         </div>
       ) : activeTab === 'PLAYERS' ? (
-        <div className="bg-white rounded-[2.5rem] border border-brand-accent/20 shadow-sm overflow-hidden">
+        <div className="bg-brand-secondary/30 backdrop-blur-xl rounded-[2.5rem] border border-white/10 shadow-2xl overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left">
-              <thead className="bg-brand-light border-b border-brand-accent/20">
+              <thead className="bg-white/5 border-b border-white/10">
                 <tr>
-                  <th className="px-8 py-5 text-[10px] font-black text-brand-accent uppercase tracking-widest">Sócio</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-brand-accent uppercase tracking-widest text-center">Presenças</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-brand-accent uppercase tracking-widest text-center">Total Sessões</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-brand-accent uppercase tracking-widest text-center">Frequência (%)</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-brand-accent uppercase tracking-widest text-right">Status</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-white/40 uppercase tracking-widest">Sócio</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-white/40 uppercase tracking-widest text-center">Presenças</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-white/40 uppercase tracking-widest text-center">Total Sessões</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-white/40 uppercase tracking-widest text-center">Frequência (%)</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-white/40 uppercase tracking-widest text-right">Status</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-brand-light">
+              <tbody className="divide-y divide-white/5">
                 {filteredStats.map((stat, idx) => (
-                  <tr key={stat.playerId} className="hover:bg-brand-light/50 transition-colors group">
+                  <tr key={stat.playerId} className="hover:bg-white/5 transition-colors group">
                     <td className="px-8 py-5">
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-brand-light rounded-xl flex items-center justify-center font-black text-brand-accent text-xs">
+                        <div className="w-10 h-10 bg-white/5 rounded-xl flex items-center justify-center font-black text-white/40 text-xs border border-white/10">
                           {idx + 1}
                         </div>
                         <div>
-                          <p className="font-black text-brand-secondary">{stat.playerName}</p>
-                          <p className="text-[10px] text-brand-accent font-bold uppercase tracking-widest">Sócio Ativo</p>
+                          <p className="font-black text-white">{stat.playerName}</p>
+                          <p className="text-[10px] text-white/40 font-bold uppercase tracking-widest">Sócio Ativo</p>
                         </div>
                       </div>
                     </td>
                     <td className="px-8 py-5 text-center">
-                      <span className="text-sm font-black text-brand-secondary">{stat.attendedSessions}</span>
+                      <span className="text-sm font-black text-white">{stat.attendedSessions}</span>
                     </td>
                     <td className="px-8 py-5 text-center">
-                      <span className="text-sm font-bold text-brand-accent">{stat.totalSessions}</span>
+                      <span className="text-sm font-bold text-white/40">{stat.totalSessions}</span>
                     </td>
                     <td className="px-8 py-5 text-center">
                       <div className="flex items-center justify-center gap-3">
-                        <div className="w-24 h-2 bg-brand-light rounded-full overflow-hidden">
+                        <div className="w-24 h-2 bg-white/5 rounded-full overflow-hidden border border-white/10">
                           <div 
                             className={`h-full rounded-full transition-all duration-1000 ${
                               stat.percentage >= 75 ? 'bg-emerald-500' : 
@@ -267,9 +268,9 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
                           />
                         </div>
                         <span className={`text-sm font-black font-mono ${
-                          stat.percentage >= 75 ? 'text-emerald-600' : 
+                          stat.percentage >= 75 ? 'text-emerald-500' : 
                           stat.percentage >= 50 ? 'text-brand-primary' : 
-                          'text-rose-600'
+                          'text-rose-500'
                         }`}>
                           {stat.percentage.toFixed(1)}%
                         </span>
@@ -277,9 +278,9 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
                     </td>
                     <td className="px-8 py-5 text-right">
                       <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border ${
-                        stat.percentage >= 75 ? 'bg-emerald-50 border-emerald-100 text-emerald-600' : 
-                        stat.percentage >= 50 ? 'bg-brand-light border-brand-accent/20 text-brand-primary' : 
-                        'bg-brand-light border-brand-accent/10 text-brand-accent'
+                        stat.percentage >= 75 ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500' : 
+                        stat.percentage >= 50 ? 'bg-brand-primary/10 border-brand-primary/20 text-brand-primary' : 
+                        'bg-white/5 border-white/10 text-white/40'
                       }`}>
                         {stat.percentage >= 75 ? 'Assíduo' : stat.percentage >= 50 ? 'Regular' : 'Ocasional'}
                       </span>
@@ -291,33 +292,33 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
           </div>
           {filteredStats.length === 0 && (
             <div className="p-20 text-center">
-              <Users className="w-12 h-12 text-brand-accent/20 mx-auto mb-4" />
-              <p className="text-sm font-bold text-brand-accent uppercase tracking-widest">Nenhum registro encontrado</p>
+              <Users className="w-12 h-12 text-white/10 mx-auto mb-4" />
+              <p className="text-sm font-bold text-white/40 uppercase tracking-widest">Nenhum registro encontrado</p>
             </div>
           )}
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {sessionSummary.map(session => (
-            <div key={session.date} className="bg-white p-8 rounded-[2.5rem] border border-brand-accent/20 shadow-sm hover:shadow-md transition-all group">
+            <div key={session.date} className="bg-brand-secondary/30 backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/10 shadow-2xl hover:shadow-brand-primary/5 transition-all group">
               <div className="flex justify-between items-start mb-6">
-                <div className="w-12 h-12 bg-brand-light rounded-2xl flex items-center justify-center">
+                <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center border border-white/10">
                   <Calendar className="w-6 h-6 text-brand-primary" />
                 </div>
-                <span className="text-[10px] font-black text-brand-accent uppercase tracking-widest bg-brand-light px-3 py-1 rounded-lg border border-brand-accent/10">
+                <span className="text-[10px] font-black text-white/40 uppercase tracking-widest bg-white/5 px-3 py-1 rounded-lg border border-white/10">
                   {new Date(session.date + 'T00:00:00').toLocaleDateString('pt-BR', { weekday: 'long' })}
                 </span>
               </div>
               
-              <h4 className="text-2xl font-black text-brand-secondary uppercase tracking-tighter mb-1">
+              <h4 className="text-2xl font-black text-white uppercase tracking-tighter mb-1">
                 {new Date(session.date + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })}
               </h4>
-              <p className="text-xs font-bold text-brand-accent uppercase tracking-widest mb-6">Sessão de Jogo</p>
+              <p className="text-xs font-bold text-white/40 uppercase tracking-widest mb-6">Sessão de Jogo</p>
               
-              <div className="flex items-center justify-between pt-6 border-t border-brand-light">
+              <div className="flex items-center justify-between pt-6 border-t border-white/10">
                 <div className="flex items-center gap-2">
                   <Users className="w-4 h-4 text-brand-primary" />
-                  <span className="text-sm font-black text-brand-secondary">{session.count} Sócios</span>
+                  <span className="text-sm font-black text-white">{session.count} Sócios</span>
                 </div>
                 <button 
                   onClick={() => {
@@ -332,9 +333,9 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
             </div>
           ))}
           {sessionSummary.length === 0 && (
-            <div className="col-span-full py-20 text-center bg-white rounded-[2.5rem] border border-brand-accent/20">
-              <Calendar className="w-12 h-12 text-brand-accent/20 mx-auto mb-4" />
-              <p className="text-sm font-bold text-brand-accent uppercase tracking-widest">Nenhuma sessão registrada neste período</p>
+            <div className="col-span-full py-20 text-center bg-brand-secondary/30 backdrop-blur-xl rounded-[2.5rem] border border-white/10 shadow-2xl">
+              <Calendar className="w-12 h-12 text-white/10 mx-auto mb-4" />
+              <p className="text-sm font-bold text-white/40 uppercase tracking-widest">Nenhuma sessão registrada neste período</p>
             </div>
           )}
         </div>

@@ -11,19 +11,28 @@ export const fetchAttendanceHistory = async (month?: string) => {
   const attendanceHistory: Record<string, Player[]> = {};
   
   try {
-    // Fetch all date documents in the attendance collection
-    const attendanceSnap = await getDocs(collection(db, 'attendance'));
-    const dates = attendanceSnap.docs.map(d => d.id);
+    // Use collectionGroup to find all players in any 'players' subcollection
+    // We'll then filter by path to ensure they belong to 'attendance'
+    const playersSnap = await getDocs(collectionGroup(db, 'players'));
     
-    // Filter dates by month if provided (format YYYY-MM)
-    const filteredDates = month 
-      ? dates.filter(d => d.startsWith(month))
-      : dates;
-
-    for (const date of filteredDates) {
-      const playersSnap = await getDocs(collection(db, 'attendance', date, 'players'));
-      attendanceHistory[date] = playersSnap.docs.map(d => d.data() as Player);
-    }
+    playersSnap.docs.forEach(d => {
+      const path = d.ref.path;
+      // Path format: attendance/{date}/players/{playerId}
+      if (path.startsWith('attendance/')) {
+        const parts = path.split('/');
+        if (parts.length >= 3) {
+          const date = parts[1];
+          
+          // Filter by month if provided (format YYYY-MM)
+          if (!month || date.startsWith(month)) {
+            if (!attendanceHistory[date]) {
+              attendanceHistory[date] = [];
+            }
+            attendanceHistory[date].push(d.data() as Player);
+          }
+        }
+      }
+    });
     
     return attendanceHistory;
   } catch (error) {
@@ -36,7 +45,22 @@ export const calculateAttendanceStats = (history: Record<string, Player[]>, allP
   const totalSessions = Object.keys(history).length;
   if (totalSessions === 0) return [];
 
-  const stats = allPlayers.map(player => {
+  // Create a map of all players to easily look them up by ID
+  const playerMap = new Map<string, Player>();
+  allPlayers.forEach(p => {
+    if (p.id) playerMap.set(p.id, p);
+  });
+  
+  // Also add players from history who might not be in allPlayers (e.g. deleted)
+  Object.values(history).forEach(dayPlayers => {
+    dayPlayers.forEach(p => {
+      if (p.id && !playerMap.has(p.id)) {
+        playerMap.set(p.id, p);
+      }
+    });
+  });
+
+  const stats = Array.from(playerMap.values()).map(player => {
     let attendedSessions = 0;
     Object.values(history).forEach(dayPlayers => {
       if (dayPlayers.some(p => p.id === player.id)) {

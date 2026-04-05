@@ -24,10 +24,10 @@ export const Notification: React.FC = () => {
           exit={{ opacity: 0, y: 20, scale: 0.9 }}
           className="fixed bottom-24 left-4 right-4 md:left-auto md:right-8 md:w-96 z-[100]"
         >
-          <div className={`p-4 rounded-2xl shadow-2xl border flex items-start gap-4 ${
-            notification.type === 'success' ? 'bg-emerald-50 border-emerald-100 text-emerald-800' :
-            notification.type === 'error' ? 'bg-rose-50 border-rose-100 text-rose-800' :
-            'bg-brand-light border-brand-accent/20 text-brand-secondary'
+          <div className={`p-4 rounded-2xl shadow-2xl border backdrop-blur-xl flex items-start gap-4 ${
+            notification.type === 'success' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-100' :
+            notification.type === 'error' ? 'bg-rose-500/10 border-rose-500/20 text-rose-100' :
+            'bg-brand-primary/10 border-brand-primary/20 text-white'
           }`}>
             <div className="shrink-0 mt-0.5">
               {notification.type === 'success' && <CheckCircle className="w-5 h-5 text-emerald-500" />}

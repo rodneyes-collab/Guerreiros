@@ -101,20 +101,20 @@ export const MembersView: React.FC<MembersViewProps> = ({
           transition: isPulling ? 'none' : 'transform 0.3s ease, opacity 0.3s ease'
         }}
       >
-        <div className="bg-white p-2 rounded-full shadow-lg border border-brand-accent/20">
+        <div className="bg-brand-secondary/30 backdrop-blur-xl p-2 rounded-full shadow-lg border border-white/10">
           <RotateCcw className={`w-6 h-6 text-brand-primary ${isSyncing ? 'animate-spin' : ''}`} />
         </div>
       </div>
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
         <div>
           <h2 className="text-4xl font-black text-brand-primary uppercase tracking-tighter">Gestão de Sócios</h2>
-          <p className="text-sm font-bold text-brand-accent uppercase tracking-widest mt-2">Total de {(players?.length || 0)} membros ativos</p>
+          <p className="text-sm font-bold text-white/40 uppercase tracking-widest mt-2">Total de {(players?.length || 0)} membros ativos</p>
         </div>
         <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
           {userRole === 'ADMIN' && repairDatabase && (
             <button 
               onClick={repairDatabase} 
-              className="flex-1 md:flex-none bg-white text-brand-accent px-6 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-brand-light transition-all border border-brand-accent/20 shadow-sm"
+              className="flex-1 md:flex-none bg-white/5 text-white px-6 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-white/10 transition-all border border-white/10 shadow-sm"
             >
               <RotateCcw className="w-5 h-5" />
               Reparar
@@ -127,10 +127,10 @@ export const MembersView: React.FC<MembersViewProps> = ({
       </div>
 
       {/* Desktop Table View */}
-      <div className="hidden md:block bg-white rounded-[2rem] border border-brand-accent/10 shadow-xl overflow-hidden">
+      <div className="hidden md:block bg-brand-secondary/30 backdrop-blur-xl rounded-[2rem] border border-white/10 shadow-xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
-            <thead className="bg-brand-secondary border-b border-brand-accent/20">
+            <thead className="bg-black/40 border-b border-white/10">
               <tr>
                 <th 
                   onClick={() => handleSort('name')}
@@ -165,31 +165,31 @@ export const MembersView: React.FC<MembersViewProps> = ({
                 )}
               </tr>
             </thead>
-            <tbody className="divide-y divide-brand-light">
+            <tbody className="divide-y divide-white/5">
               {sortedPlayers.map(player => (
-                <tr key={player.id} className="hover:bg-brand-light/50 transition-colors group">
+                <tr key={player.id} className="hover:bg-white/5 transition-colors group">
                   <td className="px-8 py-5">
-                    <p className={`font-black ${player.isOfficialSetter ? 'text-brand-primary' : 'text-brand-secondary'}`}>{player.name || "Sócio sem nome"}</p>
-                    <p className="text-[10px] text-brand-accent font-bold uppercase">{player.matchesPlayed} partidas totais</p>
+                    <p className={`font-black ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>{player.name || "Sócio sem nome"}</p>
+                    <p className="text-[10px] text-white/40 font-bold uppercase">{player.matchesPlayed} partidas totais</p>
                   </td>
                   {userRole === 'ADMIN' && (
                     <td className="px-8 py-5">
-                      <p className="text-xs font-bold text-brand-accent">{player.email || '-'}</p>
+                      <p className="text-xs font-bold text-white/60">{player.email || '-'}</p>
                     </td>
                   )}
                   <td className="px-8 py-6 text-center">
-                    <span className="text-xs font-bold text-brand-accent">{translateGender(player.gender)}</span>
+                    <span className="text-xs font-bold text-white/60">{translateGender(player.gender)}</span>
                   </td>
                   <td className="px-8 py-6 text-center">
-                    <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${player.isOfficialSetter ? 'bg-brand-primary/20 text-brand-primary border border-brand-primary/30' : 'bg-brand-light text-brand-accent'}`}>
+                    <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${player.isOfficialSetter ? 'bg-brand-primary/20 text-brand-primary border border-brand-primary/30' : 'bg-white/5 text-white/60 border border-white/10'}`}>
                       {player.isOfficialSetter ? 'Levantador' : 'Atleta'}
                     </span>
                   </td>
                   <td className="px-8 py-6 text-center">
-                    <span className="font-black text-brand-secondary">{Math.round(player.elo)}</span>
+                    <span className="font-black text-white">{Math.round(player.elo)}</span>
                   </td>
                   <td className="px-8 py-6 text-center">
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-600 text-[10px] font-black uppercase tracking-widest border border-emerald-100">
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-500 text-[10px] font-black uppercase tracking-widest border border-emerald-500/20">
                       <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
                       Ativo
                     </span>
@@ -198,17 +198,19 @@ export const MembersView: React.FC<MembersViewProps> = ({
                     <div className="flex items-center justify-end gap-2">
                       <button 
                         onClick={() => { setEditingPlayer(player); setIsFormOpen(true); }}
-                        className="p-2 text-brand-accent hover:text-brand-primary hover:bg-brand-primary/10 rounded-xl transition-all"
+                        className="p-2 text-white/40 hover:text-brand-primary hover:bg-brand-primary/10 rounded-xl transition-all"
                       >
                         <Edit2 className="w-4 h-4" />
                       </button>
                       <button 
                         onClick={() => {
-                          if (window.confirm(`Deseja realmente excluir ${player.name}?`)) {
-                            deletePlayer(player.id);
-                          }
+                          showConfirmModal(
+                            'Excluir Sócio',
+                            `Deseja realmente excluir ${player.name}?`,
+                            () => deletePlayer(player.id)
+                          );
                         }}
-                        className="p-2 text-brand-accent hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all"
+                        className="p-2 text-white/40 hover:text-rose-500 hover:bg-rose-500/10 rounded-xl transition-all"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -224,7 +226,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
       {/* Mobile Card View */}
       <div className="md:hidden space-y-4">
         {sortedPlayers.map(player => (
-          <div key={player.id} className="bg-white p-6 rounded-[2.5rem] border border-brand-accent/10 shadow-xl space-y-6 relative overflow-hidden group">
+          <div key={player.id} className="bg-brand-secondary/30 backdrop-blur-xl p-6 rounded-[2.5rem] border border-white/10 shadow-xl space-y-6 relative overflow-hidden group">
             <div className="absolute top-0 right-0 w-32 h-32 bg-brand-primary/5 rounded-full -mr-16 -mt-16 transition-transform group-hover:scale-150 duration-700"></div>
             
             <div className="flex justify-between items-start relative z-10">
@@ -233,15 +235,15 @@ export const MembersView: React.FC<MembersViewProps> = ({
                   {player.name.charAt(0)}
                 </div>
                 <div>
-                  <h4 className="text-xl font-black text-brand-secondary uppercase tracking-tight leading-none">{player.name}</h4>
+                  <h4 className="text-xl font-black text-white uppercase tracking-tight leading-none">{player.name}</h4>
                   <div className="flex items-center gap-2 mt-2">
-                    <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest ${player.isOfficialSetter ? 'bg-brand-primary/20 text-brand-primary' : 'bg-brand-light text-brand-accent'}`}>
+                    <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest ${player.isOfficialSetter ? 'bg-brand-primary/20 text-brand-primary' : 'bg-white/5 text-white/60 border border-white/10'}`}>
                       {translateGender(player.gender)}
                     </span>
-                    <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest ${player.isOfficialSetter ? 'bg-brand-primary/20 text-brand-primary' : 'bg-brand-light text-brand-accent'}`}>
+                    <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest ${player.isOfficialSetter ? 'bg-brand-primary/20 text-brand-primary' : 'bg-white/5 text-white/60 border border-white/10'}`}>
                       {player.isOfficialSetter ? 'Levantador' : 'Atleta'}
                     </span>
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600 text-[8px] font-black uppercase tracking-widest border border-emerald-100">
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 text-[8px] font-black uppercase tracking-widest border border-emerald-500/20">
                       Ativo
                     </span>
                   </div>
@@ -249,25 +251,27 @@ export const MembersView: React.FC<MembersViewProps> = ({
               </div>
               <div className="text-right">
                 <p className="text-2xl font-black text-brand-primary tracking-tighter leading-none">{Math.round(player.elo)}</p>
-                <p className="text-[8px] font-black text-brand-accent uppercase tracking-widest mt-1">ELO Rank</p>
+                <p className="text-[8px] font-black text-white/40 uppercase tracking-widest mt-1">ELO Rank</p>
               </div>
             </div>
             
             {userRole === 'ADMIN' && (
-              <div className="flex gap-3 pt-4 border-t border-brand-light relative z-10">
+              <div className="flex gap-3 pt-4 border-t border-white/5 relative z-10">
                 <button 
                   onClick={() => { setEditingPlayer(player); setIsFormOpen(true); }} 
-                  className="flex-1 flex items-center justify-center gap-2 py-4 bg-brand-light text-brand-accent rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-brand-primary/10 hover:text-brand-primary transition-all"
+                  className="flex-1 flex items-center justify-center gap-2 py-4 bg-white/5 text-white/60 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-brand-primary/10 hover:text-brand-primary transition-all"
                 >
                   <Edit2 className="w-4 h-4" /> Editar
                 </button>
                 <button 
                   onClick={() => {
-                    if (window.confirm(`Deseja realmente excluir ${player.name}?`)) {
-                      deletePlayer(player.id);
-                    }
+                    showConfirmModal(
+                      'Excluir Sócio',
+                      `Deseja realmente excluir ${player.name}?`,
+                      () => deletePlayer(player.id)
+                    );
                   }} 
-                  className="flex-1 flex items-center justify-center gap-2 py-4 bg-rose-50 text-rose-500 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-100 transition-all"
+                  className="flex-1 flex items-center justify-center gap-2 py-4 bg-rose-500/10 text-rose-500 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-500/20 transition-all"
                 >
                   <Trash2 className="w-4 h-4" /> Excluir
                 </button>

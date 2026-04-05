@@ -82,7 +82,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           transition: isPulling ? 'none' : 'transform 0.3s ease, opacity 0.3s ease'
         }}
       >
-        <div className="bg-white p-2 rounded-full shadow-lg border border-brand-primary/20">
+        <div className="bg-brand-secondary/30 backdrop-blur-xl p-2 rounded-full shadow-lg border border-white/10">
           <RotateCcw className={`w-6 h-6 text-brand-primary ${isSyncing ? 'animate-spin' : ''}`} />
         </div>
       </div>
@@ -90,7 +90,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
         <div className="space-y-2">
           <h2 className="text-5xl font-black text-brand-primary uppercase tracking-tighter leading-none">Painel de Elite</h2>
-          <p className="text-sm font-bold text-brand-accent uppercase tracking-[0.3em]">Visão geral da temporada atual</p>
+          <p className="text-sm font-bold text-white/40 uppercase tracking-[0.3em]">Visão geral da temporada atual</p>
         </div>
         {userRole === 'ADMIN' && (
           <button 
@@ -105,51 +105,51 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="bg-white p-8 rounded-[2.5rem] border border-brand-accent/10 shadow-xl relative overflow-hidden group hover:border-brand-primary/30 transition-all">
+        <div className="bg-brand-secondary/30 backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/10 shadow-xl relative overflow-hidden group hover:border-brand-primary/30 transition-all">
           <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 group-hover:scale-110 transition-all duration-500">
             <Trophy className="w-20 h-20 text-brand-primary" />
           </div>
-          <p className="text-[10px] font-black text-brand-accent uppercase tracking-[0.2em] mb-4">MVP da Temporada</p>
-          <h3 className="text-2xl font-black text-brand-secondary uppercase tracking-tight">{mvp?.name || '-'}</h3>
+          <p className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em] mb-4">MVP da Temporada</p>
+          <h3 className="text-2xl font-black text-white uppercase tracking-tight">{mvp?.name || '-'}</h3>
           <div className="flex items-center gap-2 mt-2">
             <span className="text-brand-primary font-black text-lg">{mvp?.wins || 0}</span>
-            <span className="text-[10px] font-black text-brand-accent uppercase tracking-widest">Vitórias</span>
+            <span className="text-[10px] font-black text-white/40 uppercase tracking-widest">Vitórias</span>
           </div>
         </div>
 
-        <div className="bg-white p-8 rounded-[2.5rem] border border-brand-accent/10 shadow-xl relative overflow-hidden group hover:border-brand-primary/30 transition-all">
+        <div className="bg-brand-secondary/30 backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/10 shadow-xl relative overflow-hidden group hover:border-brand-primary/30 transition-all">
           <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 group-hover:scale-110 transition-all duration-500">
             <Target className="w-20 h-20 text-brand-primary" />
           </div>
-          <p className="text-[10px] font-black text-brand-accent uppercase tracking-[0.2em] mb-4">Melhor Levantador</p>
-          <h3 className="text-2xl font-black text-brand-secondary uppercase tracking-tight">{bestSetter?.name || '-'}</h3>
+          <p className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em] mb-4">Melhor Levantador</p>
+          <h3 className="text-2xl font-black text-white uppercase tracking-tight">{bestSetter?.name || '-'}</h3>
           <div className="flex items-center gap-2 mt-2">
             <span className="text-brand-primary font-black text-lg">{bestSetter?.wins || 0}</span>
-            <span className="text-[10px] font-black text-brand-accent uppercase tracking-widest">Vitórias</span>
+            <span className="text-[10px] font-black text-white/40 uppercase tracking-widest">Vitórias</span>
           </div>
         </div>
 
-        <div className="bg-white p-8 rounded-[2.5rem] border border-brand-accent/10 shadow-xl relative overflow-hidden group hover:border-brand-primary/30 transition-all">
+        <div className="bg-brand-secondary/30 backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/10 shadow-xl relative overflow-hidden group hover:border-brand-primary/30 transition-all">
           <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 group-hover:scale-110 transition-all duration-500">
             <Zap className="w-20 h-20 text-brand-primary" />
           </div>
-          <p className="text-[10px] font-black text-brand-accent uppercase tracking-[0.2em] mb-4">Líder do Ranking</p>
-          <h3 className="text-2xl font-black text-brand-secondary uppercase tracking-tight">{topElo?.name || '-'}</h3>
+          <p className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em] mb-4">Líder do Ranking</p>
+          <h3 className="text-2xl font-black text-white uppercase tracking-tight">{topElo?.name || '-'}</h3>
           <div className="flex items-center gap-2 mt-2">
             <span className="text-brand-primary font-black text-lg">{Math.round(topElo?.elo || 0)}</span>
-            <span className="text-[10px] font-black text-brand-accent uppercase tracking-widest">ELO</span>
+            <span className="text-[10px] font-black text-white/40 uppercase tracking-widest">ELO</span>
           </div>
         </div>
 
-        <div className="bg-white p-8 rounded-[2.5rem] border border-brand-accent/10 shadow-xl relative overflow-hidden group hover:border-brand-primary/30 transition-all">
+        <div className="bg-brand-secondary/30 backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/10 shadow-xl relative overflow-hidden group hover:border-brand-primary/30 transition-all">
           <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 group-hover:scale-110 transition-all duration-500">
             <Users className="w-20 h-20 text-brand-primary" />
           </div>
-          <p className="text-[10px] font-black text-brand-accent uppercase tracking-[0.2em] mb-4">Sócios Ativos</p>
-          <h3 className="text-2xl font-black text-brand-secondary uppercase tracking-tight">{activePlayers}</h3>
+          <p className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em] mb-4">Sócios Ativos</p>
+          <h3 className="text-2xl font-black text-white uppercase tracking-tight">{activePlayers}</h3>
           <div className="flex items-center gap-2 mt-2">
             <span className="text-brand-primary font-black text-lg">{(players?.length || 0)}</span>
-            <span className="text-[10px] font-black text-brand-accent uppercase tracking-widest">Cadastrados</span>
+            <span className="text-[10px] font-black text-white/40 uppercase tracking-widest">Cadastrados</span>
           </div>
         </div>
       </div>
@@ -162,24 +162,24 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               Ranking <ArrowRight className="w-4 h-4" />
             </button>
           </div>
-          <div className="bg-white rounded-[2.5rem] border border-brand-accent/10 shadow-2xl overflow-hidden">
+          <div className="bg-brand-secondary/30 backdrop-blur-xl rounded-[2.5rem] border border-white/10 shadow-2xl overflow-hidden">
             {[...players].sort((a, b) => b.elo - a.elo).slice(0, 5).map((player, idx) => (
-              <div key={player.id} className="flex items-center justify-between p-8 border-b border-brand-light last:border-0 hover:bg-brand-light/50 transition-all group">
+              <div key={player.id} className="flex items-center justify-between p-8 border-b border-white/5 last:border-0 hover:bg-white/5 transition-all group">
                 <div className="flex items-center gap-8">
-                  <span className="text-4xl font-black text-brand-accent/10 w-12 italic group-hover:text-brand-primary/20 transition-colors">#{idx + 1}</span>
+                  <span className="text-4xl font-black text-white/5 w-12 italic group-hover:text-brand-primary/20 transition-colors">#{idx + 1}</span>
                   <div className="flex items-center gap-4">
                     <div className="w-12 h-12 rounded-full bg-brand-secondary flex items-center justify-center text-brand-primary font-black text-lg border-2 border-brand-primary/20">
                       {player.name.charAt(0)}
                     </div>
                     <div>
-                      <p className="font-black text-brand-secondary text-lg uppercase tracking-tight">{player.name}</p>
-                      <p className="text-[10px] font-bold text-brand-accent uppercase tracking-widest mt-1">{player.wins}V - {player.losses}D • {player.matchesPlayed} Partidas</p>
+                      <p className="font-black text-white text-lg uppercase tracking-tight">{player.name}</p>
+                      <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest mt-1">{player.wins}V - {player.losses}D • {player.matchesPlayed} Partidas</p>
                     </div>
                   </div>
                 </div>
                 <div className="text-right">
                   <p className="text-3xl font-black text-brand-primary tracking-tighter leading-none">{Math.round(player.elo)}</p>
-                  <p className="text-[10px] font-black text-brand-accent uppercase tracking-widest mt-1">ELO</p>
+                  <p className="text-[10px] font-black text-white/40 uppercase tracking-widest mt-1">ELO</p>
                 </div>
               </div>
             ))}
@@ -190,48 +190,48 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <h3 className="text-2xl font-black text-brand-primary uppercase tracking-tighter">Histórico Recente</h3>
           <div className="space-y-4">
             {matches.slice(0, 4).map(match => (
-              <div key={match.id} className="bg-white p-8 rounded-[2.5rem] border border-brand-accent/10 shadow-xl space-y-6 hover:border-brand-primary/20 transition-all group">
-                <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-[0.2em] text-brand-accent">
+              <div key={match.id} className="bg-brand-secondary/30 backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/10 shadow-xl space-y-6 hover:border-brand-primary/20 transition-all group">
+                <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-[0.2em] text-white/40">
                   <div className="flex items-center gap-2">
-                    <span className="text-brand-secondary">{new Date(match.timestamp).toLocaleDateString('pt-BR')}</span>
+                    <span className="text-white">{new Date(match.timestamp).toLocaleDateString('pt-BR')}</span>
                     {match.startTime && (
                       <span className="opacity-40">• {formatHour(match.startTime)}</span>
                     )}
                   </div>
-                  <span className="px-2 py-1 bg-brand-light rounded-lg text-brand-primary">
+                  <span className="px-2 py-1 bg-white/5 rounded-lg text-brand-primary border border-white/10">
                     {match.mode === 'QUICK' ? 'Rápida' : match.mode === 'SCORE' ? 'Pontuada' : 'Sequencial'}
                   </span>
                 </div>
                 
                 <div className="flex items-center justify-between gap-6">
                   <div className="flex-1 text-center space-y-2">
-                    <div className={`py-4 rounded-2xl transition-all ${match.winner === 'A' ? 'bg-brand-primary/10 border border-brand-primary/20 scale-110 shadow-lg shadow-brand-primary/5' : 'bg-brand-light/50 border border-transparent opacity-40'}`}>
+                    <div className={`py-4 rounded-2xl transition-all ${match.winner === 'A' ? 'bg-brand-primary/10 border border-brand-primary/20 scale-110 shadow-lg shadow-brand-primary/5' : 'bg-white/5 border border-transparent opacity-40'}`}>
                       {match.mode !== 'QUICK' ? (
-                        <p className={`text-3xl font-black ${match.winner === 'A' ? 'text-brand-primary' : 'text-brand-secondary'}`}>{match.scoreA}</p>
+                        <p className={`text-3xl font-black ${match.winner === 'A' ? 'text-brand-primary' : 'text-white'}`}>{match.scoreA}</p>
                       ) : (
                         <div className="h-9 flex items-center justify-center">
                           {match.winner === 'A' && <Trophy className="w-6 h-6 text-brand-primary animate-bounce" />}
                         </div>
                       )}
                     </div>
-                    <p className="text-[10px] font-black text-brand-accent uppercase tracking-widest">Time A</p>
+                    <p className="text-[10px] font-black text-white/40 uppercase tracking-widest">Time A</p>
                   </div>
                   
                   <div className="flex flex-col items-center gap-1">
-                    <span className="text-brand-accent/20 font-black italic text-sm">VS</span>
+                    <span className="text-white/10 font-black italic text-sm">VS</span>
                   </div>
                   
                   <div className="flex-1 text-center space-y-2">
-                    <div className={`py-4 rounded-2xl transition-all ${match.winner === 'B' ? 'bg-brand-primary/10 border border-brand-primary/20 scale-110 shadow-lg shadow-brand-primary/5' : 'bg-brand-light/50 border border-transparent opacity-40'}`}>
+                    <div className={`py-4 rounded-2xl transition-all ${match.winner === 'B' ? 'bg-brand-primary/10 border border-brand-primary/20 scale-110 shadow-lg shadow-brand-primary/5' : 'bg-white/5 border border-transparent opacity-40'}`}>
                       {match.mode !== 'QUICK' ? (
-                        <p className={`text-3xl font-black ${match.winner === 'B' ? 'text-brand-primary' : 'text-brand-secondary'}`}>{match.scoreB}</p>
+                        <p className={`text-3xl font-black ${match.winner === 'B' ? 'text-brand-primary' : 'text-white'}`}>{match.scoreB}</p>
                       ) : (
                         <div className="h-9 flex items-center justify-center">
                           {match.winner === 'B' && <Trophy className="w-6 h-6 text-brand-primary animate-bounce" />}
                         </div>
                       )}
                     </div>
-                    <p className="text-[10px] font-black text-brand-accent uppercase tracking-widest">Time B</p>
+                    <p className="text-[10px] font-black text-white/40 uppercase tracking-widest">Time B</p>
                   </div>
                 </div>
               </div>

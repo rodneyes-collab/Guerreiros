@@ -436,7 +436,14 @@ export const useAppLogic = () => {
       setIsSyncing(true);
       triggerDbStatus('writing');
       const dateKey = getFirestoreDateKey();
+      const dateDocRef = doc(db, 'attendance', dateKey);
       const attendanceRef = doc(db, 'attendance', dateKey, 'players', player.id);
+      
+      // Ensure the parent date document exists so it shows up in collection listings
+      await setDoc(dateDocRef, { 
+        date: dateKey, 
+        lastUpdate: Date.now() 
+      }, { merge: true });
       
       // Calculate next arrival order based on current max in attendance
       // Fetch fresh attendance to avoid stale state issues
@@ -1228,8 +1235,10 @@ export const useAppLogic = () => {
       console.error('Erro no login com Google:', error);
       if (error.code === 'auth/popup-closed-by-user') {
         showNotification('Login cancelado.', 'info');
+      } else if (error.code === 'auth/admin-restricted-operation') {
+        showNotification('Erro: Operação restrita. Verifique se o login com Google está ativado no Console do Firebase.', 'error');
       } else {
-        showNotification('Erro ao fazer login com Google.', 'error');
+        showNotification(`Erro ao fazer login com Google: ${error.message}`, 'error');
       }
     } finally {
       setIsLoggingIn(false);
@@ -1268,9 +1277,13 @@ export const useAppLogic = () => {
       } else {
         showNotification('E-mail não encontrado na lista de sócios.', 'error');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Erro ao fazer login:', error);
-      showNotification('Erro ao fazer login.', 'error');
+      if (error.code === 'auth/admin-restricted-operation') {
+        showNotification('Erro: Login Anônimo desativado no Firebase. Ative-o no Console ou use o Google Login.', 'error');
+      } else {
+        showNotification(`Erro ao fazer login: ${error.message}`, 'error');
+      }
     } finally {
       setIsSendingMagicLink(false);
     }
@@ -1355,7 +1368,6 @@ export const useAppLogic = () => {
         const sessionMatchesCount = (matches || []).filter(m => m.timestamp > threshold).length;
         const newCount = sessionMatchesCount + 1;
         setDoc(doc(db, 'metadata', 'system'), cleanObject({
-          ...systemMetadata,
           dailyMatchCount: newCount,
           matchStartTime: now
         }), { merge: true }).catch(err => handleFirestoreError(err, OperationType.WRITE, 'metadata/system'));
@@ -1848,10 +1860,10 @@ export const useAppLogic = () => {
     try {
       setIsSyncing(true);
       triggerDbStatus('writing');
-      await setDoc(doc(db, 'system', 'metadata'), { monthlyFee: fee }, { merge: true });
+      await setDoc(doc(db, 'metadata', 'system'), { monthlyFee: fee }, { merge: true });
       showNotification('Valor da mensalidade atualizado!', 'success');
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'system/metadata');
+      handleFirestoreError(error, OperationType.WRITE, 'metadata/system');
       showNotification('Erro ao atualizar mensalidade.', 'error');
     } finally {
       setIsSyncing(false);

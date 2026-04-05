@@ -181,9 +181,9 @@ export const useAuth = () => {
 
       const simpleEmail = window.localStorage.getItem('simpleLoginEmail');
       const player = players.find(p => 
-        (user.email && p.email?.toLowerCase() === user.email?.toLowerCase()) || 
+        (user.email && p.email?.trim().toLowerCase() === user.email?.trim().toLowerCase()) || 
         p.uid === user.uid ||
-        (simpleEmail && p.email?.toLowerCase() === simpleEmail.toLowerCase())
+        (simpleEmail && p.email?.trim().toLowerCase() === simpleEmail.trim().toLowerCase())
       );
       if (player) {
         setCurrentPlayer(player);
@@ -201,7 +201,7 @@ export const useAuth = () => {
   useEffect(() => {
     if (user && players.length > 0) {
       const isAdminEmail = user.email?.toLowerCase() === 'rodneyes@gmail.com';
-      const playerProfile = players.find(p => p.email?.toLowerCase() === user.email?.toLowerCase());
+      const playerProfile = players.find(p => p.email?.trim().toLowerCase() === user.email?.trim().toLowerCase());
       const shouldBeAdmin = isAdminEmail || playerProfile?.isAdmin;
 
       if (shouldBeAdmin && userRole !== 'ADMIN') {

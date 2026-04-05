@@ -16,7 +16,7 @@ export default defineConfig(({ mode }) => {
         tailwindcss(),
         VitePWA({
           registerType: 'autoUpdate',
-          includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg'],
+          includeAssets: ['logo.png'],
           manifest: {
             name: 'Guerreiros Volei',
             short_name: 'Guerreiros Volei',

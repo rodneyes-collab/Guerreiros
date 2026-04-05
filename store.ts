@@ -152,7 +152,8 @@ export const useStore = create<AppState>((set) => ({
     dailyMatchCount: 0, 
     matchStartTime: null,
     courtLocation: { lat: -23.588453, lng: -46.658890 },
-    geofenceRadius: 150
+    geofenceRadius: 150,
+    monthlyFee: 0
   },
   
   viewMode: (typeof window !== 'undefined' && localStorage.getItem('spikegen_viewMode') as ViewMode) || 'presence',

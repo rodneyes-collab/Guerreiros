@@ -48,32 +48,32 @@ export class ErrorBoundary extends React.Component<Props, State> {
   public render() {
     if (this.state.hasError) {
       return (
-        <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-          <div className="max-w-md w-full bg-white rounded-[2.5rem] shadow-xl border border-slate-200 p-8 text-center">
-            <div className="w-20 h-20 bg-rose-50 rounded-full flex items-center justify-center mx-auto mb-6">
+        <div className="min-h-screen bg-brand-secondary flex items-center justify-center p-4">
+          <div className="max-w-md w-full bg-brand-secondary/50 backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/10 p-8 text-center">
+            <div className="w-20 h-20 bg-rose-500/10 rounded-full flex items-center justify-center mx-auto mb-6 border border-rose-500/20">
               <AlertCircle className="w-10 h-10 text-rose-500" />
             </div>
             
-            <h1 className="text-2xl font-black text-slate-800 mb-2">Ops! Algo deu errado</h1>
-            <p className="text-slate-500 mb-8">
+            <h1 className="text-2xl font-black text-white mb-2 uppercase tracking-tight italic">Ops! Algo deu errado</h1>
+            <p className="text-white/40 mb-8 font-bold text-sm">
               Ocorreu um erro inesperado. Tentamos capturar os detalhes para ajudar na correção.
             </p>
 
-            <div className="bg-slate-50 rounded-2xl p-4 mb-8 text-left overflow-auto max-h-48">
-              <p className="text-xs font-mono text-slate-600 break-all">
+            <div className="bg-black/40 rounded-2xl p-4 mb-8 text-left overflow-auto max-h-48 border border-white/5">
+              <p className="text-xs font-mono text-rose-400/80 break-all leading-relaxed">
                 {this.state.errorInfo || this.state.error?.message}
               </p>
             </div>
 
             <button
               onClick={this.handleReset}
-              className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-black py-4 rounded-2xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-200"
+              className="w-full bg-brand-primary hover:bg-brand-primary/90 text-brand-secondary font-black py-4 rounded-2xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-brand-primary/20 uppercase tracking-widest text-xs"
             >
               <RotateCcw className="w-5 h-5" />
               Recarregar Aplicativo
             </button>
             
-            <p className="mt-6 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+            <p className="mt-6 text-[10px] font-black text-white/20 uppercase tracking-widest">
               Se o problema persistir, contate o suporte
             </p>
           </div>

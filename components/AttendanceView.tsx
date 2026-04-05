@@ -95,7 +95,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
           transition: isPulling ? 'none' : 'transform 0.3s ease, opacity 0.3s ease'
         }}
       >
-        <div className="bg-white p-2 rounded-full shadow-xl border border-brand-primary/20">
+        <div className="bg-brand-secondary/80 backdrop-blur-xl p-2 rounded-full shadow-2xl border border-brand-primary/20">
           <RotateCcw className={`w-6 h-6 text-brand-primary ${isSyncing ? 'animate-spin' : ''}`} />
         </div>
       </div>
@@ -111,8 +111,8 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
           )}
 
           <div className="lg:col-span-4 space-y-8">
-            <section className="bg-black rounded-[2.5rem] border border-brand-primary/20 shadow-2xl overflow-hidden group">
-              <div className="p-8 bg-brand-secondary border-b border-brand-primary/20 flex items-center justify-between">
+            <section className="bg-brand-secondary/30 backdrop-blur-xl rounded-[2.5rem] border border-white/10 shadow-2xl overflow-hidden group">
+              <div className="p-8 bg-white/5 border-b border-white/10 flex items-center justify-between">
                 <div>
                   <h2 className="font-black text-white uppercase text-lg tracking-tighter flex items-center gap-3">
                     <ClipboardCheck className="w-7 h-7 text-brand-primary" />
@@ -165,7 +165,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                       const displayName = player.name || fullPlayer?.name || "Sócio sem nome";
                       
                       return (
-                        <div key={player.id || `attendance-${idx}`} className={`flex items-center justify-between p-6 rounded-[2rem] border transition-all group shadow-sm hover:shadow-xl hover:-translate-y-1 bg-brand-secondary border-brand-primary/20 hover:border-brand-primary/50`}>
+                        <div key={player.id || `attendance-${idx}`} className={`flex items-center justify-between p-6 rounded-[2rem] border transition-all group shadow-sm hover:shadow-xl hover:-translate-y-1 bg-white/5 border-white/10 hover:border-brand-primary/50`}>
                           <div className="flex items-center gap-5">
                             <span className="text-2xl font-black text-brand-primary/40 w-10 italic group-hover:text-brand-primary transition-colors">#{player.arrivalOrder}</span>
                             <div>
@@ -199,7 +199,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                     })
                 )}
               </div>
-              <div className="p-8 bg-black border-t border-brand-primary/20">
+              <div className="p-8 bg-black/20 border-t border-white/10">
                 <p className="text-xs text-white/40 font-black uppercase text-center italic leading-relaxed tracking-widest">
                   {attendance.length < 12 
                     ? `Mínimo de 12 guerreiros para escalar (Faltam ${12 - attendance.length})` 
@@ -210,7 +210,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
           </div>
 
           <div className="lg:col-span-8 space-y-8">
-            <div className="bg-black p-10 rounded-[2.5rem] border border-brand-primary/20 shadow-2xl">
+            <div className="bg-brand-secondary/30 backdrop-blur-xl p-10 rounded-[2.5rem] border border-white/10 shadow-2xl">
               <div className="flex items-center justify-between mb-10">
                 <div className="space-y-2">
                   <h3 className="text-3xl font-black text-white uppercase tracking-tighter">Guerreiros Disponíveis</h3>
@@ -225,7 +225,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {userRole !== 'ADMIN' ? (
-                  <div className="col-span-full py-32 text-center bg-brand-secondary/50 rounded-[2.5rem] border-2 border-dashed border-brand-primary/20 space-y-6">
+                  <div className="col-span-full py-32 text-center bg-white/5 rounded-[2.5rem] border-2 border-dashed border-white/10 space-y-6">
                     <Users className="w-20 h-20 text-white/20 mx-auto" />
                     <p className="text-white/40 text-sm font-black uppercase tracking-[0.3em] max-w-md mx-auto leading-relaxed">Apenas o comando administrativo pode realizar convocações diretas.</p>
                   </div>
@@ -244,7 +244,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                       <button 
                         key={player.id || `available-${idx}`} 
                         onClick={() => registerAttendance(player)} 
-                        className={`flex items-center justify-between p-8 rounded-[2rem] border hover:shadow-2xl transition-all text-left group hover:-translate-y-1 bg-brand-secondary border-brand-primary/20 hover:border-brand-primary/50`}
+                        className={`flex items-center justify-between p-8 rounded-[2rem] border hover:shadow-2xl transition-all text-left group hover:-translate-y-1 bg-white/5 border-white/10 hover:border-brand-primary/50`}
                       >
                         <div className="space-y-3">
                           <p className={`text-2xl font-black flex items-center gap-3 leading-none uppercase tracking-tight ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
@@ -273,15 +273,15 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
             <Calendar className="w-40 h-40 text-brand-primary relative z-10 mx-auto drop-shadow-2xl" />
           </div>
           <div className="space-y-6">
-            <h2 className="text-7xl font-black text-brand-secondary tracking-tighter uppercase leading-none">Descanso dos Guerreiros</h2>
-            <p className="text-2xl text-brand-accent font-black uppercase tracking-[0.4em] max-w-3xl mx-auto leading-relaxed">
+            <h2 className="text-7xl font-black text-white tracking-tighter uppercase leading-none">Descanso dos Guerreiros</h2>
+            <p className="text-2xl text-white/60 font-black uppercase tracking-[0.4em] max-w-3xl mx-auto leading-relaxed">
               As batalhas acontecem às <span className="text-brand-primary">quintas-feiras</span>. 
               <br />
               Prepare-se para a próxima convocação.
             </p>
           </div>
           <div className="flex justify-center gap-6">
-            <div className="px-12 py-6 bg-brand-secondary rounded-[2rem] shadow-2xl border border-brand-primary/20">
+            <div className="px-12 py-6 bg-brand-secondary/30 backdrop-blur-xl rounded-[2rem] shadow-2xl border border-white/10">
               <p className="text-[10px] font-black text-brand-primary uppercase tracking-[0.3em] mb-2">Próxima Batalha</p>
               <p className="text-2xl font-black text-white uppercase tracking-tighter">Quinta-feira</p>
             </div>

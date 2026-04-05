@@ -371,9 +371,7 @@ const App: React.FC = () => {
     }
   }, [userRole, viewMode, navItems, isAuthReady, setViewMode]);
 
-  const isDarkView = useMemo(() => {
-    return ['generation', 'members', 'dashboard', 'admin'].includes(viewMode);
-  }, [viewMode]);
+  const isDarkView = true; // Always dark premium now
 
   // --- Helper Functions (Remaining in App for View Logic) ---
   const handleSwapClick = (source: 'A' | 'B' | 'Bench', playerId: string) => {
@@ -475,7 +473,7 @@ const App: React.FC = () => {
   // --- Render Logic ---
   if (isLoggingOut) {
     return (
-      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4 text-white">
+      <div className="min-h-screen bg-brand-secondary flex flex-col items-center justify-center p-4 text-white">
         <motion.div
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -498,7 +496,7 @@ const App: React.FC = () => {
 
   if (!isAuthReady || (user && isRoleLoading)) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+      <div className="min-h-screen bg-brand-light flex items-center justify-center p-6">
         <div className="flex flex-col items-center gap-6">
           <motion.div 
             animate={{ scale: [1, 1.05, 1] }}
@@ -545,9 +543,9 @@ const App: React.FC = () => {
 
   return (
     <ErrorBoundary>
-      <div className={`min-h-screen transition-colors duration-500 pb-20 sm:pb-0 sm:pl-28 ${isDarkView ? 'bg-black' : 'bg-brand-light'}`}>
+      <div className="min-h-screen transition-colors duration-500 pb-20 sm:pb-0 sm:pl-28 bg-brand-light">
         {/* Header */}
-        <header className="sticky top-0 z-30 bg-black relative overflow-hidden px-4 py-4 sm:px-12 sm:py-12 shadow-2xl shadow-black/50 border-b border-white/5">
+        <header className="sticky top-0 z-30 relative overflow-hidden px-4 py-4 sm:px-12 sm:py-12 shadow-2xl shadow-black/50 border-b border-white/5 bg-brand-light">
           {/* Header Background Image with Overlay */}
           <div className="absolute inset-0 z-0">
             <img 

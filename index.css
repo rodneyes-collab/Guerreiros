@@ -1,11 +1,13 @@
 @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700;900&display=swap');
 @import "tailwindcss";
 
+/* Cache bust: 2026-04-04 23:03 */
+
 @theme {
   --color-brand-primary: #F5C429; /* Ouro */
   --color-brand-secondary: #1E232D; /* Azul escuro */
   --color-brand-accent: #4A4F5A; /* Cinza ardósia */
-  --color-brand-light: #E9ECEF; /* Cinza claro */
+  --color-brand-light: #000000; /* Preto - Novo Fundo */
   --color-brand-danger: #ef4444; /* Red 500 */
   
   --font-sans: "Montserrat", ui-sans-serif, system-ui, sans-serif;
@@ -18,7 +20,7 @@
   }
   
   body {
-    @apply bg-brand-light text-brand-accent antialiased;
+    @apply bg-brand-light text-white antialiased;
     font-size: 16px; /* Base size for mobile */
   }
 
@@ -29,27 +31,27 @@
 
 @layer components {
   .btn-primary {
-    @apply flex items-center justify-center gap-2 px-6 py-3 bg-brand-primary text-brand-secondary font-black rounded-xl shadow-lg hover:opacity-90 active:scale-95 transition-all disabled:opacity-50 disabled:pointer-events-none uppercase tracking-widest text-xs;
+    @apply flex items-center justify-center gap-2 px-6 py-3 bg-brand-primary text-brand-secondary font-black rounded-2xl shadow-lg shadow-brand-primary/20 hover:opacity-90 active:scale-95 transition-all disabled:opacity-50 disabled:pointer-events-none uppercase tracking-widest text-xs;
   }
   
   .btn-secondary {
-    @apply flex items-center justify-center gap-2 px-6 py-3 bg-brand-secondary text-white font-black rounded-xl shadow-lg hover:bg-brand-accent active:scale-95 transition-all disabled:opacity-50 disabled:pointer-events-none uppercase tracking-widest text-xs;
+    @apply flex items-center justify-center gap-2 px-6 py-3 bg-brand-secondary/50 backdrop-blur-md text-white border border-white/10 font-black rounded-2xl shadow-lg hover:bg-brand-secondary/80 active:scale-95 transition-all disabled:opacity-50 disabled:pointer-events-none uppercase tracking-widest text-xs;
   }
 
   .btn-outline {
-    @apply flex items-center justify-center gap-2 px-6 py-3 border-2 border-brand-accent text-brand-accent font-black rounded-xl hover:bg-brand-light active:scale-95 transition-all uppercase tracking-widest text-xs;
+    @apply flex items-center justify-center gap-2 px-6 py-3 border-2 border-white/10 text-white font-black rounded-2xl hover:bg-white/5 active:scale-95 transition-all uppercase tracking-widest text-xs;
   }
 
   .card {
-    @apply bg-white rounded-2xl shadow-sm border border-brand-accent/20 p-4 md:p-6;
+    @apply bg-brand-secondary/40 backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/10 p-6 md:p-10 relative overflow-hidden;
   }
 
   .input-field {
-    @apply w-full px-4 py-3 bg-white border border-brand-accent/30 rounded-xl focus:ring-2 focus:ring-brand-primary focus:border-brand-primary outline-none transition-all text-base text-brand-secondary;
+    @apply w-full px-5 py-4 bg-white/5 border border-white/10 rounded-2xl focus:ring-2 focus:ring-brand-primary focus:border-brand-primary outline-none transition-all text-base text-white placeholder:text-white/20 backdrop-blur-sm;
   }
 
   .label {
-    @apply block text-[10px] font-black text-brand-accent uppercase tracking-widest mb-1.5 ml-1;
+    @apply block text-[10px] font-black text-brand-primary uppercase tracking-[0.2em] mb-2.5 ml-2;
   }
 }
 

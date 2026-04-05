@@ -38,7 +38,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
   };
 
   return (
-    <div className="min-h-screen bg-brand-secondary flex flex-col items-center justify-center p-4 relative overflow-hidden">
+    <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4 relative overflow-hidden">
       {/* Background elements */}
       <div className="absolute top-0 left-0 w-full h-full opacity-10">
         <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-brand-primary rounded-full blur-[120px]"></div>
@@ -50,27 +50,27 @@ export const LoginView: React.FC<LoginViewProps> = ({
           <Logo size="lg" className="mx-auto transform hover:scale-110 transition-transform duration-700 drop-shadow-[0_0_30px_rgba(245,196,41,0.3)]" />
           <div className="space-y-2">
             <h1 className="text-5xl font-black text-brand-primary tracking-tighter uppercase leading-none">Guerreiros</h1>
-            <p className="text-sm font-bold text-white/40 uppercase tracking-[0.4em]">Vôlei de Elite</p>
+            <p className="text-sm font-bold text-slate-400 uppercase tracking-[0.4em]">Vôlei de Elite</p>
           </div>
         </div>
 
         <div className="bg-white/5 backdrop-blur-2xl rounded-[2.5rem] shadow-2xl shadow-black/50 p-8 md:p-10 border border-white/10 space-y-8">
           <div className="space-y-2 text-center">
             <h2 className="text-xl font-black text-white uppercase tracking-tight">Acesso ao Clube</h2>
-            <p className="text-xs font-bold text-white/40 uppercase tracking-widest">Entre com seu e-mail de sócio</p>
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Entre com seu e-mail de sócio</p>
           </div>
 
           <form onSubmit={handleMagicLink} className="space-y-4">
             <div className="space-y-2">
               <label className="text-[10px] font-black text-brand-primary uppercase tracking-[0.2em] ml-2">E-mail</label>
               <div className="relative group">
-                <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/20 group-focus-within:text-brand-primary transition-colors" />
+                <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-600 group-focus-within:text-brand-primary transition-colors" />
                 <input 
                   type="email"
                   placeholder="exemplo@email.com"
                   value={magicLinkEmail}
                   onChange={(e) => setMagicLinkEmail(e.target.value)}
-                  className="w-full pl-12 pr-4 py-4 bg-brand-secondary/50 border border-white/10 rounded-2xl text-sm font-bold text-white focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary transition-all placeholder:text-white/10"
+                  className="w-full pl-12 pr-4 py-4 bg-slate-800/50 border border-white/10 rounded-2xl text-sm font-bold text-white focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary transition-all placeholder:text-slate-600"
                   required
                 />
               </div>
@@ -97,14 +97,14 @@ export const LoginView: React.FC<LoginViewProps> = ({
               <div className="w-full border-t border-white/10"></div>
             </div>
             <div className="relative flex justify-center text-sm">
-              <span className="px-4 bg-transparent text-white/20 font-black uppercase tracking-widest text-[10px]">Ou</span>
+              <span className="px-4 bg-transparent text-slate-400 font-black uppercase tracking-widest text-[10px]">Ou</span>
             </div>
           </div>
 
           <button
             onClick={handleGoogleLogin}
             disabled={isLoggingIn || isSendingMagicLink}
-            className="w-full flex items-center justify-center gap-3 px-8 py-4 bg-white text-brand-secondary rounded-2xl font-black uppercase tracking-widest hover:bg-brand-light transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed group"
+            className="w-full flex items-center justify-center gap-3 px-8 py-4 bg-white text-brand-secondary rounded-2xl font-black uppercase tracking-widest hover:bg-slate-100 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed group"
           >
             {isLoggingIn ? (
               <RefreshCw className="w-5 h-5 animate-spin" />

@@ -1,4 +1,4 @@
-# Regras de Geração de Partidas (Guerreiros Volei)
+.# Regras de Geração de Partidas (Guerreiros Volei)
 
 Estas são as regras detalhadas de como o sistema seleciona os jogadores e equilibra os times. Elas devem ser seguidas e mantidas para garantir a justiça e o equilíbrio das partidas.
 
@@ -17,8 +17,8 @@ Estas são as regras detalhadas de como o sistema seleciona os jogadores e equil
 
 ## 3. Distribuição Inicial (Draft Guloso)
 - Os jogadores selecionados (excluindo os 2 levantadores) são separados por gênero (Homens e Mulheres) e ordenados do maior ELO (nível técnico) para o menor.
-- O sistema distribui os jogadores um a um para os times A e B.
-- Cada jogador é alocado no time que tiver a **menor soma de ELO** naquele momento, respeitando o limite máximo de 6 jogadores por time (incluindo o levantador).
+- O sistema distribui os jogadores um a um para os times A e B. Primeiramente os homens e depois as mulheres, o homem de maior elo para o time a e o segundo de maior elo para o time b, e assim sucessivamente, depois sao escolhidas as mulheres usando a mesma forma que os homens.
+- Respeitando o limite máximo de 6 jogadores por time (incluindo o levantador).
 
 ## 4. Refinamento de Equilíbrio (Algoritmo de Trocas)
 - Após a distribuição inicial, o sistema tenta realizar trocas (swaps) entre jogadores do Time A e Time B para otimizar o equilíbrio.

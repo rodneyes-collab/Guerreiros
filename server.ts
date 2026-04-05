@@ -1,7 +1,16 @@
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
-import fs from 'fs';
+import { fileURLToPath } from 'url';
+
+// Handle __dirname in both ESM (dev via tsx) and CJS (prod via esbuild)
+let currentDir: string;
+if (typeof __dirname !== 'undefined') {
+    currentDir = __dirname;
+} else {
+    // @ts-ignore
+    currentDir = path.dirname(fileURLToPath(import.meta.url));
+}
 
 const app = express();
 app.use(cors());
@@ -30,7 +39,6 @@ async function startServer() {
         }
     } else {
         console.log('Running in production mode');
-        // When bundled in dist/server.cjs, we serve the dist directory
         const distPath = path.join(process.cwd(), 'dist');
         app.use(express.static(distPath));
         app.get('*', (req, res) => {

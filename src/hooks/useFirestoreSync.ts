@@ -132,6 +132,19 @@ export const useFirestoreSync = () => {
           if (doc.id === 'system') setSystemMetadata(doc.data() || {});
         });
 
+        // 2. Populate players if empty
+        const playersSnapshot = await getDocs(collection(db, 'players'));
+        if (playersSnapshot.empty) {
+          console.info('Firestore Sync: Players collection is empty, populating with INITIAL_PLAYERS');
+          const batch = writeBatch(db);
+          INITIAL_PLAYERS.forEach(player => {
+            const playerRef = doc(db, 'players', player.id);
+            batch.set(playerRef, player);
+          });
+          await batch.commit();
+          console.info('Firestore Sync: INITIAL_PLAYERS populated successfully');
+        }
+
         setIsInitialLoading(false);
         console.info('Firestore Sync: Initial data load complete');
       } catch (err) {
@@ -345,7 +358,7 @@ export const useFirestoreSync = () => {
   useEffect(() => {
     if (!user || !players || players.length === 0) return;
     
-    const currentPlayer = players.find(p => p.uid === user.uid || (p.email && p.email === user.email));
+    const currentPlayer = players.find(p => p.uid === user.uid || (p.email && p.email.trim().toLowerCase() === user.email?.trim().toLowerCase()));
     if (currentPlayer && (!currentPlayer.eloHistory || currentPlayer.eloHistory.length === 0)) {
       const playerRef = doc(db, 'players', currentPlayer.id);
       updateDoc(playerRef, {
