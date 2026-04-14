@@ -30,7 +30,7 @@ export const EloChart: React.FC<EloChartProps> = ({ history, averageElo, isDark 
             dataKey="date" 
             axisLine={false} 
             tickLine={false} 
-            tick={{ fill: isDark ? '#94a3b8' : '#4A4F5A', fontSize: 10, fontWeight: 'bold' }}
+            tick={{ fill: isDark ? '#ffffff' : '#4A4F5A', fontSize: 10, fontWeight: 'bold' }}
             tickFormatter={(val) => {
               if (val === 'Início') return val;
               try {
@@ -44,19 +44,20 @@ export const EloChart: React.FC<EloChartProps> = ({ history, averageElo, isDark 
             domain={['auto', 'auto']} 
             axisLine={false} 
             tickLine={false} 
-            tick={{ fill: isDark ? '#94a3b8' : '#4A4F5A', fontSize: 10, fontWeight: 'bold' }}
+            tick={{ fill: isDark ? '#ffffff' : '#4A4F5A', fontSize: 10, fontWeight: 'bold' }}
           />
           <Tooltip 
             contentStyle={{ 
               backgroundColor: '#1E232D', 
               borderRadius: '1rem', 
-              border: '1px solid rgba(245, 196, 41, 0.2)',
+              border: 'none',
               boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.3)',
               fontSize: '12px',
               fontWeight: 'bold',
               color: '#fff'
             }}
             itemStyle={{ color: '#F5C429' }}
+            labelStyle={{ color: '#fff', marginBottom: '4px' }}
             labelFormatter={(val) => {
               if (val === 'Início') return val;
               return new Date(val + 'T00:00:00').toLocaleDateString('pt-BR');
@@ -65,12 +66,12 @@ export const EloChart: React.FC<EloChartProps> = ({ history, averageElo, isDark 
           {averageElo && (
             <ReferenceLine 
               y={averageElo} 
-              stroke={isDark ? '#475569' : '#4A4F5A'} 
+              stroke={isDark ? '#ffffff' : '#4A4F5A'} 
               strokeDasharray="3 3" 
               label={{ 
                 value: `Média: ${averageElo}`, 
                 position: 'right', 
-                fill: isDark ? '#94a3b8' : '#4A4F5A', 
+                fill: isDark ? '#ffffff' : '#4A4F5A', 
                 fontSize: 10, 
                 fontWeight: 'bold' 
               }} 
@@ -89,7 +90,7 @@ export const EloChart: React.FC<EloChartProps> = ({ history, averageElo, isDark 
             name="Média Grupo"
             type="monotone" 
             dataKey="groupAverage" 
-            stroke={isDark ? '#475569' : '#4A4F5A'} 
+            stroke={isDark ? '#ffffff' : '#4A4F5A'} 
             strokeWidth={2} 
             strokeDasharray="5 5"
             dot={false}

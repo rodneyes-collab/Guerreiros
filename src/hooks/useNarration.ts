@@ -1,7 +1,7 @@
 
 import { useEffect, useCallback } from 'react';
 import { useStore } from '../../store';
-import { generateNarrationScript, getNarrationAudio, speakNarration } from '../../services/geminiService';
+import { generateNarrationScript, generateDailySummaryNarration, speakNarration } from '../../services/geminiService';
 
 export const useNarration = () => {
   const { 
@@ -41,31 +41,38 @@ export const useNarration = () => {
     oscillator.stop(audioCtx.currentTime + 0.5);
   };
 
-  const handleAnnounce = useCallback(async () => {
-    if (!generationResult || isNarrating) return;
+  const handleAnnounce = useCallback(async (type: 'teams' | 'ranking' = 'teams', rankingData?: any) => {
+    if (isNarrating) return;
+    
+    if (type === 'teams' && !generationResult) return;
+
     setIsNarrating(true);
     try {
       playWhistle();
       // Wait for whistle to finish
       await new Promise(resolve => setTimeout(resolve, 600));
       
-      // If we have pre-loaded audio, use it immediately
-      if (narrationAudio) {
-        const audio = new Audio(narrationAudio);
-        await audio.play();
-      } else {
-        // Fallback if audio wasn't ready
-        const script = narrationScript || await generateNarrationScript(generationResult.teamA, generationResult.teamB);
+      if (type === 'teams') {
+        // If we have pre-loaded audio, use it immediately
+        if (narrationAudio) {
+          const audio = new Audio(narrationAudio);
+          await audio.play();
+        } else {
+          // Fallback if audio wasn't ready
+          const script = narrationScript || await generateNarrationScript(generationResult!.teamA, generationResult!.teamB);
+          await speakNarration(script);
+        }
+      } else if (type === 'ranking' && rankingData) {
+        const script = await generateDailySummaryNarration({
+          mvp: rankingData.dailyMvp?.name,
+          bestSetter: rankingData.dailyBestSetter?.name,
+          dailyKing: rankingData.dailyKing?.name,
+          matchesCount: rankingData.dailyMatchesCount
+        });
         await speakNarration(script);
       }
     } catch (error) {
       console.error("Announce Error:", error);
-      // Last resort fallback
-      if (narrationScript) {
-        const utterance = new SpeechSynthesisUtterance(narrationScript);
-        utterance.lang = 'pt-BR';
-        window.speechSynthesis.speak(utterance);
-      }
     } finally {
       setIsNarrating(false);
     }

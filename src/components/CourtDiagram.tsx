@@ -32,7 +32,7 @@ export const CourtDiagram: React.FC<CourtDiagramProps> = ({ teamA, teamB }) => {
   const PlayerCircle = ({ p, pos, isTeamB = false, isHighlighted = false }: { p: Player | undefined; pos: string; isTeamB?: boolean; isHighlighted?: boolean }) => (
     <div className={`flex flex-col items-center gap-1 transition-all duration-500 ${isComparisonMode && !isHighlighted ? 'opacity-20 scale-90 grayscale' : 'opacity-100 scale-100'}`}>
       <div className={`w-12 h-12 sm:w-14 sm:h-14 rounded-full border-4 flex items-center justify-center shadow-lg transition-transform hover:scale-110 ${
-        isTeamB ? 'bg-white border-white/50 text-brand-secondary' : 'bg-brand-primary border-brand-primary/50 text-brand-secondary'
+        isTeamB ? 'bg-black border-white/20 text-white' : 'bg-black border-brand-primary/40 text-brand-primary'
       } ${isHighlighted || isComparisonMode ? 'ring-4 ring-brand-primary/50 ring-offset-2 ring-offset-brand-secondary' : ''}`}>
         <span className="text-[12px] font-black uppercase tracking-tighter">
           {p?.name ? p.name.split(' ')[0].substring(0, 4) : '---'}
@@ -65,7 +65,7 @@ export const CourtDiagram: React.FC<CourtDiagramProps> = ({ teamA, teamB }) => {
   };
 
   return (
-    <div className="bg-brand-secondary rounded-[3rem] p-8 sm:p-12 shadow-2xl border border-brand-primary/20 relative overflow-hidden">
+    <div className="bg-black rounded-[3rem] p-8 sm:p-12 shadow-2xl border border-brand-primary/20 relative overflow-hidden">
       <button 
         onClick={() => setIsComparisonMode(!isComparisonMode)}
         className={`absolute top-6 right-6 z-20 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 border ${

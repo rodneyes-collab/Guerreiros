@@ -23,7 +23,7 @@ export const PlayerForm: React.FC<PlayerFormProps> = ({
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-in fade-in duration-300 overflow-y-auto">
-      <div className="bg-brand-secondary w-full max-w-lg rounded-[2.5rem] shadow-2xl border border-white/10 overflow-hidden animate-in zoom-in-95 duration-300 my-auto">
+      <div className="bg-black w-full max-w-lg rounded-[2.5rem] shadow-2xl border border-white/10 overflow-hidden animate-in zoom-in-95 duration-300 my-auto">
         <div className="p-8 border-b border-white/10 flex justify-between items-center bg-white/5">
           <div>
             <h3 className="text-2xl font-black text-brand-primary uppercase tracking-tight">
@@ -86,6 +86,47 @@ export const PlayerForm: React.FC<PlayerFormProps> = ({
           </div>
 
           <div className="space-y-2">
+            <label className="text-[10px] font-black text-white/40 uppercase tracking-widest ml-1">Data de Nascimento (Dia/Mês)</label>
+            <div className="grid grid-cols-2 gap-4">
+              <select
+                value={formData.birthDate ? formData.birthDate.split('-')[2] : ''}
+                onChange={e => {
+                  const day = e.target.value;
+                  const current = formData.birthDate || '1900-01-01';
+                  const [y, m] = current.split('-');
+                  setFormData({ ...formData, birthDate: `${y}-${m}-${day.padStart(2, '0')}` });
+                }}
+                className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none appearance-none"
+              >
+                <option value="" className="bg-brand-secondary text-white/40">Dia</option>
+                {Array.from({ length: 31 }, (_, i) => i + 1).map(d => (
+                  <option key={d} value={d.toString().padStart(2, '0')} className="bg-brand-secondary text-white">{d}</option>
+                ))}
+              </select>
+              <select
+                value={formData.birthDate ? formData.birthDate.split('-')[1] : ''}
+                onChange={e => {
+                  const month = e.target.value;
+                  const current = formData.birthDate || '1900-01-01';
+                  const [y, _, d] = current.split('-');
+                  setFormData({ ...formData, birthDate: `${y}-${month.padStart(2, '0')}-${d}` });
+                }}
+                className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none appearance-none"
+              >
+                <option value="" className="bg-brand-secondary text-white/40">Mês</option>
+                {[
+                  { v: '01', l: 'Janeiro' }, { v: '02', l: 'Fevereiro' }, { v: '03', l: 'Março' },
+                  { v: '04', l: 'Abril' }, { v: '05', l: 'Maio' }, { v: '06', l: 'Junho' },
+                  { v: '07', l: 'Julho' }, { v: '08', l: 'Agosto' }, { v: '09', l: 'Setembro' },
+                  { v: '10', l: 'Outubro' }, { v: '11', l: 'Novembro' }, { v: '12', l: 'Dezembro' }
+                ].map(m => (
+                  <option key={m.v} value={m.v} className="bg-brand-secondary text-white">{m.l}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="space-y-2">
             <label className="text-[10px] font-black text-white/40 uppercase tracking-widest ml-1">Email (Opcional)</label>
             <input
               type="email"
@@ -97,16 +138,30 @@ export const PlayerForm: React.FC<PlayerFormProps> = ({
             />
           </div>
 
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-white/40 uppercase tracking-widest ml-1">Data de Entrada</label>
-            <input
-              type="date"
-              name="joinedAt"
-              required
-              value={formData.joinedAt}
-              onChange={e => setFormData({ ...formData, joinedAt: e.target.value })}
-              className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none [color-scheme:dark]"
-            />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-white/40 uppercase tracking-widest ml-1">Data de Entrada</label>
+              <input
+                type="date"
+                name="joinedAt"
+                required
+                value={formData.joinedAt}
+                onChange={e => setFormData({ ...formData, joinedAt: e.target.value })}
+                className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none [color-scheme:dark]"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-white/40 uppercase tracking-widest ml-1">Status do Sócio</label>
+              <select
+                name="status"
+                value={formData.status || 'active'}
+                onChange={e => setFormData({ ...formData, status: e.target.value })}
+                className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none appearance-none"
+              >
+                <option value="active" className="bg-brand-secondary text-white">Ativo</option>
+                <option value="inactive" className="bg-brand-secondary text-white">Inativo</option>
+              </select>
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">

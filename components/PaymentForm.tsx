@@ -25,7 +25,7 @@ export const PaymentForm: React.FC<PaymentFormProps> = ({
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-in fade-in duration-300">
-      <div className="bg-brand-secondary w-full max-w-lg rounded-[2.5rem] shadow-2xl border border-white/10 overflow-hidden animate-in zoom-in-95 duration-300">
+      <div className="bg-black w-full max-w-lg rounded-[2.5rem] shadow-2xl border border-white/10 overflow-hidden animate-in zoom-in-95 duration-300">
         <div className="p-8 border-b border-white/10 flex justify-between items-center bg-white/5">
           <div>
             <h3 className="text-2xl font-black text-brand-primary uppercase tracking-tight">
@@ -91,7 +91,14 @@ export const PaymentForm: React.FC<PaymentFormProps> = ({
               <label className="text-[10px] font-black text-white/40 uppercase tracking-widest ml-1">Status</label>
               <select
                 value={paymentFormData.status}
-                onChange={e => setPaymentFormData({ ...paymentFormData, status: e.target.value as PaymentStatus })}
+                onChange={e => {
+                  const newStatus = e.target.value as PaymentStatus;
+                  const updates: any = { status: newStatus };
+                  if (newStatus === PaymentStatus.PAID && !paymentFormData.paymentDate) {
+                    updates.paymentDate = new Date().toISOString().split('T')[0];
+                  }
+                  setPaymentFormData({ ...paymentFormData, ...updates });
+                }}
                 className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none appearance-none"
               >
                 <option value={PaymentStatus.PENDING} className="bg-brand-secondary text-white">Pendente</option>

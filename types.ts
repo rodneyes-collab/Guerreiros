@@ -23,6 +23,7 @@ export interface Player {
   isAdmin?: boolean;
   joinedAt?: string;
   playedLastMatch?: boolean;
+  timestamp?: number; // Timestamp de chegada na presença
   consecutiveBenched?: number; // Número de partidas consecutivas no banco
   birthDate?: string; // ISO date string
   uid?: string; // Firebase Auth UID
@@ -31,9 +32,30 @@ export interface Player {
   createdAt?: number;
   reads?: number; // Total de leituras do sócio
   lastReadUpdate?: string; // Data da última atualização de leitura
+  fcmToken?: string; // Token para Push Notifications
+}
+
+export interface AppNotification {
+  id: string;
+  playerId: string;
+  title: string;
+  message: string;
+  createdAt: number;
+  read: boolean;
+  type: 'match' | 'reminder' | 'system';
 }
 
 export type MatchMode = 'QUICK' | 'SCORE' | 'SEQUENTIAL';
+
+export type IntentStatus = 'GOING' | 'NOT_GOING' | 'UNDECIDED';
+
+export interface IntentionsData {
+  targetDate: string; // YYYY-MM-DD
+  automationEnabled: boolean;
+  responses: Record<string, 'GOING' | 'NOT_GOING'>;
+  confirmationTimestamps?: Record<string, number>;
+  remindersSent: Record<string, boolean>;
+}
 
 export interface Match {
   id: string;
@@ -60,9 +82,14 @@ export interface SystemMetadata {
   lastUpdate?: number;
   dailyReadQuota?: number;
   dailyAICallsQuota?: number; // Adicionado
+  showTeamCards?: boolean;
+  showWaitlist?: boolean;
+  showPerformance?: boolean;
   courtLocation?: { lat: number; lng: number };
   geofenceRadius?: number;
   monthlyFee?: number;
+  isTournamentEnabled?: boolean;
+  showEliteQueue?: boolean;
 }
 
 export enum PaymentStatus {
@@ -103,6 +130,7 @@ export interface GenerationResult {
   teamB: Team;
   remainingPlayers: Player[];
   swaps?: { playerA: string; playerB: string }[];
+  timestamp?: number;
 }
 
 export interface TournamentTeam {
@@ -137,6 +165,16 @@ export interface TournamentMatch {
   winnerId?: string;
   status: 'pending' | 'completed';
   round: number;
+  bracket?: string;
+  nextMatchId?: string;
+  nextMatchWinnerSlot?: 'A' | 'B';
+  nextMatchLoserSlot?: 'A' | 'B';
+}
+
+export enum TournamentStrategy {
+  ROUND_ROBIN = 'ROUND_ROBIN',
+  GROUPS_AND_KNOCKOUT = 'GROUPS_AND_KNOCKOUT',
+  DOUBLE_ELIMINATION = 'DOUBLE_ELIMINATION'
 }
 
 export interface Tournament {
@@ -146,6 +184,7 @@ export interface Tournament {
   status: 'active' | 'completed';
   teams: TournamentTeam[];
   matches: TournamentMatch[];
+  strategy: TournamentStrategy;
   reserves?: string[]; // IDs dos jogadores reservas
   config: {
     pointsPerSet: number;

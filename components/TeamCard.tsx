@@ -59,19 +59,16 @@ export const TeamCard: React.FC<TeamCardProps> = ({
   const suggestedPositions = getSuggestedPositions();
 
   return (
-    <div className="bg-black rounded-[2rem] sm:rounded-[3rem] border border-brand-primary/20 shadow-2xl overflow-hidden flex flex-col h-full animate-in zoom-in-95 duration-500 hover:border-brand-primary/40 transition-all">
-      <div className={`p-6 sm:p-8 bg-black ${textColorClass} relative border-b border-brand-primary/10`}>
+    <div className="bg-brand-light rounded-[2rem] sm:rounded-[3rem] border border-brand-primary/20 shadow-2xl overflow-hidden flex flex-col h-full animate-in zoom-in-95 duration-500 hover:border-brand-primary/40 transition-all">
+      <div className={`p-6 sm:p-8 bg-brand-light ${textColorClass} relative border-b border-brand-primary/10`}>
         <div className="absolute top-0 right-0 p-4 sm:p-8 opacity-10">
           <Swords className={`w-12 h-12 sm:w-20 h-20 text-brand-primary`} />
         </div>
         <div className="flex justify-between items-center mb-2 sm:mb-3">
-          <p className="text-[8px] sm:text-sm font-black uppercase opacity-70 tracking-[0.2em] sm:tracking-[0.3em] text-brand-primary">
-            Line-up Equipe <span className="ml-1 opacity-50">({attendance.length} Presentes)</span>
-          </p>
           <p className="text-[8px] sm:text-sm font-black uppercase opacity-70 tracking-[0.2em] sm:tracking-[0.3em] text-brand-primary">Média ELO</p>
         </div>
         <div className="flex justify-between items-end">
-          <h3 className="font-black text-2xl sm:text-5xl tracking-tighter uppercase text-white">{title}</h3>
+          <h3 className={`font-black text-4xl sm:text-8xl tracking-tighter uppercase ${title.includes('A') ? 'text-brand-primary' : 'text-white'}`}>{title}</h3>
           <p className="text-3xl sm:text-6xl font-black tracking-tighter text-brand-primary">{team.totalElo}</p>
         </div>
       </div>
@@ -87,6 +84,7 @@ export const TeamCard: React.FC<TeamCardProps> = ({
               p={team.setter} 
               isSetter 
               isActive={activeSwapId === team.setter.id} 
+              isTimeA={color === 'green'}
               attendancePosition={getPos(team.setter.id)}
               suggestedPosition={suggestedPositions[team.setter.id]}
               userRole={userRole}
@@ -105,12 +103,13 @@ export const TeamCard: React.FC<TeamCardProps> = ({
             <Swords className="w-3 h-3 sm:w-4 h-4 text-brand-primary" />
             Atacantes e Defesa
           </h4>
-          <div className="grid grid-cols-1 gap-2 sm:gap-3">
+          <div className="flex flex-col gap-2 sm:gap-3">
             {team.players.map((p: Player) => (
               <PlayerRow 
                 key={p.id} 
                 p={p} 
                 isActive={activeSwapId === p.id} 
+                isTimeA={color === 'green'}
                 attendancePosition={getPos(p.id)}
                 suggestedPosition={suggestedPositions[p.id]}
                 userRole={userRole}

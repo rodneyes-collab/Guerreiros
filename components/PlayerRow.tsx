@@ -14,6 +14,7 @@ interface PlayerRowProps {
   p: Player;
   isSetter?: boolean;
   isActive?: boolean;
+  isTimeA?: boolean;
   attendancePosition?: number | string;
   suggestedPosition?: string;
   userRole?: string;
@@ -26,6 +27,7 @@ export const PlayerRow: React.FC<PlayerRowProps> = ({
   p, 
   isSetter, 
   isActive, 
+  isTimeA,
   attendancePosition, 
   suggestedPosition, 
   userRole,
@@ -38,23 +40,23 @@ export const PlayerRow: React.FC<PlayerRowProps> = ({
   const displayName = p.name || fullPlayer?.name || "Sócio sem nome";
 
   return (
-    <div className={`flex items-center justify-between p-3 sm:p-5 rounded-[1.5rem] sm:rounded-[2rem] border transition-all group ${isActive ? 'bg-brand-primary/10 border-brand-primary/30 shadow-md ring-2 ring-brand-primary/20' : 'bg-black border-brand-primary/20 hover:border-brand-primary/40 shadow-sm hover:shadow-md'}`}>
-      <div className="flex items-center gap-3 sm:gap-6">
-        <div className="relative">
-          <div className={`w-10 h-10 sm:w-16 sm:h-16 rounded-full flex items-center justify-center text-lg sm:text-2xl font-black ${isSetter ? 'bg-brand-primary/20 text-brand-primary' : 'bg-white/10 text-white'} border border-brand-primary/10 shadow-sm`}>
+    <div className={`flex items-center justify-between p-2 sm:p-5 rounded-[1.2rem] sm:rounded-[2rem] border transition-all group ${isActive ? 'bg-brand-primary/10 border-brand-primary/30 shadow-md ring-2 ring-brand-primary/20' : 'bg-brand-light border-brand-primary/20 hover:border-brand-primary/40 shadow-sm hover:shadow-md'}`}>
+      <div className="flex items-center gap-2 sm:gap-6 min-w-0">
+        <div className="relative shrink-0">
+          <div className={`w-8 h-8 sm:w-16 sm:h-16 rounded-full flex items-center justify-center text-sm sm:text-2xl font-black ${isSetter ? (isTimeA ? 'bg-brand-primary/20 text-brand-primary' : 'bg-brand-primary/20 text-brand-secondary dark:text-white') : 'bg-brand-primary/5 text-brand-secondary/40 dark:text-white/40'} border border-brand-primary/10 shadow-sm`}>
             {attendancePosition && attendancePosition !== 0 ? attendancePosition : '?'}
           </div>
-          {isSetter && <div className="absolute -top-1 -right-1 sm:-top-2 sm:-right-2 w-5 h-5 sm:w-6 sm:h-6 bg-brand-primary rounded-full border-2 border-brand-secondary flex items-center justify-center shadow-sm"><UserCheck className="w-2.5 h-2.5 sm:w-3 h-3 text-brand-secondary" /></div>}
+          {isSetter && <div className="absolute -top-1 -right-1 sm:-top-2 sm:-right-2 w-4 h-4 sm:w-6 sm:h-6 bg-brand-primary rounded-full border-2 border-brand-nav flex items-center justify-center shadow-sm"><UserCheck className="w-2 h-2 sm:w-3 h-3 text-brand-secondary" /></div>}
         </div>
         <div className="min-w-0">
-          <p className={`text-sm sm:text-2xl font-black ${(p.isOfficialSetter || isSetter) ? 'text-brand-primary' : 'text-white'} tracking-tight leading-none truncate`}>{displayName}</p>
-          <div className="flex items-center gap-2 sm:gap-3 mt-1 sm:mt-2">
-            <span className="text-[9px] sm:text-[11px] font-black uppercase text-brand-secondary bg-brand-primary px-1.5 py-0.5 rounded border border-brand-primary/30">{p.dailyWins || 0}V</span>
-            <span className="text-[9px] sm:text-[11px] font-black uppercase text-white bg-white/10 px-1.5 py-0.5 rounded border border-white/20">{p.dailyLosses || 0}D</span>
-            <span className="text-[9px] sm:text-[11px] text-white/60 font-bold uppercase flex items-center gap-1 sm:gap-2">
+          <p className={`text-xs sm:text-3xl font-black ${isTimeA ? 'text-brand-primary drop-shadow-[0_0_8px_rgba(245,196,41,0.3)]' : 'text-brand-secondary dark:text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.2)]'} tracking-tight leading-none truncate`}>{displayName}</p>
+          <div className="flex items-center gap-1.5 sm:gap-3 mt-1 sm:mt-2">
+            <span className="text-[8px] sm:text-[11px] font-black uppercase text-brand-light bg-brand-primary px-1 py-0.5 rounded border border-brand-primary/30">{p.dailyWins || 0}V</span>
+            <span className="text-[8px] sm:text-[11px] font-black uppercase text-brand-light bg-brand-secondary dark:bg-white px-1 py-0.5 rounded border border-white/30">{p.dailyLosses || 0}D</span>
+            <span className="text-[8px] sm:text-[11px] text-brand-secondary/60 dark:text-white/60 font-bold uppercase flex items-center gap-1 sm:gap-2">
               <span className="hidden xs:inline">ELO:</span> <span className="text-brand-primary font-black">{p.elo}</span>
               {suggestedPosition && (
-                <span className="bg-white/10 text-white px-1.5 py-0.5 rounded text-[8px] sm:text-[10px] border border-white/20">P{suggestedPosition}</span>
+                <span className="bg-brand-primary/10 text-brand-primary px-1 py-0.5 rounded text-[7px] sm:text-[10px] border border-brand-primary/20">P{suggestedPosition}</span>
               )}
             </span>
           </div>
@@ -66,28 +68,28 @@ export const PlayerRow: React.FC<PlayerRowProps> = ({
             <button 
               type="button"
               onClick={() => onPromote(p.id)}
-              className="p-2 sm:p-4 rounded-xl sm:rounded-2xl text-white/40 hover:text-brand-primary hover:bg-brand-primary/10 transition-all"
+              className="p-3 sm:p-4 rounded-xl sm:rounded-2xl text-brand-secondary/40 dark:text-white/40 hover:text-brand-primary hover:bg-brand-primary/10 transition-all"
               title="Designar como Levantador"
             >
-              <UserCheck className="w-5 h-5 sm:w-7 sm:h-7"/>
+              <UserCheck className="w-6 h-6 sm:w-7 sm:h-7"/>
             </button>
           )}
           <button 
             type="button"
             onClick={() => onSwap(p.id)}
-            className={`p-2 sm:p-4 rounded-xl sm:rounded-2xl transition-all ${isActive ? 'bg-brand-primary text-brand-secondary shadow-lg' : 'text-white/40 hover:text-brand-primary hover:bg-brand-primary/10'}`}
+            className={`p-3 sm:p-4 rounded-xl sm:rounded-2xl transition-all ${isActive ? 'bg-brand-primary text-brand-secondary shadow-lg' : 'text-brand-secondary/40 dark:text-white/40 hover:text-brand-primary hover:bg-brand-primary/10'}`}
             title="Trocar Jogador"
           >
-            <ArrowLeftRight className="w-5 h-5 sm:w-7 sm:h-7"/>
+            <ArrowLeftRight className="w-6 h-6 sm:w-7 sm:h-7"/>
           </button>
           {onRemove && (
             <button 
               type="button"
               onClick={() => onRemove(p.id)}
-              className="p-2 sm:p-4 rounded-xl sm:rounded-2xl text-white/40 hover:text-brand-primary hover:bg-brand-primary/10 transition-all"
+              className="p-3 sm:p-4 rounded-xl sm:rounded-2xl text-brand-secondary/40 dark:text-white/40 hover:text-brand-primary hover:bg-brand-primary/10 transition-all"
               title="Sair da Partida (Entra Reserva)"
             >
-              <LogOut className="w-5 h-5 sm:w-7 sm:h-7"/>
+              <LogOut className="w-6 h-6 sm:w-7 sm:h-7"/>
             </button>
           )}
         </div>

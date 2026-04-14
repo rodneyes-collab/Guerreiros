@@ -16,8 +16,13 @@ export const playerSchema = z.object({
   dailyResults: z.array(z.enum(['V', 'D'])).default([]),
   playedLastMatch: z.boolean().default(false),
   isAdmin: z.boolean().default(false),
+  isOfficialSetter: z.boolean().default(false),
   joinedAt: z.string().optional(),
-  email: z.string().email("Email inválido").or(z.literal('')),
+  birthDate: z.string().optional(),
+  status: z.string().optional(),
+  createdAt: z.number().optional(),
+  consecutiveBenched: z.number().int().min(0).default(0),
+  email: z.string().email("Email inválido").or(z.literal('')).optional(),
   eloHistory: z.array(z.object({
     date: z.string(),
     elo: z.number()

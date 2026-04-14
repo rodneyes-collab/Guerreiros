@@ -15,7 +15,7 @@ export const Logo: React.FC<LogoProps> = ({ className = '', size = 'md' }) => {
   };
 
   return (
-    <div className={`flex items-center justify-center overflow-hidden rounded-2xl bg-brand-secondary border-2 border-brand-primary shadow-xl shadow-brand-primary/10 ${sizeClasses[size]} ${className}`}>
+    <div className={`flex items-center justify-center overflow-hidden rounded-2xl bg-black border-2 border-brand-primary shadow-xl shadow-brand-primary/10 ${sizeClasses[size]} ${className}`}>
       <img 
         src="/logo.png" 
         alt="Guerreiros V.C. Logo" 

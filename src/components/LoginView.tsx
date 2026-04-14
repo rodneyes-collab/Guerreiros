@@ -38,13 +38,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
   };
 
   return (
-    <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4 relative overflow-hidden">
-      {/* Background elements */}
-      <div className="absolute top-0 left-0 w-full h-full opacity-10">
-        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-brand-primary rounded-full blur-[120px]"></div>
-        <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-brand-primary rounded-full blur-[120px]"></div>
-      </div>
-
+    <div className="min-h-screen bg-black flex flex-col items-center justify-center p-4 relative overflow-hidden">
       <div className="max-w-md w-full relative z-10 space-y-12 animate-in fade-in zoom-in duration-1000">
         <div className="text-center space-y-6">
           <Logo size="lg" className="mx-auto transform hover:scale-110 transition-transform duration-700 drop-shadow-[0_0_30px_rgba(245,196,41,0.3)]" />
@@ -142,7 +136,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
       </div>
       
       <p className="absolute bottom-8 text-[10px] font-black text-white/20 uppercase tracking-[0.3em]">
-        Guerreiros Volleyball Club © 2024
+        Guerreiros Volleyball Club © 2025
       </p>
     </div>
   );

@@ -167,33 +167,12 @@ export const analyzeMatch = async (teamA: Team, teamB: Team): Promise<string> =>
  * Generates an energetic narration script.
  */
 export const generateNarrationScript = async (teamA: Team, teamB: Team): Promise<string> => {
-  const teamAIds = [teamA.setter?.id, ...teamA.players.map(p => p.id)].sort().join(',');
-  const teamBIds = [teamB.setter?.id, ...teamB.players.map(p => p.id)].sort().join(',');
-  const cacheKey = `narration_${teamAIds}_vs_${teamBIds}`;
-
-  if (analysisCache[cacheKey]) return analysisCache[cacheKey];
-
   const teamANames = [teamA.setter?.name, ...teamA.players.map(p => p.name)].filter(Boolean).join(', ');
   const teamBNames = [teamB.setter?.name, ...teamB.players.map(p => p.name)].filter(Boolean).join(', ');
 
-  const ai = getAI();
-  // Prompt ultra-curto
-  const prompt = `Narração (Locutor):
-    A: ${teamANames}. B: ${teamBNames}.
-    Curto e energético.`;
-
-  try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: prompt,
-    });
-    const result = response.text || `Time A: ${teamANames}. Time B: ${teamBNames}. Jogo iniciado!`;
-    analysisCache[cacheKey] = result;
-    saveCache(analysisCache);
-    return result;
-  } catch (error: any) {
-    return `Time A: ${teamANames}. Time B: ${teamBNames}. Bora pro jogo!`;
-  }
+  // Retorna o texto exato e direto, conforme solicitado pelo usuário, 
+  // sem usar a IA para gerar o script, evitando assim qualquer texto extra, opções ou repetições.
+  return `Equipe A: ${teamANames}. Equipe B: ${teamBNames}.`;
 };
 
 /**
@@ -270,24 +249,37 @@ export const verifyRules = async (
 /**
  * Generates a summary of the day's highlights.
  */
-export const generateDailySummaryNarration = async (stats: { mvp: string; evolution: string; topWinRate: string }): Promise<string> => {
-  const cacheKey = `summary_${stats.mvp}_${stats.evolution}_${stats.topWinRate}`;
+export const generateDailySummaryNarration = async (stats: { 
+  mvp?: string; 
+  bestSetter?: string; 
+  dailyKing?: string;
+  matchesCount?: number;
+}): Promise<string> => {
+  const cacheKey = `summary_v3_${stats.mvp}_${stats.bestSetter}_${stats.dailyKing}_${stats.matchesCount}`;
   if (analysisCache[cacheKey]) return analysisCache[cacheKey];
 
   const ai = getAI();
-  const prompt = `Resumo (Locutor): MVP: ${stats.mvp}, Evolução: ${stats.evolution}, WinRate: ${stats.topWinRate}. Max 2 frases.`;
+  const prompt = `Resumo do Dia (Guerreiros Volleyball):
+    - Partidas: ${stats.matchesCount || 0}
+    - MVP: ${stats.mvp || 'N/A'}
+    - Melhor Levantador: ${stats.bestSetter || 'N/A'}
+    - Rei do Dia (Maior Ganho ELO): ${stats.dailyKing || 'N/A'}
+    
+    TAREFA: Gere APENAS UM ÚNICO roteiro de locução curto (max 3 frases) e empolgante celebrando os resultados. 
+    NÃO dê opções (ex: Opção 1, Opção 2). NÃO use introduções. Apenas o texto da narração falada.
+    Use "Equipe" em vez de "Time" para evitar erros de pronúncia.`;
 
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: prompt,
     });
-    const result = response.text || "Racha épico hoje! Parabéns a todos!";
+    const result = response.text || "Racha épico hoje! Parabéns a todos os guerreiros!";
     analysisCache[cacheKey] = result;
     saveCache(analysisCache);
     return result;
   } catch (error: any) {
-    return "Racha sensacional! Parabéns aos guerreiros!";
+    return "Racha sensacional! Parabéns aos guerreiros pelo desempenho de hoje!";
   }
 };
 
@@ -329,12 +321,23 @@ export const getNarrationAudio = async (text: string): Promise<string | null> =>
  * Speaks the provided text. Defaults to browser TTS for zero cost.
  */
 export const speakNarration = async (text: string, forceAIVoice = false): Promise<void> => {
+  // Pré-processamento para garantir pronúncia correta
+  const processedText = text.replace(/\bTime\b/gi, 'Equipe');
+
   // Se não for forçado, usa a voz do navegador (Grátis)
   if (!forceAIVoice) {
     window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
+    const utterance = new SpeechSynthesisUtterance(processedText);
     utterance.lang = 'pt-BR';
-    utterance.rate = 1.1; // Um pouco mais rápido para parecer mais natural
+    
+    // Tentar encontrar uma voz mais natural em português
+    const voices = window.speechSynthesis.getVoices();
+    const ptVoice = voices.find(v => v.lang.includes('pt-BR') && (v.name.includes('Google') || v.name.includes('Natural'))) || 
+                    voices.find(v => v.lang.includes('pt-BR'));
+    
+    if (ptVoice) utterance.voice = ptVoice;
+    
+    utterance.rate = 1.0; 
     utterance.pitch = 1.0;
     window.speechSynthesis.speak(utterance);
     return;
@@ -342,7 +345,7 @@ export const speakNarration = async (text: string, forceAIVoice = false): Promis
 
   // Voz da IA apenas se explicitamente solicitado
   try {
-    const audioSrc = await getNarrationAudio(text);
+    const audioSrc = await getNarrationAudio(processedText);
     if (audioSrc) {
       const audio = new Audio(audioSrc);
       await audio.play();
@@ -351,7 +354,7 @@ export const speakNarration = async (text: string, forceAIVoice = false): Promis
     }
   } catch (error) {
     // Fallback para navegador se a IA falhar
-    const utterance = new SpeechSynthesisUtterance(text);
+    const utterance = new SpeechSynthesisUtterance(processedText);
     utterance.lang = 'pt-BR';
     window.speechSynthesis.speak(utterance);
   }
@@ -398,6 +401,30 @@ export const detectAnomalies = async (data: { players: Player[], matches: any[],
     console.error("Erro na detecção de anomalias:", error);
     if (error?.message?.includes('429')) return "Limite de requisições da IA atingido. Tente novamente mais tarde.";
     return "Falha técnica ao processar a varredura de anomalias.";
+  }
+};
+
+/**
+ * Generates a creative birthday message for a player.
+ */
+export const generateBirthdayMessage = async (playerName: string): Promise<string> => {
+  const ai = getAI();
+  const prompt = `Gere uma mensagem de aniversário curta, criativa e animada para um sócio de um clube de vôlei. 
+    O nome do sócio é "${playerName}". 
+    A mensagem deve ser em português, usar emojis de vôlei e festa, e ter um tom de união e celebração. 
+    Evite usar palavras com gênero específico como "guerreiro" ou "guerreira", use termos neutros ou apenas o nome.
+    Não use aspas na resposta. Max 50 palavras.`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: prompt,
+    });
+
+    return response.text || `Parabéns, ${playerName}! Que seu dia seja repleto de aces e vitórias dentro e fora de quadra! 🏐🎉`;
+  } catch (error) {
+    console.error("Error generating birthday message:", error);
+    return `Parabéns, ${playerName}! Que seu dia seja repleto de aces e vitórias dentro e fora de quadra! 🏐🎉`;
   }
 };
 

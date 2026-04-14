@@ -18,13 +18,18 @@ import {
   Target,
   Hash,
   RotateCcw,
-  AlertCircle
+  AlertCircle,
+  LayoutGrid,
+  GitBranch,
+  Zap,
+  RefreshCw
 } from 'lucide-react';
 import { useStore } from '../store';
-import { Tournament, TournamentTeam, TournamentMatch, SetScore } from '../types';
+import { Tournament, TournamentTeam, TournamentMatch, SetScore, TournamentStrategy } from '../types';
+import { generateTournamentTeams } from '../utils/teamLogic';
 
 interface TournamentViewProps {
-  onStart: (config: { numTeams: number; pointsPerSet: number; setsPerMatch: number }) => Promise<void>;
+  onStart: (config: { numTeams: number; pointsPerSet: number; setsPerMatch: number; strategy: TournamentStrategy, preGeneratedTeams?: TournamentTeam[], preGeneratedReserves?: string[] }) => Promise<void>;
   onRecord: (matchId: string, setScores: SetScore[]) => Promise<void>;
   onResetMatch: (matchId: string) => Promise<void>;
   onEnd: () => Promise<void>;
@@ -33,13 +38,20 @@ interface TournamentViewProps {
 }
 
 export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecord, onResetMatch, onEnd, onAddPlayer, onSubstitute }) => {
-  const { activeTournament, attendance, userRole, players } = useStore();
+  const { activeTournament, attendance: allAttendance, userRole, players: allPlayers } = useStore();
+  const players = useMemo(() => allPlayers.filter(p => p.status !== 'inactive'), [allPlayers]);
+  const attendance = useMemo(() => allAttendance.filter(p => p.status !== 'inactive'), [allAttendance]);
   const [isStarting, setIsStarting] = useState(false);
   const [config, setConfig] = useState({
     numTeams: 3,
     pointsPerSet: 15,
-    setsPerMatch: 1
+    setsPerMatch: 1,
+    strategy: TournamentStrategy.ROUND_ROBIN
   });
+
+  const [previewTeams, setPreviewTeams] = useState<TournamentTeam[] | null>(null);
+  const [previewReserves, setPreviewReserves] = useState<string[]>([]);
+  const [isPreviewing, setIsPreviewing] = useState(false);
 
   const [recordingMatch, setRecordingMatch] = useState<TournamentMatch | null>(null);
   const [isManagingTeams, setIsManagingTeams] = useState(false);
@@ -47,6 +59,82 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
   const [substitutingPlayerId, setSubstitutingPlayerId] = useState<string | null>(null);
   const [currentSetScores, setCurrentSetScores] = useState<SetScore[]>([]);
   const [expandedMatches, setExpandedMatches] = useState<Set<string>>(new Set());
+
+  const handleGeneratePreview = () => {
+    const { teams, reserves } = generateTournamentTeams(attendance, config.numTeams);
+    setPreviewTeams(teams);
+    setPreviewReserves(reserves);
+    setIsPreviewing(true);
+  };
+
+  const handleCancelPreview = () => {
+    setPreviewTeams(null);
+    setPreviewReserves([]);
+    setIsPreviewing(false);
+  };
+
+  const handlePreviewSubstitute = (teamId: string, oldPlayerId: string, newPlayerId: string) => {
+    if (!previewTeams) return;
+    
+    let updatedReserves = [...previewReserves];
+    
+    // Check if newPlayerId is in another team
+    const otherTeam = previewTeams.find(t => t.id !== teamId && t.players.includes(newPlayerId));
+
+    if (otherTeam) {
+      // Swap between teams
+      const updatedTeams = previewTeams.map(team => {
+        if (team.id === teamId) {
+          return {
+            ...team,
+            players: team.players.map(pid => pid === oldPlayerId ? newPlayerId : pid)
+          };
+        }
+        if (team.id === otherTeam.id) {
+          return {
+            ...team,
+            players: team.players.map(pid => pid === newPlayerId ? oldPlayerId : pid)
+          };
+        }
+        return team;
+      });
+      setPreviewTeams(updatedTeams);
+    } else {
+      // Substitute from reserves
+      if (updatedReserves.includes(newPlayerId)) {
+        updatedReserves = updatedReserves.filter(id => id !== newPlayerId);
+        updatedReserves.push(oldPlayerId);
+      }
+
+      const updatedTeams = previewTeams.map(team => {
+        if (team.id === teamId) {
+          return {
+            ...team,
+            players: team.players.map(pid => pid === oldPlayerId ? newPlayerId : pid)
+          };
+        }
+        return team;
+      });
+
+      setPreviewTeams(updatedTeams);
+      setPreviewReserves(updatedReserves);
+    }
+  };
+
+  const handlePreviewAddPlayer = (teamId: string, playerId: string) => {
+    if (!previewTeams) return;
+    
+    const updatedReserves = previewReserves.filter(id => id !== playerId);
+    const updatedTeams = previewTeams.map(team => {
+      if (team.id === teamId) {
+        return { ...team, players: [...team.players, playerId] };
+      }
+      return team;
+    });
+
+    setPreviewTeams(updatedTeams);
+    setPreviewReserves(updatedReserves);
+  };
 
   const toggleMatchExpansion = (matchId: string) => {
     setExpandedMatches(prev => {
@@ -64,20 +152,34 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
     return Math.max(2, Math.min(5, Math.floor(attendance.length / 6)));
   }, [attendance.length]);
 
+  const suggestedStrategy = useMemo(() => {
+    const n = config.numTeams;
+    if (n <= 3) return TournamentStrategy.ROUND_ROBIN;
+    if (n === 4) return TournamentStrategy.DOUBLE_ELIMINATION;
+    return TournamentStrategy.GROUPS_AND_KNOCKOUT;
+  }, [config.numTeams]);
+
   useEffect(() => {
     if (!activeTournament) {
-      setConfig(prev => ({ ...prev, numTeams: suggestedNumTeams }));
+      setConfig(prev => ({ 
+        ...prev, 
+        numTeams: suggestedNumTeams,
+        strategy: suggestedStrategy 
+      }));
     }
-  }, [suggestedNumTeams, activeTournament]);
+  }, [suggestedNumTeams, suggestedStrategy, activeTournament]);
 
   const suggestedConfig = useMemo(() => {
-    let basePoints = 15;
-    if (config.numTeams === 2) basePoints = 25;
-    else if (config.numTeams === 3) basePoints = 21;
-    else if (config.numTeams === 4) basePoints = 21;
-    else if (config.numTeams === 5) basePoints = 12;
+    const numTeams = Number(config.numTeams) || 3;
+    const setsPerMatch = Number(config.setsPerMatch) || 1;
 
-    const sets = config.setsPerMatch;
+    let basePoints = 15;
+    if (numTeams === 2) basePoints = 25;
+    else if (numTeams === 3) basePoints = 21;
+    else if (numTeams === 4) basePoints = 21;
+    else if (numTeams === 5) basePoints = 12;
+
+    const sets = setsPerMatch;
     const points = Math.max(5, Math.round(basePoints / sets));
     
     return { 
@@ -95,14 +197,22 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
   };
 
   const timeEstimation = useMemo(() => {
-    const numTeams = config.numTeams;
-    const totalMatches = (numTeams * (numTeams - 1)) / 2;
+    const numTeams = Number(config.numTeams) || 3;
+    const pointsPerSet = Number(config.pointsPerSet) || 15;
+    const setsPerMatch = Number(config.setsPerMatch) || 1;
+    const strategy = config.strategy;
+
+    const totalMatches = strategy === TournamentStrategy.ROUND_ROBIN 
+      ? (numTeams * (numTeams - 1)) / 2
+      : strategy === TournamentStrategy.DOUBLE_ELIMINATION
+        ? (numTeams * 2) - 2
+        : (numTeams === 4 ? 4 : numTeams === 5 ? 6 : (numTeams * (numTeams - 1)) / 2); // Simplified for Groups+KO
     
     const secondsPerPoint = 40;
-    const pointsPerMatch = config.pointsPerSet * 2 * config.setsPerMatch;
+    const pointsPerMatch = pointsPerSet * 2 * setsPerMatch;
     const matchPlayTime = (pointsPerMatch * secondsPerPoint) / 60;
     const matchOverhead = 3;
-    const setOverhead = (config.setsPerMatch - 1) * 2;
+    const setOverhead = (setsPerMatch - 1) * 2;
     
     const timePerMatch = Math.round(matchPlayTime + matchOverhead + setOverhead);
     const totalTime = totalMatches * timePerMatch;
@@ -117,7 +227,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
   const availablePlayers = useMemo(() => {
     if (!activeTournament) return [];
     const assignedIds = new Set(activeTournament.teams.flatMap(t => t.players));
-    return attendance.filter(p => !assignedIds.has(p.id));
+    return attendance.filter(p => p.status !== 'inactive' && !assignedIds.has(p.id));
   }, [attendance, activeTournament]);
 
   const reservePlayers = useMemo(() => {
@@ -127,8 +237,17 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
 
   const handleStart = async () => {
     setIsStarting(true);
-    await onStart(config);
+    const finalConfig = {
+      numTeams: Number(config.numTeams) || 3,
+      pointsPerSet: Number(config.pointsPerSet) || 15,
+      setsPerMatch: Number(config.setsPerMatch) || 1,
+      strategy: config.strategy,
+      preGeneratedTeams: previewTeams || undefined,
+      preGeneratedReserves: previewReserves.length > 0 ? previewReserves : undefined
+    };
+    await onStart(finalConfig);
     setIsStarting(false);
+    setIsPreviewing(false);
   };
 
   const handleRecord = async () => {
@@ -139,6 +258,259 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
   };
 
   if (!activeTournament) {
+    if (isPreviewing && previewTeams) {
+      return (
+        <div className="space-y-8 animate-in fade-in duration-500">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <div>
+              <h2 className="text-2xl font-black text-white uppercase tracking-tighter">Pré-visualização dos Times</h2>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                Confira o balanceamento e faça ajustes manuais se necessário
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <button
+                onClick={handleCancelPreview}
+                className="px-6 py-3 bg-white/5 text-slate-300 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-white/10 transition-all border border-white/10"
+              >
+                Voltar
+              </button>
+              <button
+                onClick={handleGeneratePreview}
+                className="px-6 py-3 bg-brand-primary/20 text-brand-primary rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-brand-primary/30 transition-all flex items-center gap-2 border border-brand-primary/30"
+              >
+                <RefreshCw className="w-4 h-4" /> Re-sortear
+              </button>
+              <button
+                onClick={() => setIsManagingTeams(true)}
+                className="px-6 py-3 bg-brand-primary/20 text-brand-primary rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-brand-primary/30 transition-all flex items-center gap-2 border border-brand-primary/30"
+              >
+                <Users className="w-4 h-4" /> Trocar Jogadores
+              </button>
+              <button
+                onClick={handleStart}
+                disabled={isStarting}
+                className="px-6 py-3 bg-brand-primary text-brand-secondary rounded-xl font-black text-[10px] uppercase tracking-widest hover:scale-[1.02] active:scale-95 transition-all flex items-center gap-2 shadow-lg shadow-brand-primary/20 disabled:opacity-50"
+              >
+                {isStarting ? (
+                  <div className="w-4 h-4 border-2 border-brand-secondary border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <>
+                    <Play className="w-4 h-4 fill-brand-secondary" /> Iniciar Torneio
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            {previewTeams.map(team => {
+              const teamElo = team.players.reduce((sum, pid) => {
+                const p = players.find(player => player.id === pid);
+                return sum + (p?.elo || 0);
+              }, 0);
+
+              return (
+                <div key={team.id} className="bg-black rounded-[2rem] border border-white/10 p-6 shadow-sm hover:border-white/20 transition-all">
+                  <div className="flex items-center justify-between mb-4 pb-3 border-b border-white/10">
+                    <div>
+                      <h4 className="text-xs font-black text-brand-primary uppercase tracking-widest">
+                        {team.name}
+                      </h4>
+                      <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">
+                        Total ELO: {teamElo}
+                      </p>
+                    </div>
+                    <span className="text-[8px] font-black text-slate-500 uppercase">
+                      {team.players.length} Atletas
+                    </span>
+                  </div>
+                  <div className="space-y-3">
+                    {team.players.map(pid => {
+                      const player = players.find(p => p.id === pid);
+                      return (
+                        <div key={pid} className="flex items-center justify-between group">
+                          <div className="flex items-center gap-2">
+                            <span className={`text-xs font-bold ${player?.isOfficialSetter ? 'text-brand-primary' : 'text-slate-300'}`}>
+                              {player?.name || '...'}
+                            </span>
+                            {player?.isOfficialSetter && (
+                              <span className="text-[7px] font-black bg-brand-primary/20 text-brand-primary px-1.5 py-0.5 rounded-md uppercase border border-brand-primary/30">L</span>
+                            )}
+                          </div>
+                          <span className="text-[8px] font-black text-slate-500 uppercase group-hover:text-slate-400 transition-colors">
+                            ELO {player?.elo}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {previewReserves.length > 0 && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="p-1.5 bg-brand-primary/20 rounded-lg border border-brand-primary/30">
+                  <Users className="w-4 h-4 text-brand-primary" />
+                </div>
+                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Reservas</h3>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {previewReserves.map(pid => {
+                  const player = players.find(p => p.id === pid);
+                  if (!player) return null;
+                  return (
+                    <div key={player.id} className="bg-white/5 px-3 py-1.5 rounded-lg border border-white/10 shadow-sm flex items-center gap-2 group hover:border-white/20 transition-all">
+                      <span className="text-[10px] font-bold text-white uppercase">{player.name}</span>
+                      <div className="flex items-center gap-1 border-l border-white/10 pl-2">
+                        <span className="text-[8px] font-black text-slate-500 uppercase">ELO {player.elo}</span>
+                        {player.isOfficialSetter && (
+                          <span className="text-[8px] font-black text-brand-primary uppercase">L</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Modal de Gerenciamento de Times (Preview) */}
+          <AnimatePresence>
+            {isManagingTeams && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+                <motion.div 
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
+                  className="bg-black border border-white/10 rounded-[3rem] w-full max-w-5xl max-h-[90vh] flex flex-col p-8 shadow-2xl"
+                >
+                  <div className="flex justify-between items-center mb-8 shrink-0">
+                    <h3 className="text-xl font-black text-white uppercase tracking-tighter">Trocar Jogadores</h3>
+                    <button 
+                      onClick={() => {
+                        setIsManagingTeams(false);
+                        setManagingTeamId(null);
+                        setSubstitutingPlayerId(null);
+                      }} 
+                      className="p-2 hover:bg-white/10 rounded-xl transition-all"
+                    >
+                      <X className="w-6 h-6 text-slate-400 hover:text-white" />
+                    </button>
+                  </div>
+
+                  <div className="flex-grow overflow-y-auto pr-2 space-y-8">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                      {previewTeams.map(team => (
+                        <div key={team.id} className="bg-white/5 rounded-3xl p-6 border border-white/10 space-y-4">
+                          <div className="flex justify-between items-center">
+                            <h4 className="text-sm font-black text-white uppercase tracking-widest">{team.name}</h4>
+                            <button 
+                              onClick={() => setManagingTeamId(managingTeamId === team.id ? null : team.id)}
+                              className="p-2 bg-brand-primary/20 rounded-xl shadow-sm hover:bg-brand-primary/30 text-brand-primary transition-all border border-brand-primary/30"
+                            >
+                              <Plus className="w-4 h-4" />
+                            </button>
+                          </div>
+
+                          <div className="space-y-2">
+                            {team.players.map(pid => {
+                              const player = players.find(p => p.id === pid);
+                              return (
+                                <div key={pid} className="flex items-center justify-between bg-slate-800/30 p-3 rounded-xl border border-white/10">
+                                  <span className="text-xs font-bold text-slate-300 truncate">{player?.name || 'Desconhecido'}</span>
+                                  <button 
+                                    onClick={() => {
+                                      setManagingTeamId(team.id);
+                                      setSubstitutingPlayerId(pid);
+                                    }}
+                                    className="p-1.5 text-slate-400 hover:text-brand-primary hover:bg-brand-primary/20 rounded-lg transition-all"
+                                    title="Substituir"
+                                  >
+                                    <Edit2 className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {managingTeamId && (
+                      <div className="bg-brand-primary/20 rounded-3xl p-8 border border-brand-primary/30 space-y-6 animate-in slide-in-from-top-4">
+                        <div className="flex justify-between items-center">
+                          <h4 className="text-sm font-black text-brand-primary uppercase tracking-widest">
+                            {substitutingPlayerId ? 'Substituir por:' : `Adicionar ao ${previewTeams.find(t => t.id === managingTeamId)?.name}:`}
+                          </h4>
+                          <button onClick={() => { setManagingTeamId(null); setSubstitutingPlayerId(null); }} className="text-brand-primary hover:text-brand-primary/80">
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+
+                        {(() => {
+                          const availableForPreview = attendance.filter(p => {
+                            if (p.status === 'inactive') return false;
+                            if (substitutingPlayerId) {
+                              // If substituting, allow selecting anyone else (reserves or other teams)
+                              return p.id !== substitutingPlayerId;
+                            } else {
+                              // If adding, only allow selecting from reserves/unassigned
+                              return !previewTeams.flatMap(t => t.players).includes(p.id);
+                            }
+                          });
+                          return availableForPreview.length > 0 ? (
+                            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                              {availableForPreview.map(player => {
+                                const isReserve = previewReserves.includes(player.id);
+                                return (
+                                  <button
+                                    key={player.id}
+                                    onClick={() => {
+                                      if (substitutingPlayerId) {
+                                        handlePreviewSubstitute(managingTeamId, substitutingPlayerId, player.id);
+                                      } else {
+                                        handlePreviewAddPlayer(managingTeamId, player.id);
+                                      }
+                                      setManagingTeamId(null);
+                                      setSubstitutingPlayerId(null);
+                                    }}
+                                    className={`bg-slate-800 p-4 rounded-2xl border text-center hover:shadow-md transition-all group relative ${
+                                      isReserve ? 'border-emerald-500/50 hover:border-emerald-400' : 'border-brand-primary/50 hover:border-brand-primary'
+                                    }`}
+                                  >
+                                    {isReserve && (
+                                      <span className="absolute -top-2 left-1/2 -translate-x-1/2 bg-emerald-500 text-[6px] text-white px-2 py-0.5 rounded-full uppercase tracking-widest shadow-sm">
+                                        Reserva
+                                      </span>
+                                    )}
+                                    <p className={`text-xs font-black uppercase truncate ${isReserve ? 'text-emerald-400 group-hover:text-emerald-300' : 'text-white group-hover:text-brand-primary'}`}>{player.name}</p>
+                                    <p className="text-[8px] font-bold text-slate-400 uppercase mt-1">ELO {player.elo}</p>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div className="text-center py-8">
+                              <p className="text-sm font-bold text-slate-400 italic">Nenhum jogador disponível na lista de presença.</p>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              </div>
+            )}
+          </AnimatePresence>
+        </div>
+      );
+    }
+
     return (
       <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in duration-500">
         <div className="text-center space-y-4">
@@ -151,9 +523,49 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
           </p>
         </div>
 
-        <div className="bg-slate-900 rounded-[2.5rem] border border-white/10 p-8 sm:p-12 shadow-lg">
+        <div className="bg-black rounded-[2.5rem] border border-white/10 p-8 sm:p-12 shadow-lg">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
             <div className="space-y-8">
+              <div className="space-y-4">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                  <GitBranch className="w-3 h-3" /> Estratégia do Torneio
+                </label>
+                <div className="grid grid-cols-1 gap-3">
+                  {[
+                    { id: TournamentStrategy.ROUND_ROBIN, name: 'Todos contra Todos', icon: LayoutGrid, desc: 'Ideal para poucos times. Todos jogam entre si.' },
+                    { id: TournamentStrategy.GROUPS_AND_KNOCKOUT, name: 'Grupos + Mata-Mata', icon: Trophy, desc: 'Fase classificatória seguida de semifinais/final.' },
+                    { id: TournamentStrategy.DOUBLE_ELIMINATION, name: 'Dupla Eliminação', icon: GitBranch, desc: 'Mata-mata com repescagem. Perdeu duas, está fora.' }
+                  ].map(strat => (
+                    <button
+                      key={strat.id}
+                      onClick={() => setConfig({ ...config, strategy: strat.id })}
+                      className={`flex items-start gap-4 p-4 rounded-2xl border-2 transition-all text-left relative ${
+                        config.strategy === strat.id 
+                          ? 'bg-brand-primary/10 border-brand-primary shadow-lg shadow-brand-primary/5' 
+                          : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:border-white/20'
+                      }`}
+                    >
+                      <div className={`p-2 rounded-xl ${config.strategy === strat.id ? 'bg-brand-primary text-brand-secondary' : 'bg-white/10 text-slate-500'}`}>
+                        <strat.icon className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className={`text-xs font-black uppercase tracking-tight ${config.strategy === strat.id ? 'text-white' : 'text-slate-400'}`}>
+                            {strat.name}
+                          </span>
+                          {strat.id === suggestedStrategy && (
+                            <span className="bg-brand-primary text-[6px] text-brand-secondary px-2 py-0.5 rounded-full uppercase font-black tracking-widest flex items-center gap-1">
+                              <Zap className="w-2 h-2 fill-brand-secondary" /> Recomendado
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[9px] font-medium text-slate-500 mt-1 leading-tight">{strat.desc}</p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div className="space-y-4">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
                   <Users className="w-3 h-3" /> Número de Times
@@ -190,7 +602,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
                 <input 
                   type="number"
                   value={config.pointsPerSet}
-                  onChange={(e) => setConfig({ ...config, pointsPerSet: parseInt(e.target.value) || 15 })}
+                  onChange={(e) => setConfig({ ...config, pointsPerSet: e.target.value === '' ? '' as any : parseInt(e.target.value) })}
                   className="w-full bg-white/10 border border-white/20 rounded-2xl py-4 px-6 font-black text-white focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary transition-all placeholder:text-slate-600"
                 />
               </div>
@@ -202,7 +614,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
                 <input 
                   type="number"
                   value={config.setsPerMatch}
-                  onChange={(e) => setConfig({ ...config, setsPerMatch: parseInt(e.target.value) || 1 })}
+                  onChange={(e) => setConfig({ ...config, setsPerMatch: e.target.value === '' ? '' as any : parseInt(e.target.value) })}
                   className="w-full bg-white/10 border border-white/20 rounded-2xl py-4 px-6 font-black text-white focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary transition-all placeholder:text-slate-600"
                 />
               </div>
@@ -255,18 +667,12 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
               </div>
 
               <button
-                onClick={handleStart}
-                disabled={isStarting || attendance.length < config.numTeams * 6}
+                onClick={handleGeneratePreview}
+                disabled={attendance.length < config.numTeams * 6}
                 className="w-full mt-8 bg-brand-primary text-brand-secondary py-5 rounded-2xl font-black uppercase tracking-widest shadow-xl shadow-brand-primary/20 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 disabled:hover:scale-100 flex items-center justify-center gap-3"
               >
-                {isStarting ? (
-                  <div className="w-5 h-5 border-2 border-brand-secondary border-t-transparent rounded-full animate-spin" />
-                ) : (
-                  <>
-                    <Play className="w-5 h-5 fill-brand-secondary" />
-                    Sortear e Iniciar
-                  </>
-                )}
+                <Users className="w-5 h-5 fill-brand-secondary" />
+                Sortear Times
               </button>
             </div>
           </div>
@@ -337,7 +743,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
             }, 0);
 
             return (
-              <div key={team.id} className="bg-slate-800/30 rounded-[2rem] border border-white/10 p-6 shadow-sm hover:border-white/20 transition-all">
+              <div key={team.id} className="bg-black rounded-[2rem] border border-white/10 p-6 shadow-sm hover:border-white/20 transition-all">
                 <div className="flex items-center justify-between mb-4 pb-3 border-b border-white/10">
                   <div>
                     <h4 className="text-xs font-black text-brand-primary uppercase tracking-widest">
@@ -412,7 +818,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
           <h3 className="text-sm font-black text-white uppercase tracking-widest">Classificação</h3>
         </div>
 
-        <div className="bg-slate-800/30 rounded-[2.5rem] border border-white/10 overflow-hidden shadow-sm">
+        <div className="bg-black rounded-[2.5rem] border border-white/10 overflow-hidden shadow-sm">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-white/5 border-b border-white/10">
@@ -481,7 +887,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
             return (
               <div 
                 key={match.id}
-                className={`relative overflow-hidden bg-slate-800/30 rounded-[2rem] border-2 transition-all duration-300 ${
+                className={`relative overflow-hidden bg-black rounded-[2rem] border-2 transition-all duration-300 ${
                   isCompleted 
                     ? 'border-white/10 shadow-sm' 
                     : 'border-brand-primary/30 shadow-md hover:border-brand-primary/50'
@@ -500,7 +906,15 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
                       <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${
                         isCompleted ? 'bg-white/10 text-slate-400 border border-white/10' : 'bg-brand-primary/20 text-brand-primary border border-brand-primary/30 animate-pulse'
                       }`}>
-                        Jogo {idx + 1}
+                        {match.bracket === 'upper' ? 'Chave Superior' : 
+                         match.bracket === 'lower' ? 'Repescagem' : 
+                         match.bracket === 'final' ? 'Grande Final' : 
+                         match.bracket === 'group' ? 'Fase de Grupos' : 
+                         match.bracket === 'groupA' ? 'Grupo A' : 
+                         match.bracket === 'groupB' ? 'Grupo B' : 
+                         match.bracket === 'semi' ? 'Semifinal' : 
+                         match.bracket === 'knockout' ? 'Mata-Mata' : 
+                         `Jogo ${idx + 1}`}
                       </span>
                       {isCompleted && (
                         <span className="flex items-center gap-1 text-[10px] font-black text-brand-primary uppercase tracking-widest">
@@ -544,14 +958,14 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
                         <p className={`text-xs font-black uppercase text-center mb-1 ${
                           isCompleted && winnerId === teamA?.id ? 'text-brand-primary' : 'text-white'
                         }`}>
-                          {teamA?.name}
+                          {teamA?.name || (match.bracket ? 'A definir' : '...')}
                         </p>
                         {isCompleted && winnerId === teamA?.id && (
                           <Medal className="w-3 h-3 text-brand-primary absolute -right-4 -top-1" />
                         )}
                       </div>
                       <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mb-3">
-                        ELO {teamA?.players.reduce((sum, pid) => sum + (players.find(p => p.id === pid)?.elo || 0), 0)}
+                        {teamA ? `ELO ${teamA.players.reduce((sum, pid) => sum + (players.find(p => p.id === pid)?.elo || 0), 0)}` : '-'}
                       </p>
                       
                       {isCompleted ? (
@@ -587,14 +1001,14 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
                         <p className={`text-xs font-black uppercase text-center mb-1 ${
                           isCompleted && winnerId === teamB?.id ? 'text-brand-primary' : 'text-white'
                         }`}>
-                          {teamB?.name}
+                          {teamB?.name || (match.bracket ? 'A definir' : '...')}
                         </p>
                         {isCompleted && winnerId === teamB?.id && (
                           <Medal className="w-3 h-3 text-brand-primary absolute -right-4 -top-1" />
                         )}
                       </div>
                       <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mb-3">
-                        ELO {teamB?.players.reduce((sum, pid) => sum + (players.find(p => p.id === pid)?.elo || 0), 0)}
+                        {teamB ? `ELO ${teamB.players.reduce((sum, pid) => sum + (players.find(p => p.id === pid)?.elo || 0), 0)}` : '-'}
                       </p>
                       
                       {isCompleted ? (
@@ -684,7 +1098,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
                     </AnimatePresence>
                   </div>
 
-                  {match.status === 'pending' && userRole === 'ADMIN' && (
+                  {match.status === 'pending' && userRole === 'ADMIN' && match.teamAId && match.teamBId && (
                     <button
                       onClick={() => {
                         setRecordingMatch(match);
@@ -719,7 +1133,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
               initial={{ opacity: 0, scale: 0.9, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="relative w-full max-w-lg bg-slate-900 rounded-[2.5rem] shadow-2xl p-8 sm:p-12 overflow-hidden border border-white/10"
+              className="relative w-full max-w-lg bg-black rounded-[2.5rem] shadow-2xl p-8 sm:p-12 overflow-hidden border border-white/10"
             >
               <div className="flex justify-between items-center mb-8">
                 <h3 className="text-xl font-black text-white uppercase tracking-tighter">
@@ -813,7 +1227,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
               initial={{ opacity: 0, scale: 0.9, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="relative w-full max-w-4xl bg-slate-900 rounded-[2.5rem] shadow-2xl p-8 overflow-hidden max-h-[90vh] flex flex-col border border-white/10"
+              className="relative w-full max-w-4xl bg-black rounded-[2.5rem] shadow-2xl p-8 overflow-hidden max-h-[90vh] flex flex-col border border-white/10"
             >
               <div className="flex justify-between items-center mb-8 shrink-0">
                 <h3 className="text-xl font-black text-white uppercase tracking-tighter">Gerenciar Times</h3>

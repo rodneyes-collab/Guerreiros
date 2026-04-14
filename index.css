@@ -1,32 +1,70 @@
 @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700;900&display=swap');
 @import "tailwindcss";
 
-/* Cache bust: 2026-04-04 23:03 */
-
-@theme {
-  --color-brand-primary: #F5C429; /* Ouro */
-  --color-brand-secondary: #1E232D; /* Azul escuro */
-  --color-brand-accent: #4A4F5A; /* Cinza ardósia */
-  --color-brand-light: #000000; /* Preto - Novo Fundo */
-  --color-brand-danger: #ef4444; /* Red 500 */
-  
-  --font-sans: "Montserrat", ui-sans-serif, system-ui, sans-serif;
-}
+/* Cache bust: 2026-04-07 16:51 */
 
 @layer base {
+  :root {
+    --brand-primary: #F5C429;
+    --brand-secondary: #1E232D;
+    --brand-accent: #4A4F5A;
+    --brand-light: #f8fafc;
+    --brand-dark: #000000;
+    
+    --bg-app: var(--brand-dark); /* Default to dark as requested previously */
+    --text-app: #ffffff;
+    --card-bg: #000000;
+    --card-border: rgba(255, 255, 255, 0.1);
+    --input-bg: rgba(255, 255, 255, 0.05);
+    --nav-bg: #1E232D;
+  }
+
+  /* When .dark class is NOT present, we use light theme (since we want dark to be default but support toggle) */
+  /* Actually, let's follow the standard: :root is light, .dark is dark. */
+  :root {
+    --bg-app: #f8fafc;
+    --text-app: #0f172a;
+    --card-bg: #ffffff;
+    --card-border: #e2e8f0;
+    --input-bg: #f1f5f9;
+    --nav-bg: #000000;
+  }
+
+  .dark {
+    --bg-app: #000000;
+    --text-app: #ffffff;
+    --card-bg: #000000;
+    --card-border: rgba(255, 255, 255, 0.1);
+    --input-bg: rgba(255, 255, 255, 0.05);
+    --nav-bg: #000000;
+  }
+
   html {
     -webkit-tap-highlight-color: transparent;
     scroll-behavior: smooth;
   }
   
   body {
-    @apply bg-brand-light text-white antialiased;
+    background-color: var(--bg-app);
+    color: var(--text-app);
+    @apply antialiased transition-colors duration-300;
     font-size: 16px; /* Base size for mobile */
   }
 
   h1, h2, h3, h4 {
     @apply font-black tracking-tighter text-brand-primary uppercase;
   }
+}
+
+@theme {
+  --color-brand-primary: #F5C429; /* Ouro */
+  --color-brand-secondary: #1E232D; /* Azul escuro */
+  --color-brand-accent: #4A4F5A; /* Cinza ardósia */
+  --color-brand-light: var(--bg-app);
+  --color-brand-nav: var(--nav-bg);
+  --color-brand-danger: #ef4444; /* Red 500 */
+  
+  --font-sans: "Montserrat", ui-sans-serif, system-ui, sans-serif;
 }
 
 @layer components {
@@ -39,15 +77,20 @@
   }
 
   .btn-outline {
-    @apply flex items-center justify-center gap-2 px-6 py-3 border-2 border-white/10 text-white font-black rounded-2xl hover:bg-white/5 active:scale-95 transition-all uppercase tracking-widest text-xs;
+    @apply flex items-center justify-center gap-2 px-6 py-3 border-2 border-white/10 text-white dark:text-white font-black rounded-2xl hover:bg-white/5 active:scale-95 transition-all uppercase tracking-widest text-xs;
   }
 
   .card {
-    @apply bg-brand-secondary/40 backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/10 p-6 md:p-10 relative overflow-hidden;
+    background-color: var(--card-bg);
+    border-color: var(--card-border);
+    @apply backdrop-blur-xl rounded-[2.5rem] shadow-2xl p-6 md:p-10 relative overflow-hidden border;
   }
 
   .input-field {
-    @apply w-full px-5 py-4 bg-white/5 border border-white/10 rounded-2xl focus:ring-2 focus:ring-brand-primary focus:border-brand-primary outline-none transition-all text-base text-white placeholder:text-white/20 backdrop-blur-sm;
+    background-color: var(--input-bg);
+    border-color: var(--card-border);
+    color: var(--text-app);
+    @apply w-full px-5 py-4 rounded-2xl focus:ring-2 focus:ring-brand-primary focus:border-brand-primary outline-none transition-all text-base placeholder:text-white/20 backdrop-blur-sm border;
   }
 
   .label {

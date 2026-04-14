@@ -7,8 +7,12 @@ import {
   Users,
   Sparkles,
   ArrowRight,
-  RotateCcw
+  RotateCcw,
+  Clock,
+  PlayCircle
 } from 'lucide-react';
+import { formatTime } from '../utils/helpers';
+import { Player } from '../types';
 
 interface DashboardViewProps {
   generateDailySummary: () => void;
@@ -22,7 +26,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   refreshPlayers,
   userRole
 }) => {
-  const { players, matches, isNarratingSummary, isSyncing } = useStore();
+  const { players: allPlayers, matches, isNarratingSummary, isSyncing, generationResult, attendance, elapsedTime } = useStore();
+  const players = React.useMemo(() => allPlayers.filter(p => p.status !== 'inactive'), [allPlayers]);
   const [startY, setStartY] = React.useState(0);
   const [pullDistance, setPullDistance] = React.useState(0);
   const [isPulling, setIsPulling] = React.useState(false);
@@ -66,6 +71,28 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
+  const getEloChanges = () => {
+    if (!generationResult) return { aWin: 0, aLoss: 0, bWin: 0, bLoss: 0 };
+    const teamA = [generationResult.teamA.setter, ...generationResult.teamA.players].filter(Boolean) as Player[];
+    const teamB = [generationResult.teamB.setter, ...generationResult.teamB.players].filter(Boolean) as Player[];
+    
+    const avgEloA = teamA.reduce((sum, p) => sum + p.elo, 0) / (teamA.length || 1);
+    const avgEloB = teamB.reduce((sum, p) => sum + p.elo, 0) / (teamB.length || 1);
+    
+    const expectedA = 1 / (1 + Math.pow(10, (avgEloB - avgEloA) / 400));
+    const expectedB = 1 - expectedA;
+    
+    const K = 32;
+    return {
+      aWin: Math.round(K * (1 - expectedA)),
+      aLoss: Math.round(K * (0 - expectedA)),
+      bWin: Math.round(K * (1 - expectedB)),
+      bLoss: Math.round(K * (0 - expectedB))
+    };
+  };
+
+  const eloChanges = getEloChanges();
+
   return (
     <div 
       className="relative space-y-10 animate-in fade-in duration-700"
@@ -103,6 +130,78 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </button>
         )}
       </div>
+
+      {/* Partida em Andamento (Visível para Sócios no Dashboard) */}
+      {generationResult && (
+        <div className="bg-brand-light rounded-[2.5rem] border border-brand-primary/20 p-6 sm:p-10 shadow-2xl relative overflow-hidden group animate-in slide-in-from-top-4 duration-700">
+          <div className="absolute inset-0 bg-gradient-to-br from-brand-primary/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-1000" />
+          
+          <div className="flex items-center justify-between mb-8 relative z-10">
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-brand-secondary rounded-2xl border border-brand-primary/20">
+                <Trophy className="w-6 h-6 text-brand-primary" />
+              </div>
+              <div>
+                <h3 className="text-xs font-black text-white uppercase tracking-[0.3em]">Partida em Andamento</h3>
+                <p className="text-[10px] font-black text-brand-primary uppercase tracking-[0.2em] mt-1">Acompanhe em tempo real</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 bg-brand-secondary/50 px-6 py-3 rounded-2xl border border-brand-primary/10">
+              <Clock className="w-4 h-4 text-brand-primary animate-pulse" />
+              <span className="text-sm font-black text-white font-mono tracking-widest">{formatTime(elapsedTime)}</span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 relative z-10">
+            {/* Time A */}
+            <div className="bg-brand-light p-6 rounded-3xl border border-brand-primary/10">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-brand-primary shadow-[0_0_10px_rgba(245,196,41,0.6)] animate-pulse" />
+                  <span className="text-xs font-black text-brand-primary uppercase tracking-widest">Time A</span>
+                </div>
+                <span className="text-[10px] font-black text-brand-primary uppercase tracking-widest italic">ELO: {generationResult.teamA.totalElo}</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {[generationResult.teamA.setter, ...generationResult.teamA.players].filter(Boolean).map((p, idx) => (
+                  <span key={p?.id || idx} className="text-[11px] font-black text-brand-primary uppercase tracking-tight bg-brand-primary/5 px-3 py-1.5 rounded-lg border border-brand-primary/10">
+                    {p?.name}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            {/* Time B */}
+            <div className="bg-brand-light p-6 rounded-3xl border border-white/5">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-white shadow-[0_0_10px_rgba(255,255,255,0.6)] animate-pulse" />
+                  <span className="text-xs font-black text-white uppercase tracking-widest">Time B</span>
+                </div>
+                <span className="text-[10px] font-black text-white/80 uppercase tracking-widest italic">ELO: {generationResult.teamB.totalElo}</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {[generationResult.teamB.setter, ...generationResult.teamB.players].filter(Boolean).map((p, idx) => (
+                  <span key={p?.id || idx} className="text-[11px] font-black text-white/90 uppercase tracking-tight bg-white/5 px-3 py-1.5 rounded-lg border border-white/5">
+                    {p?.name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-8 pt-8 border-t border-white/5 flex flex-col sm:flex-row items-center gap-4 sm:gap-8 text-[10px] font-black uppercase tracking-widest relative z-10">
+            <div className="flex items-center gap-4 w-full sm:w-auto">
+              <span className="text-green-400 bg-green-400/10 px-4 py-2 rounded-xl border border-green-400/20 whitespace-nowrap">Vitória: +{eloChanges.aWin} ELO</span>
+              <span className="text-red-400 bg-red-400/10 px-4 py-2 rounded-xl border border-red-400/20 whitespace-nowrap">Derrota: {eloChanges.aLoss} ELO</span>
+            </div>
+            <div className="flex items-center gap-2 text-white/60 bg-white/5 px-4 py-2 rounded-xl border border-white/10 w-full sm:w-auto justify-center">
+              <Users className="w-4 h-4" />
+              <span>{attendance.length} Sócios Presentes</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <div className="bg-brand-secondary/30 backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/10 shadow-xl relative overflow-hidden group hover:border-brand-primary/30 transition-all">

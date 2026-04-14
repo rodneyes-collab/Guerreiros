@@ -186,6 +186,7 @@ export const useAuth = () => {
         (simpleEmail && p.email?.trim().toLowerCase() === simpleEmail.trim().toLowerCase())
       );
       if (player) {
+        console.log('useAuth: Current player found!', player.name);
         setCurrentPlayer(player);
         if (!player.uid && user.uid) {
           const playerRef = doc(db, 'players', player.id);

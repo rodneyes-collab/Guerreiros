@@ -87,18 +87,6 @@ export const useFirestoreSync = () => {
             await setDoc(monthlyUsageRef, { reads: 15, writes: 0, aiCalls: 0, lastUpdate: date });
           }
         }
-
-        // Increment per-player usage
-        if (currentPlayer) {
-          const playerRef = doc(db, 'players', currentPlayer.id);
-          const lastUpdate = currentPlayer.lastReadUpdate || '';
-          let currentReads = (lastUpdate === date) ? (currentPlayer.reads || 0) : 0;
-          
-          await updateDoc(playerRef, {
-            reads: currentReads + 15,
-            lastReadUpdate: date
-          });
-        }
       } catch (e) {
         console.warn('Usage tracking skipped (likely permission or initial load):', e);
       }

@@ -23,7 +23,8 @@ interface HistoryViewProps {
 }
 
 export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch }) => {
-  const { matches, players, userRole } = useStore();
+  const { matches, players: allPlayers, userRole } = useStore();
+  const players = React.useMemo(() => allPlayers.filter(p => p.status !== 'inactive'), [allPlayers]);
   const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterPlayerId, setFilterPlayerId] = useState<string>('');
@@ -106,7 +107,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch }) => {
           )}
         </div>
 
-        <div className="bg-brand-secondary/30 backdrop-blur-xl rounded-[2.5rem] border border-white/10 shadow-xl overflow-hidden">
+        <div className="bg-brand-light backdrop-blur-xl rounded-[2.5rem] border border-white/10 shadow-xl overflow-hidden">
           <div className="bg-white/5 p-8 text-white relative overflow-hidden border-b border-white/10">
             <div className="absolute top-0 right-0 p-12 opacity-10">
               <Trophy className="w-32 h-32" />
@@ -261,7 +262,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch }) => {
         </div>
 
         {isFilterExpanded && (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-6 bg-brand-secondary/30 backdrop-blur-xl rounded-[2rem] border border-white/10 animate-in slide-in-from-top duration-300">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-6 bg-brand-light backdrop-blur-xl rounded-[2rem] border border-white/10 animate-in slide-in-from-top duration-300">
             <div className="space-y-2">
               <label className="text-[10px] font-black text-white/40 uppercase tracking-widest px-1">Filtrar por Jogador</label>
               <select 
@@ -317,7 +318,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch }) => {
             <button
               key={match.id}
               onClick={() => setSelectedMatch(match)}
-              className="group bg-brand-secondary p-6 rounded-[2.5rem] border border-white/10 hover:border-brand-primary/50 hover:shadow-xl hover:shadow-brand-primary/5 transition-all text-left flex flex-col md:flex-row items-center justify-between gap-6"
+              className="group bg-brand-light p-6 rounded-[2.5rem] border border-white/10 hover:border-brand-primary/50 hover:shadow-xl hover:shadow-brand-primary/5 transition-all text-left flex flex-col md:flex-row items-center justify-between gap-6"
             >
               <div className="flex items-center gap-6 w-full md:w-auto">
                 <div className="w-16 h-16 rounded-2xl bg-white/5 flex flex-col items-center justify-center border border-white/10 group-hover:bg-brand-primary/10 group-hover:border-brand-primary/20 transition-colors">
@@ -372,7 +373,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch }) => {
             </button>
           ))
         ) : (
-          <div className="h-64 flex flex-col items-center justify-center text-center space-y-4 bg-brand-secondary/30 backdrop-blur-xl rounded-[3rem] border-4 border-dashed border-white/10">
+          <div className="h-64 flex flex-col items-center justify-center text-center space-y-4 bg-brand-light backdrop-blur-xl rounded-[3rem] border-4 border-dashed border-white/10">
             <div className="bg-white/5 border border-white/10 p-6 rounded-full">
               <History className="w-12 h-12 text-white/20" />
             </div>

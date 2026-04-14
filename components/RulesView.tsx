@@ -23,7 +23,7 @@ export const RulesView: React.FC = () => {
       </div>
 
       <div className="grid gap-8">
-        <section className="bg-brand-secondary/30 backdrop-blur-xl p-10 rounded-[3rem] border border-white/10 shadow-sm space-y-8 relative overflow-hidden">
+        <section className="bg-black backdrop-blur-xl p-10 rounded-[3rem] border border-white/10 shadow-sm space-y-8 relative overflow-hidden">
           <div className="absolute top-0 right-0 p-8 opacity-5">
             <Scale className="w-40 h-40 text-white" />
           </div>
@@ -37,11 +37,11 @@ export const RulesView: React.FC = () => {
 
           <div className="grid gap-8">
             {[
-              { title: "Abertura da Lista", desc: "A lista de presença é organizada pelo admin e será iniciada no momento que tenha pelo menos 12 jogadores que chegaram ou às 20:00." },
-              { title: "Gestão de Fila de Espera", desc: "O sistema mantém uma fila dinâmica. Jogadores que chegam após o início da primeira partida entram no final da lista de espera, respeitando o rodízio de quem ainda não jogou." }
+              { title: "Abertura da Lista", desc: "A lista de presença é aberta pelo administrador quando chegarem pelo menos 12 jogadores ou às 20:00 em ponto." },
+              { title: "Fila de Espera", desc: "Quem chegar depois do início do primeiro jogo entra no fim da fila. O sistema sempre prioriza quem ainda não jogou no dia." }
             ].map((item, i) => (
               <div key={i} className="flex gap-6 group">
-                <span className="text-4xl font-black text-white/10 group-hover:text-brand-primary/30 transition-colors italic">{String(i+1).padStart(2, '0')}</span>
+                <span className="text-4xl font-black text-white/20 group-hover:text-brand-primary/50 transition-colors italic">{String(i+1).padStart(2, '0')}</span>
                 <div className="space-y-1">
                   <h4 className="font-black text-white uppercase text-sm tracking-widest">{item.title}</h4>
                   <p className="text-white/60 leading-relaxed font-medium">{item.desc}</p>
@@ -51,7 +51,7 @@ export const RulesView: React.FC = () => {
           </div>
         </section>
 
-        <section className="bg-brand-secondary/30 backdrop-blur-xl p-10 rounded-[3rem] border border-white/10 shadow-sm space-y-8 relative overflow-hidden">
+        <section className="bg-black backdrop-blur-xl p-10 rounded-[3rem] border border-white/10 shadow-sm space-y-8 relative overflow-hidden">
           <div className="flex items-center gap-4 text-brand-primary">
             <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center border border-white/10">
               <ShieldCheck className="w-6 h-6" />
@@ -61,14 +61,14 @@ export const RulesView: React.FC = () => {
 
           <div className="grid gap-8">
             {[
-              { title: "1. Fila de Prioridade (Quem Joga)", desc: "O sistema seleciona 12 jogadores para cada partida. A prioridade é definida nesta ordem: 1º Maior número de vezes consecutivas no banco; 2º Menor número de partidas jogadas no dia; 3º Não jogou a última partida; 4º Ordem de chegada no ginásio." },
-              { title: "2. Regra dos Levantadores Oficiais", desc: "O sistema garante o limite de 2 levantadores oficiais por partida (1 por time). Se houver mais de 2, os excedentes vão para o banco, priorizando a entrada de não-levantadores. Exceção: Se faltar jogadores para completar os 12, os levantadores excedentes entram improvisados em outras posições." },
-              { title: "3. Distribuição Inicial (Draft Guloso)", desc: "Os jogadores selecionados (excluindo os 2 levantadores) são separados por gênero e ordenados do maior ELO (nível técnico) para o menor. O sistema distribui os jogadores um a um, alocando-os no time que tiver a menor soma de ELO naquele momento, respeitando o limite de 6 jogadores por time." },
-              { title: "4. Refinamento de Equilíbrio (Trocas)", desc: "Após a distribuição inicial, o sistema realiza trocas (swaps) entre jogadores do Time A e Time B. Uma troca só é permitida entre jogadores do mesmo gênero. A troca só é efetivada se a diferença total de ELO entre os dois times diminuir, buscando deixar a diferença o mais próxima possível de zero." },
-              { title: "5. Posicionamento em Quadra", desc: "O Levantador oficial (ou o jogador de maior ELO improvisado como levantador) é fixado na Posição 3 (meio de rede). Os demais jogadores são distribuídos nas posições 4, 2, 5, 6 e 1, ordenados do maior ELO para o menor, garantindo a melhor distribuição de força na rede e na defesa." }
+              { title: "1. Fila de Prioridade (Quem Joga)", desc: "O sistema seleciona 12 jogadores para cada partida seguindo esta ordem: 1º Maior tempo consecutivo no banco; 2º Menor número de partidas jogadas no dia; 3º Não ter jogado a última partida; 4º Ordem de chegada no ginásio." },
+              { title: "2. Regra dos Levantadores", desc: "Cada jogo tem apenas 2 levantadores (um para cada time). Se houver mais levantadores na fila, eles esperam no banco para dar lugar a outros jogadores. Se faltar gente para completar os 12, os levantadores extras jogam em outras posições." },
+              { title: "3. Distribuição de Equipes", desc: "Os jogadores são escolhidos por gênero e nível técnico (ELO). Primeiro, o sistema organiza os homens: o de maior ELO vai para o Time A, o segundo para o Time B, e assim por diante, alternando entre as equipes. Depois, o mesmo é feito com as mulheres, garantindo que os times fiquem equilibrados." },
+              { title: "4. Refinamento de Equilíbrio (Trocas)", desc: "Após a distribuição inicial, o sistema realiza trocas (swaps) entre jogadores do mesmo gênero. A troca só é efetivada se a diferença total de ELO entre os times diminuir, buscando o máximo equilíbrio técnico." },
+              { title: "5. Posicionamento Estratégico", desc: "O Levantador oficial é fixado na Posição 3 (meio de rede). Os demais jogadores são distribuídos nas posições 4, 2, 5, 6 e 1, ordenados por ELO, garantindo uma distribuição técnica equilibrada entre rede e defesa." }
             ].map((item, i) => (
               <div key={i} className="flex gap-6 group">
-                <span className="text-4xl font-black text-white/10 group-hover:text-brand-primary/30 transition-colors italic">{String(i+3).padStart(2, '0')}</span>
+                <span className="text-4xl font-black text-white/20 group-hover:text-brand-primary/50 transition-colors italic">{String(i+3).padStart(2, '0')}</span>
                 <div className="space-y-1">
                   <h4 className="font-black text-white uppercase text-sm tracking-widest">{item.title}</h4>
                   <p className="text-white/60 leading-relaxed font-medium">{item.desc}</p>
@@ -78,7 +78,7 @@ export const RulesView: React.FC = () => {
           </div>
         </section>
 
-        <section className="bg-brand-secondary/30 backdrop-blur-xl p-10 rounded-[3rem] border border-white/10 shadow-sm space-y-8 relative overflow-hidden">
+        <section className="bg-black backdrop-blur-xl p-10 rounded-[3rem] border border-white/10 shadow-sm space-y-8 relative overflow-hidden">
           <div className="flex items-center gap-4 text-brand-primary">
             <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center border border-white/10">
               <Trophy className="w-6 h-6" />
@@ -88,12 +88,12 @@ export const RulesView: React.FC = () => {
 
           <div className="grid gap-8">
             {[
-              { title: "Cálculo de Vitória/Derrota", desc: "O ganho ou perda de ELO é calculado com base na probabilidade de vitória. Vencer um time tecnicamente superior rende mais pontos do que vencer um time inferior." },
-              { title: "Duração das Partidas", desc: "Sets oficiais são disputados até 15 pontos. Não há tempo limite para a duração dos sets." },
-              { title: "Bônus de Performance", desc: "Vitórias consecutivas (streak) ativam um multiplicador de ELO, incentivando a consistência. O multiplicador reseta após a primeira derrota ou ao final da sessão diária." }
+              { title: "Cálculo de Pontos (ELO)", desc: "Você ganha ou perde pontos dependendo da força dos times. Ganhar de um time forte dá mais pontos. Perder para um time mais fraco tira mais pontos." },
+              { title: "Duração dos Jogos", desc: "Os sets são disputados até 15 pontos e não têm tempo limite para acabar. O sistema marca a duração de cada jogo para identificar o jogador mais eficiente (aquele que vence suas partidas em menos tempo)." },
+              { title: "Bônus de Vitórias", desc: "A cada vitória consecutiva no dia, você recebe um bônus progressivo: +2 pontos na 2ª vitória, +4 na 3ª, +6 na 4ª e +8 da 5ª em diante. O bônus é resetado em caso de derrota ou ao fim da sessão." }
             ].map((item, i) => (
               <div key={i} className="flex gap-6 group">
-                <span className="text-4xl font-black text-white/10 group-hover:text-brand-primary/30 transition-colors italic">{String(i+7).padStart(2, '0')}</span>
+                <span className="text-4xl font-black text-white/20 group-hover:text-brand-primary/50 transition-colors italic">{String(i+8).padStart(2, '0')}</span>
                 <div className="space-y-1">
                   <h4 className="font-black text-white uppercase text-sm tracking-widest">{item.title}</h4>
                   <p className="text-white/60 leading-relaxed font-medium">{item.desc}</p>
@@ -103,7 +103,7 @@ export const RulesView: React.FC = () => {
           </div>
         </section>
 
-        <section className="bg-brand-secondary/30 backdrop-blur-xl p-10 rounded-[3rem] border border-white/10 shadow-sm space-y-8 relative overflow-hidden">
+        <section className="bg-black backdrop-blur-xl p-10 rounded-[3rem] border border-white/10 shadow-sm space-y-8 relative overflow-hidden">
           <div className="flex items-center gap-4 text-brand-primary">
             <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center border border-white/10">
               <CreditCard className="w-6 h-6" />
@@ -113,11 +113,10 @@ export const RulesView: React.FC = () => {
 
           <div className="grid gap-8">
             {[
-              { title: "Vencimento da Mensalidade", desc: "As mensalidades vencem no dia 05 de cada mês. O pagamento em dia garante a manutenção do status 'Ativo' e acesso total às funcionalidades do aplicativo." },
-              { title: "Taxa de Manutenção", desc: "Sócios que optarem pelo plano trimestral ou semestral possuem descontos progressivos. A taxa cobre aluguel da quadra, bolas novas a cada 3 meses e eventos do clube." }
+              { title: "Pagamento", desc: "A mensalidade vence todo dia 05. Pagar em dia garante que você continue 'Ativo' e possa usar todas as funções do aplicativo." }
             ].map((item, i) => (
               <div key={i} className="flex gap-6 group">
-                <span className="text-4xl font-black text-white/10 group-hover:text-brand-primary/30 transition-colors italic">{String(i+10).padStart(2, '0')}</span>
+                <span className="text-4xl font-black text-white/20 group-hover:text-brand-primary/50 transition-colors italic">{String(i+11).padStart(2, '0')}</span>
                 <div className="space-y-1">
                   <h4 className="font-black text-white uppercase text-sm tracking-widest">{item.title}</h4>
                   <p className="text-white/60 leading-relaxed font-medium">{item.desc}</p>
@@ -127,7 +126,7 @@ export const RulesView: React.FC = () => {
           </div>
         </section>
 
-        <section className="bg-brand-secondary/30 backdrop-blur-xl p-10 rounded-[3rem] border border-white/10 shadow-sm space-y-8 relative overflow-hidden">
+        <section className="bg-black backdrop-blur-xl p-10 rounded-[3rem] border border-white/10 shadow-sm space-y-8 relative overflow-hidden">
           <div className="flex items-center gap-4 text-brand-primary">
             <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center border border-white/10">
               <Dribbble className="w-6 h-6" />
@@ -137,11 +136,34 @@ export const RulesView: React.FC = () => {
 
           <div className="grid gap-8">
             {[
-              { title: "Aquecimento Prévio", desc: "O aquecimento com bola deve ser feito nas áreas laterais para não atrasar o início dos sets em quadra. O tempo de rede para aquecimento oficial é de apenas 5 minutos." },
+              { title: "Aquecimento e Prevenção", desc: "Sugerimos que todos façam alongamentos e exercícios de aquecimento antes de jogar para evitar lesões. Não é permitido o aquecimento com bola na quadra para não atrasar o início das partidas." },
               { title: "Cuidado com as Bolas", desc: "As bolas de jogo são exclusivas para uso em quadra. É proibido chutar as bolas ou utilizá-las em superfícies abrasivas fora da área de jogo." }
             ].map((item, i) => (
               <div key={i} className="flex gap-6 group">
-                <span className="text-4xl font-black text-white/10 group-hover:text-brand-primary/30 transition-colors italic">{String(i+12).padStart(2, '0')}</span>
+                <span className="text-4xl font-black text-white/20 group-hover:text-brand-primary/50 transition-colors italic">{String(i+12).padStart(2, '0')}</span>
+                <div className="space-y-1">
+                  <h4 className="font-black text-white uppercase text-sm tracking-widest">{item.title}</h4>
+                  <p className="text-white/60 leading-relaxed font-medium">{item.desc}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="bg-black backdrop-blur-xl p-10 rounded-[3rem] border border-white/10 shadow-sm space-y-8 relative overflow-hidden">
+          <div className="flex items-center gap-4 text-brand-primary">
+            <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center border border-white/10">
+              <Users className="w-6 h-6" />
+            </div>
+            <h3 className="text-2xl font-black uppercase tracking-tight text-white">Uso Consciente do App</h3>
+          </div>
+
+          <div className="grid gap-8">
+            {[
+              { title: "Responsabilidade Coletiva", desc: "Este aplicativo foi desenvolvido para facilitar a organização e promover a integração do grupo. Use-o com responsabilidade: respeite a fila de presença, aceite as convocações do sistema e utilize as ferramentas de feedback de forma construtiva. O objetivo principal é sempre a diversão e o fair play." }
+            ].map((item, i) => (
+              <div key={i} className="flex gap-6 group">
+                <span className="text-4xl font-black text-white/20 group-hover:text-brand-primary/50 transition-colors italic">{String(i+14).padStart(2, '0')}</span>
                 <div className="space-y-1">
                   <h4 className="font-black text-white uppercase text-sm tracking-widest">{item.title}</h4>
                   <p className="text-white/60 leading-relaxed font-medium">{item.desc}</p>
@@ -152,7 +174,7 @@ export const RulesView: React.FC = () => {
         </section>
 
         <div className="grid md:grid-cols-2 gap-8">
-          <section className="bg-emerald-500/10 p-10 rounded-[3rem] border border-emerald-500/20 space-y-6">
+          <section className="bg-black p-10 rounded-[3rem] border border-emerald-500/20 space-y-6">
             <div className="flex items-center gap-4 text-emerald-500">
               <CheckCircle2 className="w-8 h-8" />
               <h3 className="text-xl font-black uppercase tracking-tight">Conduta Esperada</h3>
@@ -160,7 +182,7 @@ export const RulesView: React.FC = () => {
             <ul className="space-y-4">
               {[
                 "Respeito absoluto às decisões do sistema de sorteio e arbitragem",
-                "Fair play: acusar toques na rede e bolas fora sem necessidade de VAR",
+                "Fair play: acusar toques na rede e bolas fora",
                 "Espírito esportivo: incentivar colegas de todos os níveis técnicos",
                 "Zelo pelo material (bolas, antenas, rede) e limpeza da quadra",
                 "Pontualidade rigorosa nos horários de início e trocas de set",
@@ -174,7 +196,7 @@ export const RulesView: React.FC = () => {
             </ul>
           </section>
 
-          <section className="bg-rose-500/10 p-10 rounded-[3rem] border border-rose-500/20 space-y-6">
+          <section className="bg-black p-10 rounded-[3rem] border border-rose-500/20 space-y-6">
             <div className="flex items-center gap-4 text-rose-500">
               <AlertCircle className="w-8 h-8" />
               <h3 className="text-xl font-black uppercase tracking-tight">Infrações e Penalidades</h3>

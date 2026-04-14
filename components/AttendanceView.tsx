@@ -45,7 +45,9 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
   userRole,
   setViewMode
 }) => {
-  const { attendance, preConfirmations, isSyncing } = useStore();
+  const { attendance: allAttendance, preConfirmations: allPreConfirmations, isSyncing } = useStore();
+  const attendance = React.useMemo(() => allAttendance.filter(p => p.status !== 'inactive'), [allAttendance]);
+  const preConfirmations = React.useMemo(() => allPreConfirmations.filter(p => p.status !== 'inactive'), [allPreConfirmations]);
   const [startY, setStartY] = React.useState(0);
   const [pullDistance, setPullDistance] = React.useState(0);
   const [isPulling, setIsPulling] = React.useState(false);
@@ -111,12 +113,12 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
           )}
 
           <div className="lg:col-span-4 space-y-8">
-            <section className="bg-brand-secondary/30 backdrop-blur-xl rounded-[2.5rem] border border-white/10 shadow-2xl overflow-hidden group">
+            <section className="bg-brand-light rounded-[2.5rem] border border-white/10 shadow-2xl overflow-hidden group">
               <div className="p-8 bg-white/5 border-b border-white/10 flex items-center justify-between">
                 <div>
                   <h2 className="font-black text-white uppercase text-lg tracking-tighter flex items-center gap-3">
                     <ClipboardCheck className="w-7 h-7 text-brand-primary" />
-                    Lista de Elite
+                    Lista de Presença
                   </h2>
                   <p className="text-[10px] text-brand-primary font-black uppercase tracking-widest mt-1.5">{attendance.length} Guerreiros Confirmados</p>
                 </div>
@@ -164,34 +166,37 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                       const fullPlayer = availablePlayers.find(p => p.id === player.id);
                       const displayName = player.name || fullPlayer?.name || "Sócio sem nome";
                       
+                      const generationResult = useStore.getState().generationResult;
+                      const isCurrentlyBenched = generationResult?.remainingPlayers?.some(rp => rp.id === player.id);
+                      const displayBenchedCount = (player.consecutiveBenched || 0) + (isCurrentlyBenched ? 1 : 0);
+                      
                       return (
-                        <div key={player.id || `attendance-${idx}`} className={`flex items-center justify-between p-6 rounded-[2rem] border transition-all group shadow-sm hover:shadow-xl hover:-translate-y-1 bg-white/5 border-white/10 hover:border-brand-primary/50`}>
-                          <div className="flex items-center gap-5">
-                            <span className="text-2xl font-black text-brand-primary/40 w-10 italic group-hover:text-brand-primary transition-colors">#{player.arrivalOrder}</span>
+                        <div key={player.id || `attendance-${idx}`} className={`flex items-center justify-between p-4 rounded-2xl border transition-all group shadow-sm hover:shadow-xl hover:-translate-y-0.5 bg-brand-light border-white/10 hover:border-brand-primary/50`}>
+                          <div className="flex items-center gap-4">
+                            <span className="text-xl font-black text-brand-primary/40 w-8 italic group-hover:text-brand-primary transition-colors">#{player.arrivalOrder}</span>
                             <div>
-                              <p className={`text-2xl font-black flex items-center gap-3 leading-none uppercase tracking-tight ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
+                              <p className={`text-lg font-black flex items-center gap-2 leading-none uppercase tracking-tight ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
                                 {displayName}
-                                {player.isOfficialSetter && <span className="text-[10px] font-black uppercase bg-brand-primary/10 text-brand-primary px-3 py-1 rounded-full border border-brand-primary/20">Levantador</span>}
+                                {player.timestamp && (
+                                  <span className="text-[10px] text-white/30 font-medium lowercase tracking-normal">
+                                    {new Date(player.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                  </span>
+                                )}
+                                {player.isOfficialSetter && <span className="text-[8px] font-black uppercase bg-brand-primary/10 text-brand-primary px-2 py-0.5 rounded-full border border-brand-primary/20">Levantador</span>}
+                                {displayBenchedCount > 0 && (
+                                  <span className="text-[8px] font-black uppercase bg-brand-primary/10 text-brand-primary px-2 py-0.5 rounded-full border border-brand-primary/20 animate-pulse">
+                                    {displayBenchedCount} fora
+                                  </span>
+                                )}
                               </p>
-                              <div className="flex flex-wrap items-center gap-3 mt-3">
-                                <span className="text-xs font-black text-brand-primary bg-brand-primary/10 px-3 py-1 rounded-lg border border-brand-primary/20">
-                                  {translateGender(player.gender)}
-                                </span>
-                                <span className="text-xs font-black text-brand-primary bg-brand-primary/10 px-3 py-1 rounded-lg border border-brand-primary/20">
-                                  {player.dailyWins}V - {player.dailyLosses}D
-                                </span>
-                                <span className="text-[10px] text-white/60 font-black uppercase tracking-[0.2em]">ELO {Math.round(player.elo)}</span>
-                                {player.playedLastMatch && <span className="text-[10px] font-black uppercase bg-brand-primary/10 text-brand-primary px-3 py-1 rounded-full border border-brand-primary/20">Jogou Última</span>}
-                                {(player.consecutiveBenched || 0) > 0 && <span className="text-[10px] font-black uppercase bg-white/10 text-white/80 px-3 py-1 rounded-full border border-white/20">Banco: {player.consecutiveBenched}</span>}
-                              </div>
                             </div>
                           </div>
                           {userRole === 'ADMIN' && (
                             <button 
                               onClick={() => removeAttendance(player.id)} 
-                              className="p-3 text-white/20 hover:text-red-400 hover:bg-red-500/10 rounded-xl transition-all"
+                              className="p-2 text-white/20 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all"
                             >
-                              <X className="w-8 h-8" />
+                              <X className="w-6 h-6" />
                             </button>
                           )}
                         </div>
@@ -199,7 +204,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                     })
                 )}
               </div>
-              <div className="p-8 bg-black/20 border-t border-white/10">
+              <div className="p-8 bg-brand-primary/5 border-t border-white/10">
                 <p className="text-xs text-white/40 font-black uppercase text-center italic leading-relaxed tracking-widest">
                   {attendance.length < 12 
                     ? `Mínimo de 12 guerreiros para escalar (Faltam ${12 - attendance.length})` 
@@ -210,7 +215,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
           </div>
 
           <div className="lg:col-span-8 space-y-8">
-            <div className="bg-brand-secondary/30 backdrop-blur-xl p-10 rounded-[2.5rem] border border-white/10 shadow-2xl">
+            <div className="bg-brand-light backdrop-blur-xl p-10 rounded-[2.5rem] border border-white/10 shadow-2xl">
               <div className="flex items-center justify-between mb-10">
                 <div className="space-y-2">
                   <h3 className="text-3xl font-black text-white uppercase tracking-tighter">Guerreiros Disponíveis</h3>
@@ -237,25 +242,22 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                     <p className="text-white/60 text-xl font-black uppercase tracking-tighter italic">Todos os guerreiros já estão em campo!</p>
                   </div>
                 ) : (
-                  (availablePlayers || [])
+                    (availablePlayers || [])
                     .filter(p => !attendance.some(a => a.id === p.id))
                     .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
                     .map((player, idx) => (
                       <button 
                         key={player.id || `available-${idx}`} 
                         onClick={() => registerAttendance(player)} 
-                        className={`flex items-center justify-between p-8 rounded-[2rem] border hover:shadow-2xl transition-all text-left group hover:-translate-y-1 bg-white/5 border-white/10 hover:border-brand-primary/50`}
+                        className={`flex items-center justify-between p-4 rounded-2xl border hover:shadow-2xl transition-all text-left group hover:-translate-y-0.5 bg-brand-light border-white/10 hover:border-brand-primary/50`}
                       >
-                        <div className="space-y-3">
-                          <p className={`text-2xl font-black flex items-center gap-3 leading-none uppercase tracking-tight ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
+                        <div className="space-y-1">
+                          <p className={`text-lg font-black flex items-center gap-2 leading-none uppercase tracking-tight ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
                             {player.name || "Sócio sem nome"}
-                            {player.isOfficialSetter && <span className="text-[10px] font-black uppercase bg-brand-primary/10 text-brand-primary px-3 py-1 rounded-full border border-brand-primary/20">Levantador</span>}
-                          </p>
-                          <p className="text-[10px] text-white/60 font-black uppercase tracking-[0.2em]">
-                            {translateGender(player.gender)} • Jogos Hoje: <span className="text-brand-primary">{player.dailyMatches}</span> • <span className="text-white font-black">{Math.round(player.elo)} ELO</span>
+                            {player.isOfficialSetter && <span className="text-[8px] font-black uppercase bg-brand-primary/10 text-brand-primary px-2 py-0.5 rounded-full border border-brand-primary/20">Levantador</span>}
                           </p>
                         </div>
-                        <div className="p-4 bg-brand-primary/10 text-brand-primary group-hover:bg-brand-primary group-hover:text-brand-secondary rounded-2xl shadow-xl transition-all border border-brand-primary/20 group-hover:scale-110"><Plus className="w-8 h-8" /></div>
+                        <div className="p-2 bg-brand-primary/10 text-brand-primary group-hover:bg-brand-primary group-hover:text-brand-secondary rounded-xl shadow-xl transition-all border border-brand-primary/20 group-hover:scale-110"><Plus className="w-5 h-5" /></div>
                       </button>
                     ))
                 )}
@@ -281,8 +283,8 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
             </p>
           </div>
           <div className="flex justify-center gap-6">
-            <div className="px-12 py-6 bg-brand-secondary/30 backdrop-blur-xl rounded-[2rem] shadow-2xl border border-white/10">
-              <p className="text-[10px] font-black text-brand-primary uppercase tracking-[0.3em] mb-2">Próxima Batalha</p>
+            <div className="px-12 py-6 bg-brand-light backdrop-blur-xl rounded-[2rem] shadow-2xl border border-white/10">
+              <p className="text-[10px] font-black text-brand-primary uppercase tracking-[0.3em] mb-2">Próxima Partida</p>
               <p className="text-2xl font-black text-white uppercase tracking-tighter">Quinta-feira</p>
             </div>
           </div>

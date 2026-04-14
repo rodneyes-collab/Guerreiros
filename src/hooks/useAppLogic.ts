@@ -20,11 +20,12 @@ import {
   handleFirestoreError,
   trackUsage,
   trackAIUsage,
-  getFirestoreDateKey
+  getFirestoreDateKey,
+  serverTimestamp
 } from '../../firebase';
 import { useStore } from '../../store';
 import { cleanObject, generateUUID } from '../../utils/helpers';
-import { Player, Team, Match, Gender, Tournament, TournamentTeam, TournamentMatch, SetScore } from '../../types';
+import { Player, Team, Match, Gender, Tournament, TournamentTeam, TournamentMatch, SetScore, SystemMetadata, TournamentStrategy } from '../../types';
 import { generateTeams, generateTournamentTeams } from '../../utils/teamLogic';
 import { playerSchema, matchSchema } from '../lib/schemas';
 
@@ -204,6 +205,28 @@ export const useAppLogic = () => {
       // Validate match data
       matchSchema.parse(match);
       
+      // Dynamic ELO calculation based on team averages
+      const teamA = [generationResult.teamA.setter, ...generationResult.teamA.players].filter(Boolean) as Player[];
+      const teamB = [generationResult.teamB.setter, ...generationResult.teamB.players].filter(Boolean) as Player[];
+      
+      const avgEloA = teamA.reduce((sum, p) => sum + p.elo, 0) / teamA.length;
+      const avgEloB = teamB.reduce((sum, p) => sum + p.elo, 0) / teamB.length;
+      
+      // Expected score for Team A
+      const expectedA = 1 / (1 + Math.pow(10, (avgEloB - avgEloA) / 400));
+      const actualA = winner === 'A' ? 1 : 0;
+      
+      // Base ELO change (K-factor)
+      const K = 32;
+      const baseEloChange = Math.round(K * (actualA - expectedA));
+      
+      // Bonus for score difference
+      const scoreDiff = Math.abs(finalScoreA - finalScoreB);
+      const bonus = Math.floor(scoreDiff / 5); // 1 point for every 5 points difference
+      
+      const finalEloChangeA = baseEloChange + (winner === 'A' ? bonus : -bonus);
+      const finalEloChangeB = -baseEloChange + (winner === 'B' ? bonus : -bonus);
+      
       batch.set(doc(db, 'matches', matchId), cleanObject(match));
 
       // Update system metadata ONCE in the batch
@@ -215,9 +238,23 @@ export const useAppLogic = () => {
       }, { merge: true });
       
       // Atualizar ELO e estatísticas
-      const updatePlayerStats = (p: Player, isWinner: boolean) => {
-        const eloChange = isWinner ? 25 : -20;
-        const newElo = Math.max(800, p.elo + eloChange);
+      const updatePlayerStats = (p: Player, isTeamA: boolean) => {
+        const baseChange = isTeamA ? finalEloChangeA : finalEloChangeB;
+        const isWinner = (isTeamA && winner === 'A') || (!isTeamA && winner === 'B');
+        
+        // Bônus de Sequência (Streak)
+        const dailyResults = p.dailyResults || [];
+        let currentStreak = 0;
+        for (let i = dailyResults.length - 1; i >= 0; i--) {
+          if (dailyResults[i] === 'V') currentStreak++;
+          else break;
+        }
+        
+        // +2 por vitória na sequência (2ª=2, 3ª=4, 4ª=6, 5ª+=8)
+        const streakBonus = isWinner ? Math.min(8, currentStreak * 2) : 0;
+        const totalEloChange = baseChange + streakBonus;
+        
+        const newElo = Math.max(800, p.elo + totalEloChange);
         const playerRef = doc(db, 'players', p.id);
         const attendanceRef = doc(db, 'attendance', date, 'players', p.id);
         
@@ -232,7 +269,7 @@ export const useAppLogic = () => {
           dailyMatches: (p.dailyMatches || 0) + 1,
           dailyWins: isWinner ? (p.dailyWins || 0) + 1 : (p.dailyWins || 0),
           dailyLosses: !isWinner ? (p.dailyLosses || 0) + 1 : (p.dailyLosses || 0),
-          dailyEloGain: (p.dailyEloGain || 0) + eloChange,
+          dailyEloGain: (p.dailyEloGain || 0) + totalEloChange,
           dailyResults: [...(p.dailyResults || []), (isWinner ? 'V' : 'D') as 'V' | 'D'],
           playedLastMatch: true,
           consecutiveBenched: 0,
@@ -243,11 +280,8 @@ export const useAppLogic = () => {
         batch.set(attendanceRef, updates, { merge: true });
       };
       
-      const teamA = [generationResult.teamA.setter, ...generationResult.teamA.players].filter(Boolean) as Player[];
-      const teamB = [generationResult.teamB.setter, ...generationResult.teamB.players].filter(Boolean) as Player[];
-      
-      teamA.forEach(p => updatePlayerStats(p, winner === 'A'));
-      teamB.forEach(p => updatePlayerStats(p, winner === 'B'));
+      teamA.forEach(p => updatePlayerStats(p, true));
+      teamB.forEach(p => updatePlayerStats(p, false));
 
       // --- ATUALIZAÇÃO DE SINERGIAS E RIVALIDADES ---
       const newSynergy = { ...synergy };
@@ -300,6 +334,37 @@ export const useAppLogic = () => {
       
       // Limpar partida atual do Firestore
       batch.delete(doc(db, 'metadata', 'currentMatch'));
+
+      // Notificar jogadores sobre o resultado da partida
+      const notifyResult = (p: Player, isTeamA: boolean) => {
+        const isWinner = (isTeamA && winner === 'A') || (!isTeamA && winner === 'B');
+        const title = isWinner ? 'Vitória! 🏆' : 'Fim de Jogo';
+        const message = isWinner 
+          ? `Parabéns! Seu time venceu a partida #${finalCount}.` 
+          : `Seu time perdeu a partida #${finalCount}. Bora pra próxima!`;
+
+        const appNotifRef = doc(collection(db, 'notifications'));
+        batch.set(appNotifRef, {
+          playerId: p.id,
+          title,
+          message,
+          createdAt: Date.now(),
+          read: false,
+          type: 'match'
+        });
+
+        if (p.fcmToken) {
+          const fcmRef = doc(collection(db, 'fcm_messages'));
+          batch.set(fcmRef, {
+            token: p.fcmToken,
+            notification: { title, body: message },
+            createdAt: serverTimestamp()
+          });
+        }
+      };
+
+      teamA.forEach(p => notifyResult(p, true));
+      teamB.forEach(p => notifyResult(p, false));
       
       await batch.commit();
       setSystemMetadata({ 
@@ -318,7 +383,18 @@ export const useAppLogic = () => {
         
         if (played) {
           const isWinner = (playedInA && winner === 'A') || (playedInB && winner === 'B');
-          const eloChange = isWinner ? 25 : -20;
+          const baseChange = isWinner ? 25 : -20;
+          
+          // Bônus de Sequência Local
+          const dailyResults = p.dailyResults || [];
+          let currentStreak = 0;
+          for (let i = dailyResults.length - 1; i >= 0; i--) {
+            if (dailyResults[i] === 'V') currentStreak++;
+            else break;
+          }
+          const streakBonus = isWinner ? Math.min(8, currentStreak * 2) : 0;
+          const eloChange = baseChange + streakBonus;
+
           return {
             ...p,
             elo: Math.max(800, p.elo + eloChange),
@@ -1097,13 +1173,13 @@ export const useAppLogic = () => {
       };
 
       // Validate player data
-      playerSchema.parse(finalData);
+      const validatedData = playerSchema.parse(finalData);
 
-      if (finalData.email === '') {
-        delete finalData.email;
+      if (validatedData.email === '') {
+        delete (validatedData as any).email;
       }
 
-      await setDoc(playerRef, cleanObject(finalData), { merge: true });
+      await setDoc(playerRef, cleanObject(validatedData), { merge: true });
       await trackUsage(0, 1);
       showNotification(playerData.id ? 'Sócio atualizado!' : 'Sócio cadastrado!', 'success');
     } catch (error) {
@@ -1230,13 +1306,36 @@ export const useAppLogic = () => {
   const handleGoogleLogin = async () => {
     try {
       setIsLoggingIn(true);
-      await signInWithPopup(auth, googleProvider);
+      const result = await signInWithPopup(auth, googleProvider);
+      const user = result.user;
+      
+      if (!user.email) {
+        await signOut(auth);
+        showNotification('Erro: E-mail não fornecido pelo Google.', 'error');
+        return;
+      }
+
+      const trimmedEmail = user.email.trim().toLowerCase();
+      const isAdminEmail = trimmedEmail === 'rodneyes@gmail.com';
+      
+      // Check if player exists in the system
+      const player = players.find(p => p.email?.trim().toLowerCase() === trimmedEmail);
+      
+      if (!player && !isAdminEmail) {
+        await signOut(auth);
+        showNotification('Acesso negado: Este e-mail não está cadastrado como sócio ou administrador.', 'error');
+        return;
+      }
+
+      showNotification('Login realizado com sucesso!', 'success');
     } catch (error: any) {
       console.error('Erro no login com Google:', error);
       if (error.code === 'auth/popup-closed-by-user') {
         showNotification('Login cancelado.', 'info');
       } else if (error.code === 'auth/admin-restricted-operation') {
-        showNotification('Erro: Operação restrita. Verifique se o login com Google está ativado no Console do Firebase.', 'error');
+        showNotification('Erro: Login com Google desativado. Ative-o no Console do Firebase (Authentication > Sign-in method).', 'error');
+      } else if (error.code === 'auth/unauthorized-domain') {
+        showNotification('Erro: Domínio não autorizado. Adicione este domínio no Console do Firebase (Authentication > Settings > Authorized domains).', 'error');
       } else {
         showNotification(`Erro ao fazer login com Google: ${error.message}`, 'error');
       }
@@ -1280,7 +1379,9 @@ export const useAppLogic = () => {
     } catch (error: any) {
       console.error('Erro ao fazer login:', error);
       if (error.code === 'auth/admin-restricted-operation') {
-        showNotification('Erro: Login Anônimo desativado no Firebase. Ative-o no Console ou use o Google Login.', 'error');
+        showNotification('ERRO CRÍTICO: O Login Anônimo está desativado no seu Firebase. Para corrigir: Acesse o Console do Firebase > Authentication > Sign-in method > Adicionar novo provedor > Anônimo > Ativar.', 'error');
+      } else if (error.code === 'auth/operation-not-allowed') {
+        showNotification('Erro: Provedor de login desativado no Firebase Console.', 'error');
       } else {
         showNotification(`Erro ao fazer login: ${error.message}`, 'error');
       }
@@ -1342,14 +1443,104 @@ export const useAppLogic = () => {
 
     const performGeneration = async () => {
       if (navigator.vibrate) navigator.vibrate(50);
-      const result = generateTeams(playersToUse);
+      const result = { ...generateTeams(playersToUse), timestamp: Date.now() };
       
       // Persistir partida no Firestore para outros admins
       try {
         await setDoc(doc(db, 'metadata', 'currentMatch'), cleanObject(result));
         await trackUsage(0, 1);
+
+        // Calcular número da partida
+        const now = Date.now();
+        const threshold = systemMetadata.lastResetTimestamp || (now - (16 * 60 * 60 * 1000));
+        const sessionMatchesCount = (matches || []).filter(m => m.timestamp > threshold).length;
+        const matchNumber = isReshuffle ? sessionMatchesCount : sessionMatchesCount + 1;
+
+        // Nomes dos times
+        const teamANames = [result.teamA.setter?.name, ...result.teamA.players.map(p => p.name)].filter(Boolean).join(', ');
+        const teamBNames = [result.teamB.setter?.name, ...result.teamB.players.map(p => p.name)].filter(Boolean).join(', ');
+
+        const batch = writeBatch(db);
+        let hasNotifications = false;
+
+        // Função auxiliar para enfileirar notificação
+        const queueNotification = (player: Player | null | undefined, title: string, body: string) => {
+          if (player) {
+            // Save to in-app notifications (this also triggers the Cloud Function for push)
+            const appNotifRef = doc(collection(db, 'notifications'));
+            batch.set(appNotifRef, {
+              playerId: player.id,
+              title,
+              message: body,
+              createdAt: Date.now(),
+              read: false,
+              type: 'match'
+            });
+
+            // Legacy FCM trigger (optional, if Cloud Function is not yet deployed or for redundancy)
+            if (player.fcmToken) {
+              const notificationRef = doc(collection(db, 'fcm_messages'));
+              batch.set(notificationRef, {
+                token: player.fcmToken,
+                notification: { title, body },
+                createdAt: serverTimestamp()
+              });
+            }
+            hasNotifications = true;
+          }
+        };
+
+        // Notificar Time A
+        const notifyTeamA = (p: Player | null | undefined) => {
+          if (!p) return;
+          const otherTeammates = [result.teamA.setter, ...result.teamA.players]
+            .filter(tp => tp && tp.id !== p.id)
+            .map(tp => tp!.name)
+            .join(', ');
+
+          queueNotification(
+            p,
+            `Partida #${matchNumber} - Sua vez!`,
+            `Você está no Time A com: ${otherTeammates}.\nHoje: ${p.dailyWins || 0}V / ${p.dailyLosses || 0}D.\nDirija-se à quadra!`
+          );
+        };
+        notifyTeamA(result.teamA.setter);
+        result.teamA.players.forEach(notifyTeamA);
+
+        // Notificar Time B
+        const notifyTeamB = (p: Player | null | undefined) => {
+          if (!p) return;
+          const otherTeammates = [result.teamB.setter, ...result.teamB.players]
+            .filter(tp => tp && tp.id !== p.id)
+            .map(tp => tp!.name)
+            .join(', ');
+
+          queueNotification(
+            p,
+            `Partida #${matchNumber} - Sua vez!`,
+            `Você está no Time B com: ${otherTeammates}.\nHoje: ${p.dailyWins || 0}V / ${p.dailyLosses || 0}D.\nDirija-se à quadra!`
+          );
+        };
+        notifyTeamB(result.teamB.setter);
+        result.teamB.players.forEach(notifyTeamB);
+
+        // Notificar Próximos (Fila de Espera)
+        const nextPlayers = result.remainingPlayers.slice(0, 12);
+        nextPlayers.forEach(p => {
+          queueNotification(
+            p,
+            `Prepare-se!`,
+            `Você está na próxima partida. Fique atento!`
+          );
+        });
+
+        if (hasNotifications) {
+          await batch.commit();
+          console.log('Notificações FCM enviadas para a fila.');
+        }
+
       } catch (err) {
-        console.error("Erro ao persistir partida:", err);
+        console.error("Erro ao persistir partida ou enviar notificações:", err);
       }
 
       setGenerationResult(result);
@@ -1870,7 +2061,21 @@ export const useAppLogic = () => {
     }
   };
 
-  const startTournament = async (config: { numTeams: number; pointsPerSet: number; setsPerMatch: number }) => {
+  const updateSystemMetadata = async (metadata: Partial<SystemMetadata>) => {
+    try {
+      setIsSyncing(true);
+      triggerDbStatus('writing');
+      await setDoc(doc(db, 'metadata', 'system'), metadata, { merge: true });
+      setSystemMetadata(metadata);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'metadata/system');
+      showNotification('Erro ao atualizar configurações do sistema.', 'error');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const startTournament = async (config: { numTeams: number; pointsPerSet: number; setsPerMatch: number; strategy: TournamentStrategy, preGeneratedTeams?: TournamentTeam[], preGeneratedReserves?: string[] }) => {
     try {
       setIsSyncing(true);
       triggerDbStatus('writing');
@@ -1881,92 +2086,199 @@ export const useAppLogic = () => {
         return;
       }
 
-      const { teams, reserves } = generateTournamentTeams(participants, config.numTeams);
-      
-      // Round Robin Scheduling using Circle Method
-      const numTeams = config.numTeams;
-      const teamIds = teams.map(t => t.id);
-      const rounds: { teamAId: string; teamBId: string }[][] = [];
-      
-      const tempTeams = [...teamIds];
-      if (numTeams % 2 !== 0) {
-        tempTeams.push('BYE'); // Dummy team for odd number of teams
+      let teams = config.preGeneratedTeams;
+      let reserves = config.preGeneratedReserves;
+
+      if (!teams || !reserves) {
+        const generated = generateTournamentTeams(participants, config.numTeams);
+        teams = generated.teams;
+        reserves = generated.reserves;
       }
-      
-      const n = tempTeams.length;
-      const numRounds = n - 1;
-      const matchesPerRound = n / 2;
-      
-      for (let r = 0; r < numRounds; r++) {
-        const roundMatches: { teamAId: string; teamBId: string }[] = [];
-        for (let i = 0; i < matchesPerRound; i++) {
-          const teamA = tempTeams[i];
-          const teamB = tempTeams[n - 1 - i];
-          
-          if (teamA !== 'BYE' && teamB !== 'BYE') {
-            roundMatches.push({ teamAId: teamA, teamBId: teamB });
-          }
-        }
-        rounds.push(roundMatches);
-        
-        // Rotate teams (keep first team fixed)
-        const last = tempTeams.pop()!;
-        tempTeams.splice(1, 0, last);
-      }
-      
-      // Flatten rounds into matches, trying to avoid consecutive matches for teams
+
+      const strategy = config.strategy || TournamentStrategy.ROUND_ROBIN;
       const finalMatches: TournamentMatch[] = [];
-      let lastMatchTeams: string[] = [];
-      
-      const availableRounds = [...rounds];
-      let currentRoundNum = 1;
-      
-      while (availableRounds.length > 0) {
-        // Find a round where the first match doesn't involve teams from the last match
-        let roundIdx = availableRounds.findIndex(round => {
-          if (round.length === 0) return true;
-          const firstMatch = round[0];
-          return !lastMatchTeams.includes(firstMatch.teamAId) && !lastMatchTeams.includes(firstMatch.teamBId);
-        });
+      const teamIds = teams.map(t => t.id);
+
+      const generateRoundRobinMatches = (teamsToSchedule: string[], bracketName?: string) => {
+        const numTeams = teamsToSchedule.length;
+        const rounds: { teamAId: string; teamBId: string }[][] = [];
         
-        if (roundIdx === -1) {
-          // If no round has a perfect first match, try to find a round that HAS a match that doesn't overlap
-          // and we will swap it to the first position
-          roundIdx = availableRounds.findIndex(round => {
-            return round.some(m => !lastMatchTeams.includes(m.teamAId) && !lastMatchTeams.includes(m.teamBId));
-          });
+        const tempTeams = [...teamsToSchedule];
+        if (numTeams % 2 !== 0) {
+          tempTeams.push('BYE');
         }
         
-        if (roundIdx === -1) roundIdx = 0; // Fallback
+        const n = tempTeams.length;
+        const numRounds = n - 1;
+        const matchesPerRound = n / 2;
         
-        const currentRound = availableRounds.splice(roundIdx, 1)[0];
+        for (let r = 0; r < numRounds; r++) {
+          const roundMatches: { teamAId: string; teamBId: string }[] = [];
+          for (let i = 0; i < matchesPerRound; i++) {
+            const teamA = tempTeams[i];
+            const teamB = tempTeams[n - 1 - i];
+            
+            if (teamA !== 'BYE' && teamB !== 'BYE') {
+              roundMatches.push({ teamAId: teamA, teamBId: teamB });
+            }
+          }
+          rounds.push(roundMatches);
+          
+          const last = tempTeams.pop()!;
+          tempTeams.splice(1, 0, last);
+        }
         
-        // Within the round, reorder to avoid overlap with lastMatchTeams
-        if (currentRound.length > 1) {
-          const swapIdx = currentRound.findIndex(m => !lastMatchTeams.includes(m.teamAId) && !lastMatchTeams.includes(m.teamBId));
-          if (swapIdx !== -1 && swapIdx !== 0) {
-            [currentRound[0], currentRound[swapIdx]] = [currentRound[swapIdx], currentRound[0]];
+        const generatedMatches: TournamentMatch[] = [];
+        let lastMatchTeams: string[] = [];
+        const availableRounds = [...rounds];
+        let currentRoundNum = 1;
+        
+        while (availableRounds.length > 0) {
+          let roundIdx = availableRounds.findIndex(round => {
+            if (round.length === 0) return true;
+            const firstMatch = round[0];
+            return !lastMatchTeams.includes(firstMatch.teamAId) && !lastMatchTeams.includes(firstMatch.teamBId);
+          });
+          
+          if (roundIdx === -1) {
+            roundIdx = availableRounds.findIndex(round => {
+              return round.some(m => !lastMatchTeams.includes(m.teamAId) && !lastMatchTeams.includes(m.teamBId));
+            });
           }
           
-          // Also try to order the rest of the matches in the round to minimize internal overlaps (though Circle Method shouldn't have any)
-          // and to prepare a good "last match" for the next round.
-        }
-        
-        currentRound.forEach(m => {
-          finalMatches.push({
-            id: generateUUID(),
-            teamAId: m.teamAId,
-            teamBId: m.teamBId,
-            scoreA: 0,
-            scoreB: 0,
-            setsA: 0,
-            setsB: 0,
-            status: 'pending',
-            round: currentRoundNum
+          if (roundIdx === -1) roundIdx = 0;
+          
+          const currentRound = availableRounds.splice(roundIdx, 1)[0];
+          
+          if (currentRound.length > 1) {
+            const swapIdx = currentRound.findIndex(m => !lastMatchTeams.includes(m.teamAId) && !lastMatchTeams.includes(m.teamBId));
+            if (swapIdx !== -1 && swapIdx !== 0) {
+              [currentRound[0], currentRound[swapIdx]] = [currentRound[swapIdx], currentRound[0]];
+            }
+          }
+          
+          currentRound.forEach(m => {
+            generatedMatches.push({
+              id: generateUUID(),
+              teamAId: m.teamAId,
+              teamBId: m.teamBId,
+              scoreA: 0,
+              scoreB: 0,
+              setsA: 0,
+              setsB: 0,
+              status: 'pending',
+              round: currentRoundNum,
+              bracket: bracketName
+            });
+            lastMatchTeams = [m.teamAId, m.teamBId];
           });
-          lastMatchTeams = [m.teamAId, m.teamBId];
-        });
-        currentRoundNum++;
+          currentRoundNum++;
+        }
+        return generatedMatches;
+      };
+
+      if (strategy === TournamentStrategy.ROUND_ROBIN) {
+        finalMatches.push(...generateRoundRobinMatches(teamIds));
+      } else if (strategy === TournamentStrategy.GROUPS_AND_KNOCKOUT) {
+        if (config.numTeams >= 4) {
+          const half = Math.ceil(teamIds.length / 2);
+          const groupA = teamIds.slice(0, half);
+          const groupB = teamIds.slice(half);
+          
+          const matchesA = generateRoundRobinMatches(groupA, 'groupA');
+          const matchesB = generateRoundRobinMatches(groupB, 'groupB');
+          
+          // Interleave matches
+          const maxLength = Math.max(matchesA.length, matchesB.length);
+          for (let i = 0; i < maxLength; i++) {
+            if (i < matchesA.length) finalMatches.push(matchesA[i]);
+            if (i < matchesB.length) finalMatches.push(matchesB[i]);
+          }
+          
+          // Re-assign rounds sequentially
+          finalMatches.forEach((m, idx) => {
+            m.round = idx + 1;
+          });
+        } else {
+          showNotification('Grupos + Mata-Mata requer pelo menos 4 times. Usando Todos contra Todos.', 'info');
+          finalMatches.push(...generateRoundRobinMatches(teamIds, 'group'));
+        }
+      } else if (strategy === TournamentStrategy.DOUBLE_ELIMINATION) {
+        if (config.numTeams === 3) {
+          const m1Id = generateUUID();
+          const m2Id = generateUUID();
+          const m3Id = generateUUID();
+          const m4Id = generateUUID();
+
+          // Upper Bracket Round 1
+          finalMatches.push({
+            id: m1Id, teamAId: teamIds[0], teamBId: teamIds[1], scoreA: 0, scoreB: 0, setsA: 0, setsB: 0,
+            status: 'pending', round: 1, bracket: 'upper', nextMatchId: m2Id, nextMatchWinnerSlot: 'A', nextMatchLoserSlot: 'A'
+          });
+
+          // Upper Final
+          finalMatches.push({
+            id: m2Id, teamAId: '', teamBId: teamIds[2], scoreA: 0, scoreB: 0, setsA: 0, setsB: 0,
+            status: 'pending', round: 2, bracket: 'upper', nextMatchId: m4Id, nextMatchWinnerSlot: 'A', nextMatchLoserSlot: 'B'
+          });
+
+          // Lower Final
+          finalMatches.push({
+            id: m3Id, teamAId: '', teamBId: '', scoreA: 0, scoreB: 0, setsA: 0, setsB: 0,
+            status: 'pending', round: 3, bracket: 'lower', nextMatchId: m4Id, nextMatchWinnerSlot: 'B'
+          });
+
+          // Grand Final
+          finalMatches.push({
+            id: m4Id, teamAId: '', teamBId: '', scoreA: 0, scoreB: 0, setsA: 0, setsB: 0,
+            status: 'pending', round: 4, bracket: 'final'
+          });
+        } else if (config.numTeams === 4) {
+          const m1Id = generateUUID();
+          const m2Id = generateUUID();
+          const m3Id = generateUUID();
+          const m4Id = generateUUID();
+          const m5Id = generateUUID();
+          const m6Id = generateUUID();
+
+          // Upper Bracket Round 1
+          finalMatches.push({
+            id: m1Id, teamAId: teamIds[0], teamBId: teamIds[1], scoreA: 0, scoreB: 0, setsA: 0, setsB: 0,
+            status: 'pending', round: 1, bracket: 'upper', nextMatchId: m3Id, nextMatchWinnerSlot: 'A', nextMatchLoserSlot: 'A'
+          });
+          finalMatches.push({
+            id: m2Id, teamAId: teamIds[2], teamBId: teamIds[3], scoreA: 0, scoreB: 0, setsA: 0, setsB: 0,
+            status: 'pending', round: 1, bracket: 'upper', nextMatchId: m3Id, nextMatchWinnerSlot: 'B', nextMatchLoserSlot: 'B'
+          });
+
+          // Upper Final
+          finalMatches.push({
+            id: m3Id, teamAId: '', teamBId: '', scoreA: 0, scoreB: 0, setsA: 0, setsB: 0,
+            status: 'pending', round: 2, bracket: 'upper', nextMatchId: m6Id, nextMatchWinnerSlot: 'A'
+          });
+
+          // Lower Round 1
+          finalMatches.push({
+            id: m4Id, teamAId: '', teamBId: '', scoreA: 0, scoreB: 0, setsA: 0, setsB: 0,
+            status: 'pending', round: 2, bracket: 'lower', nextMatchId: m5Id, nextMatchWinnerSlot: 'A'
+          });
+
+          // Lower Final
+          finalMatches.push({
+            id: m5Id, teamAId: '', teamBId: '', scoreA: 0, scoreB: 0, setsA: 0, setsB: 0,
+            status: 'pending', round: 3, bracket: 'lower', nextMatchId: m6Id, nextMatchWinnerSlot: 'B'
+          });
+
+          // Grand Final
+          finalMatches.push({
+            id: m6Id, teamAId: '', teamBId: '', scoreA: 0, scoreB: 0, setsA: 0, setsB: 0,
+            status: 'pending', round: 4, bracket: 'final'
+          });
+        } else {
+          // Fallback to Round Robin if not 3 or 4 teams for now
+          showNotification('Dupla eliminação suportada apenas para 3 ou 4 times no momento. Usando Todos contra Todos.', 'info');
+          finalMatches.push(...generateRoundRobinMatches(teamIds));
+        }
       }
 
       const tournament: Tournament = {
@@ -1976,6 +2288,7 @@ export const useAppLogic = () => {
         status: 'active',
         teams,
         matches: finalMatches,
+        strategy,
         reserves,
         config
       };
@@ -2014,6 +2327,8 @@ export const useAppLogic = () => {
             else if (set.scoreB > set.scoreA) setsB++;
           });
 
+          const winnerId = setsA > setsB ? m.teamAId : (setsB > setsA ? m.teamBId : undefined);
+
           return {
             ...m,
             scoreA,
@@ -2022,11 +2337,186 @@ export const useAppLogic = () => {
             setsB,
             setScores,
             status: 'completed' as const,
-            winnerId: setsA > setsB ? m.teamAId : (setsB > setsA ? m.teamBId : undefined)
+            winnerId
           };
         }
         return m;
       });
+
+      // Handle Bracket Progression
+      const currentMatch = updatedMatches.find(m => m.id === matchId);
+      if (currentMatch && currentMatch.status === 'completed' && currentMatch.winnerId) {
+        const winnerId = currentMatch.winnerId;
+        const loserId = winnerId === currentMatch.teamAId ? currentMatch.teamBId : currentMatch.teamAId;
+
+        if (activeTournament.strategy === TournamentStrategy.DOUBLE_ELIMINATION) {
+          // Progression for Double Elimination
+          updatedMatches.forEach(m => {
+            if (m.status === 'pending') {
+              // Upper Bracket Progression
+              if (currentMatch.bracket === 'upper' && currentMatch.nextMatchId === m.id) {
+                if (currentMatch.nextMatchWinnerSlot === 'A') m.teamAId = winnerId;
+                else if (currentMatch.nextMatchWinnerSlot === 'B') m.teamBId = winnerId;
+              }
+
+              // Lower Bracket Progression (Losers from Upper)
+              if (currentMatch.bracket === 'upper') {
+                if (activeTournament.config.numTeams === 3) {
+                  if (currentMatch.round === 1) {
+                    const m3 = updatedMatches.find(um => um.bracket === 'lower' && um.round === 3);
+                    if (m3) m3.teamAId = loserId;
+                  } else if (currentMatch.round === 2) {
+                    const m3 = updatedMatches.find(um => um.bracket === 'lower' && um.round === 3);
+                    if (m3) m3.teamBId = loserId;
+                  }
+                } else if (activeTournament.config.numTeams === 4) {
+                  if (currentMatch.round === 1) {
+                    const m4 = updatedMatches.find(um => um.bracket === 'lower' && um.round === 2);
+                    if (m4) {
+                      if (currentMatch.id === activeTournament.matches[0].id) m4.teamAId = loserId;
+                      else m4.teamBId = loserId;
+                    }
+                  } else if (currentMatch.round === 2) { // Upper Final
+                    const m5 = updatedMatches.find(um => um.bracket === 'lower' && um.round === 3);
+                    if (m5) m5.teamBId = loserId;
+                  }
+                }
+              }
+
+              // Lower Bracket Progression (Winners from Lower)
+              if (currentMatch.bracket === 'lower' && currentMatch.nextMatchId === m.id) {
+                if (currentMatch.nextMatchWinnerSlot === 'A') m.teamAId = winnerId;
+                else if (currentMatch.nextMatchWinnerSlot === 'B') m.teamBId = winnerId;
+              }
+
+              // Grand Final Progression
+              if (activeTournament.config.numTeams === 3) {
+                if (currentMatch.bracket === 'upper' && currentMatch.round === 2 && currentMatch.nextMatchId === m.id) {
+                  m.teamAId = winnerId;
+                }
+                if (currentMatch.bracket === 'lower' && currentMatch.round === 3 && currentMatch.nextMatchId === m.id) {
+                  m.teamBId = winnerId;
+                }
+              } else if (activeTournament.config.numTeams === 4) {
+                if (currentMatch.bracket === 'upper' && currentMatch.round === 2 && currentMatch.nextMatchId === m.id) {
+                  m.teamAId = winnerId;
+                }
+                if (currentMatch.bracket === 'lower' && currentMatch.round === 3 && currentMatch.nextMatchId === m.id) {
+                  m.teamBId = winnerId;
+                }
+              }
+            }
+          });
+        }
+        
+        if (activeTournament.strategy === TournamentStrategy.GROUPS_AND_KNOCKOUT) {
+          if (currentMatch.bracket === 'semi' && currentMatch.nextMatchId) {
+            const nextMatch = updatedMatches.find(m => m.id === currentMatch.nextMatchId);
+            if (nextMatch) {
+              if (currentMatch.nextMatchWinnerSlot === 'A') nextMatch.teamAId = winnerId;
+              else if (currentMatch.nextMatchWinnerSlot === 'B') nextMatch.teamBId = winnerId;
+            }
+          }
+        }
+      }
+
+      // If Groups + Knockout, check if all group matches are done to generate knockout matches
+      if (activeTournament.strategy === TournamentStrategy.GROUPS_AND_KNOCKOUT) {
+        const groupMatches = updatedMatches.filter(m => m.bracket === 'groupA' || m.bracket === 'groupB' || m.bracket === 'group');
+        const allGroupMatchesDone = groupMatches.length > 0 && groupMatches.every(m => m.status === 'completed');
+        const semiMatchesExist = updatedMatches.some(m => m.bracket === 'semi');
+        const finalMatchExists = updatedMatches.some(m => m.bracket === 'final');
+        
+        if (allGroupMatchesDone && !semiMatchesExist && !finalMatchExists) {
+          const calculateStandings = (bracketName: string) => {
+            const teamsInGroup = new Set<string>();
+            updatedMatches.filter(m => m.bracket === bracketName).forEach(m => {
+              teamsInGroup.add(m.teamAId);
+              teamsInGroup.add(m.teamBId);
+            });
+            
+            return Array.from(teamsInGroup).map(teamId => {
+              const teamMatches = updatedMatches.filter(m => m.bracket === bracketName && (m.teamAId === teamId || m.teamBId === teamId));
+              let points = 0;
+              let wins = 0;
+              let setsWon = 0;
+              let setsLost = 0;
+              let pointsFor = 0;
+              let pointsAgainst = 0;
+
+              teamMatches.forEach(m => {
+                if (m.status === 'completed') {
+                  const isTeamA = m.teamAId === teamId;
+                  const teamSets = isTeamA ? m.setsA : m.setsB;
+                  const oppSets = isTeamA ? m.setsB : m.setsA;
+                  
+                  if (teamSets > oppSets) {
+                    points += 3;
+                    wins++;
+                  }
+                  setsWon += teamSets;
+                  setsLost += oppSets;
+                  
+                  m.setScores?.forEach(s => {
+                    pointsFor += isTeamA ? s.scoreA : s.scoreB;
+                    pointsAgainst += isTeamA ? s.scoreB : s.scoreA;
+                  });
+                }
+              });
+
+              return { id: teamId, points, wins, setsWon, setsLost, pointsFor, pointsAgainst };
+            }).sort((a, b) => {
+              if (b.points !== a.points) return b.points - a.points;
+              if ((b.setsWon - b.setsLost) !== (a.setsWon - a.setsLost)) return (b.setsWon - b.setsLost) - (a.setsWon - a.setsLost);
+              return (b.pointsFor - b.pointsAgainst) - (a.pointsFor - a.pointsAgainst);
+            });
+          };
+
+          if (updatedMatches.some(m => m.bracket === 'groupA')) {
+            // We have 2 groups
+            const standingsA = calculateStandings('groupA');
+            const standingsB = calculateStandings('groupB');
+            
+            if (standingsA.length >= 2 && standingsB.length >= 2) {
+              const semi1Id = generateUUID();
+              const semi2Id = generateUUID();
+              const finalId = generateUUID();
+              
+              const nextRound = updatedMatches[updatedMatches.length-1].round + 1;
+              
+              updatedMatches.push({
+                id: semi1Id, teamAId: standingsA[0].id, teamBId: standingsB[1].id, scoreA: 0, scoreB: 0, setsA: 0, setsB: 0,
+                status: 'pending', round: nextRound, bracket: 'semi', nextMatchId: finalId, nextMatchWinnerSlot: 'A'
+              });
+              updatedMatches.push({
+                id: semi2Id, teamAId: standingsB[0].id, teamBId: standingsA[1].id, scoreA: 0, scoreB: 0, setsA: 0, setsB: 0,
+                status: 'pending', round: nextRound, bracket: 'semi', nextMatchId: finalId, nextMatchWinnerSlot: 'B'
+              });
+              updatedMatches.push({
+                id: finalId, teamAId: '', teamBId: '', scoreA: 0, scoreB: 0, setsA: 0, setsB: 0,
+                status: 'pending', round: nextRound + 1, bracket: 'final'
+              });
+            }
+          } else {
+            // Single group fallback
+            const standings = calculateStandings('group');
+            if (standings.length >= 2) {
+              updatedMatches.push({
+                id: generateUUID(),
+                teamAId: standings[0].id,
+                teamBId: standings[1].id,
+                scoreA: 0,
+                scoreB: 0,
+                setsA: 0,
+                setsB: 0,
+                status: 'pending',
+                round: updatedMatches[updatedMatches.length-1].round + 1,
+                bracket: 'final'
+              });
+            }
+          }
+        }
+      }
 
       const updatedTeams = activeTournament.teams.map(team => {
         const teamMatches = updatedMatches.filter(m => m.status === 'completed' && (m.teamAId === team.id || m.teamBId === team.id));
@@ -2080,8 +2570,140 @@ export const useAppLogic = () => {
         teams: updatedTeams
       });
 
-      await setDoc(doc(db, 'tournaments', activeTournament.id), updatedTournament);
-      await setDoc(doc(db, 'metadata', 'activeTournament'), updatedTournament);
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'tournaments', activeTournament.id), updatedTournament);
+      batch.set(doc(db, 'metadata', 'activeTournament'), updatedTournament);
+
+      // --- ELO UPDATE LOGIC ---
+      const match = updatedMatches.find(m => m.id === matchId);
+      if (match && match.status === 'completed') {
+        const teamA = activeTournament.teams.find(t => t.id === match.teamAId);
+        const teamB = activeTournament.teams.find(t => t.id === match.teamBId);
+
+        if (teamA && teamB) {
+          const playersA = teamA.players.map(id => players.find(p => p.id === id)).filter(Boolean) as Player[];
+          const playersB = teamB.players.map(id => players.find(p => p.id === id)).filter(Boolean) as Player[];
+
+          if (playersA.length > 0 && playersB.length > 0) {
+            const avgEloA = playersA.reduce((sum, p) => sum + p.elo, 0) / playersA.length;
+            const avgEloB = playersB.reduce((sum, p) => sum + p.elo, 0) / playersB.length;
+
+            const expectedA = 1 / (1 + Math.pow(10, (avgEloB - avgEloA) / 400));
+            
+            let actualA = 0.5; // Draw
+            let winner: 'A' | 'B' | 'Draw' = 'Draw';
+            if (match.setsA > match.setsB) {
+              actualA = 1;
+              winner = 'A';
+            } else if (match.setsB > match.setsA) {
+              actualA = 0;
+              winner = 'B';
+            }
+
+            const K = 32;
+            const baseEloChange = Math.round(K * (actualA - expectedA));
+
+            const scoreDiff = Math.abs(match.scoreA - match.scoreB);
+            const bonus = winner !== 'Draw' ? Math.floor(scoreDiff / 5) : 0;
+
+            const finalEloChangeA = baseEloChange + (winner === 'A' ? bonus : (winner === 'B' ? -bonus : 0));
+            const finalEloChangeB = -baseEloChange + (winner === 'B' ? bonus : (winner === 'A' ? -bonus : 0));
+
+            const date = getFirestoreDateKey();
+
+            const updatePlayerStats = (p: Player, isTeamA: boolean) => {
+              const baseChange = isTeamA ? finalEloChangeA : finalEloChangeB;
+              const isWinner = (isTeamA && winner === 'A') || (!isTeamA && winner === 'B');
+              const isDraw = winner === 'Draw';
+              
+              const dailyResults = p.dailyResults || [];
+              let currentStreak = 0;
+              for (let i = dailyResults.length - 1; i >= 0; i--) {
+                if (dailyResults[i] === 'V') currentStreak++;
+                else break;
+              }
+              
+              const streakBonus = isWinner ? Math.min(8, currentStreak * 2) : 0;
+              const totalEloChange = baseChange + streakBonus;
+              
+              const newElo = Math.max(800, p.elo + totalEloChange);
+              const playerRef = doc(db, 'players', p.id);
+              const attendanceRef = doc(db, 'attendance', date, 'players', p.id);
+              
+              const newHistoryEntry = { date: new Date().toISOString(), elo: newElo };
+              const updatedHistory = [...(p.eloHistory || []), newHistoryEntry].slice(-50);
+              
+              const updates = {
+                elo: newElo,
+                matchesPlayed: (p.matchesPlayed || 0) + 1,
+                wins: isWinner ? (p.wins || 0) + 1 : (p.wins || 0),
+                losses: (!isWinner && !isDraw) ? (p.losses || 0) + 1 : (p.losses || 0),
+                dailyMatches: (p.dailyMatches || 0) + 1,
+                dailyWins: isWinner ? (p.dailyWins || 0) + 1 : (p.dailyWins || 0),
+                dailyLosses: (!isWinner && !isDraw) ? (p.dailyLosses || 0) + 1 : (p.dailyLosses || 0),
+                dailyEloGain: (p.dailyEloGain || 0) + totalEloChange,
+                dailyResults: isDraw ? (p.dailyResults || []) : [...(p.dailyResults || []), (isWinner ? 'V' : 'D') as 'V' | 'D'],
+                playedLastMatch: true,
+                consecutiveBenched: 0,
+                eloHistory: updatedHistory
+              };
+              
+              batch.set(playerRef, updates, { merge: true });
+              
+              if (attendance.some(ap => ap.id === p.id)) {
+                batch.set(attendanceRef, updates, { merge: true });
+              }
+            };
+
+            playersA.forEach(p => updatePlayerStats(p, true));
+            playersB.forEach(p => updatePlayerStats(p, false));
+
+            // Update local state
+            const updateLocalStats = (p: Player) => {
+              const playedInA = playersA.some(tp => tp.id === p.id);
+              const playedInB = playersB.some(tp => tp.id === p.id);
+              const played = playedInA || playedInB;
+              
+              if (played) {
+                const isWinner = (playedInA && winner === 'A') || (playedInB && winner === 'B');
+                const isDraw = winner === 'Draw';
+                const actualEloChange = playedInA ? finalEloChangeA : finalEloChangeB;
+                
+                const dailyResults = p.dailyResults || [];
+                let currentStreak = 0;
+                for (let i = dailyResults.length - 1; i >= 0; i--) {
+                  if (dailyResults[i] === 'V') currentStreak++;
+                  else break;
+                }
+                const streakBonus = isWinner ? Math.min(8, currentStreak * 2) : 0;
+                const totalEloChange = actualEloChange + streakBonus;
+
+                return {
+                  ...p,
+                  elo: Math.max(800, p.elo + totalEloChange),
+                  matchesPlayed: (p.matchesPlayed || 0) + 1,
+                  wins: isWinner ? (p.wins || 0) + 1 : (p.wins || 0),
+                  losses: (!isWinner && !isDraw) ? (p.losses || 0) + 1 : (p.losses || 0),
+                  dailyMatches: (p.dailyMatches || 0) + 1,
+                  dailyWins: isWinner ? (p.dailyWins || 0) + 1 : (p.dailyWins || 0),
+                  dailyLosses: (!isWinner && !isDraw) ? (p.dailyLosses || 0) + 1 : (p.dailyLosses || 0),
+                  dailyEloGain: (p.dailyEloGain || 0) + totalEloChange,
+                  dailyResults: isDraw ? (p.dailyResults || []) : [...(p.dailyResults || []), (isWinner ? 'V' : 'D') as 'V' | 'D'],
+                  playedLastMatch: true,
+                  consecutiveBenched: 0
+                };
+              }
+              return p;
+            };
+
+            setPlayers(players.map(updateLocalStats));
+            setAttendance(attendance.map(updateLocalStats));
+          }
+        }
+      }
+      // --------------------------
+
+      await batch.commit();
 
       showNotification('Resultado registrado!', 'success');
     } catch (error) {
@@ -2332,6 +2954,7 @@ export const useAppLogic = () => {
     triggerSync,
     recalculateStats,
     recalculateDailyStats,
+    updateSystemMetadata,
     registerAttendance,
     removeAttendance,
     clearAttendance,

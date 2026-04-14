@@ -6,7 +6,10 @@ import {
   Trash2, 
   UserPlus, 
   Edit2,
-  RotateCcw
+  RotateCcw,
+  Cake,
+  UserCheck,
+  UserX
 } from 'lucide-react';
 
 interface MembersViewProps {
@@ -16,6 +19,7 @@ interface MembersViewProps {
   setIsFormOpen: (open: boolean) => void;
   refreshPlayers: () => Promise<void>;
   repairDatabase?: () => void;
+  savePlayer: (player: any) => Promise<void>;
 }
 
 export const MembersView: React.FC<MembersViewProps> = ({
@@ -24,9 +28,10 @@ export const MembersView: React.FC<MembersViewProps> = ({
   setEditingPlayer,
   setIsFormOpen,
   refreshPlayers,
-  repairDatabase
+  repairDatabase,
+  savePlayer
 }) => {
-  const { players, userRole, isSyncing } = useStore();
+  const { players, userRole, isSyncing, showConfirmModal } = useStore();
   const [startY, setStartY] = React.useState(0);
   const [pullDistance, setPullDistance] = React.useState(0);
   const [isPulling, setIsPulling] = React.useState(false);
@@ -44,6 +49,11 @@ export const MembersView: React.FC<MembersViewProps> = ({
 
   const sortedPlayers = React.useMemo(() => {
     return [...players].sort((a, b) => {
+      // Sort active players first
+      if (a.status !== b.status) {
+        return a.status === 'inactive' ? 1 : -1;
+      }
+
       let aValue = a[sortConfig.key];
       let bValue = b[sortConfig.key];
 
@@ -108,7 +118,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
         <div>
           <h2 className="text-4xl font-black text-brand-primary uppercase tracking-tighter">Gestão de Sócios</h2>
-          <p className="text-sm font-bold text-white/40 uppercase tracking-widest mt-2">Total de {(players?.length || 0)} membros ativos</p>
+          <p className="text-sm font-bold text-white/40 uppercase tracking-widest mt-2">Total de {(players?.length || 0)} membros registrados</p>
         </div>
         <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
           {userRole === 'ADMIN' && repairDatabase && (
@@ -169,7 +179,19 @@ export const MembersView: React.FC<MembersViewProps> = ({
               {sortedPlayers.map(player => (
                 <tr key={player.id} className="hover:bg-white/5 transition-colors group">
                   <td className="px-8 py-5">
-                    <p className={`font-black ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>{player.name || "Sócio sem nome"}</p>
+                    <div className="flex items-center gap-2">
+                      <p className={`font-black ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'} ${player.status === 'inactive' ? 'opacity-40' : ''}`}>
+                        {player.name || "Sócio sem nome"}
+                      </p>
+                      {player.birthDate && (
+                        <div className="group/birthday relative">
+                          <Cake className="w-4 h-4 text-brand-primary animate-pulse" />
+                          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1 bg-brand-primary text-black text-[10px] font-black uppercase rounded-lg opacity-0 group-hover/birthday:opacity-100 transition-opacity whitespace-nowrap z-50">
+                            Aniversário: {new Date(player.birthDate).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                     <p className="text-[10px] text-white/40 font-bold uppercase">{player.matchesPlayed} partidas totais</p>
                   </td>
                   {userRole === 'ADMIN' && (
@@ -189,13 +211,41 @@ export const MembersView: React.FC<MembersViewProps> = ({
                     <span className="font-black text-white">{Math.round(player.elo)}</span>
                   </td>
                   <td className="px-8 py-6 text-center">
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-500 text-[10px] font-black uppercase tracking-widest border border-emerald-500/20">
-                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
-                      Ativo
-                    </span>
+                    {player.status === 'inactive' ? (
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/5 text-white/40 text-[10px] font-black uppercase tracking-widest border border-white/10">
+                        Inativo
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-500 text-[10px] font-black uppercase tracking-widest border border-emerald-500/20">
+                        <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
+                        Ativo
+                      </span>
+                    )}
                   </td>
                   <td className="px-8 py-6 text-right">
                     <div className="flex items-center justify-end gap-2">
+                      {userRole === 'ADMIN' && (
+                        <button 
+                          onClick={() => {
+                            const newStatus = player.status === 'inactive' ? 'active' : 'inactive';
+                            const action = newStatus === 'active' ? 'ativar' : 'inativar';
+                            showConfirmModal(
+                              `${action.charAt(0).toUpperCase() + action.slice(1)} Sócio`,
+                              `Deseja realmente ${action} ${player.name}?`,
+                              () => {
+                                savePlayer({
+                                  ...player,
+                                  status: newStatus
+                                });
+                              }
+                            );
+                          }}
+                          className={`p-2 rounded-xl transition-all ${player.status === 'inactive' ? 'text-emerald-500 hover:bg-emerald-500/10' : 'text-amber-500 hover:bg-amber-500/10'}`}
+                          title={player.status === 'inactive' ? 'Ativar Sócio' : 'Inativar Sócio'}
+                        >
+                          {player.status === 'inactive' ? <UserCheck className="w-4 h-4" /> : <UserX className="w-4 h-4" />}
+                        </button>
+                      )}
                       <button 
                         onClick={() => { setEditingPlayer(player); setIsFormOpen(true); }}
                         className="p-2 text-white/40 hover:text-brand-primary hover:bg-brand-primary/10 rounded-xl transition-all"
@@ -235,7 +285,19 @@ export const MembersView: React.FC<MembersViewProps> = ({
                   {player.name.charAt(0)}
                 </div>
                 <div>
-                  <h4 className="text-xl font-black text-white uppercase tracking-tight leading-none">{player.name}</h4>
+                  <div className="flex items-center gap-2">
+                    <h4 className={`text-xl font-black uppercase tracking-tight leading-none ${player.status === 'inactive' ? 'text-white/40' : 'text-white'}`}>
+                      {player.name}
+                    </h4>
+                    {player.birthDate && (
+                      <div className="group/birthday relative">
+                        <Cake className="w-4 h-4 text-brand-primary animate-pulse" />
+                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1 bg-brand-primary text-black text-[10px] font-black uppercase rounded-lg opacity-0 group-hover/birthday:opacity-100 transition-opacity whitespace-nowrap z-50">
+                          Aniversário: {new Date(player.birthDate).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                   <div className="flex items-center gap-2 mt-2">
                     <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest ${player.isOfficialSetter ? 'bg-brand-primary/20 text-brand-primary' : 'bg-white/5 text-white/60 border border-white/10'}`}>
                       {translateGender(player.gender)}
@@ -243,9 +305,15 @@ export const MembersView: React.FC<MembersViewProps> = ({
                     <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest ${player.isOfficialSetter ? 'bg-brand-primary/20 text-brand-primary' : 'bg-white/5 text-white/60 border border-white/10'}`}>
                       {player.isOfficialSetter ? 'Levantador' : 'Atleta'}
                     </span>
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 text-[8px] font-black uppercase tracking-widest border border-emerald-500/20">
-                      Ativo
-                    </span>
+                    {player.status === 'inactive' ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/5 text-white/40 text-[8px] font-black uppercase tracking-widest border border-white/10">
+                        Inativo
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 text-[8px] font-black uppercase tracking-widest border border-emerald-500/20">
+                        Ativo
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -257,6 +325,26 @@ export const MembersView: React.FC<MembersViewProps> = ({
             
             {userRole === 'ADMIN' && (
               <div className="flex gap-3 pt-4 border-t border-white/5 relative z-10">
+                <button 
+                  onClick={() => {
+                    const newStatus = player.status === 'inactive' ? 'active' : 'inactive';
+                    const action = newStatus === 'active' ? 'ativar' : 'inativar';
+                    showConfirmModal(
+                      `${action.charAt(0).toUpperCase() + action.slice(1)} Sócio`,
+                      `Deseja realmente ${action} ${player.name}?`,
+                      () => {
+                        savePlayer({
+                          ...player,
+                          status: newStatus
+                        });
+                      }
+                    );
+                  }}
+                  className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${player.status === 'inactive' ? 'bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20' : 'bg-amber-500/10 text-amber-500 hover:bg-amber-500/20'}`}
+                >
+                  {player.status === 'inactive' ? <UserCheck className="w-4 h-4" /> : <UserX className="w-4 h-4" />}
+                  {player.status === 'inactive' ? 'Ativar' : 'Inativar'}
+                </button>
                 <button 
                   onClick={() => { setEditingPlayer(player); setIsFormOpen(true); }} 
                   className="flex-1 flex items-center justify-center gap-2 py-4 bg-white/5 text-white/60 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-brand-primary/10 hover:text-brand-primary transition-all"

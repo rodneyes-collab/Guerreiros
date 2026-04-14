@@ -25,10 +25,15 @@ import {
   Minus,
   Users,
   ClipboardCheck,
-  BarChart3
+  BarChart3,
+  Settings2,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 
+import { PlayerStatusCard } from '../src/components/PlayerStatusCard';
 import { getPriorityQueue } from '../utils/teamLogic';
+import { Player, SystemMetadata } from '../types';
 
 interface MatchViewProps {
   onGenerate: (onlyCurrentPlayers?: boolean) => void;
@@ -45,6 +50,8 @@ interface MatchViewProps {
   onSwapClick: (source: 'A' | 'B' | 'Bench', playerId: string) => void;
   onRemovePlayer: (team: 'A' | 'B', playerId: string) => void;
   onPromoteToSetter: (team: 'A' | 'B', playerId: string) => void;
+  systemMetadata: SystemMetadata;
+  updateSystemMetadata: (metadata: Partial<SystemMetadata>) => void;
 }
 
 export const MatchView: React.FC<MatchViewProps> = ({
@@ -61,13 +68,14 @@ export const MatchView: React.FC<MatchViewProps> = ({
   onAnnounce,
   onSwapClick,
   onRemovePlayer,
-  onPromoteToSetter
+  onPromoteToSetter,
+  systemMetadata,
+  updateSystemMetadata
 }) => {
   const { 
     generationResult, 
-    attendance, 
+    attendance: allAttendance, 
     userRole, 
-    systemMetadata, 
     matches,
     setGenerationResult,
     setViewMode,
@@ -88,9 +96,20 @@ export const MatchView: React.FC<MatchViewProps> = ({
     swapSelection,
     setSwapSelection
   } = useStore();
+  const attendance = React.useMemo(() => allAttendance.filter(p => p.status !== 'inactive'), [allAttendance]);
+  const { currentPlayer } = useStore();
 
   const [showAudit, setShowAudit] = useState(false);
   const [showAnalysis, setShowAnalysis] = useState(false);
+  const [showActions, setShowActions] = useState(false);
+  
+  const showTeamCards = systemMetadata.showTeamCards !== false;
+  const showWaitlist = systemMetadata.showWaitlist !== false;
+  const showPerformance = systemMetadata.showPerformance !== false;
+
+  const toggleTeamCards = () => updateSystemMetadata({ showTeamCards: !showTeamCards });
+  const toggleWaitlist = () => updateSystemMetadata({ showWaitlist: !showWaitlist });
+  const togglePerformance = () => updateSystemMetadata({ showPerformance: !showPerformance });
 
   const today = getFirestoreDateKey();
   const sixteenHoursAgo = Date.now() - (16 * 60 * 60 * 1000);
@@ -161,8 +180,53 @@ export const MatchView: React.FC<MatchViewProps> = ({
   const { topPlayers, remainingPlayers } = getPriorityQueue(attendance, 12, 2);
   const priorityPlayers = [...topPlayers, ...remainingPlayers];
 
+  const getEloChanges = () => {
+    if (!generationResult) return { aWin: 0, aLoss: 0, bWin: 0, bLoss: 0 };
+    const teamA = [generationResult.teamA.setter, ...generationResult.teamA.players].filter(Boolean) as Player[];
+    const teamB = [generationResult.teamB.setter, ...generationResult.teamB.players].filter(Boolean) as Player[];
+    
+    const avgEloA = teamA.reduce((sum, p) => sum + p.elo, 0) / (teamA.length || 1);
+    const avgEloB = teamB.reduce((sum, p) => sum + p.elo, 0) / (teamB.length || 1);
+    
+    const expectedA = 1 / (1 + Math.pow(10, (avgEloB - avgEloA) / 400));
+    const expectedB = 1 - expectedA;
+    
+    const K = 32;
+    return {
+      aWin: Math.round(K * (1 - expectedA)),
+      aLoss: Math.round(K * (0 - expectedA)),
+      bWin: Math.round(K * (1 - expectedB)),
+      bLoss: Math.round(K * (0 - expectedB))
+    };
+  };
+
+  const eloChanges = getEloChanges();
+
   return (
     <div className="space-y-8 animate-in zoom-in-95 duration-500">
+      {/* Status do Sócio Logado */}
+      {currentPlayer && userRole === 'MEMBER' && (
+        <div className="bg-brand-secondary/40 backdrop-blur-md rounded-[1.5rem] sm:rounded-[2rem] p-4 sm:p-6 border border-brand-primary/20 flex flex-col sm:flex-row items-center justify-between gap-3 sm:gap-4 shadow-2xl">
+          <div className="flex items-center gap-3 sm:gap-4">
+            <div className="bg-brand-primary/10 p-2 sm:p-3 rounded-xl sm:rounded-2xl">
+              <Users className="w-5 h-5 sm:w-6 sm:h-6 text-brand-primary" />
+            </div>
+            <div>
+              <p className="text-[10px] sm:text-xs font-black text-white/40 uppercase tracking-[0.2em]">Seu Status Atual</p>
+              <p className="text-sm sm:text-lg font-black text-white uppercase tracking-tight">{currentPlayer.name}</p>
+            </div>
+          </div>
+          <PlayerStatusCard 
+            currentPlayer={currentPlayer}
+            attendance={attendance}
+            generationResult={generationResult}
+            matches={matches}
+            systemMetadata={systemMetadata}
+            activeTournament={useStore.getState().activeTournament}
+          />
+        </div>
+      )}
+
       {/* Alerta de Partidas Ocultas (Recuperação) */}
       {hiddenTodayMatches.length > 0 && (
         <div className="mb-6 bg-brand-secondary border-2 border-brand-primary/20 rounded-[2rem] p-6 flex flex-col md:flex-row items-center justify-between gap-4 animate-in fade-in slide-in-from-top-4 duration-500">
@@ -194,11 +258,11 @@ export const MatchView: React.FC<MatchViewProps> = ({
           </div>
           <div className="space-y-4">
             <h2 className="text-5xl font-black text-white uppercase tracking-tighter leading-none">Pronto para a Batalha?</h2>
-            <p className="text-lg text-brand-primary max-w-md mx-auto font-black uppercase tracking-widest opacity-80">
-              {attendance.length < 12 
-                ? `Convoque pelo menos 12 guerreiros. Atualmente: ${attendance.length}`
-                : "A elite está pronta. Times equilibrados via ELO Dynamic."}
-            </p>
+            {attendance.length < 12 && (
+              <p className="text-lg text-brand-primary max-w-md mx-auto font-black uppercase tracking-widest opacity-80">
+                Convoque pelo menos 12 guerreiros. Atualmente: {attendance.length}
+              </p>
+            )}
           </div>
 
           <div className="flex flex-col gap-6 w-full max-w-sm">
@@ -215,18 +279,9 @@ export const MatchView: React.FC<MatchViewProps> = ({
                 <p className="text-xs font-black text-brand-primary uppercase tracking-[0.2em] animate-pulse">Aguardando comando do organizador...</p>
               </div>
             )}
-            
-            {attendance.length < 12 && (
-              <button 
-                onClick={() => setViewMode('presence')} 
-                className="text-xs font-black uppercase text-brand-primary bg-brand-secondary px-8 py-4 rounded-2xl hover:bg-brand-secondary/90 transition-all tracking-[0.2em] shadow-xl border border-brand-primary/20"
-              >
-                Ir para Lista de Convocação
-              </button>
-            )}
           </div>
 
-          {attendance.length >= 12 && priorityPlayers.length > 0 && (
+          {systemMetadata.showEliteQueue && attendance.length >= 12 && priorityPlayers.length > 0 && (
             <div className="w-full max-w-4xl bg-brand-secondary/30 border border-brand-primary/10 rounded-[3rem] p-10 animate-in fade-in slide-in-from-bottom-8 duration-1000 shadow-inner">
               <div className="flex items-center gap-3 mb-8 justify-center">
                 <Clock className="w-5 h-5 text-brand-primary" />
@@ -255,6 +310,11 @@ export const MatchView: React.FC<MatchViewProps> = ({
                         (p.consecutiveBenched || 0) >= 2 ? 'text-red-500' : 'text-white'
                       }`}>
                         {p.name}
+                        {p.timestamp && (
+                          <span className="text-[8px] text-white/30 font-medium lowercase tracking-normal">
+                            {new Date(p.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        )}
                         {p.isOfficialSetter && (
                           <span className="w-2 h-2 rounded-full bg-brand-primary shadow-[0_0_8px_rgba(245,196,41,0.8)] animate-pulse" title="Levantador Oficial" />
                         )}
@@ -263,8 +323,8 @@ export const MatchView: React.FC<MatchViewProps> = ({
                         (p.consecutiveBenched || 0) >= 2 ? 'text-red-400' : 'text-white/60'
                       }`}>
                         {(p.consecutiveBenched || 0) > 0 
-                          ? `${p.consecutiveBenched} ${p.consecutiveBenched === 1 ? 'rodada' : 'rodadas'} fora`
-                          : (p.playedLastMatch ? 'Jogou última' : 'Na fila')}
+                          ? `${p.consecutiveBenched} ${p.consecutiveBenched <= 1 ? 'partida' : 'partidas'} fora`
+                          : 'Na fila'}
                       </span>
                     </div>
                   ))}
@@ -284,10 +344,10 @@ export const MatchView: React.FC<MatchViewProps> = ({
                     {priorityPlayers.slice(12).map((p) => (
                       <div 
                         key={p.id} 
-                        className="flex items-center gap-3 bg-brand-secondary border border-brand-primary/10 px-5 py-2.5 rounded-2xl shrink-0 hover:bg-brand-secondary/80 transition-colors"
+                        className="flex items-center gap-3 bg-black border border-brand-primary/10 px-5 py-2.5 rounded-2xl shrink-0 hover:bg-white/5 transition-colors"
                       >
                         <span className="text-[10px] font-black text-white uppercase tracking-tight">{p.name}</span>
-                        <span className="text-[9px] font-black text-brand-primary uppercase bg-brand-primary/10 px-2 py-0.5 rounded-lg border border-brand-primary/20">{p.consecutiveBenched}R</span>
+                        <span className="text-[9px] font-black text-brand-primary uppercase bg-brand-primary/10 px-2 py-0.5 rounded-lg border border-brand-primary/20">{p.consecutiveBenched} {p.consecutiveBenched <= 1 ? 'partida' : 'partidas'} fora</span>
                       </div>
                     ))}
                   </div>
@@ -302,102 +362,100 @@ export const MatchView: React.FC<MatchViewProps> = ({
         </div>
       ) : (
         <>
-          <div className="flex flex-col md:flex-row justify-between items-center gap-6 mb-4">
-            <div className="flex flex-col md:flex-row items-center gap-6">
-              <h2 className="text-4xl font-black text-white uppercase tracking-tighter flex items-center gap-4">
-                <div className="p-3 bg-brand-primary rounded-2xl shadow-xl shadow-brand-primary/20">
-                  <Swords className="w-8 h-8 text-brand-secondary" />
-                </div>
-                Confronto de Elite
-              </h2>
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="bg-brand-secondary text-brand-primary px-5 py-2 rounded-2xl flex items-center gap-3 border border-brand-primary/30 shadow-xl">
-                  <Hash className="w-4 h-4" />
-                  <span className="text-xs font-black uppercase tracking-widest">Batalha #{currentMatchNumber}</span>
-                </div>
-                {(() => {
-                  const diff = Math.abs(generationResult.teamA.totalElo - generationResult.teamB.totalElo);
-                  if (diff < 150) return (
-                    <div className="bg-emerald-50 px-5 py-2 rounded-2xl flex items-center gap-3 border border-emerald-200">
-                      <Scale className="w-4 h-4 text-emerald-500" />
-                      <span className="text-xs font-black text-emerald-700 uppercase tracking-widest">⚖️ Equilibrado</span>
-                    </div>
-                  );
-                  return (
-                    <div className="bg-brand-light px-5 py-2 rounded-2xl flex items-center gap-3 border border-brand-accent/10">
-                      <Swords className="w-4 h-4 text-brand-accent" />
-                      <span className="text-xs font-black text-brand-secondary uppercase tracking-widest">⚔️ Desafio Técnico</span>
-                    </div>
-                  );
-                })()}
-                <div className="bg-white/10 px-5 py-2 rounded-2xl flex items-center gap-3 border border-white/10">
-                  <Users className="w-4 h-4 text-brand-primary" />
-                  <span className="text-xs font-black text-white uppercase tracking-widest">{attendance.length} Guerreiros</span>
-                </div>
-                <div className="bg-white/10 px-5 py-2 rounded-2xl flex items-center gap-3 border border-white/10">
-                  <Clock className="w-4 h-4 text-brand-primary" />
-                  <span className="text-xs font-black text-white uppercase tracking-widest tabular-nums">{formatTime(elapsedTime)}</span>
-                </div>
-              </div>
-            </div>
+          <div className="flex flex-col gap-6 mb-8">
+            {/* Botões de Ação */}
+            {userRole === 'ADMIN' && (
+              <div className="bg-black/40 backdrop-blur-md p-4 sm:p-6 rounded-[2rem] sm:rounded-[3rem] border border-white/5 shadow-inner">
+                <button
+                  onClick={() => setShowActions(!showActions)}
+                  className="w-full flex items-center justify-between text-white font-black uppercase tracking-widest text-xs sm:text-sm hover:text-brand-primary transition-colors"
+                >
+                  <div className="flex items-center gap-3">
+                    <Settings2 className="w-5 h-5 text-brand-primary" />
+                    <span>Ações da Partida</span>
+                  </div>
+                  {showActions ? <ChevronUp className="w-5 h-5 text-brand-primary" /> : <ChevronDown className="w-5 h-5 text-brand-primary" />}
+                </button>
 
-            <div className="flex flex-wrap gap-3">
-              {userRole === 'ADMIN' && (
-                <>
-                  <button 
-                    onClick={() => {
-                      if (!showAnalysis && !analysis) {
-                        onAnalyzeMatch();
-                      }
-                      setShowAnalysis(!showAnalysis);
-                    }} 
-                    className={`flex items-center gap-3 text-[10px] font-black uppercase px-6 py-3 rounded-2xl border transition-all shadow-lg ${showAnalysis ? 'bg-brand-primary text-brand-secondary border-brand-primary/30' : 'bg-black border-brand-primary/20 text-white hover:bg-white/5'}`}
-                  >
-                    <Sparkles className={`w-4 h-4 ${showAnalysis ? 'text-brand-secondary' : 'text-brand-primary'}`} />
-                    {showAnalysis ? 'Ocultar Análise' : 'Análise IA'}
-                  </button>
-                  <button 
-                    onClick={() => {
-                      if (!showAudit && !ruleVerification) {
-                        onVerifyRules();
-                      }
-                      setShowAudit(!showAudit);
-                    }} 
-                    className={`flex items-center gap-3 text-[10px] font-black uppercase px-6 py-3 rounded-2xl border transition-all shadow-lg ${showAudit ? 'bg-brand-primary text-brand-secondary border-brand-primary/30' : 'bg-black border-brand-primary/20 text-white hover:bg-white/5'}`}
-                  >
-                    <ShieldCheck className={`w-4 h-4 ${showAudit ? 'text-brand-secondary' : 'text-brand-primary'}`} />
-                    {showAudit ? 'Ocultar Auditoria' : 'Auditoria IA'}
-                  </button>
-                  <button 
-                    onClick={onDiscard} 
-                    className="flex items-center gap-3 text-[10px] font-black uppercase px-6 py-3 rounded-2xl border border-red-500/30 bg-black text-red-500 hover:bg-red-500/10 transition-all shadow-lg"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                    Descartar
-                  </button>
-                </>
-              )}
-              <button 
-                onClick={() => setViewMode('presence')} 
-                className="flex items-center gap-3 text-[10px] font-black uppercase px-6 py-3 rounded-2xl border border-brand-primary/20 bg-black text-white hover:bg-white/5 transition-all shadow-lg"
-              >
-                <ClipboardCheck className="w-4 h-4 text-brand-primary" />
-                Convocação
-              </button>
-              {userRole === 'ADMIN' && (
-                <>
-                  <button 
-                    onClick={onAnnounce} 
-                    disabled={isNarrating}
-                    className={`flex items-center gap-3 text-[10px] font-black uppercase px-8 py-3 rounded-2xl shadow-2xl transition-all ${isNarrating ? 'bg-brand-primary/50 text-brand-secondary animate-pulse' : 'bg-brand-primary text-brand-secondary hover:scale-105 border border-brand-primary/30'}`}
-                  >
-                    {isNarrating ? <Volume2 className="w-4 h-4 animate-bounce" /> : <Megaphone className="w-4 h-4" />}
-                    {isNarrating ? 'Anunciando...' : 'Anunciar Times'}
-                  </button>
-                  <button onClick={() => onGenerate(true)} className="text-[10px] font-black uppercase bg-black text-white border border-brand-primary/20 px-8 py-3 rounded-2xl shadow-2xl hover:bg-white/5 transition-all">Nova Escalação</button>
-                </>
-              )}
-            </div>
+                {showActions && (
+                  <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-4 mt-6 pt-6 border-t border-white/10 animate-in slide-in-from-top-2 fade-in duration-300">
+                    <button 
+                      onClick={() => {
+                        if (!showAudit && !ruleVerification) {
+                          onVerifyRules();
+                        }
+                        setShowAudit(!showAudit);
+                      }} 
+                      className={`flex items-center gap-3 text-[10px] font-black uppercase px-6 py-4 rounded-2xl border transition-all shadow-lg ${showAudit ? 'bg-brand-primary text-brand-secondary border-brand-primary/30' : 'bg-black border-brand-primary/20 text-white hover:bg-white/5'}`}
+                    >
+                      <ShieldCheck className={`w-4 h-4 ${showAudit ? 'text-brand-secondary' : 'text-brand-primary'}`} />
+                      {showAudit ? 'Ocultar Auditoria' : 'Auditoria IA'}
+                    </button>
+
+                    <button 
+                      onClick={() => {
+                        if (!showAnalysis && !analysis) {
+                          onAnalyzeMatch();
+                        }
+                        setShowAnalysis(!showAnalysis);
+                      }} 
+                      className={`flex items-center gap-3 text-[10px] font-black uppercase px-6 py-4 rounded-2xl border transition-all shadow-lg ${showAnalysis ? 'bg-brand-primary text-brand-secondary border-brand-primary/30' : 'bg-black border-brand-primary/20 text-white hover:bg-white/5'}`}
+                    >
+                      <Sparkles className={`w-4 h-4 ${showAnalysis ? 'text-brand-secondary' : 'text-brand-primary'}`} />
+                      {showAnalysis ? 'Ocultar Análise' : 'Análise IA'}
+                    </button>
+
+                    <button 
+                      onClick={toggleTeamCards} 
+                      className={`flex items-center gap-3 text-[10px] font-black uppercase px-6 py-4 rounded-2xl border transition-all shadow-lg ${showTeamCards ? 'bg-brand-primary text-brand-secondary border-brand-primary/30' : 'bg-black border-brand-primary/20 text-white hover:bg-white/5'}`}
+                    >
+                      <Users className={`w-4 h-4 ${showTeamCards ? 'text-brand-secondary' : 'text-brand-primary'}`} />
+                      {showTeamCards ? 'Ocultar Times' : 'Mostrar Times'}
+                    </button>
+
+                    <button 
+                      onClick={toggleWaitlist} 
+                      className={`flex items-center gap-3 text-[10px] font-black uppercase px-6 py-4 rounded-2xl border transition-all shadow-lg ${showWaitlist ? 'bg-brand-primary text-brand-secondary border-brand-primary/30' : 'bg-black border-brand-primary/20 text-white hover:bg-white/5'}`}
+                    >
+                      <Clock className={`w-4 h-4 ${showWaitlist ? 'text-brand-secondary' : 'text-brand-primary'}`} />
+                      {showWaitlist ? 'Ocultar Fila' : 'Mostrar Fila'}
+                    </button>
+
+                    <button 
+                      onClick={togglePerformance} 
+                      className={`flex items-center gap-3 text-[10px] font-black uppercase px-6 py-4 rounded-2xl border transition-all shadow-lg ${showPerformance ? 'bg-brand-primary text-brand-secondary border-brand-primary/30' : 'bg-black border-brand-primary/20 text-white hover:bg-white/5'}`}
+                    >
+                      <BarChart3 className={`w-4 h-4 ${showPerformance ? 'text-brand-secondary' : 'text-brand-primary'}`} />
+                      {showPerformance ? 'Ocultar Performance' : 'Mostrar Performance'}
+                    </button>
+
+                    <button 
+                      onClick={onAnnounce} 
+                      disabled={isNarrating}
+                      className={`flex items-center gap-3 text-[10px] font-black uppercase px-8 py-4 rounded-2xl shadow-2xl transition-all ${isNarrating ? 'bg-brand-primary/50 text-brand-secondary animate-pulse' : 'bg-brand-primary text-brand-secondary hover:scale-105 border border-brand-primary/30'}`}
+                    >
+                      {isNarrating ? <Volume2 className="w-4 h-4 animate-bounce" /> : <Megaphone className="w-4 h-4" />}
+                      {isNarrating ? 'Anunciando...' : 'Anunciar Times'}
+                    </button>
+
+                    <button 
+                      onClick={() => onGenerate(true)} 
+                      className="text-[10px] font-black uppercase bg-black text-white border border-brand-primary/20 px-8 py-4 rounded-2xl shadow-2xl hover:bg-white/5 transition-all"
+                    >
+                      Nova Escalação
+                    </button>
+
+                    <button 
+                      onClick={onDiscard} 
+                      className="flex items-center gap-3 text-[10px] font-black uppercase px-6 py-4 rounded-2xl border border-red-500/30 bg-black text-red-500 hover:bg-red-500/10 transition-all shadow-lg"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      Descartar
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Análise IA */}
@@ -490,201 +548,207 @@ export const MatchView: React.FC<MatchViewProps> = ({
             </div>
           )}
 
-          {/* Resumo Rápido */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-            <div className="bg-black p-6 rounded-[2.5rem] border border-brand-primary/20 shadow-xl relative overflow-hidden">
-              <div className="absolute top-0 right-0 p-4 opacity-5">
-                <Users className="w-20 h-20 text-white" />
-              </div>
-              <div className="flex items-center justify-between mb-4 relative z-10">
-                <div className="flex items-center gap-3">
-                  <span className="text-[10px] font-black uppercase text-brand-secondary bg-brand-primary px-3 py-1 rounded-lg border border-brand-primary/20 shadow-sm">Time A</span>
-                  <span className="text-xs font-black text-brand-primary bg-brand-primary/10 px-3 py-1 rounded-lg border border-brand-primary/20 shadow-sm tabular-nums">{generationResult.teamA.totalElo} ELO</span>
+          {/* Resumo dos Times Otimizado */}
+          <div className="bg-black backdrop-blur-md rounded-2xl sm:rounded-[2.5rem] p-4 sm:p-8 mb-8 border border-brand-primary/10 flex flex-col gap-8 animate-in fade-in duration-700 shadow-2xl">
+            {/* Time A */}
+            <div className="flex flex-col gap-4 w-full">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-2.5 h-2.5 rounded-full bg-brand-primary shadow-[0_0_10px_rgba(245,196,41,0.6)] animate-pulse" />
+                  <span className="text-xs sm:text-sm font-black text-brand-primary uppercase tracking-widest">Time A</span>
                 </div>
+                <span className="text-[10px] sm:text-xs font-black text-brand-primary uppercase tracking-widest italic bg-brand-primary/10 px-3 py-1 rounded-full border border-brand-primary/20">ELO: {generationResult.teamA.totalElo}</span>
               </div>
-              <p className="text-sm font-black text-white leading-relaxed uppercase tracking-tight relative z-10">
-                {[generationResult.teamA.setter, ...generationResult.teamA.players].filter(Boolean).map((p, i, arr) => (
-                  <React.Fragment key={p.id}>
-                    <span className={p.id === generationResult.teamA.setter?.id || p.isOfficialSetter ? 'text-brand-primary' : ''}>
-                      {p.name}
+              <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-x-6 gap-y-4 py-2">
+                {[generationResult.teamA.setter, ...generationResult.teamA.players].filter(Boolean).map((p, idx) => (
+                  <div 
+                    key={p?.id || idx} 
+                    className={`flex items-center gap-2 group/player transition-all duration-300`}
+                  >
+                    <span className={`text-base sm:text-xl font-black uppercase tracking-tight relative ${
+                      p?.isOfficialSetter 
+                        ? 'text-brand-primary drop-shadow-[0_0_8px_rgba(245,196,41,0.5)]' 
+                        : 'text-brand-primary drop-shadow-[0_0_5px_rgba(245,196,41,0.3)]'
+                    }`}>
+                      {p?.name}
+                      <span className="absolute -bottom-0.5 left-0 w-0 h-0.5 bg-brand-primary transition-all duration-500 group-hover/player:w-full" />
                     </span>
-                    {i < arr.length - 1 ? ' • ' : ''}
-                  </React.Fragment>
+                    {p?.isOfficialSetter && <Sparkles className="w-3.5 h-3.5 sm:w-5 sm:h-5 text-brand-primary animate-pulse shrink-0" />}
+                  </div>
                 ))}
-              </p>
+              </div>
             </div>
 
-            <div className="bg-black p-6 rounded-[2.5rem] border border-brand-primary/20 shadow-xl relative overflow-hidden">
-              <div className="absolute top-0 right-0 p-4 opacity-5">
-                <Users className="w-20 h-20 text-white" />
-              </div>
-              <div className="flex items-center justify-between mb-4 relative z-10">
-                <div className="flex items-center gap-3">
-                  <span className="text-[10px] font-black uppercase text-brand-secondary bg-brand-primary px-3 py-1 rounded-lg border border-brand-primary/20 shadow-sm">Time B</span>
-                  <span className="text-xs font-black text-brand-primary bg-brand-primary/10 px-3 py-1 rounded-lg border border-brand-primary/20 shadow-sm tabular-nums">{generationResult.teamB.totalElo} ELO</span>
+            <div className="h-px w-full bg-white/10" />
+
+            {/* Time B */}
+            <div className="flex flex-col gap-4 w-full">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-2.5 h-2.5 rounded-full bg-white shadow-[0_0_10px_rgba(255,255,255,0.6)] animate-pulse" />
+                  <span className="text-xs sm:text-sm font-black text-white uppercase tracking-widest">Time B</span>
                 </div>
+                <span className="text-[10px] sm:text-xs font-black text-white/80 uppercase tracking-widest italic bg-white/5 px-3 py-1 rounded-full border border-white/10">ELO: {generationResult.teamB.totalElo}</span>
               </div>
-              <p className="text-sm font-black text-white leading-relaxed uppercase tracking-tight relative z-10">
-                {[generationResult.teamB.setter, ...generationResult.teamB.players].filter(Boolean).map((p, i, arr) => (
-                  <React.Fragment key={p.id}>
-                    <span className={p.id === generationResult.teamB.setter?.id || p.isOfficialSetter ? 'text-brand-primary' : ''}>
-                      {p.name}
+              <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-x-6 gap-y-4 py-2">
+                {[generationResult.teamB.setter, ...generationResult.teamB.players].filter(Boolean).map((p, idx) => (
+                  <div 
+                    key={p?.id || idx} 
+                    className={`flex items-center gap-2 group/player transition-all duration-300`}
+                  >
+                    <span className={`text-base sm:text-xl font-black uppercase tracking-tight relative ${
+                      p?.isOfficialSetter 
+                        ? 'text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.5)]' 
+                        : 'text-white/70 drop-shadow-[0_0_5px_rgba(255,255,255,0.3)]'
+                    }`}>
+                      {p?.name}
+                      <span className="absolute -bottom-0.5 left-0 w-0 h-0.5 bg-white transition-all duration-500 group-hover/player:w-full" />
                     </span>
-                    {i < arr.length - 1 ? ' • ' : ''}
-                  </React.Fragment>
+                    {p?.isOfficialSetter && <Sparkles className="w-3.5 h-3.5 sm:w-5 sm:h-5 text-white animate-pulse shrink-0" />}
+                  </div>
                 ))}
-              </p>
+              </div>
             </div>
           </div>
 
-          {/* Placar Eletrônico e Finalização */}
-          <div className="bg-black rounded-[3rem] border border-brand-primary/20 shadow-2xl overflow-hidden mb-10 relative">
-            <div className="absolute inset-0 bg-gradient-to-b from-brand-primary/5 to-transparent pointer-events-none" />
-            
-            <div className="px-10 py-6 border-b border-brand-primary/10 flex justify-between items-center relative z-10">
-              <h3 className="text-xs font-black text-white uppercase tracking-[0.3em] flex items-center gap-3">
-                <Trophy className="w-5 h-5 text-brand-primary" />
-                Arena de Batalha
-              </h3>
-              <div className="flex items-center gap-3">
-                <span className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em]">Tempo de Jogo:</span>
-                <span className="text-xs font-mono font-black text-brand-primary bg-brand-primary/10 px-3 py-1 rounded-lg border border-brand-primary/20 tabular-nums">{formatTime(elapsedTime)}</span>
-              </div>
-            </div>
-
-            <div className="p-10 relative z-10">
-              <div className="flex bg-brand-secondary rounded-2xl mb-10 p-1 border border-brand-primary/10">
-                {(['QUICK', 'SEQUENTIAL', 'SCORE'] as const).map((mode) => (
-                  <button
-                    key={mode}
-                    onClick={() => setScoreMode(mode)}
-                    className={`flex-1 py-3 text-[10px] font-black uppercase tracking-[0.2em] transition-all rounded-xl ${scoreMode === mode ? 'bg-brand-primary text-brand-secondary shadow-md' : 'text-white/40 hover:text-white hover:bg-white/5'}`}
-                  >
-                    {mode === 'QUICK' ? 'Rápido' : mode === 'SEQUENTIAL' ? 'Ponto a Ponto' : 'Placar Final'}
-                  </button>
-                ))}
+          {/* Placar e Ações de Partida */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-10">
+            {/* Placar Central */}
+            <div className="md:col-span-2 bg-black rounded-[2rem] sm:rounded-[3rem] border border-brand-primary/20 p-6 sm:p-10 shadow-2xl relative overflow-hidden group">
+              <div className="absolute inset-0 bg-gradient-to-br from-brand-primary/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-1000" />
+              
+              <div className="flex items-center justify-between mb-6 sm:mb-10 relative z-10">
+                <div className="flex items-center gap-3 sm:gap-4">
+                  <div className="p-2 sm:p-3 bg-brand-secondary rounded-xl sm:rounded-2xl border border-brand-primary/20">
+                    <Trophy className="w-5 h-5 sm:w-6 sm:h-6 text-brand-primary" />
+                  </div>
+                  <div>
+                    <h3 className="text-[10px] sm:text-xs font-black text-white uppercase tracking-[0.2em] sm:tracking-[0.3em]">Partida em Andamento</h3>
+                    <p className="text-[10px] font-black text-brand-primary uppercase tracking-[0.2em] mt-1">Partida #{currentMatchNumber}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 sm:gap-3 bg-brand-secondary/50 px-3 py-2 sm:px-6 sm:py-3 rounded-xl sm:rounded-2xl border border-brand-primary/10">
+                  <Clock className="w-3 h-3 sm:w-4 sm:h-4 text-brand-primary animate-pulse" />
+                  <span className="text-xs sm:text-sm font-black text-white font-mono tracking-widest">{formatTime(elapsedTime)}</span>
+                </div>
               </div>
 
-              {scoreMode === 'SEQUENTIAL' && (
-                <div className="flex items-center justify-around gap-10 py-10">
-                  <div className="flex flex-col items-center gap-6">
-                    <p className="text-xs font-black text-brand-primary bg-brand-primary/10 px-4 py-2 rounded-xl border border-brand-primary/20 uppercase tracking-[0.3em]">Time A</p>
-                    <div className="flex items-center gap-6">
-                      <button onClick={() => setScoreA(Math.max(0, scoreA - 1))} className="w-12 h-12 rounded-full border border-brand-primary/20 flex items-center justify-center text-white/40 hover:text-brand-primary hover:border-brand-primary/50 transition-all"><Minus className="w-5 h-5" /></button>
-                      <div className="bg-brand-secondary px-6 py-4 rounded-3xl border border-brand-primary/20 shadow-lg">
-                        <span className="text-8xl font-black text-white tabular-nums tracking-tighter">{scoreA}</span>
-                      </div>
-                      <button onClick={() => setScoreA(scoreA + 1)} className="w-20 h-20 rounded-[2rem] bg-brand-primary text-brand-secondary flex items-center justify-center shadow-xl hover:scale-110 active:scale-95 transition-all"><Plus className="w-10 h-10" /></button>
-                    </div>
-                  </div>
-                  <div className="h-24 w-px bg-brand-primary/20" />
-                  <div className="flex flex-col items-center gap-6">
-                    <p className="text-xs font-black text-brand-primary bg-brand-primary/10 px-4 py-2 rounded-xl border border-brand-primary/20 uppercase tracking-[0.3em]">Time B</p>
-                    <div className="flex items-center gap-6">
-                      <button onClick={() => setScoreB(scoreB + 1)} className="w-20 h-20 rounded-[2rem] bg-brand-primary text-brand-secondary flex items-center justify-center shadow-xl hover:scale-110 active:scale-95 transition-all"><Plus className="w-10 h-10" /></button>
-                      <div className="bg-brand-secondary px-6 py-4 rounded-3xl border border-brand-primary/20 shadow-lg">
-                        <span className="text-8xl font-black text-white tabular-nums tracking-tighter">{scoreB}</span>
-                      </div>
-                      <button onClick={() => setScoreB(Math.max(0, scoreB - 1))} className="w-12 h-12 rounded-full border border-brand-primary/20 flex items-center justify-center text-white/40 hover:text-brand-primary hover:border-brand-primary/50 transition-all"><Minus className="w-5 h-5" /></button>
-                    </div>
-                  </div>
-                </div>
-              )}
+              <div className="flex flex-col items-center justify-center gap-6 sm:gap-8 relative z-10">
+                {userRole === 'ADMIN' && (
+                  <div className="flex flex-row items-center justify-center gap-3 sm:gap-8 w-full">
+                    <button 
+                      onClick={() => onFinishMatch('A')}
+                      className="w-1/2 bg-brand-primary hover:bg-brand-primary/90 text-black px-2 py-4 sm:px-8 sm:py-6 rounded-2xl sm:rounded-3xl font-black text-[10px] sm:text-sm uppercase tracking-widest shadow-xl shadow-brand-primary/20 transition-all hover:scale-105 active:scale-95 flex flex-col sm:flex-row items-center justify-center gap-1.5 sm:gap-3"
+                    >
+                      <span>Vitória A</span> <Trophy className="w-4 h-4 sm:w-5 sm:h-5" />
+                    </button>
 
-              {scoreMode === 'SCORE' && (
-                <div className="flex items-center justify-center gap-10 py-10">
-                  <div className="flex flex-col items-center gap-4">
-                    <p className="text-xs font-black text-brand-primary bg-brand-primary/10 px-4 py-2 rounded-xl border border-brand-primary/20 uppercase tracking-[0.3em]">Time A</p>
-                    <input type="number" value={tempScoreA} onChange={(e) => setTempScoreA(e.target.value)} className="w-24 h-24 text-5xl font-black text-center bg-brand-secondary border-2 border-brand-primary/20 rounded-[2rem] text-white focus:border-brand-primary shadow-lg transition-all outline-none" />
-                  </div>
-                  <div className="text-4xl font-black text-brand-primary/10">VS</div>
-                  <div className="flex flex-col items-center gap-4">
-                    <p className="text-xs font-black text-brand-primary bg-brand-primary/10 px-4 py-2 rounded-xl border border-brand-primary/20 uppercase tracking-[0.3em]">Time B</p>
-                    <input type="number" value={tempScoreB} onChange={(e) => setTempScoreB(e.target.value)} className="w-24 h-24 text-5xl font-black text-center bg-brand-secondary border-2 border-brand-primary/20 rounded-[2rem] text-white focus:border-brand-primary shadow-lg transition-all outline-none" />
-                  </div>
-                </div>
-              )}
+                    <div className="hidden sm:block w-px h-16 bg-white/10" />
 
-              {userRole === 'ADMIN' && (
-                <div className="flex gap-6 mt-10">
-                  <button 
-                    onClick={() => onFinishMatch('A')}
-                    className="flex-1 bg-brand-secondary hover:bg-brand-secondary/80 border-2 border-brand-primary/20 text-white font-black py-6 rounded-[2rem] shadow-xl transition-all flex flex-col items-center justify-center group"
-                  >
-                    <span className="text-[10px] uppercase tracking-[0.3em] text-brand-primary group-hover:scale-110 transition-transform mb-1">Vencedor</span>
-                    <span className="text-lg uppercase tracking-tighter">Time A</span>
-                  </button>
-                  <button 
-                    onClick={() => onFinishMatch('B')}
-                    className="flex-1 bg-brand-secondary hover:bg-brand-secondary/80 border-2 border-brand-primary/20 text-white font-black py-6 rounded-[2rem] shadow-xl transition-all flex flex-col items-center justify-center group"
-                  >
-                    <span className="text-[10px] uppercase tracking-[0.3em] text-brand-primary group-hover:scale-110 transition-transform mb-1">Vencedor</span>
-                    <span className="text-lg uppercase tracking-tighter">Time B</span>
-                  </button>
+                    <button 
+                      onClick={() => onFinishMatch('B')}
+                      className="w-1/2 bg-white hover:bg-gray-200 text-black px-2 py-4 sm:px-8 sm:py-6 rounded-2xl sm:rounded-3xl font-black text-[10px] sm:text-sm uppercase tracking-widest shadow-xl shadow-white/20 transition-all hover:scale-105 active:scale-95 flex flex-col sm:flex-row items-center justify-center gap-1.5 sm:gap-3"
+                    >
+                      <span>Vitória B</span> <Trophy className="w-4 h-4 sm:w-5 sm:h-5" />
+                    </button>
+                  </div>
+                )}
+                
+                <div className="flex flex-col sm:flex-row items-center gap-2 sm:gap-8 text-[9px] sm:text-[10px] font-black uppercase tracking-widest mt-1 sm:mt-2 w-full">
+                  <div className="flex items-center justify-center gap-2 sm:gap-4 w-full sm:w-auto">
+                    <span className="text-green-400 bg-green-400/10 px-2 py-1.5 sm:px-4 sm:py-2 rounded-lg sm:rounded-xl border border-green-400/20 whitespace-nowrap">Vitória: +{eloChanges.aWin} ELO</span>
+                    <span className="text-red-400 bg-red-400/10 px-2 py-1.5 sm:px-4 sm:py-2 rounded-lg sm:rounded-xl border border-red-400/20 whitespace-nowrap">Derrota: {eloChanges.aLoss} ELO</span>
+                  </div>
+                  <div className="flex items-center justify-center gap-2 text-white/60 bg-white/5 px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg sm:rounded-xl border border-white/10 w-full sm:w-auto">
+                    <Users className="w-3 h-3 sm:w-4 sm:h-4" />
+                    <span>{attendance.length} Sócios Presentes</span>
+                  </div>
                 </div>
-              )}
+              </div>
             </div>
           </div>
 
           {/* Lista de Espera */}
-          <div className="bg-black rounded-[3rem] p-10 mb-10 border border-brand-primary/20 shadow-2xl relative overflow-hidden">
-            <div className="absolute top-0 right-0 p-10 opacity-5 pointer-events-none">
-              <Clock className="w-40 h-40 text-brand-primary" />
-            </div>
-            
-            <div className="flex items-center justify-between mb-10 relative z-10">
-              <div className="flex items-center gap-4">
-                <div className="p-3 bg-brand-secondary rounded-2xl border border-brand-primary/20">
-                  <Clock className="w-6 h-6 text-brand-primary" />
+          {showWaitlist && (
+            <div className="bg-black rounded-[2rem] sm:rounded-[3rem] p-6 sm:p-10 mb-10 border border-brand-primary/20 shadow-2xl relative overflow-hidden">
+              <div className="absolute top-0 right-0 p-6 sm:p-10 opacity-5 pointer-events-none">
+                <Clock className="w-20 h-20 sm:w-40 sm:h-40 text-brand-primary" />
+              </div>
+              
+              <div className="flex items-center justify-between mb-6 sm:mb-10 relative z-10">
+                <div className="flex items-center gap-3 sm:gap-4">
+                  <div className="p-2 sm:p-3 bg-brand-secondary rounded-xl sm:rounded-2xl border border-brand-primary/20">
+                    <Clock className="w-5 h-5 sm:w-6 sm:h-6 text-brand-primary" />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-black text-white uppercase tracking-[0.3em]">Guerreiros em Espera</h3>
+                    <p className="text-[10px] font-black text-brand-primary uppercase tracking-[0.2em] mt-1">Fila de Prioridade Dinâmica</p>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="text-xs font-black text-white uppercase tracking-[0.3em]">Guerreiros em Espera</h3>
-                  <p className="text-[10px] font-black text-brand-primary uppercase tracking-[0.2em] mt-1">Fila de Prioridade Dinâmica</p>
+                <div className="bg-brand-primary/10 text-brand-primary px-3 py-1.5 sm:px-6 sm:py-2 rounded-xl sm:rounded-2xl border border-brand-primary/30 shadow-xl">
+                  <span className="text-xs font-black uppercase tracking-widest">{(generationResult?.remainingPlayers?.length || 0)} Na Fila</span>
                 </div>
               </div>
-              <div className="bg-brand-primary/10 text-brand-primary px-6 py-2 rounded-2xl border border-brand-primary/30 shadow-xl">
-                <span className="text-xs font-black uppercase tracking-widest">{(generationResult?.remainingPlayers?.length || 0)} Na Fila</span>
-              </div>
-            </div>
-            
-            {generationResult?.remainingPlayers && generationResult.remainingPlayers.length > 0 ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 relative z-10">
-                {generationResult.remainingPlayers.map((player, idx) => (
-                  <div 
-                    key={player.id || `remaining-${idx}`} 
-                    className={`relative flex items-center justify-between p-6 rounded-[2rem] border transition-all duration-500 group hover:-translate-y-1 ${swapSelection?.playerId === player.id ? 'bg-brand-primary/10 border-brand-primary shadow-2xl ring-4 ring-brand-primary/20' : 'bg-brand-secondary border-brand-primary/20 hover:border-brand-primary/50 shadow-xl'}`}
-                  >
-                    <div className="flex items-center gap-5 min-w-0">
-                      <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-xs font-black shrink-0 shadow-lg transition-all duration-500 ${idx < 6 ? 'bg-brand-primary text-brand-secondary group-hover:scale-110' : 'bg-black border border-brand-primary/20 text-white'}`}>
-                        {idx + 1}º
-                      </div>
-                      <div className="min-w-0">
-                        <p className={`text-sm font-black uppercase tracking-tight leading-tight truncate ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
-                          {player.name}
-                        </p>
-                        <div className="flex items-center gap-3 mt-2">
-                          <span className="text-[9px] font-black text-brand-primary uppercase tracking-widest bg-brand-primary/10 px-2 py-0.5 rounded-md border border-brand-primary/20">ELO {player.elo}</span>
-                          <span className={`text-[9px] font-black uppercase tracking-widest ${player.consecutiveBenched >= 2 ? 'text-red-500 animate-pulse' : 'text-white/60'}`}>
-                            {player.consecutiveBenched}R Fora
-                          </span>
+              
+              {generationResult?.remainingPlayers && generationResult.remainingPlayers.length > 0 ? (
+                <div className="grid grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3 relative z-10">
+                  {generationResult.remainingPlayers.map((player, idx) => (
+                    <div 
+                      key={player.id || `remaining-${idx}`} 
+                      className={`relative flex items-center justify-between p-2 sm:p-4 rounded-2xl sm:rounded-3xl border-2 transition-all duration-500 group hover:-translate-y-1 ${swapSelection?.playerId === player.id ? 'border-brand-primary bg-brand-primary/10 shadow-xl z-10' : 'border-transparent bg-white/5 hover:bg-white/10 hover:shadow-md'}`}
+                    >
+                      <div className="flex items-center gap-3 sm:gap-4 min-w-0">
+                        <div className={`w-8 h-8 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center text-xs sm:text-base font-black shrink-0 shadow-lg transition-all duration-500 ${
+                          idx < 12 
+                            ? 'bg-brand-primary text-brand-secondary group-hover:scale-110' 
+                            : idx < 24 
+                              ? 'bg-white text-black' 
+                              : 'bg-black border border-brand-primary/20 text-white'
+                        }`}>
+                          {idx + 1}º
+                        </div>
+                        <div className="min-w-0">
+                          <p className={`text-sm sm:text-2xl font-black flex items-center gap-2 tracking-tight leading-none truncate ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
+                            {player.name}
+                            {player.timestamp && (
+                              <span className="text-[10px] text-white/30 font-medium lowercase tracking-normal">
+                                {new Date(player.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            )}
+                          </p>
+                          <div className="flex flex-wrap items-center gap-2 mt-1 sm:mt-2">
+                            <span className={`text-[9px] sm:text-[11px] font-black uppercase ${
+                              (player.consecutiveBenched || 0) >= 0 
+                                ? 'text-brand-primary animate-pulse' 
+                                : 'text-white/40'
+                            }`}>
+                              {(player.consecutiveBenched || 0) + 1} fora
+                            </span>
+                            <span className="text-white/30 text-[9px]">•</span>
+                            <span className="text-[9px] sm:text-[11px] text-white font-bold uppercase tracking-widest">
+                              Hoje: {player.dailyMatches}
+                            </span>
+                          </div>
                         </div>
                       </div>
+                      {userRole === 'ADMIN' && (
+                        <button 
+                          onClick={() => onSwapClick('Bench', player.id)}
+                          className={`p-1.5 sm:p-3 rounded-lg sm:rounded-xl transition-all shrink-0 ${swapSelection?.playerId === player.id ? 'bg-brand-primary text-brand-secondary shadow-2xl' : 'text-white/40 hover:text-brand-primary hover:bg-brand-primary/10'}`}
+                        >
+                          <ArrowLeftRight className="w-3 h-3 sm:w-5 sm:h-5" />
+                        </button>
+                      )}
                     </div>
-                    <button 
-                      onClick={() => onSwapClick('Bench', player.id)}
-                      className={`p-4 rounded-2xl transition-all shrink-0 ${swapSelection?.playerId === player.id ? 'bg-brand-primary text-brand-secondary shadow-2xl' : 'text-white/40 hover:text-brand-primary hover:bg-brand-primary/10'}`}
-                    >
-                      <ArrowLeftRight className="w-5 h-5" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-20 bg-brand-secondary/50 rounded-[3rem] border-2 border-dashed border-brand-primary/20 relative z-10">
-                <p className="text-xs font-black text-white/40 uppercase tracking-[0.3em]">Nenhum guerreiro aguardando no momento</p>
-              </div>
-            )}
-          </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-10 sm:py-20 bg-brand-secondary/50 rounded-[2rem] sm:rounded-[3rem] border-2 border-dashed border-brand-primary/20 relative z-10">
+                  <p className="text-[10px] sm:text-xs font-black text-white/40 uppercase tracking-[0.2em] sm:tracking-[0.3em]">Nenhum guerreiro aguardando no momento</p>
+                </div>
+              )}
+            </div>
+          )}
 
           {swapSelection && (
             <div className="bg-brand-primary p-8 rounded-[2.5rem] mb-10 flex items-center justify-between shadow-2xl shadow-brand-primary/30 animate-pulse border-2 border-brand-secondary/10">
@@ -706,44 +770,47 @@ export const MatchView: React.FC<MatchViewProps> = ({
             </div>
           )}
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 mb-10">
-            <TeamCard 
-              title="Time A" 
-              team={generationResult.teamA} 
-              color="green" 
-              attendance={attendance}
-              userRole={userRole}
-              onSwap={(pid) => onSwapClick('A', pid)}
-              onRemove={(pid) => onRemovePlayer('A', pid)}
-              onPromote={(pid) => onPromoteToSetter('A', pid)}
-              activeSwapId={swapSelection?.playerId}
-            />
-            <TeamCard 
-              title="Time B" 
-              team={generationResult.teamB} 
-              color="blue" 
-              attendance={attendance}
-              userRole={userRole}
-              onSwap={(pid) => onSwapClick('B', pid)}
-              onRemove={(pid) => onRemovePlayer('B', pid)}
-              onPromote={(pid) => onPromoteToSetter('B', pid)}
-              activeSwapId={swapSelection?.playerId}
-            />
-          </div>
+          {showTeamCards && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 mb-10">
+              <TeamCard 
+                title="Time A" 
+                team={generationResult.teamA} 
+                color="green" 
+                attendance={attendance}
+                userRole={userRole}
+                onSwap={(pid) => onSwapClick('A', pid)}
+                onRemove={(pid) => onRemovePlayer('A', pid)}
+                onPromote={(pid) => onPromoteToSetter('A', pid)}
+                activeSwapId={swapSelection?.playerId}
+              />
+              <TeamCard 
+                title="Time B" 
+                team={generationResult.teamB} 
+                color="blue" 
+                attendance={attendance}
+                userRole={userRole}
+                onSwap={(pid) => onSwapClick('B', pid)}
+                onRemove={(pid) => onRemovePlayer('B', pid)}
+                onPromote={(pid) => onPromoteToSetter('B', pid)}
+                activeSwapId={swapSelection?.playerId}
+              />
+            </div>
+          )}
 
           {/* Estatísticas de Partidas por Jogador */}
-          <div className="bg-black rounded-[3rem] border border-brand-primary/20 p-10 shadow-2xl overflow-hidden">
-            <div className="flex items-center justify-between mb-10">
-              <div className="flex items-center gap-4">
-                <div className="p-3 bg-brand-secondary rounded-2xl border border-brand-primary/20">
-                  <BarChart3 className="w-6 h-6 text-brand-primary" />
-                </div>
-                <div>
-                  <h3 className="text-xs font-black text-white uppercase tracking-[0.3em]">Performance da Sessão</h3>
-                  <p className="text-[10px] font-black text-brand-primary uppercase tracking-[0.2em] mt-1">Histórico de Batalhas do Dia</p>
+          {showPerformance && (
+            <div className="bg-black rounded-[3rem] border border-brand-primary/20 p-10 shadow-2xl overflow-hidden">
+              <div className="flex items-center justify-between mb-10">
+                <div className="flex items-center gap-4">
+                  <div className="p-3 bg-brand-secondary rounded-2xl border border-brand-primary/20">
+                    <BarChart3 className="w-6 h-6 text-brand-primary" />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-black text-white uppercase tracking-[0.3em]">Performance da Sessão</h3>
+                    <p className="text-[10px] font-black text-brand-primary uppercase tracking-[0.2em] mt-1">Histórico de Batalhas do Dia</p>
+                  </div>
                 </div>
               </div>
-            </div>
 
             <div className="relative">
               <div className="overflow-x-auto pb-6 -mx-10 px-10">
@@ -753,14 +820,14 @@ export const MatchView: React.FC<MatchViewProps> = ({
                       <th className="text-left py-4 px-6 text-[10px] font-black text-white/40 uppercase tracking-[0.2em] sticky left-0 bg-black z-20">Guerreiro</th>
                       {todayMatches.map((_, i) => (
                         <th key={i} className="py-4 px-2 text-center min-w-[60px]">
-                          <div className="mx-auto w-10 h-10 rounded-xl bg-brand-secondary border border-brand-primary/20 text-brand-primary flex items-center justify-center text-[10px] font-black shadow-lg uppercase tracking-widest">
+                          <div className="mx-auto w-10 h-10 rounded-xl bg-black border border-brand-primary/20 text-brand-primary flex items-center justify-center text-[10px] font-black shadow-lg uppercase tracking-widest">
                             B{i + 1}
                           </div>
                         </th>
                       ))}
                       {todayMatches.length === 0 && (
                         <th className="py-4 px-2 text-center min-w-[60px]">
-                          <div className="mx-auto w-10 h-10 rounded-xl bg-brand-secondary border border-brand-primary/20 text-brand-primary flex items-center justify-center text-[10px] font-black shadow-lg uppercase tracking-widest">
+                          <div className="mx-auto w-10 h-10 rounded-xl bg-black border border-brand-primary/20 text-brand-primary flex items-center justify-center text-[10px] font-black shadow-lg uppercase tracking-widest">
                             B1
                           </div>
                         </th>
@@ -779,7 +846,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
                         <tr key={player.id || `attendance-row-${idx}`} className="group">
                           <td className="py-4 px-6 sticky left-0 bg-black z-10 border-y border-l border-brand-primary/20 rounded-l-2xl group-hover:bg-brand-secondary transition-colors">
                             <div className="flex items-center gap-4">
-                              <div className="w-8 h-8 rounded-xl bg-brand-secondary border border-brand-primary/20 text-brand-primary flex items-center justify-center text-[10px] font-black shadow-lg">
+                              <div className="w-8 h-8 rounded-xl bg-black border border-brand-primary/20 text-brand-primary flex items-center justify-center text-[10px] font-black shadow-lg">
                                 {arrivalOrder || '?'}
                               </div>
                               <div>
@@ -797,7 +864,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
                           return (
                             <td key={match.id || `match-cell-${mIdx}`} className="py-4 px-2 text-center border-y border-brand-primary/20 group-hover:bg-brand-secondary transition-colors">
                               {played ? (
-                                <div className={`inline-flex items-center justify-center w-10 h-10 rounded-xl font-black text-xs shadow-lg transition-all group-hover:scale-110 ${won ? 'bg-brand-primary text-brand-secondary shadow-brand-primary/20' : 'bg-brand-secondary border border-brand-primary/20 text-white shadow-brand-secondary/20'}`}>
+                                <div className={`inline-flex items-center justify-center w-10 h-10 rounded-xl font-black text-xs shadow-lg transition-all group-hover:scale-110 border ${won ? 'bg-brand-primary border-brand-primary/30 text-black' : 'bg-white border-white/30 text-black'}`}>
                                   {won ? 'V' : 'D'}
                                 </div>
                               ) : (
@@ -819,8 +886,8 @@ export const MatchView: React.FC<MatchViewProps> = ({
                           <div className="flex flex-col items-center">
                             <span className="text-xs font-black text-white uppercase tracking-tight">{player.dailyMatches} Jogos</span>
                             <div className="flex gap-2 mt-1.5">
-                              <span className="text-[9px] font-black text-brand-primary bg-brand-primary/10 px-2 py-0.5 rounded-lg border border-brand-primary/20">{player.dailyWins}V</span>
-                              <span className="text-[9px] font-black text-white/60 bg-white/5 px-2 py-0.5 rounded-lg border border-white/10">{player.dailyLosses}D</span>
+                              <span className="text-[9px] font-black text-black bg-brand-primary px-2 py-0.5 rounded-lg border border-brand-primary/20">{player.dailyWins}V</span>
+                              <span className="text-[9px] font-black text-black bg-white px-2 py-0.5 rounded-lg border border-white/10">{player.dailyLosses}D</span>
                             </div>
                           </div>
                         </td>
@@ -830,19 +897,20 @@ export const MatchView: React.FC<MatchViewProps> = ({
                 </table>
               </div>
             </div>
-          </div>
+            </div>
+          )}
 
           {/* Finalizar Dia */}
           {userRole === 'ADMIN' && (
             <div className="flex justify-center pt-16 mt-10 border-t border-brand-primary/10">
               <button 
                 onClick={onFinishDay}
-                className="flex items-center gap-6 px-12 py-6 bg-black hover:bg-brand-secondary text-white rounded-[2rem] transition-all shadow-2xl shadow-brand-primary/10 group relative overflow-hidden border border-brand-primary/20"
+                className="flex items-center gap-6 px-12 py-6 bg-rose-600 hover:bg-rose-700 text-white rounded-[2rem] transition-all shadow-2xl shadow-rose-600/20 group relative overflow-hidden border border-rose-500/30"
               >
-                <div className="absolute inset-0 bg-gradient-to-r from-brand-primary/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-                <RefreshCw className="w-6 h-6 text-brand-primary group-hover:rotate-180 transition-transform duration-1000 relative z-10" />
+                <div className="absolute inset-0 bg-gradient-to-r from-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                <RefreshCw className="w-6 h-6 text-white group-hover:rotate-180 transition-transform duration-1000 relative z-10" />
                 <div className="text-left relative z-10">
-                  <p className="text-[10px] font-black uppercase tracking-[0.3em] text-brand-primary leading-none mb-2">Encerrar Sessão</p>
+                  <p className="text-[10px] font-black uppercase tracking-[0.3em] text-white/80 leading-none mb-2">Encerrar Sessão</p>
                   <p className="text-base font-black uppercase tracking-tight leading-none">Finalizar Dia de Jogos</p>
                 </div>
               </button>

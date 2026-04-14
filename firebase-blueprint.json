@@ -159,9 +159,44 @@
         "config": { "type": "object" }
       },
       "required": ["id", "name", "date", "status", "teams", "matches", "config"]
+    },
+    "Intentions": {
+      "title": "Intentions",
+      "description": "Weekly intentions for the upcoming game day",
+      "type": "object",
+      "properties": {
+        "targetDate": { "type": "string" },
+        "automationEnabled": { "type": "boolean" },
+        "responses": { "type": "object" },
+        "remindersSent": { "type": "object" }
+      }
+    },
+    "FcmMessage": {
+      "title": "FCM Message",
+      "description": "A message to be sent via Firebase Cloud Messaging",
+      "type": "object",
+      "properties": {
+        "token": { "type": "string" },
+        "notification": {
+          "type": "object",
+          "properties": {
+            "title": { "type": "string" },
+            "body": { "type": "string" }
+          }
+        },
+        "createdAt": { "type": "string", "format": "date-time" }
+      }
     }
   },
   "firestore": {
+    "/metadata/intentions": {
+      "schema": "Intentions",
+      "description": "Weekly intentions and automation settings"
+    },
+    "/fcm_messages/{docId}": {
+      "schema": "FcmMessage",
+      "description": "Queue for push notifications"
+    },
     "/metadata/currentMatch": {
       "schema": "CurrentMatch",
       "description": "The match currently in progress, shared among admins"

@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { Player, Payment, Match, GenerationResult, SystemMetadata, UsageStats, Expense, Tournament } from './types';
 import { User } from './firebase';
 
-export type ViewMode = 'presence' | 'history' | 'generation' | 'members' | 'dashboard' | 'rules' | 'payments' | 'admin' | 'tournament' | 'attendance_report';
+export type ViewMode = 'presence' | 'history' | 'generation' | 'members' | 'dashboard' | 'rules' | 'payments' | 'admin' | 'tournament' | 'attendance_report' | 'intentions';
 
 interface AppState {
   // Data
@@ -59,6 +59,7 @@ interface AppState {
   isLoggingOut: boolean;
   isScanningAnomalies: boolean;
   anomalyReport: string | null;
+  theme: 'light' | 'dark';
   
   // Management State
   isFormOpen: boolean;
@@ -120,6 +121,8 @@ interface AppState {
   setIsLoggingOut: (is: boolean) => void;
   setIsScanningAnomalies: (is: boolean) => void;
   setAnomalyReport: (report: string | null) => void;
+  setTheme: (theme: 'light' | 'dark') => void;
+  toggleTheme: () => void;
   
   setIsFormOpen: (isOpen: boolean) => void;
   setEditingPlayer: (player: Player | null) => void;
@@ -153,7 +156,9 @@ export const useStore = create<AppState>((set) => ({
     matchStartTime: null,
     courtLocation: { lat: -23.588453, lng: -46.658890 },
     geofenceRadius: 150,
-    monthlyFee: 0
+    monthlyFee: 0,
+    isTournamentEnabled: true,
+    showEliteQueue: true
   },
   
   viewMode: (typeof window !== 'undefined' && localStorage.getItem('spikegen_viewMode') as ViewMode) || 'presence',
@@ -190,6 +195,7 @@ export const useStore = create<AppState>((set) => ({
   isLoggingOut: false,
   isScanningAnomalies: false,
   anomalyReport: null,
+  theme: (typeof window !== 'undefined' && localStorage.getItem('spikegen_theme') as 'light' | 'dark') || 'dark',
   
   isFormOpen: false,
   editingPlayer: null,
@@ -271,6 +277,29 @@ export const useStore = create<AppState>((set) => ({
   setIsLoggingOut: (isLoggingOut) => set({ isLoggingOut }),
   setIsScanningAnomalies: (isScanningAnomalies) => set({ isScanningAnomalies }),
   setAnomalyReport: (anomalyReport) => set({ anomalyReport }),
+  setTheme: (theme) => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('spikegen_theme', theme);
+      if (theme === 'dark') {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+    }
+    set({ theme });
+  },
+  toggleTheme: () => set((state) => {
+    const newTheme = state.theme === 'dark' ? 'light' : 'dark';
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('spikegen_theme', newTheme);
+      if (newTheme === 'dark') {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+    }
+    return { theme: newTheme };
+  }),
   
   setIsFormOpen: (isFormOpen) => set({ isFormOpen }),
   setEditingPlayer: (editingPlayer) => set({ editingPlayer }),

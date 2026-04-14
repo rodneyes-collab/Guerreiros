@@ -66,19 +66,19 @@ service cloud.firestore {
         'dailyEloGain', 'wins', 'losses', 'eloHistory', 'isAdmin', 
         'joinedAt', 'playedLastMatch', 'birthDate', 'updatedAt', 'uid', 'dailyResults',
         'arrivalOrder', 'isPresent', 'timestamp', 'status', 'createdAt',
-        'role', 'position', 'level', 'consecutiveBenched', 'reads', 'lastReadUpdate'
+        'role', 'position', 'level', 'consecutiveBenched', 'reads', 'lastReadUpdate', 'fcmToken'
       ];
       return hasOnlyAllowedFields(data, allowedFields) &&
              (!('id' in data) || data.id is string) &&
              (!('name' in data) || (data.name is string && data.name.size() > 0 && data.name.size() < 100)) &&
-             (!('email' in data) || isValidEmail(data.email)) &&
+             (!('email' in data) || data.email == "" || isValidEmail(data.email)) &&
              (!('gender' in data) || data.gender in ['MALE', 'FEMALE', 'M', 'F']) &&
-             (!('elo' in data) || data.elo is int) &&
+             (!('elo' in data) || data.elo is int || data.elo is float) &&
              (!('matchesPlayed' in data) || data.matchesPlayed is int) &&
              (!('dailyMatches' in data) || data.dailyMatches is int) &&
              (!('dailyWins' in data) || data.dailyWins is int) &&
              (!('dailyLosses' in data) || data.dailyLosses is int) &&
-             (!('dailyEloGain' in data) || data.dailyEloGain is int) &&
+             (!('dailyEloGain' in data) || data.dailyEloGain is int || data.dailyEloGain is float) &&
              (!('wins' in data) || data.wins is int) &&
              (!('losses' in data) || data.losses is int) &&
              (!('playedLastMatch' in data) || data.playedLastMatch is bool) &&
@@ -100,7 +100,8 @@ service cloud.firestore {
              (!('uid' in data) || data.uid is string) &&
              (!('consecutiveBenched' in data) || data.consecutiveBenched is int) &&
              (!('reads' in data) || data.reads is int) &&
-             (!('lastReadUpdate' in data) || data.lastReadUpdate is string);
+             (!('lastReadUpdate' in data) || data.lastReadUpdate is string) &&
+             (!('fcmToken' in data) || data.fcmToken == null || data.fcmToken is string);
     }
 
     function isValidMatch(data) {
@@ -142,8 +143,21 @@ service cloud.firestore {
 
     match /players/{playerId} {
       allow read: if true;
-      allow create, update: if isAdmin() && isValidPlayer(request.resource.data);
+      allow create: if isAdmin() && isValidPlayer(request.resource.data);
+      allow update: if (isAdmin() || 
+                        (isAuthenticated() && 
+                         (
+                           (resource.data.uid == request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['fcmToken'])) ||
+                           ((!('uid' in resource.data) || resource.data.uid == null || resource.data.uid == "") && request.resource.data.diff(resource.data).affectedKeys().hasAny(['uid']) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['uid', 'email']) && request.resource.data.uid == request.auth.uid)
+                         )
+                        )
+                       ) && isValidPlayer(request.resource.data);
       allow delete: if isAdmin();
+    }
+
+    match /fcm_messages/{docId} {
+      allow create: if isAuthenticated();
+      allow read, update, delete: if false;
     }
 
     match /matches/{matchId} {
@@ -165,6 +179,11 @@ service cloud.firestore {
                         isValidPlayer(request.resource.data);
         allow delete: if isAdmin();
       }
+    }
+
+    match /metadata/intentions {
+      allow read: if true;
+      allow write: if isAuthenticated();
     }
 
     match /metadata/{key} {

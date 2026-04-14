@@ -20,7 +20,8 @@ import {
   Sparkles,
   Swords,
   History,
-  X
+  X,
+  Info
 } from 'lucide-react';
 import { 
   LineChart, 
@@ -52,7 +53,7 @@ import { translateGender } from '../utils/helpers';
 interface RankingViewProps {
   userRole: 'ADMIN' | 'MEMBER';
   refreshPlayers: () => Promise<void>;
-  handleAnnounceSummary: () => void;
+  handleAnnounceSummary: (data?: any) => void;
   isNarratingSummary: boolean;
   resetDailyMatches: () => Promise<void>;
   isDark?: boolean;
@@ -66,7 +67,8 @@ export const RankingView: React.FC<RankingViewProps> = ({
   resetDailyMatches,
   isDark = false
 }) => {
-  const { synergy, negativeSynergy, rivalry, players, matches, isSyncing, currentPlayer } = useStore();
+  const { synergy, negativeSynergy, rivalry, players: allPlayers, matches, isSyncing, currentPlayer } = useStore();
+  const players = useMemo(() => allPlayers.filter(p => p.status !== 'inactive'), [allPlayers]);
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -445,6 +447,37 @@ export const RankingView: React.FC<RankingViewProps> = ({
     }).slice(-15); // Show last 15 matches for clarity
   }, [selectedPlayer, matches]);
 
+  const stabilityData = useMemo(() => {
+    if (!selectedPlayer || !matches) return [];
+    
+    const playerMatches = matches.filter(m => 
+      m.teamA.includes(selectedPlayer.id) || m.teamB.includes(selectedPlayer.id)
+    );
+    
+    const buckets: Record<number, { wins: number, total: number }> = {};
+    
+    playerMatches.forEach(m => {
+      const duration = m.duration || 0;
+      if (duration === 0) return;
+      
+      const bucket = Math.round(duration / 5) * 5;
+      if (!buckets[bucket]) buckets[bucket] = { wins: 0, total: 0 };
+      
+      buckets[bucket].total++;
+      const isWinner = (m.winner === 'A' && m.teamA.includes(selectedPlayer.id)) || 
+                       (m.winner === 'B' && m.teamB.includes(selectedPlayer.id));
+      if (isWinner) buckets[bucket].wins++;
+    });
+    
+    return Object.entries(buckets)
+      .map(([duration, stats]) => ({
+        duration: parseInt(duration),
+        winRate: Math.round((stats.wins / stats.total) * 100),
+        total: stats.total
+      }))
+      .sort((a, b) => a.duration - b.duration);
+  }, [selectedPlayer, matches]);
+
   const getTrend = (player: any) => {
     if (!player.eloHistory || player.eloHistory.length < 2) return 'neutral';
     const last = player.eloHistory[player.eloHistory.length - 1].elo;
@@ -463,7 +496,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
 
   // Top Stats
   const topStats = useMemo(() => {
-    if (!players || players.length === 0) return { mvp: null, bestSetter: null, topElo: null, dailyKing: null, topImpact: null, dailyMvp: null, dailyBestSetter: null, dailyMatchesCount: 0 };
+    if (!players || players.length === 0) return { mvp: null, bestSetter: null, topElo: null, dailyKing: null, topImpact: null, dailyMvp: null, dailyBestSetter: null, dailyMatchesCount: 0, dailyEfficient: null, mostEfficient: null };
     
     // Minimum matches to qualify for MVP/Best Setter to avoid 1-match outliers
     const MIN_MATCHES = 3;
@@ -471,18 +504,23 @@ export const RankingView: React.FC<RankingViewProps> = ({
     const getWinRate = (p: any) => (p.matchesPlayed || 0) > 0 ? (p.wins || 0) / p.matchesPlayed : 0;
 
     // Calculate daily stats based on selected date
-    let dailyStats: Record<string, { matches: number, wins: number, eloGain: number }> = {};
+    let dailyStats: Record<string, { matches: number, wins: number, eloGain: number, duration: number }> = {};
     let dailyMatchesCount = 0;
 
     if (selectedDailyDate === 'Hoje') {
+      const today = new Date().toISOString().split('T')[0];
+      const todayMatches = matches.filter(m => m.date === today);
       players.forEach(p => {
+        const playerTodayMatches = todayMatches.filter(m => m.teamA.includes(p.id) || m.teamB.includes(p.id));
+        const duration = playerTodayMatches.reduce((acc, m) => acc + (m.duration || 0), 0);
         dailyStats[p.id] = {
           matches: p.dailyMatches || 0,
           wins: p.dailyWins || 0,
-          eloGain: p.dailyEloGain || 0
+          eloGain: p.dailyEloGain || 0,
+          duration: duration
         };
       });
-      dailyMatchesCount = matches.filter(m => m.date === new Date().toISOString().split('T')[0]).length;
+      dailyMatchesCount = todayMatches.length;
     } else {
       const dateMatches = matches.filter(m => m.date === selectedDailyDate);
       dailyMatchesCount = dateMatches.length;
@@ -495,22 +533,18 @@ export const RankingView: React.FC<RankingViewProps> = ({
           (m.winner === 'A' && m.teamA.includes(p.id)) || 
           (m.winner === 'B' && m.teamB.includes(p.id))
         ).length;
+        const duration = playerMatches.reduce((acc, m) => acc + (m.duration || 0), 0);
 
-        // For eloGain in historical matches, we'd need to track it per match.
-        // Since we don't have per-match elo gain in the match object, 
-        // we can estimate it or look at eloHistory if available.
-        // For now, let's look at eloHistory.
         let eloGain = 0;
         if (p.eloHistory) {
           const entry = p.eloHistory.find(h => h.date === selectedDailyDate);
           if (entry) {
-            // Find previous entry
             const sortedHistory = [...p.eloHistory].sort((a, b) => a.date.localeCompare(b.date));
             const index = sortedHistory.findIndex(h => h.date === selectedDailyDate);
             if (index > 0) {
               eloGain = entry.elo - sortedHistory[index - 1].elo;
             } else {
-              eloGain = entry.elo - 1200; // Assuming 1200 starting
+              eloGain = entry.elo - 1200;
             }
           }
         }
@@ -518,7 +552,8 @@ export const RankingView: React.FC<RankingViewProps> = ({
         dailyStats[p.id] = {
           matches: playerMatches.length,
           wins: playerWins,
-          eloGain: eloGain
+          eloGain: eloGain,
+          duration: duration
         };
       });
     }
@@ -552,7 +587,6 @@ export const RankingView: React.FC<RankingViewProps> = ({
 
     const topElo = [...players].sort((a, b) => (b.elo || 0) - (a.elo || 0))[0];
     
-    // Calculate dailyKing excluding the dailyMvp to ensure variety, fallback to dailyMvp if only 1 player played
     const dailyKingCandidates = [...players]
       .filter(p => (dailyStats[p.id]?.matches || 0) > 0 && p.id !== dailyMvp?.id)
       .sort((a, b) => 
@@ -570,6 +604,29 @@ export const RankingView: React.FC<RankingViewProps> = ({
         return impactB - impactA || (b.matchesPlayed || 0) - (a.matchesPlayed || 0);
       });
     const topImpact = topImpactCandidates.length > 0 ? topImpactCandidates[0] : mvp;
+
+    const dailyEfficient = [...players]
+      .filter(p => (dailyStats[p.id]?.matches || 0) > 0 && (dailyStats[p.id]?.duration || 0) > 0)
+      .sort((a, b) => {
+        const effA = dailyStats[a.id].eloGain / dailyStats[a.id].duration;
+        const effB = dailyStats[b.id].eloGain / dailyStats[b.id].duration;
+        return effB - effA;
+      })[0];
+
+    const totalDurations: Record<string, number> = {};
+    matches.forEach(m => {
+      [...m.teamA, ...m.teamB].forEach(pId => {
+        totalDurations[pId] = (totalDurations[pId] || 0) + (m.duration || 0);
+      });
+    });
+
+    const mostEfficient = [...players]
+      .filter(p => (p.matchesPlayed || 0) >= MIN_MATCHES && (totalDurations[p.id] || 0) > 0)
+      .sort((a, b) => {
+        const effA = (a.elo - 1000) / totalDurations[a.id];
+        const effB = (b.elo - 1000) / totalDurations[b.id];
+        return effB - effA;
+      })[0];
     
     return { 
       mvp, 
@@ -580,7 +637,9 @@ export const RankingView: React.FC<RankingViewProps> = ({
       dailyMvp, 
       dailyBestSetter,
       dailyMatchesCount,
-      dailyStats // Export dailyStats for use in UI
+      dailyStats,
+      dailyEfficient,
+      mostEfficient
     };
   }, [players, matches, selectedDailyDate]);
 
@@ -655,7 +714,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
         <div className="flex w-full md:w-auto gap-3">
           {userRole === 'ADMIN' && (
             <button 
-              onClick={handleAnnounceSummary}
+              onClick={() => handleAnnounceSummary(topStats)}
               disabled={isNarratingSummary}
               className="flex-1 md:flex-none bg-brand-primary text-brand-secondary px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-brand-primary/90 shadow-xl shadow-brand-primary/10 transition-all disabled:opacity-50 border border-brand-primary/20"
             >
@@ -740,15 +799,15 @@ export const RankingView: React.FC<RankingViewProps> = ({
                 <motion.div 
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  className={`bg-brand-secondary/30 backdrop-blur-xl border-white/10 p-6 rounded-[2.5rem] shadow-2xl relative overflow-hidden group border`}
+                  className={`bg-black backdrop-blur-xl border-white/10 p-6 rounded-[2.5rem] shadow-2xl relative overflow-hidden group border`}
                 >
-                  <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
-                    <Trophy className="w-12 h-12 text-brand-primary" />
+                  <div className="absolute top-0 right-0 p-6 opacity-30 group-hover:scale-110 transition-transform">
+                    <Trophy className="w-12 h-12 text-yellow-400" />
                   </div>
-                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/40 mb-2">MVP {selectedDailyDate === 'Hoje' ? 'do Dia' : ''}</p>
-                  <h4 className="text-xl font-black text-brand-primary truncate">{topStats.dailyMvp ? (topStats.dailyMvp.name || "Sócio sem nome") : "Nenhum"}</h4>
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-brand-primary mb-2">MVP {selectedDailyDate === 'Hoje' ? 'do Dia' : ''}</p>
+                  <h4 className="text-xl font-black text-white truncate">{topStats.dailyMvp ? (topStats.dailyMvp.name || "Sócio sem nome") : "Nenhum"}</h4>
                   <div className="mt-4 flex items-center gap-2">
-                    <span className={`bg-white/5 text-white/60 border-white/10 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border`}>
+                    <span className={`bg-white/5 text-brand-primary border-white/10 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border`}>
                       {topStats.dailyMvp ? `${Math.round((topStats.dailyStats[topStats.dailyMvp.id].wins / (topStats.dailyStats[topStats.dailyMvp.id].matches || 1)) * 100)}% Win Rate` : "Sem partidas"}
                     </span>
                   </div>
@@ -758,15 +817,15 @@ export const RankingView: React.FC<RankingViewProps> = ({
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
                   transition={{ delay: 0.1 }}
-                  className={`bg-brand-secondary/30 backdrop-blur-xl border-white/10 p-6 rounded-[2.5rem] shadow-2xl relative overflow-hidden group border`}
+                  className={`bg-black backdrop-blur-xl border-white/10 p-6 rounded-[2.5rem] shadow-2xl relative overflow-hidden group border`}
                 >
-                  <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
-                    <Target className="w-12 h-12 text-brand-primary" />
+                  <div className="absolute top-0 right-0 p-6 opacity-30 group-hover:scale-110 transition-transform">
+                    <Target className="w-12 h-12 text-yellow-400" />
                   </div>
-                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/40 mb-2">Levantador {selectedDailyDate === 'Hoje' ? 'do Dia' : ''}</p>
-                  <h4 className="text-xl font-black text-brand-primary truncate">{topStats.dailyBestSetter ? (topStats.dailyBestSetter.name || "Sócio sem nome") : "Nenhum"}</h4>
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-brand-primary mb-2">Levantador {selectedDailyDate === 'Hoje' ? 'do Dia' : ''}</p>
+                  <h4 className="text-xl font-black text-white truncate">{topStats.dailyBestSetter ? (topStats.dailyBestSetter.name || "Sócio sem nome") : "Nenhum"}</h4>
                   <div className="mt-4 flex items-center gap-2">
-                    <span className={`bg-white/5 text-white/60 border-white/10 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border`}>
+                    <span className={`bg-white/5 text-brand-primary border-white/10 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border`}>
                       {topStats.dailyBestSetter ? `${Math.round((topStats.dailyStats[topStats.dailyBestSetter.id].wins / (topStats.dailyStats[topStats.dailyBestSetter.id].matches || 1)) * 100)}% Win Rate` : "Sem partidas"}
                     </span>
                   </div>
@@ -776,15 +835,15 @@ export const RankingView: React.FC<RankingViewProps> = ({
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
                   transition={{ delay: 0.2 }}
-                  className={`bg-brand-secondary/30 backdrop-blur-xl border-white/10 p-6 rounded-[2.5rem] shadow-2xl relative overflow-hidden group border`}
+                  className={`bg-black backdrop-blur-xl border-white/10 p-6 rounded-[2.5rem] shadow-2xl relative overflow-hidden group border`}
                 >
-                  <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
-                    <Zap className="w-12 h-12 text-brand-primary" />
+                  <div className="absolute top-0 right-0 p-6 opacity-30 group-hover:scale-110 transition-transform">
+                    <Zap className="w-12 h-12 text-yellow-400" />
                   </div>
-                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/40 mb-2">Rei {selectedDailyDate === 'Hoje' ? 'do Dia' : ''}</p>
-                  <h4 className="text-xl font-black text-brand-primary truncate">{topStats.dailyKing ? (topStats.dailyKing.name || "Sócio sem nome") : "Nenhum"}</h4>
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-brand-primary mb-2">Rei {selectedDailyDate === 'Hoje' ? 'do Dia' : ''}</p>
+                  <h4 className="text-xl font-black text-white truncate">{topStats.dailyKing ? (topStats.dailyKing.name || "Sócio sem nome") : "Nenhum"}</h4>
                   <div className="mt-4 flex items-center gap-2">
-                    <span className={`bg-white/5 text-white/60 border-white/10 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border`}>
+                    <span className={`bg-white/5 text-brand-primary border-white/10 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border`}>
                       {topStats.dailyKing ? `${topStats.dailyStats[topStats.dailyKing.id].eloGain >= 0 ? '+' : ''}${topStats.dailyStats[topStats.dailyKing.id].eloGain || 0} ELO` : "Sem partidas"}
                     </span>
                   </div>
@@ -794,14 +853,18 @@ export const RankingView: React.FC<RankingViewProps> = ({
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
                   transition={{ delay: 0.3 }}
-                  className={`bg-brand-secondary/30 backdrop-blur-xl border-white/10 p-6 rounded-[2.5rem] shadow-2xl relative overflow-hidden group border`}
+                  className={`bg-black backdrop-blur-xl border-white/10 p-6 rounded-[2.5rem] shadow-2xl relative overflow-hidden group border`}
                 >
-                  <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
-                    <Activity className="w-12 h-12 text-brand-primary" />
+                  <div className="absolute top-0 right-0 p-6 opacity-30 group-hover:scale-110 transition-transform">
+                    <Activity className="w-12 h-12 text-yellow-400" />
                   </div>
-                  <p className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em] mb-2">Partidas {selectedDailyDate === 'Hoje' ? 'Hoje' : ''}</p>
-                  <h4 className="text-3xl font-black text-brand-primary">{topStats.dailyMatchesCount}</h4>
-                  <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest mt-2">Registradas</p>
+                  <p className="text-[10px] font-black text-brand-primary uppercase tracking-[0.2em] mb-2">Jogador eficiente {selectedDailyDate === 'Hoje' ? 'do dia' : ''}</p>
+                  <h4 className="text-xl font-black text-white truncate">{topStats.dailyEfficient ? (topStats.dailyEfficient.name || "Sócio sem nome") : "Nenhum"}</h4>
+                  <div className="mt-4 flex items-center gap-2">
+                    <span className={`bg-white/5 text-brand-primary border-white/10 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border`}>
+                      {topStats.dailyEfficient ? `${(topStats.dailyStats[topStats.dailyEfficient.id].eloGain / (topStats.dailyStats[topStats.dailyEfficient.id].duration || 1)).toFixed(2)} ELO/Min` : "Sem partidas"}
+                    </span>
+                  </div>
                 </motion.div>
               </div>
             </section>
@@ -819,14 +882,14 @@ export const RankingView: React.FC<RankingViewProps> = ({
                 <motion.div 
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className={`bg-brand-secondary/30 backdrop-blur-xl border-white/10 p-6 md:p-8 rounded-[2rem] shadow-2xl relative overflow-hidden group border`}
+                  className={`bg-black backdrop-blur-xl border-white/10 p-6 md:p-8 rounded-[2rem] shadow-2xl relative overflow-hidden group border`}
                 >
-                  <div className="absolute top-0 right-0 p-4 md:p-6 opacity-10 group-hover:scale-110 transition-transform">
-                    <Trophy className="w-12 h-12 md:w-16 md:h-16 text-brand-primary" />
+                  <div className="absolute top-0 right-0 p-4 md:p-6 opacity-30 group-hover:scale-110 transition-transform">
+                    <Trophy className="w-12 h-12 md:w-16 md:h-16 text-yellow-400" />
                   </div>
-                  <p className="text-[9px] md:text-[10px] font-black text-white/40 uppercase tracking-[0.2em] mb-3 md:mb-4">MVP Eficiência</p>
-                  <h3 className="text-lg md:text-2xl font-black text-brand-primary truncate">{topStats.mvp ? (topStats.mvp.name || "Sócio sem nome") : "Nenhum"}</h3>
-                  <p className="text-white/40 font-black text-xs md:text-sm mt-1 uppercase tracking-widest">
+                  <p className="text-[9px] md:text-[10px] font-black text-brand-primary uppercase tracking-[0.2em] mb-3 md:mb-4">MVP Eficiência</p>
+                  <h3 className="text-lg md:text-2xl font-black text-white truncate">{topStats.mvp ? (topStats.mvp.name || "Sócio sem nome") : "Nenhum"}</h3>
+                  <p className="text-brand-primary font-black text-xs md:text-sm mt-1 uppercase tracking-widest">
                     {topStats.mvp ? `${Math.round((topStats.mvp.wins / (topStats.mvp.matchesPlayed || 1)) * 100)}% Aproveitamento` : "Sem partidas"}
                   </p>
                 </motion.div>
@@ -835,14 +898,14 @@ export const RankingView: React.FC<RankingViewProps> = ({
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.1 }}
-                  className={`bg-brand-secondary/30 backdrop-blur-xl border-white/10 p-6 md:p-8 rounded-[2rem] shadow-2xl relative overflow-hidden group border`}
+                  className={`bg-black backdrop-blur-xl border-white/10 p-6 md:p-8 rounded-[2rem] shadow-2xl relative overflow-hidden group border`}
                 >
-                  <div className="absolute top-0 right-0 p-4 md:p-6 opacity-10 group-hover:scale-110 transition-transform">
-                    <Target className="w-12 h-12 md:w-16 md:h-16 text-brand-primary" />
+                  <div className="absolute top-0 right-0 p-4 md:p-6 opacity-30 group-hover:scale-110 transition-transform">
+                    <Target className="w-12 h-12 md:w-16 md:h-16 text-yellow-400" />
                   </div>
-                  <p className="text-[9px] md:text-[10px] font-black text-white/40 uppercase tracking-[0.2em] mb-3 md:mb-4">Melhor Levantador</p>
-                  <h3 className="text-lg md:text-2xl font-black text-brand-primary truncate">{topStats.bestSetter ? (topStats.bestSetter.name || "Sócio sem nome") : "Nenhum"}</h3>
-                  <p className="text-white/40 font-black text-xs md:text-sm mt-1 uppercase tracking-widest">
+                  <p className="text-[9px] md:text-[10px] font-black text-brand-primary uppercase tracking-[0.2em] mb-3 md:mb-4">Melhor Levantador</p>
+                  <h3 className="text-lg md:text-2xl font-black text-white truncate">{topStats.bestSetter ? (topStats.bestSetter.name || "Sócio sem nome") : "Nenhum"}</h3>
+                  <p className="text-brand-primary font-black text-xs md:text-sm mt-1 uppercase tracking-widest">
                     {topStats.bestSetter ? `${Math.round((topStats.bestSetter.wins / (topStats.bestSetter.matchesPlayed || 1)) * 100)}% Aproveitamento` : "Sem partidas"}
                   </p>
                 </motion.div>
@@ -851,29 +914,29 @@ export const RankingView: React.FC<RankingViewProps> = ({
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.2 }}
-                  className={`bg-brand-secondary/30 backdrop-blur-xl border-white/10 p-6 md:p-8 rounded-[2rem] shadow-2xl relative overflow-hidden group border`}
+                  className={`bg-black backdrop-blur-xl border-white/10 p-6 md:p-8 rounded-[2rem] shadow-2xl relative overflow-hidden group border`}
                 >
-                  <div className="absolute top-0 right-0 p-4 md:p-6 opacity-10 group-hover:scale-110 transition-transform">
-                    <Zap className="w-12 h-12 md:w-16 md:h-16 text-brand-primary" />
+                  <div className="absolute top-0 right-0 p-4 md:p-6 opacity-30 group-hover:scale-110 transition-transform">
+                    <Zap className="w-12 h-12 md:w-16 md:h-16 text-yellow-400" />
                   </div>
-                  <p className="text-[9px] md:text-[10px] font-black text-white/40 uppercase tracking-[0.2em] mb-3 md:mb-4">Rei do ELO</p>
-                  <h3 className="text-lg md:text-2xl font-black text-brand-primary truncate">{topStats.topElo?.name || "Sócio sem nome" || '-'}</h3>
-                  <p className="text-white/40 font-black text-xs md:text-sm mt-1 uppercase tracking-widest">{topStats.topElo?.elo || 0} Pontos</p>
+                  <p className="text-[9px] md:text-[10px] font-black text-brand-primary uppercase tracking-[0.2em] mb-3 md:mb-4">Rei do ELO</p>
+                  <h3 className="text-lg md:text-2xl font-black text-white truncate">{topStats.topElo?.name || "Sócio sem nome" || '-'}</h3>
+                  <p className="text-brand-primary font-black text-xs md:text-sm mt-1 uppercase tracking-widest">{topStats.topElo?.elo || 0} Pontos</p>
                 </motion.div>
 
                 <motion.div 
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.3 }}
-                  className={`bg-brand-secondary/30 backdrop-blur-xl border-white/10 p-6 md:p-8 rounded-[2rem] shadow-2xl relative overflow-hidden group border`}
+                  className={`bg-black backdrop-blur-xl border-white/10 p-6 md:p-8 rounded-[2rem] shadow-2xl relative overflow-hidden group border`}
                 >
-                  <div className="absolute top-0 right-0 p-4 md:p-6 opacity-10 group-hover:scale-110 transition-transform">
-                    <Activity className="w-12 h-12 md:w-16 md:h-16 text-brand-primary" />
+                  <div className="absolute top-0 right-0 p-4 md:p-6 opacity-30 group-hover:scale-110 transition-transform">
+                    <Activity className="w-12 h-12 md:w-16 md:h-16 text-yellow-400" />
                   </div>
-                  <p className="text-[9px] md:text-[10px] font-black text-white/40 uppercase tracking-[0.2em] mb-3 md:mb-4">Maior Impacto</p>
-                  <h3 className="text-lg md:text-2xl font-black text-brand-primary truncate">{topStats.topImpact ? (topStats.topImpact.name || "Sócio sem nome") : "Nenhum"}</h3>
-                  <p className="text-white/40 font-black text-xs md:text-sm mt-1 uppercase tracking-widest">
-                    {topStats.topImpact ? `${((topStats.topImpact.elo - 1000) / (topStats.topImpact.matchesPlayed || 1)).toFixed(1)} ELO/Jogo` : "Sem partidas"}
+                  <p className="text-[9px] md:text-[10px] font-black text-brand-primary uppercase tracking-[0.2em] mb-3 md:mb-4">Sócio Mais Eficiente</p>
+                  <h3 className="text-lg md:text-2xl font-black text-white truncate">{topStats.mostEfficient ? (topStats.mostEfficient.name || "Sócio sem nome") : "Nenhum"}</h3>
+                  <p className="text-brand-primary font-black text-xs md:text-sm mt-1 uppercase tracking-widest">
+                    {topStats.mostEfficient ? "Líder em ELO/Minuto" : "Sem partidas"}
                   </p>
                 </motion.div>
               </div>
@@ -881,7 +944,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
 
       {/* Global Synergies & Rivalries */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className={`bg-brand-secondary/30 backdrop-blur-xl border-white/10 p-8 rounded-[2.5rem] shadow-2xl border`}>
+        <div className={`bg-black backdrop-blur-xl border-white/10 p-8 rounded-[2.5rem] shadow-2xl border`}>
           <div className="flex items-center gap-3 mb-6">
             <div className="p-2 bg-brand-primary/10 rounded-xl">
               <Users className="w-5 h-5 text-brand-primary" />
@@ -910,7 +973,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
           </div>
         </div>
 
-        <div className={`bg-brand-secondary/30 backdrop-blur-xl border-white/10 p-8 rounded-[2.5rem] shadow-2xl border`}>
+        <div className={`bg-black backdrop-blur-xl border-white/10 p-8 rounded-[2.5rem] shadow-2xl border`}>
           <div className="flex items-center gap-3 mb-6">
             <div className="p-2 bg-brand-primary/10 rounded-xl">
               <Swords className="w-5 h-5 text-brand-primary" />
@@ -961,7 +1024,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
           </div>
         </div>
 
-        <div className={`bg-brand-secondary/30 backdrop-blur-xl border-white/10 rounded-[2.5rem] shadow-2xl overflow-hidden border`}>
+        <div className={`bg-brand-light backdrop-blur-xl border-white/10 rounded-[2.5rem] shadow-2xl overflow-hidden border`}>
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
@@ -1056,7 +1119,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
           className={`w-full px-6 py-5 rounded-[2rem] font-black text-sm uppercase tracking-widest flex items-center justify-between gap-3 shadow-sm transition-all border ${
             isDark 
               ? 'bg-brand-secondary border-white/10 text-white hover:bg-white/5' 
-              : 'bg-black border border-brand-primary/20 text-white hover:bg-brand-secondary'
+              : 'bg-brand-light border border-brand-primary/20 text-brand-secondary dark:text-white hover:bg-brand-secondary'
           }`}
         >
           <div className="flex items-center gap-3">
@@ -1074,7 +1137,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
               className="space-y-8"
             >
               {/* Profile Card */}
-              <div className="bg-brand-secondary/30 backdrop-blur-xl rounded-[3rem] p-8 text-white shadow-2xl relative overflow-hidden border border-white/10">
+              <div className="bg-brand-light backdrop-blur-xl rounded-[3rem] p-8 text-brand-secondary dark:text-white shadow-2xl relative overflow-hidden border border-white/10">
                 <div className="absolute top-0 right-0 p-12 opacity-10">
                   <Trophy className="w-32 h-32 rotate-12 text-brand-primary" />
                 </div>
@@ -1127,7 +1190,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
               </div>
 
               {/* Accumulated Results Card */}
-              <div className={`bg-brand-secondary/30 backdrop-blur-xl border-white/10 p-8 rounded-[2.5rem] shadow-2xl border`}>
+              <div className={`bg-black backdrop-blur-xl border-white/10 p-8 rounded-[2.5rem] shadow-2xl border`}>
                 <div className="flex items-center gap-3 mb-8">
                   <div className={`p-2 rounded-xl bg-white/5`}>
                     <History className="w-5 h-5 text-brand-primary" />
@@ -1159,7 +1222,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
               {/* Charts Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 {/* ELO Evolution Chart */}
-                <div className={`bg-brand-secondary/30 backdrop-blur-xl border-white/10 p-8 rounded-[2.5rem] shadow-2xl border`}>
+                <div className={`bg-black backdrop-blur-xl border-white/10 p-8 rounded-[2.5rem] shadow-2xl border`}>
                   <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
                     <div className="flex items-center gap-3">
                       <div className="p-2 bg-brand-primary/10 rounded-xl">
@@ -1199,14 +1262,14 @@ export const RankingView: React.FC<RankingViewProps> = ({
                           dataKey="date" 
                           axisLine={false} 
                           tickLine={false} 
-                          tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }}
+                          tick={{ fontSize: 10, fontWeight: 700, fill: '#ffffff' }}
                           dy={10}
                         />
                         <YAxis 
                           width={40}
                           axisLine={false}
                           tickLine={false}
-                          tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }}
+                          tick={{ fontSize: 10, fontWeight: 700, fill: '#ffffff' }}
                           domain={['dataMin - 50', 'dataMax + 50']}
                         />
                         <Tooltip 
@@ -1219,13 +1282,15 @@ export const RankingView: React.FC<RankingViewProps> = ({
                             backgroundColor: '#1E232D',
                             color: '#fff'
                           }}
+                          itemStyle={{ color: '#F5C429' }}
+                          labelStyle={{ color: '#fff', marginBottom: '4px' }}
                         />
                         <Legend 
                           verticalAlign="top" 
                           align="right" 
                           height={36}
                           iconType="circle"
-                          wrapperStyle={{ fontSize: '10px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.05em' }}
+                          wrapperStyle={{ fontSize: '10px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#fff' }}
                         />
                         <Area 
                           name={selectedPlayer.name}
@@ -1241,7 +1306,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
                           name="Média do Grupo"
                           type="monotone" 
                           dataKey="groupAverage" 
-                          stroke="#4A4F5A" 
+                          stroke="#ffffff" 
                           strokeWidth={2} 
                           strokeDasharray="5 5"
                           dot={false}
@@ -1253,7 +1318,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
                 </div>
 
                 {/* Daily Performance Chart */}
-                <div className={`bg-brand-secondary/30 backdrop-blur-xl border-white/10 p-8 rounded-[2.5rem] shadow-2xl border`}>
+                <div className={`bg-black backdrop-blur-xl border-white/10 p-8 rounded-[2.5rem] shadow-2xl border`}>
                   <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
                     <div className="flex items-center gap-3">
                       <div className="p-2 bg-brand-primary/10 rounded-xl">
@@ -1289,14 +1354,14 @@ export const RankingView: React.FC<RankingViewProps> = ({
                           dataKey="date" 
                           axisLine={false} 
                           tickLine={false} 
-                          tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }}
+                          tick={{ fontSize: 10, fontWeight: 700, fill: '#ffffff' }}
                           dy={10}
                         />
                         <YAxis 
                           width={40}
                           axisLine={false}
                           tickLine={false}
-                          tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }}
+                          tick={{ fontSize: 10, fontWeight: 700, fill: '#ffffff' }}
                         />
                         <Tooltip 
                           cursor={{ fill: 'rgba(255,255,255,0.05)' }}
@@ -1309,6 +1374,8 @@ export const RankingView: React.FC<RankingViewProps> = ({
                             backgroundColor: '#1E232D',
                             color: '#fff'
                           }}
+                          itemStyle={{ color: '#F5C429' }}
+                          labelStyle={{ color: '#fff', marginBottom: '4px' }}
                           formatter={(value: number) => {
                             if (chartMetric === 'elo') return [`${value >= 0 ? '+' : ''}${value} Pontos`, 'Variação'];
                             if (chartMetric === 'winrate') return [`${value}%`, 'Aproveitamento'];
@@ -1321,7 +1388,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
                               key={`cell-${index}`} 
                               fill={
                                 chartMetric === 'elo' 
-                                  ? (entry.variation >= 0 ? '#F5C429' : '#4A4F5A')
+                                  ? (entry.variation >= 0 ? '#F5C429' : '#ffffff')
                                   : '#F5C429'
                               } 
                             />
@@ -1333,7 +1400,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
                 </div>
 
                 {/* Win/Loss Evolution Chart */}
-                <div className={`bg-brand-secondary/30 backdrop-blur-xl border-white/10 p-8 rounded-[2.5rem] shadow-2xl border`}>
+                <div className={`bg-black backdrop-blur-xl border-white/10 p-8 rounded-[2.5rem] shadow-2xl border`}>
                   <div className="flex items-center gap-3 mb-8">
                     <div className="p-2 bg-brand-primary/10 rounded-xl">
                       <History className="w-5 h-5 text-brand-primary" />
@@ -1344,7 +1411,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
                 </div>
 
                 {/* Performance Trends Line Charts */}
-                <div className={`bg-brand-secondary/30 backdrop-blur-xl border-white/10 p-8 rounded-[2.5rem] shadow-2xl border flex flex-col`}>
+                <div className={`bg-black backdrop-blur-xl border-white/10 p-8 rounded-[2.5rem] shadow-2xl border flex flex-col`}>
                   <div className="flex items-center justify-between mb-8">
                     <div className="flex items-center gap-3">
                       <div className="p-2 bg-brand-primary/10 rounded-xl">
@@ -1359,20 +1426,26 @@ export const RankingView: React.FC<RankingViewProps> = ({
                   
                   <div className="flex-1 min-h-[250px] w-full">
                     <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={winRateHistory}>
+                      <AreaChart data={winRateHistory}>
+                        <defs>
+                          <linearGradient id="colorWinRate" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#F5C429" stopOpacity={0.3}/>
+                            <stop offset="95%" stopColor="#F5C429" stopOpacity={0}/>
+                          </linearGradient>
+                        </defs>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.05)" />
                         <XAxis 
                           dataKey="match" 
                           axisLine={false} 
                           tickLine={false} 
-                          tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }}
-                          label={{ value: 'Partida', position: 'insideBottom', offset: -5, fontSize: 10, fontWeight: 800, fill: '#94a3b8' }}
+                          tick={{ fontSize: 10, fontWeight: 700, fill: '#ffffff' }}
+                          label={{ value: 'Partida', position: 'insideBottom', offset: -5, fontSize: 10, fontWeight: 800, fill: '#ffffff' }}
                         />
                         <YAxis 
                           domain={[0, 100]}
                           axisLine={false} 
                           tickLine={false} 
-                          tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }}
+                          tick={{ fontSize: 10, fontWeight: 700, fill: '#ffffff' }}
                           tickFormatter={(val) => `${val}%`}
                         />
                         <Tooltip 
@@ -1385,20 +1458,24 @@ export const RankingView: React.FC<RankingViewProps> = ({
                             backgroundColor: '#1E232D',
                             color: '#fff'
                           }}
+                          itemStyle={{ color: '#F5C429' }}
+                          labelStyle={{ color: '#fff', marginBottom: '4px' }}
                           formatter={(value) => [`${value}%`, 'Aproveitamento']}
                           labelFormatter={(label) => `Partida #${label}`}
                         />
-                        <Line 
+                        <Area 
                           type="monotone" 
                           dataKey="winRate" 
                           stroke="#F5C429" 
                           strokeWidth={4}
-                          dot={{ r: 4, fill: '#F5C429', strokeWidth: 2, stroke: '#1E232D' }}
+                          fillOpacity={1}
+                          fill="url(#colorWinRate)"
+                          dot={false}
                           activeDot={{ r: 6, strokeWidth: 0 }}
                           animationDuration={1500}
                         />
                         <ReferenceLine y={50} stroke="rgba(255,255,255,0.2)" strokeDasharray="3 3" label={{ value: 'Equilíbrio', position: 'right', fill: '#94a3b8', fontSize: 8, fontWeight: 800 }} />
-                      </LineChart>
+                      </AreaChart>
                     </ResponsiveContainer>
                   </div>
                   
@@ -1419,112 +1496,94 @@ export const RankingView: React.FC<RankingViewProps> = ({
                 </div>
               </div>
 
-              {/* Advanced Stats & Win/Loss Distribution */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                {/* Win/Loss Donut */}
-                <div className={`md:col-span-1 p-8 rounded-[2.5rem] shadow-2xl flex flex-col items-center justify-center border bg-brand-secondary/30 backdrop-blur-xl border-white/10`}>
-                  <h4 className="text-[10px] font-black text-white/40 uppercase tracking-widest mb-6 w-full text-center">Distribuição de Resultados</h4>
-                  <div className="h-[180px] w-full relative">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie
-                          data={advancedStats?.winLossData}
-                          cx="50%"
-                          cy="50%"
-                          innerRadius={60}
-                          outerRadius={80}
-                          paddingAngle={8}
-                          dataKey="value"
-                        >
-                          {advancedStats?.winLossData.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={entry.color} />
-                          ))}
-                        </Pie>
-                        <Tooltip 
-                          contentStyle={{ borderRadius: '16px', border: 'none', fontWeight: 'bold', backgroundColor: '#1E232D', color: '#fff' }}
-                        />
-                      </PieChart>
-                    </ResponsiveContainer>
-                    <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                      <p className={`text-2xl font-black text-white`}>{selectedPlayer.matchesPlayed}</p>
-                      <p className="text-[8px] font-black text-white/40 uppercase">Partidas</p>
-                    </div>
-                  </div>
-                  <div className="flex gap-6 mt-4">
-                    <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 rounded-full bg-brand-primary" />
-                      <span className="text-[10px] font-bold text-white/40">{selectedPlayer.wins}V</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 rounded-full bg-brand-accent" />
-                      <span className="text-[10px] font-bold text-white/40">{selectedPlayer.losses}D</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Efficiency Cards */}
-                <div className="md:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className={`bg-brand-secondary/30 backdrop-blur-xl border-white/10 p-8 rounded-[2.5rem] shadow-2xl relative overflow-hidden group flex flex-col border`}>
-                    <div className="relative z-10">
-                      <div className="absolute top-0 right-0 opacity-10 group-hover:scale-110 transition-transform text-brand-primary">
-                        <Activity className="w-16 h-16" />
+              {/* Advanced Stats: Performance Stability */}
+              <div className="grid grid-cols-1 gap-8">
+                <div className={`p-8 rounded-[2.5rem] shadow-2xl relative overflow-hidden group flex flex-col border bg-black backdrop-blur-xl border-white/10`}>
+                  <div className="relative z-10">
+                    <div className="absolute top-0 right-0 p-8 flex gap-2">
+                      <div className="group/info relative">
+                        <Info className="w-5 h-5 text-white/20 hover:text-brand-primary transition-colors cursor-help" />
+                        <div className="absolute right-0 top-full mt-2 w-64 p-4 bg-brand-secondary border border-white/10 rounded-2xl shadow-2xl opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-all z-50">
+                          <p className="text-[10px] font-black text-brand-primary uppercase mb-2">Estabilidade de Performance</p>
+                          <p className="text-[10px] leading-relaxed text-white/60 font-bold">
+                            Este gráfico relaciona o seu aproveitamento (Win Rate) com a duração das partidas. 
+                            Uma linha estável indica que você mantém o mesmo nível de jogo independente se a partida é curta ou longa.
+                          </p>
+                        </div>
                       </div>
-                      <p className="text-[9px] font-black text-white/40 uppercase tracking-widest mb-4">Impacto por Jogo</p>
-                      <div className="flex items-baseline gap-2">
-                        <h3 className="text-3xl font-black text-brand-primary">{advancedStats?.avgEloChange.toFixed(1)}</h3>
-                        <span className="text-xs font-bold text-white/40 uppercase">ELO / Partida</span>
-                      </div>
-                      <p className="text-[10px] font-bold text-white/40 mt-2">Média de crescimento histórico</p>
+                      <Activity className="w-12 h-12 text-brand-primary opacity-10 group-hover:scale-110 transition-transform" />
                     </div>
-                    
-                    <div className="h-24 mt-6 -mx-4">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={advancedStats?.impactHistory}>
-                          <Bar 
-                            dataKey="impact" 
-                            radius={[4, 4, 0, 0]}
-                          >
-                            {advancedStats?.impactHistory.map((entry: any, index: number) => (
-                             <Cell 
-                                key={`cell-${index}`} 
-                                fill={entry.impact > 0 ? '#F5C429' : '#4A4F5A'} 
-                                fillOpacity={0.4}
-                              />
-                            ))}
-                          </Bar>
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
-
-                  <div className={`p-8 rounded-[2.5rem] relative overflow-hidden group border shadow-2xl ${
-                    advancedStats?.streakType === 'win' 
-                      ? 'bg-brand-primary/10 border-brand-primary/20 text-brand-primary' 
-                      : advancedStats?.streakType === 'loss'
-                      ? 'bg-brand-accent/10 border-brand-accent/20 text-brand-accent'
-                      : `bg-brand-secondary/30 backdrop-blur-xl border-white/10 text-white`
-                  }`}>
-                    <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
-                      {advancedStats?.streakType === 'win' ? <Sparkles className="w-16 h-16" /> : <RotateCcw className="w-16 h-16" />}
-                    </div>
-                    <p className="text-[9px] font-black uppercase tracking-widest mb-4 opacity-60">Sequência Atual</p>
+                    <p className="text-[9px] font-black text-white/40 uppercase tracking-widest mb-4">Estabilidade de Performance (Win Rate por Duração)</p>
                     <div className="flex items-baseline gap-2">
-                      <h3 className="text-3xl font-black">{advancedStats?.streak}</h3>
-                      <span className="text-xs font-bold uppercase">
-                        {advancedStats?.streakType === 'win' ? 'Vitórias' : 'Derrotas'}
-                      </span>
+                      <h3 className="text-3xl font-black text-brand-primary">
+                        {stabilityData.length > 0 ? Math.round(stabilityData.reduce((acc, d) => acc + d.winRate, 0) / stabilityData.length) : 0}%
+                      </h3>
+                      <span className="text-xs font-bold text-white/40 uppercase">Aproveitamento Médio</span>
                     </div>
-                    <div className="flex items-center gap-2 mt-2">
-                      <div className={`w-2 h-2 rounded-full ${advancedStats?.streakType === 'win' ? 'bg-brand-primary' : 'bg-brand-accent'}`} />
-                      <p className="text-[10px] font-bold opacity-70">Ritmo de jogo atual</p>
-                    </div>
+                    <p className="text-[10px] font-bold text-white/40 mt-2">Consistência técnica em diferentes tempos de jogo</p>
+                  </div>
+                  
+                  <div className="h-48 mt-8 -mx-4">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={stabilityData}>
+                        <defs>
+                          <linearGradient id="colorStability" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#F5C429" stopOpacity={0.3}/>
+                            <stop offset="95%" stopColor="#F5C429" stopOpacity={0}/>
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                        <XAxis 
+                          dataKey="duration" 
+                          axisLine={false} 
+                          tickLine={false} 
+                          tick={{ fill: '#ffffff', fontSize: 10, fontWeight: 800 }}
+                          tickFormatter={(val) => `${val}m`}
+                          label={{ value: 'Duração (Minutos)', position: 'insideBottom', offset: -5, fill: 'rgba(255,255,255,0.6)', fontSize: 8, fontWeight: 800 }}
+                        />
+                        <YAxis domain={[0, 100]} hide />
+                        <Tooltip 
+                          cursor={{ fill: 'rgba(255,255,255,0.05)' }}
+                          content={({ active, payload }) => {
+                            if (active && payload && payload.length) {
+                              const data = payload[0].payload;
+                              return (
+                                <div className="bg-brand-secondary border border-white/10 p-3 rounded-xl shadow-2xl">
+                                  <p className="text-[10px] font-black text-white uppercase mb-1">Partidas de {data.duration} min</p>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-sm font-black text-brand-primary">
+                                      {data.winRate}% Win Rate
+                                    </span>
+                                    <span className="text-[10px] font-black text-white/40">
+                                      ({data.total} jogos)
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            }
+                            return null;
+                          }}
+                        />
+                        <Area 
+                          type="monotone"
+                          dataKey="winRate" 
+                          stroke="#F5C429"
+                          strokeWidth={3}
+                          fillOpacity={1}
+                          fill="url(#colorStability)"
+                          dot={false}
+                          activeDot={{ r: 6, strokeWidth: 0 }}
+                        />
+                        <ReferenceLine y={50} stroke="rgba(255,255,255,0.1)" strokeDasharray="3 3" />
+                      </AreaChart>
+                    </ResponsiveContainer>
                   </div>
                 </div>
               </div>
 
               {/* Synergy & Rivalry */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className={`p-6 rounded-[2rem] border bg-brand-secondary/30 backdrop-blur-xl border-white/10 shadow-2xl`}>
+                <div className={`p-6 rounded-[2rem] border bg-black backdrop-blur-xl border-white/10 shadow-2xl`}>
                   <h4 className="text-[10px] font-black text-brand-primary uppercase tracking-widest mb-4">Sinergia Positiva</h4>
                   <div className="flex items-center gap-4">
                     <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm bg-white/5 border border-white/10`}>
@@ -1542,16 +1601,16 @@ export const RankingView: React.FC<RankingViewProps> = ({
                 </div>
 
                 <div className={`p-6 rounded-[2rem] border bg-brand-secondary/30 backdrop-blur-xl border-white/10 shadow-2xl`}>
-                  <h4 className="text-[10px] font-black text-white/40 uppercase tracking-widest mb-4">Sinergia Negativa</h4>
+                  <h4 className="text-[10px] font-black text-brand-primary uppercase tracking-widest mb-4">Sinergia Negativa</h4>
                   <div className="flex items-center gap-4">
                     <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm bg-white/5 border border-white/10`}>
-                      <TrendingDown className="w-5 h-5 text-white/40" />
+                      <TrendingDown className="w-5 h-5 text-brand-primary" />
                     </div>
                     <div>
                       <p className={`font-black uppercase tracking-tight text-sm text-white`}>
                         {playerRelationships.negativeSynergy?.name || 'Parceiro Difícil'}
                       </p>
-                      <p className="text-[10px] font-bold text-white/40">
+                      <p className="text-[10px] font-bold text-brand-primary">
                         {playerRelationships.negativeSynergy ? `${playerRelationships.negativeSynergy.losses} derrotas juntos` : 'Sem dados'}
                       </p>
                     </div>
@@ -1615,7 +1674,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
                         dataKey="subject" 
                         axisLine={false} 
                         tickLine={false} 
-                        tick={{ fontSize: 10, fontWeight: 700, fill: isDark ? '#94a3b8' : '#4A4F5A' }}
+                        tick={{ fontSize: 10, fontWeight: 700, fill: isDark ? '#ffffff' : '#4A4F5A' }}
                       />
                       <YAxis hide />
                       <Tooltip 
@@ -1629,9 +1688,11 @@ export const RankingView: React.FC<RankingViewProps> = ({
                           backgroundColor: '#1E232D',
                           color: '#fff'
                         }}
+                        itemStyle={{ color: '#F5C429' }}
+                        labelStyle={{ color: '#fff', marginBottom: '4px' }}
                       />
                       <Bar name={selectedPlayer.name} dataKey="A" fill="#F5C429" radius={[6, 6, 0, 0]} barSize={30} />
-                      <Bar name={comparisonPlayer?.name || 'Média Grupo'} dataKey="B" fill={isDark ? '#475569' : '#4A4F5A'} radius={[6, 6, 0, 0]} barSize={30} />
+                      <Bar name={comparisonPlayer?.name || 'Média Grupo'} dataKey="B" fill={isDark ? '#ffffff' : '#4A4F5A'} radius={[6, 6, 0, 0]} barSize={30} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -1679,7 +1740,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
               initial={{ opacity: 0, scale: 0.9, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className={`relative w-full max-w-2xl rounded-[3rem] shadow-2xl overflow-hidden flex flex-col max-h-[80vh] border bg-brand-secondary/90 backdrop-blur-2xl border-white/10`}
+              className={`relative w-full max-w-2xl rounded-[3rem] shadow-2xl overflow-hidden flex flex-col max-h-[80vh] border bg-black backdrop-blur-2xl border-white/10`}
             >
               <div className={`p-8 border-b bg-white/5 border-white/10`}>
                 <div className="flex justify-between items-center mb-6">

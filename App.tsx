@@ -19,7 +19,8 @@ import {
   Zap,
   CheckCircle2,
   Edit2,
-  BarChart3
+  BarChart3,
+  ListTodo
 } from 'lucide-react';
 
 import { getBrazilDay } from './firebase';
@@ -28,6 +29,7 @@ import { useAuth } from './src/hooks/useAuth';
 import { useFirestoreSync } from './src/hooks/useFirestoreSync';
 import { useDailyReset } from './src/hooks/useDailyReset';
 import { useNarration } from './src/hooks/useNarration';
+import { usePushNotifications } from './src/hooks/usePushNotifications';
 import { useAppLogic } from './src/hooks/useAppLogic';
 import { PaymentStatus } from './types';
 
@@ -36,6 +38,8 @@ import { Notification } from './components/Notification';
 import { ConfirmModal } from './components/ConfirmModal';
 import { AttendanceView } from './components/AttendanceView';
 import { AttendanceReportView } from './components/AttendanceReportView';
+import { IntentionsView } from './components/IntentionsView';
+import { useIntentions } from './src/hooks/useIntentions';
 import { MatchView } from './components/MatchView';
 import { RankingView } from './components/RankingView';
 import { MembersView } from './components/MembersView';
@@ -47,24 +51,82 @@ import { TournamentView } from './components/TournamentView';
 import { PlayerForm } from './components/PlayerForm';
 import { PaymentForm } from './components/PaymentForm';
 import { ExpenseForm } from './components/ExpenseForm';
+import { PlayerStatusCard } from './src/components/PlayerStatusCard';
 import { LoginView } from './src/components/LoginView';
 import { AccessRequestView } from './src/components/AccessRequestView';
 import { CourtDiagram } from './src/components/CourtDiagram';
 import { Logo } from './src/components/Logo';
 import { clearOldStorage } from './services/geminiService';
+import { useBirthdays } from './src/hooks/useBirthdays';
+import { BirthdayBanner } from './src/components/BirthdayBanner';
+import { NotificationCenter } from './src/components/NotificationCenter';
 
 const App: React.FC = () => {
   // --- Hooks ---
   const { user, userRole, currentPlayer, isAuthReady, isRoleLoading } = useAuth();
   useFirestoreSync();
   useDailyReset();
+  usePushNotifications();
   const { handleAnnounce } = useNarration();
+
+  // --- Store State ---
+  const {
+    viewMode,
+    setViewMode,
+    players,
+    attendance,
+    matches,
+    payments,
+    preConfirmations,
+    generationResult,
+    activeTournament,
+    isVerifyingRules,
+    isScanningAnomalies,
+    anomalyReport,
+    isLoggingOut,
+    isSyncing,
+    dbStatus,
+    theme,
+    toggleTheme,
+    notification,
+    hideNotification,
+    confirmModal,
+    hideConfirmModal,
+    swapSelection,
+    setSwapSelection,
+    elapsedTime,
+    setElapsedTime,
+    systemMetadata,
+    setGenerationResult,
+    showNotification,
+    showConfirmModal,
+    setEditingPayment,
+    setIsPaymentFormOpen,
+    editingPayment,
+    isPaymentFormOpen,
+    pendingRequests,
+    isFormOpen,
+    setIsFormOpen,
+    editingPlayer,
+    setEditingPlayer,
+    triggerSync: forceSync
+  } = useStore();
+
+  const { todayBirthdays } = useBirthdays();
 
   // Limpeza de storage antigo uma única vez no boot
   useEffect(() => {
     clearOldStorage();
   }, []);
-  
+
+  useEffect(() => {
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [theme]);
+
   const {
     magicLinkEmail,
     setMagicLinkEmail,
@@ -91,6 +153,7 @@ const App: React.FC = () => {
     onRejectRequest,
     triggerSync,
     recalculateDailyStats,
+    updateSystemMetadata,
     registerAttendance,
     removeAttendance,
     clearAttendance,
@@ -123,47 +186,6 @@ const App: React.FC = () => {
     resetTournamentMatch,
     deleteTournament
   } = useAppLogic();
-
-  // --- Store State ---
-  const {
-    viewMode,
-    setViewMode,
-    players,
-    attendance,
-    matches,
-    payments,
-    preConfirmations,
-    generationResult,
-    activeTournament,
-    isVerifyingRules,
-    isScanningAnomalies,
-    anomalyReport,
-    isLoggingOut,
-    isSyncing,
-    dbStatus,
-    notification,
-    hideNotification,
-    confirmModal,
-    hideConfirmModal,
-    swapSelection,
-    setSwapSelection,
-    elapsedTime,
-    setElapsedTime,
-    systemMetadata,
-    setGenerationResult,
-    showNotification,
-    showConfirmModal,
-    setEditingPayment,
-    setIsPaymentFormOpen,
-    editingPayment,
-    isPaymentFormOpen,
-    pendingRequests,
-    isFormOpen,
-    setIsFormOpen,
-    editingPlayer,
-    setEditingPlayer,
-    triggerSync: forceSync
-  } = useStore();
 
   // --- Local UI State ---
   const [selectedPlayerForHistory, setSelectedPlayerForHistory] = useState<any>(null);
@@ -207,7 +229,9 @@ const App: React.FC = () => {
     isOfficialSetter: false,
     isAdmin: false,
     joinedAt: new Date().toISOString().split('T')[0],
-    email: ''
+    birthDate: '',
+    email: '',
+    status: 'active'
   });
 
   // Sync form data when editing player changes
@@ -221,7 +245,9 @@ const App: React.FC = () => {
         isOfficialSetter: editingPlayer.isOfficialSetter || false,
         isAdmin: editingPlayer.isAdmin || false,
         joinedAt: editingPlayer.joinedAt || new Date().toISOString().split('T')[0],
-        email: editingPlayer.email || ''
+        birthDate: editingPlayer.birthDate || '',
+        email: editingPlayer.email || '',
+        status: editingPlayer.status || 'active'
       });
     } else {
       setFormData({
@@ -232,7 +258,9 @@ const App: React.FC = () => {
         isOfficialSetter: false,
         isAdmin: false,
         joinedAt: new Date().toISOString().split('T')[0],
-        email: ''
+        birthDate: '',
+        email: '',
+        status: 'active'
       });
     }
   }, [editingPlayer]);
@@ -314,7 +342,7 @@ const App: React.FC = () => {
       setPaymentFormData({
         playerId: '',
         month: currentMonth,
-        amount: 0,
+        amount: systemMetadata.monthlyFee || 0,
         dueDate: new Date(now.getFullYear(), now.getMonth(), 5).toISOString().split('T')[0],
         status: PaymentStatus.PENDING,
         method: '',
@@ -349,6 +377,7 @@ const App: React.FC = () => {
 
   // --- Navigation Items ---
   const navItems = useMemo(() => [
+    { id: 'intentions', label: 'Lista', icon: ListTodo, adminOnly: false },
     { id: 'presence', label: 'Presença', icon: ClipboardCheck, adminOnly: false },
     { id: 'generation', label: 'Partida', icon: Swords, adminOnly: false },
     { id: 'tournament', label: 'Torneio', icon: Trophy, adminOnly: false },
@@ -358,15 +387,19 @@ const App: React.FC = () => {
     { id: 'dashboard', label: 'Ranking', icon: LayoutDashboard, adminOnly: false },
     { id: 'rules', label: 'Regras', icon: ShieldAlert, adminOnly: false },
     { id: 'admin', label: 'Admin', icon: Settings, adminOnly: true },
-  ].filter(item => !item.adminOnly || userRole === 'ADMIN'), [userRole]);
+  ].filter(item => {
+    if (item.adminOnly && userRole !== 'ADMIN') return false;
+    if (item.id === 'tournament' && !systemMetadata.isTournamentEnabled && userRole !== 'ADMIN') return false;
+    return true;
+  }), [userRole, systemMetadata.isTournamentEnabled]);
 
   // --- Security Redirect ---
   useEffect(() => {
     if (isAuthReady && userRole) {
-      const validViews = [...navItems.map(item => item.id), 'attendance_report'];
+      const validViews = [...navItems.map(item => item.id), 'attendance_report', 'intentions'];
       const isRestricted = !validViews.includes(viewMode);
       if (isRestricted) {
-        setViewMode('generation');
+        setViewMode('intentions');
       }
     }
   }, [userRole, viewMode, navItems, isAuthReady, setViewMode]);
@@ -473,7 +506,7 @@ const App: React.FC = () => {
   // --- Render Logic ---
   if (isLoggingOut) {
     return (
-      <div className="min-h-screen bg-brand-secondary flex flex-col items-center justify-center p-4 text-white">
+      <div className="min-h-screen bg-black flex flex-col items-center justify-center p-4 text-white">
         <motion.div
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -496,7 +529,7 @@ const App: React.FC = () => {
 
   if (!isAuthReady || (user && isRoleLoading)) {
     return (
-      <div className="min-h-screen bg-brand-light flex items-center justify-center p-6">
+      <div className="min-h-screen bg-black flex items-center justify-center p-6">
         <div className="flex flex-col items-center gap-6">
           <motion.div 
             animate={{ scale: [1, 1.05, 1] }}
@@ -543,9 +576,10 @@ const App: React.FC = () => {
 
   return (
     <ErrorBoundary>
+      <BirthdayBanner birthdays={todayBirthdays} />
       <div className="min-h-screen transition-colors duration-500 pb-20 sm:pb-0 sm:pl-28 bg-brand-light">
         {/* Header */}
-        <header className="sticky top-0 z-30 relative overflow-hidden px-4 py-4 sm:px-12 sm:py-12 shadow-2xl shadow-black/50 border-b border-white/5 bg-brand-light">
+        <header className="sticky top-0 z-30 relative overflow-hidden px-4 py-3 sm:px-12 sm:py-12 shadow-2xl shadow-black/50 border-b border-white/5 bg-brand-light transition-colors duration-500">
           {/* Header Background Image with Overlay */}
           <div className="absolute inset-0 z-0">
             <img 
@@ -554,8 +588,8 @@ const App: React.FC = () => {
               className="w-full h-full object-cover opacity-5 scale-110 blur-[4px]"
               referrerPolicy="no-referrer"
             />
-            <div className="absolute inset-0 bg-gradient-to-r from-black via-black/95 to-transparent"></div>
-            <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/80"></div>
+            <div className="absolute inset-0 bg-gradient-to-r from-brand-light via-brand-light/95 to-transparent"></div>
+            <div className="absolute inset-0 bg-gradient-to-b from-transparent to-brand-light/80"></div>
           </div>
 
           <div className="max-w-7xl mx-auto flex justify-between items-center relative z-10">
@@ -578,20 +612,44 @@ const App: React.FC = () => {
             </div>
 
             <div className="flex items-center gap-3 sm:gap-8">
-              <button 
-                onClick={() => {
-                  forceSync();
-                  showNotification('Sincronização forçada iniciada...', 'info');
-                }}
-                className={`p-2.5 sm:p-5 rounded-xl sm:rounded-2xl transition-all border-2 ${isSyncing ? 'bg-brand-primary/20 border-brand-primary text-brand-primary animate-spin' : 'bg-white/5 text-white/80 hover:bg-brand-primary/20 hover:text-brand-primary border-white/10 hover:border-brand-primary/50'}`}
-                title="Sincronizar Agora"
-                disabled={isSyncing}
-              >
-                <Database className="w-5 h-5 sm:w-8 sm:h-8" />
-              </button>
+              <div className="sm:hidden flex items-center gap-2">
+                <NotificationCenter />
+                <PlayerStatusCard 
+                  currentPlayer={currentPlayer}
+                  attendance={attendance}
+                  generationResult={generationResult}
+                  matches={matches}
+                  systemMetadata={systemMetadata}
+                  activeTournament={activeTournament}
+                />
+              </div>
+              
+              {userRole === 'ADMIN' && (
+                <button 
+                  onClick={() => {
+                    forceSync();
+                    showNotification('Sincronização forçada iniciada...', 'info');
+                  }}
+                  className={`p-2.5 sm:p-5 rounded-xl sm:rounded-2xl transition-all border-2 ${isSyncing ? 'bg-brand-primary/20 border-brand-primary text-brand-primary animate-spin' : 'bg-white/5 text-white/80 hover:bg-brand-primary/20 hover:text-brand-primary border-white/10 hover:border-brand-primary/50'}`}
+                  title="Sincronizar Agora"
+                  disabled={isSyncing}
+                >
+                  <Database className="w-5 h-5 sm:w-8 sm:h-8" />
+                </button>
+              )}
+
               <div className="hidden sm:flex flex-col items-end">
                 <p className="text-xs font-black text-white/40 uppercase tracking-[0.2em] mb-1">Atleta</p>
                 <div className="flex items-center gap-3">
+                  <NotificationCenter />
+                  <PlayerStatusCard 
+                    currentPlayer={currentPlayer}
+                    attendance={attendance}
+                    generationResult={generationResult}
+                    matches={matches}
+                    systemMetadata={systemMetadata}
+                    activeTournament={activeTournament}
+                  />
                   <p className="text-lg font-black text-white uppercase tracking-tight flex items-center gap-2">
                     {currentPlayer?.name || user.displayName || 'Atleta'}
                     {userRole === 'ADMIN' && <CheckCircle2 className="w-5 h-5 text-brand-primary" />}
@@ -610,7 +668,7 @@ const App: React.FC = () => {
         </header>
 
         {/* Sidebar Navigation */}
-        <nav className="fixed bottom-0 left-0 w-full sm:w-28 sm:h-full bg-black border-t sm:border-t-0 sm:border-r border-white/5 z-40 flex sm:flex-col items-center overflow-x-auto sm:overflow-x-visible justify-start sm:justify-center gap-2 sm:gap-4 p-2 sm:p-0 scrollbar-hide shadow-2xl">
+        <nav className="fixed bottom-0 left-0 w-full sm:w-28 sm:h-full bg-brand-nav border-t sm:border-t-0 sm:border-r border-white/5 z-40 flex sm:flex-col items-center overflow-x-auto sm:overflow-x-visible justify-start sm:justify-center gap-2 sm:gap-4 p-2 sm:p-0 scrollbar-hide shadow-2xl">
           {navItems.map((item) => (
             <button
               key={item.id}
@@ -618,8 +676,8 @@ const App: React.FC = () => {
               className={`flex flex-col items-center gap-1 sm:gap-2 p-2.5 sm:p-6 rounded-2xl sm:rounded-3xl transition-all relative group flex-shrink-0 ${
                 viewMode === item.id 
                   ? 'bg-brand-primary text-brand-secondary shadow-2xl shadow-brand-primary/30 scale-110' 
-                  : 'text-white/40 hover:bg-white/5 hover:text-white'
-              }`}
+                  : 'text-white/80 hover:bg-brand-primary/10 hover:text-brand-primary'
+              } transition-all`}
             >
               <item.icon className="w-5 h-5 sm:w-9 sm:h-9" />
               <span className={`text-[8px] font-black uppercase tracking-tighter sm:hidden`}>{item.label}</span>
@@ -634,6 +692,21 @@ const App: React.FC = () => {
 
         {/* Main Content */}
         <main className="max-w-7xl mx-auto p-6 sm:p-12">
+          {viewMode === 'intentions' && (
+            <IntentionsView 
+              userRole={userRole}
+              currentPlayer={currentPlayer}
+              showNotification={showNotification}
+              onMoveToAttendance={(playerId) => {
+                const player = players.find(p => p.id === playerId);
+                if (player) {
+                  registerAttendance(player);
+                  showNotification('Sócio movido para a quadra!', 'success');
+                }
+              }}
+            />
+          )}
+
           {viewMode === 'presence' && (
             <AttendanceView 
               userRole={userRole}
@@ -646,7 +719,7 @@ const App: React.FC = () => {
               onToggleIntention={onToggleIntention}
               refreshPlayers={refreshPlayers}
               resetDailyMatches={handleFinishDay}
-              availablePlayers={players}
+              availablePlayers={players.filter(p => p.status !== 'inactive')}
               preConfirmations={preConfirmations}
               setViewMode={setViewMode}
             />
@@ -669,14 +742,16 @@ const App: React.FC = () => {
                 isVerifyingRules={isVerifyingRules}
                 isAnalyzing={isAnalyzing}
                 isNarratingSummary={isNarratingSummary}
-                onAnnounce={handleAnnounce}
+                onAnnounce={() => handleAnnounce('teams')}
                 onSwapClick={handleSwapClick}
                 onRemovePlayer={handleRemovePlayer}
                 onPromoteToSetter={promoteToSetter}
+                systemMetadata={systemMetadata}
+                updateSystemMetadata={updateSystemMetadata}
               />
               
               {generationResult && (
-                <div className="animate-in fade-in slide-in-from-bottom-8 duration-700">
+                <div className="animate-in fade-in slide-in-from-bottom-8 duration-700 bg-black rounded-[3rem] border border-brand-primary/20 p-8 sm:p-12 shadow-2xl">
                   <div className="flex items-center gap-4 mb-8">
                     <div className="h-px flex-grow bg-white/10"></div>
                     <h2 className="text-sm font-black text-white/40 uppercase tracking-[0.3em]">Posicionamento Tático</h2>
@@ -711,6 +786,7 @@ const App: React.FC = () => {
               setIsFormOpen={setIsFormOpen}
               refreshPlayers={refreshPlayers}
               repairDatabase={repairDatabase}
+              savePlayer={savePlayer}
             />
           )}
 
@@ -730,7 +806,7 @@ const App: React.FC = () => {
             <RankingView 
               userRole={userRole}
               refreshPlayers={refreshPlayers}
-              handleAnnounceSummary={handleAnnounce}
+              handleAnnounceSummary={(data) => handleAnnounce('ranking', data)}
               isNarratingSummary={isNarratingSummary}
               resetDailyMatches={handleFinishDay}
               isDark={isDarkView}
@@ -745,6 +821,7 @@ const App: React.FC = () => {
               resetElo={resetElo}
               triggerSync={triggerSync}
               recalculateDailyStats={recalculateDailyStats}
+              updateSystemMetadata={updateSystemMetadata}
               recalculateStats={recalculateStats}
               repairDatabase={repairDatabase}
               initializeEloHistory={initializeEloHistory}

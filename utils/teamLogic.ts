@@ -22,41 +22,37 @@ export function getPriorityQueue(attendanceList: Player[], count: number = 12, m
     return 0;
   };
 
-  // Separate setters and others
-  const officialSetters = attendanceList.filter(p => p.isOfficialSetter).sort(sortByPriority);
-  const nonSetters = attendanceList.filter(p => !p.isOfficialSetter).sort(sortByPriority);
+  // 1. Separate setters and non-setters, both sorted by priority
+  const allSetters = attendanceList.filter(p => p.isOfficialSetter).sort(sortByPriority);
+  const allNonSetters = attendanceList.filter(p => !p.isOfficialSetter).sort(sortByPriority);
 
-  // Pick up to maxSetters (2) from official setters
-  const selectedSetters = officialSetters.slice(0, maxSetters);
-  const leftoverSetters = officialSetters.slice(maxSetters);
-
-  // To avoid having more than 2 official setters in a match, we prioritize non-setters.
-  // We only use leftover setters if we don't have enough non-setters to reach the required count.
-  const neededCount = Math.max(0, count - selectedSetters.length);
+  // 2. Select exactly up to 2 setters (one for each team)
+  const selectedSetters = allSetters.slice(0, maxSetters);
   
-  let selectedOthers: Player[] = [];
-  let remainingPlayers: Player[] = [];
+  // 3. Fill the rest of the slots with non-setters
+  const neededNonSetters = count - selectedSetters.length;
+  const selectedNonSetters = allNonSetters.slice(0, neededNonSetters);
 
-  if (nonSetters.length >= neededCount) {
-    // We have enough non-setters, so we bench all leftover setters
-    selectedOthers = nonSetters.slice(0, neededCount);
-    remainingPlayers = [...nonSetters.slice(neededCount), ...leftoverSetters].sort(sortByPriority);
-  } else {
-    // We don't have enough non-setters, so we MUST use some leftover setters
-    selectedOthers = [...nonSetters];
-    const stillNeeded = neededCount - nonSetters.length;
-    selectedOthers.push(...leftoverSetters.slice(0, stillNeeded));
-    remainingPlayers = leftoverSetters.slice(stillNeeded);
-  }
+  // 4. Combine to form the match pool
+  const topPlayers = [...selectedSetters, ...selectedNonSetters];
+  
+  // 5. Remaining players are those not selected, sorted by priority for the waitlist
+  const selectedIds = new Set(topPlayers.map(p => p.id));
+  const remainingPlayers = attendanceList
+    .filter(p => !selectedIds.has(p.id))
+    .sort(sortByPriority);
 
   return {
-    topPlayers: [...selectedSetters, ...selectedOthers],
+    topPlayers,
     remainingPlayers
   };
 }
 
 export function generateTournamentTeams(participants: Player[], numTeams: number): { teams: TournamentTeam[], reserves: string[] } {
-  const sortedPlayers = [...participants].sort((a, b) => (b.elo || 1200) - (a.elo || 1200));
+  const totalPlayersNeeded = numTeams * 6;
+  const { topPlayers, remainingPlayers } = getPriorityQueue(participants, totalPlayersNeeded, numTeams);
+
+  const sortedPlayers = [...topPlayers].sort((a, b) => (b.elo || 1200) - (a.elo || 1200));
   
   const officialSetters = sortedPlayers.filter(p => p.isOfficialSetter);
   const others = sortedPlayers.filter(p => !p.isOfficialSetter);
@@ -79,7 +75,7 @@ export function generateTournamentTeams(participants: Player[], numTeams: number
     });
   }
 
-  const reserves: string[] = [];
+  const reserves: string[] = remainingPlayers.map(p => p.id);
 
   // 1. Distribute official setters (max 1 per team)
   let setterIdx = 0;
@@ -89,18 +85,19 @@ export function generateTournamentTeams(participants: Player[], numTeams: number
       teams[setterIdx].players.push(setter.id);
       teams[setterIdx].totalElo = (teams[setterIdx].totalElo || 0) + (setter.elo || 1200);
     } else {
-      reserves.push(setter.id);
+      others.push(setter); // If more setters than teams, treat them as normal players
     }
     setterIdx++;
   }
 
   // 2. Distribute others (until teams have 6 players)
-  const men = others.filter(p => p.gender === Gender.MALE);
-  const women = others.filter(p => p.gender === Gender.FEMALE);
-  const otherPool = [...men, ...women]; // Already sorted by ELO indirectly because 'others' was sorted
+  const men = others.filter(p => p.gender === Gender.MALE).sort((a, b) => (b.elo || 1200) - (a.elo || 1200));
+  const women = others.filter(p => p.gender === Gender.FEMALE).sort((a, b) => (b.elo || 1200) - (a.elo || 1200));
+  const otherPool = [...men, ...women];
 
-  let currentTeamIdx = 0;
-  let direction = 1;
+  // Randomize starting team for snake draft
+  let currentTeamIdx = Math.floor(Math.random() * numTeams);
+  let direction = Math.random() > 0.5 ? 1 : -1;
 
   while (otherPool.length > 0) {
     const player = otherPool.shift()!;
@@ -148,15 +145,22 @@ export function generateTournamentTeams(participants: Player[], numTeams: number
   while (improved) {
     improved = false;
     
-    for (let i = 0; i < teams.length; i++) {
-      for (let j = 0; j < teams.length; j++) {
+    // Randomize team iteration order
+    const teamIndices = Array.from({ length: teams.length }, (_, i) => i).sort(() => Math.random() - 0.5);
+    
+    for (const i of teamIndices) {
+      for (const j of teamIndices) {
         if (i === j) continue;
 
         const teamA = teams[i];
         const teamB = teams[j];
         
-        for (let pAIdx = 0; pAIdx < teamA.players.length; pAIdx++) {
-          for (let pBIdx = 0; pBIdx < teamB.players.length; pBIdx++) {
+        // Randomize player iteration order
+        const pAIndices = Array.from({ length: teamA.players.length }, (_, i) => i).sort(() => Math.random() - 0.5);
+        const pBIndices = Array.from({ length: teamB.players.length }, (_, i) => i).sort(() => Math.random() - 0.5);
+        
+        for (const pAIdx of pAIndices) {
+          for (const pBIdx of pBIndices) {
             const pA = participants.find(p => p.id === teamA.players[pAIdx]);
             const pB = participants.find(p => p.id === teamB.players[pBIdx]);
 
@@ -266,35 +270,33 @@ export function generateTeams(attendanceList: Player[]): GenerationResult {
   // Randomize initial team choice for the greedy distribution
   const firstTeam = Math.random() > 0.5 ? 'A' : 'B';
 
-  men.forEach((man) => {
-    const eloA = playersA.reduce((sum, p) => sum + p.elo, 0) + (setterA?.elo || 0);
-    const eloB = playersB.reduce((sum, p) => sum + p.elo, 0) + (setterB?.elo || 0);
-
+  // Distribute men first, alternating between teams
+  men.forEach((man, idx) => {
     const canAddToA = playersA.length < requiredA;
     const canAddToB = playersB.length < requiredB;
+    const targetTeam = (idx % 2 === 0) ? firstTeam : (firstTeam === 'A' ? 'B' : 'A');
 
-    if (canAddToA && (!canAddToB || eloA <= eloB)) {
-      playersA.push(man);
-    } else if (canAddToB) {
-      playersB.push(man);
-    } else if (canAddToA) {
-      playersA.push(man);
+    if (targetTeam === 'A') {
+      if (canAddToA) playersA.push(man);
+      else if (canAddToB) playersB.push(man);
+    } else {
+      if (canAddToB) playersB.push(man);
+      else if (canAddToA) playersA.push(man);
     }
   });
 
-  women.forEach(woman => {
-    const eloA = playersA.reduce((sum, p) => sum + p.elo, 0) + (setterA?.elo || 0);
-    const eloB = playersB.reduce((sum, p) => sum + p.elo, 0) + (setterB?.elo || 0);
-
+  // Distribute women next, alternating between teams
+  women.forEach((woman, idx) => {
     const canAddToA = playersA.length < requiredA;
     const canAddToB = playersB.length < requiredB;
+    const targetTeam = (idx % 2 === 0) ? firstTeam : (firstTeam === 'A' ? 'B' : 'A');
 
-    if (canAddToA && (!canAddToB || eloA <= eloB)) {
-      playersA.push(woman);
-    } else if (canAddToB) {
-      playersB.push(woman);
-    } else if (canAddToA) {
-      playersA.push(woman);
+    if (targetTeam === 'A') {
+      if (canAddToA) playersA.push(woman);
+      else if (canAddToB) playersB.push(woman);
+    } else {
+      if (canAddToB) playersB.push(woman);
+      else if (canAddToA) playersA.push(woman);
     }
   });
 

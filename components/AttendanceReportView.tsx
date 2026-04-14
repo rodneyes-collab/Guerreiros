@@ -19,7 +19,8 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 
 export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void }> = ({ setViewMode }) => {
-  const { players, userRole } = useStore();
+  const { players: allPlayers, userRole } = useStore();
+  const players = useMemo(() => allPlayers.filter(p => p.status !== 'inactive'), [allPlayers]);
   const [history, setHistory] = useState<Record<string, Player[]>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [filterMonth, setFilterMonth] = useState(getFirestoreDateKey().slice(0, 7));
@@ -90,7 +91,7 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
       {/* Header & Filters */}
-      <div className="bg-brand-secondary/30 backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/10 shadow-2xl space-y-8">
+      <div className="bg-black p-8 rounded-[2.5rem] border border-white/10 shadow-2xl space-y-8">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
           <div className="flex items-center gap-4">
             {setViewMode && (
@@ -223,7 +224,7 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
           <p className="text-xs font-black text-brand-accent uppercase tracking-widest animate-pulse">Carregando histórico...</p>
         </div>
       ) : activeTab === 'PLAYERS' ? (
-        <div className="bg-brand-secondary/30 backdrop-blur-xl rounded-[2.5rem] border border-white/10 shadow-2xl overflow-hidden">
+        <div className="bg-black rounded-[2.5rem] border border-white/10 shadow-2xl overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left">
               <thead className="bg-white/5 border-b border-white/10">
@@ -300,7 +301,7 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {sessionSummary.map(session => (
-            <div key={session.date} className="bg-brand-secondary/30 backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/10 shadow-2xl hover:shadow-brand-primary/5 transition-all group">
+            <div key={session.date} className="bg-black p-8 rounded-[2.5rem] border border-white/10 shadow-2xl hover:shadow-brand-primary/5 transition-all group">
               <div className="flex justify-between items-start mb-6">
                 <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center border border-white/10">
                   <Calendar className="w-6 h-6 text-brand-primary" />
@@ -333,7 +334,7 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
             </div>
           ))}
           {sessionSummary.length === 0 && (
-            <div className="col-span-full py-20 text-center bg-brand-secondary/30 backdrop-blur-xl rounded-[2.5rem] border border-white/10 shadow-2xl">
+            <div className="col-span-full py-20 text-center bg-black rounded-[2.5rem] border border-white/10 shadow-2xl">
               <Calendar className="w-12 h-12 text-white/10 mx-auto mb-4" />
               <p className="text-sm font-bold text-white/40 uppercase tracking-widest">Nenhuma sessão registrada neste período</p>
             </div>

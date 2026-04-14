@@ -1,5 +1,5 @@
 import React from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { Match } from '../../types';
 
 interface WinLossChartProps {
@@ -58,7 +58,17 @@ export const WinLossChart: React.FC<WinLossChartProps> = ({ matches, playerId, i
   return (
     <div className="h-64 w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+        <AreaChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+          <defs>
+            <linearGradient id="colorWins" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stopColor="#F5C429" stopOpacity={0.3}/>
+              <stop offset="95%" stopColor="#F5C429" stopOpacity={0}/>
+            </linearGradient>
+            <linearGradient id="colorLosses" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stopColor="#ffffff" stopOpacity={0.1}/>
+              <stop offset="95%" stopColor="#ffffff" stopOpacity={0}/>
+            </linearGradient>
+          </defs>
           <CartesianGrid 
             strokeDasharray="3 3" 
             stroke={isDark ? "rgba(255,255,255,0.08)" : "rgba(74, 79, 90, 0.1)"} 
@@ -69,7 +79,7 @@ export const WinLossChart: React.FC<WinLossChartProps> = ({ matches, playerId, i
             axisLine={false} 
             tickLine={false} 
             tick={{ 
-              fill: isDark ? '#64748b' : '#4A4F5A', 
+              fill: isDark ? '#ffffff' : '#4A4F5A', 
               fontSize: 10, 
               fontWeight: 'bold' 
             }}
@@ -86,21 +96,23 @@ export const WinLossChart: React.FC<WinLossChartProps> = ({ matches, playerId, i
             axisLine={false} 
             tickLine={false} 
             tick={{ 
-              fill: isDark ? '#64748b' : '#4A4F5A', 
+              fill: isDark ? '#ffffff' : '#4A4F5A', 
               fontSize: 10, 
               fontWeight: 'bold' 
             }}
           />
           <Tooltip 
             contentStyle={{ 
-              backgroundColor: isDark ? '#1e293b' : '#ffffff',
+              backgroundColor: isDark ? '#1E232D' : '#ffffff',
               borderRadius: '1rem', 
-              border: isDark ? '1px solid rgba(255,255,255,0.1)' : '1px solid rgba(245, 196, 41, 0.2)',
+              border: 'none',
               boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.3)',
               fontSize: '12px',
               fontWeight: 'bold',
               color: isDark ? '#fff' : '#1e293b'
             }}
+            itemStyle={{ color: '#F5C429' }}
+            labelStyle={{ color: isDark ? '#fff' : '#1e293b', marginBottom: '4px' }}
             labelFormatter={(val) => {
               if (val === 'Início') return val;
               return new Date(val + 'T00:00:00').toLocaleDateString('pt-BR');
@@ -114,38 +126,32 @@ export const WinLossChart: React.FC<WinLossChartProps> = ({ matches, playerId, i
               fontWeight: 'bold',
               textTransform: 'uppercase',
               letterSpacing: '0.05em',
-              color: isDark ? '#cbd5e1' : '#4A4F5A'
+              color: isDark ? '#ffffff' : '#4A4F5A'
             }}
           />
-          <Line 
+          <Area 
             name="Vitórias"
             type="monotone" 
             dataKey="wins" 
             stroke="#F5C429" 
             strokeWidth={3} 
-            dot={{ 
-              r: 3, 
-              fill: '#F5C429', 
-              strokeWidth: 2, 
-              stroke: isDark ? '#0f172a' : '#fff' 
-            }}
+            fillOpacity={1}
+            fill="url(#colorWins)"
+            dot={false}
             activeDot={{ r: 5, strokeWidth: 0 }}
           />
-          <Line 
+          <Area 
             name="Derrotas"
             type="monotone" 
             dataKey="losses" 
-            stroke={isDark ? '#64748b' : '#cbd5e1'} 
+            stroke={isDark ? '#ffffff' : '#cbd5e1'} 
             strokeWidth={3} 
-            dot={{ 
-              r: 3, 
-              fill: isDark ? '#64748b' : '#cbd5e1', 
-              strokeWidth: 2, 
-              stroke: isDark ? '#0f172a' : '#fff' 
-            }}
+            fillOpacity={1}
+            fill="url(#colorLosses)"
+            dot={false}
             activeDot={{ r: 5, strokeWidth: 0 }}
           />
-        </LineChart>
+        </AreaChart>
       </ResponsiveContainer>
     </div>
   );

@@ -15,10 +15,14 @@ import {
   User 
 } from 'firebase/auth';
 import { getFirestore, enableIndexedDbPersistence, collection, doc, updateDoc, onSnapshot, setDoc, deleteDoc, getDoc, getDocFromServer, getDocs, writeBatch, increment, query, where, orderBy, arrayUnion, addDoc, serverTimestamp, collectionGroup } from 'firebase/firestore';
+import { getMessaging, getToken, onMessage } from 'firebase/messaging';
 import firebaseConfig from './firebase-applet-config.json';
 
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
+
+// Initialize Firebase Cloud Messaging and get a reference to the service
+export const messaging = typeof window !== 'undefined' && 'Notification' in window ? getMessaging(app) : null;
 
 // Enable offline persistence
 enableIndexedDbPersistence(db).catch((err) => {
