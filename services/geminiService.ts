@@ -3,7 +3,7 @@ import { GoogleGenAI, Modality } from "@google/genai";
 import { Team, Player, GenerationResult, Match } from "../types";
 
 // Cache persistente para evitar chamadas repetidas à IA com os mesmos dados
-const CACHE_KEY = 'spikegen_ai_cache';
+const CACHE_KEY = 'spikegen_ai_cache_v2';
 const MAX_CACHE_ITEMS = 20; // Reduzido para maior segurança
 const MAX_CACHE_SIZE_BYTES = 1.0 * 1024 * 1024; // 1MB (limite conservador)
 
@@ -105,6 +105,56 @@ const saveCache = (cache: Record<string, string>) => {
   }
 };
 const analysisCache = getCache();
+
+/**
+ * Helper to convert raw PCM from Gemini TTS to a playable WAV Blob URL.
+ */
+const pcmToWavUrl = (pcmBase64: string, sampleRate: number = 24000): string => {
+  const binaryString = window.atob(pcmBase64);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+
+  const buffer = new ArrayBuffer(44 + len);
+  const view = new DataView(buffer);
+
+  // RIFF identifier
+  view.setUint32(0, 0x52494646, false); // "RIFF"
+  // file length
+  view.setUint32(4, 36 + len, true);
+  // RIFF type
+  view.setUint32(8, 0x57415645, false); // "WAVE"
+  // format chunk identifier
+  view.setUint32(12, 0x666d7420, false); // "fmt "
+  // format chunk length
+  view.setUint32(16, 16, true);
+  // sample format (PCM = 1)
+  view.setUint16(20, 1, true);
+  // channel count (Mono = 1)
+  view.setUint16(22, 1, true);
+  // sample rate
+  view.setUint32(24, sampleRate, true);
+  // byte rate (sample rate * block align)
+  view.setUint32(28, sampleRate * 2, true);
+  // block align (channel count * bytes per sample)
+  view.setUint16(32, 2, true);
+  // bits per sample
+  view.setUint16(34, 16, true);
+  // data chunk identifier
+  view.setUint32(36, 0x64617461, false); // "data"
+  // data chunk length
+  view.setUint32(40, len, true);
+
+  // write the PCM samples
+  for (let i = 0; i < len; i++) {
+    view.setUint8(44 + i, bytes[i]);
+  }
+
+  const blob = new Blob([buffer], { type: 'audio/wav' });
+  return URL.createObjectURL(blob);
+};
 
 /**
  * Helper to get a fresh instance of the Gemini AI client.
@@ -259,14 +309,16 @@ export const generateDailySummaryNarration = async (stats: {
   if (analysisCache[cacheKey]) return analysisCache[cacheKey];
 
   const ai = getAI();
-  const prompt = `Resumo do Dia (Guerreiros Volleyball):
+  const prompt = `Você é um locutor esportivo brasileiro carismático e empolgado.
+    Resumo do Dia (Guerreiros Volleyball):
     - Partidas: ${stats.matchesCount || 0}
     - MVP: ${stats.mvp || 'N/A'}
     - Melhor Levantador: ${stats.bestSetter || 'N/A'}
     - Rei do Dia (Maior Ganho ELO): ${stats.dailyKing || 'N/A'}
     
-    TAREFA: Gere APENAS UM ÚNICO roteiro de locução curto (max 3 frases) e empolgante celebrando os resultados. 
-    NÃO dê opções (ex: Opção 1, Opção 2). NÃO use introduções. Apenas o texto da narração falada.
+    TAREFA: Gere um roteiro de locução curto (max 3 frases) que soe NATURAL e FLUIDO, como se estivesse comentando ao vivo. 
+    Use pontuação (vírgulas e pontos) para criar pausas naturais. Use gírias leves de vôlei se apropriado. 
+    NÃO faça listas. NÃO dê opções. Apenas o texto da narração falada.
     Use "Equipe" em vez de "Time" para evitar erros de pronúncia.`;
 
   try {
@@ -284,6 +336,114 @@ export const generateDailySummaryNarration = async (stats: {
 };
 
 /**
+ * Generates a team announcement audio directly from teams to reduce latency.
+ */
+export const generateTeamAnnouncementAudio = async (teamA: Team, teamB: Team): Promise<string | null> => {
+  const teamANames = [teamA.setter?.name, ...teamA.players.map(p => p.name)].filter(Boolean).join(', ');
+  const teamBNames = [teamB.setter?.name, ...teamB.players.map(p => p.name)].filter(Boolean).join(', ');
+  
+  const cacheKey = `teams_audio_v1_${teamANames}_vs_${teamBNames}`;
+  if (analysisCache[cacheKey]) return analysisCache[cacheKey];
+
+  const ai = getAI(true);
+  const prompt = `Você é um locutor esportivo brasileiro carismático e empolgado.
+    
+    TAREFA: Narre a escalação das duas equipes abaixo de forma NATURAL, FLUIDA e RÁPIDA. 
+    
+    Equipe A: ${teamANames}
+    Equipe B: ${teamBNames}
+    
+    Instruções:
+    - Comece direto com a Equipe A.
+    - Use entonação de rádio esportivo. 
+    - Fale de forma direta e enérgica.
+    - Use "Equipe" em vez de "Time".`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash-preview-tts",
+      contents: [{ parts: [{ text: prompt }] }],
+      config: {
+        responseModalities: [Modality.AUDIO],
+        speechConfig: {
+          voiceConfig: { 
+            prebuiltVoiceConfig: { voiceName: 'Zephyr' } 
+          },
+        },
+      },
+    });
+    
+    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    const result = base64Audio ? pcmToWavUrl(base64Audio) : null;
+    
+    return result;
+  } catch (error: any) {
+    console.error("Error generating team announcement audio:", error);
+    return null;
+  }
+};
+
+/**
+ * Generates a summary audio directly from stats to reduce latency.
+ */
+export const generateDailySummaryAudio = async (stats: { 
+  mvp?: string; 
+  bestSetter?: string; 
+  dailyKing?: string;
+  matchesCount?: number;
+  rankingChanges?: string[]; // Adicionado campo para mudanças no ranking
+}): Promise<string | null> => {
+  const cacheKey = `summary_audio_v4_${stats.mvp}_${stats.bestSetter}_${stats.dailyKing}_${stats.matchesCount}_${stats.rankingChanges?.join(',')}`;
+  if (analysisCache[cacheKey]) return analysisCache[cacheKey];
+
+  const ai = getAI(true);
+  const rankingInfo = stats.rankingChanges && stats.rankingChanges.length > 0
+    ? `\n- Mudanças no Ranking Geral: ${stats.rankingChanges.join(', ')}`
+    : '';
+
+  const prompt = `Você é um locutor esportivo brasileiro carismático e empolgado.
+    Resumo do Dia (Guerreiros Volleyball):
+    - Partidas: ${stats.matchesCount || 0}
+    - MVP: ${stats.mvp || 'N/A'}
+    - Melhor Levantador: ${stats.bestSetter || 'N/A'}
+    - Rei do Dia (Maior Ganho ELO): ${stats.dailyKing || 'N/A'}${rankingInfo}
+    
+    TAREFA: Narre os resultados acima de forma NATURAL, FLUIDA e RÁPIDA. 
+    Use entonação de rádio esportivo. Não faça listas. 
+    Se houver mudanças no ranking, cite-as com empolgação (ex: "E atenção que o ranking geral pegou fogo com Fulano subindo de posição!").
+    Fale de forma direta e enérgica.
+    Use "Equipe" em vez de "Time".`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash-preview-tts",
+      contents: [{ parts: [{ text: prompt }] }],
+      config: {
+        responseModalities: [Modality.AUDIO],
+        speechConfig: {
+          voiceConfig: { 
+            prebuiltVoiceConfig: { voiceName: 'Zephyr' } 
+          },
+        },
+      },
+    });
+    
+    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    const result = base64Audio ? pcmToWavUrl(base64Audio) : null;
+    
+    if (result) {
+      // Don't cache Blob URLs in localStorage as they are session-specific
+      // But we can cache the base64 if needed. For now let's just return.
+    }
+    
+    return result;
+  } catch (error: any) {
+    console.error("Error generating summary audio:", error);
+    return null;
+  }
+};
+
+/**
  * Converts text to speech using Gemini TTS (Special moments only).
  */
 export const getNarrationAudio = async (text: string): Promise<string | null> => {
@@ -293,23 +453,24 @@ export const getNarrationAudio = async (text: string): Promise<string | null> =>
 
   const ai = getAI(true);
   try {
+    // Prefixo mais simples que o modelo entende como instrução de estilo sem ler literalmente
+    const styledText = `Com empolgação de locutor esportivo: ${text}`;
+    
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",
-      contents: [{ parts: [{ text }] }],
+      contents: [{ parts: [{ text: styledText }] }],
       config: {
         responseModalities: [Modality.AUDIO],
         speechConfig: {
-          voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } },
+          voiceConfig: { 
+            // 'Zephyr' é naturalmente mais rápido e enérgico
+            prebuiltVoiceConfig: { voiceName: 'Zephyr' } 
+          },
         },
       },
     });
     const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-    const result = base64Audio ? `data:audio/mp3;base64,${base64Audio}` : null;
-    
-    if (result) {
-      analysisCache[cacheKey] = result;
-      saveCache(analysisCache);
-    }
+    const result = base64Audio ? pcmToWavUrl(base64Audio) : null;
     
     return result;
   } catch (error: any) {
@@ -323,6 +484,18 @@ export const getNarrationAudio = async (text: string): Promise<string | null> =>
 export const speakNarration = async (text: string, forceAIVoice = false): Promise<void> => {
   // Pré-processamento para garantir pronúncia correta
   const processedText = text.replace(/\bTime\b/gi, 'Equipe');
+
+  // Setup Media Session Metadata
+  if ('mediaSession' in navigator) {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: 'Narração Guerreiros',
+      artist: 'Guerreiros Volleyball Club',
+      album: 'Guerreiros Intelligence',
+      artwork: [
+        { src: 'https://picsum.photos/seed/volleyball/512/512', sizes: '512x512', type: 'image/png' }
+      ]
+    });
+  }
 
   // Se não for forçado, usa a voz do navegador (Grátis)
   if (!forceAIVoice) {
@@ -339,6 +512,17 @@ export const speakNarration = async (text: string, forceAIVoice = false): Promis
     
     utterance.rate = 1.0; 
     utterance.pitch = 1.0;
+
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.playbackState = 'playing';
+    }
+
+    utterance.onend = () => {
+      if ('mediaSession' in navigator) {
+        navigator.mediaSession.playbackState = 'none';
+      }
+    };
+
     window.speechSynthesis.speak(utterance);
     return;
   }
@@ -348,6 +532,31 @@ export const speakNarration = async (text: string, forceAIVoice = false): Promis
     const audioSrc = await getNarrationAudio(processedText);
     if (audioSrc) {
       const audio = new Audio(audioSrc);
+      audio.crossOrigin = "anonymous";
+
+      // Tenta forçar o Audio Focus usando Web Audio API
+      try {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioContextClass) {
+          const audioCtx = new AudioContextClass();
+          const source = audioCtx.createMediaElementSource(audio);
+          source.connect(audioCtx.destination);
+          if (audioCtx.state === 'suspended') {
+            await audioCtx.resume();
+          }
+        }
+      } catch (ctxError) {
+        console.warn("Web Audio API routing failed:", ctxError);
+      }
+
+      if ('mediaSession' in navigator) {
+        navigator.mediaSession.playbackState = 'playing';
+      }
+      audio.onended = () => {
+        if ('mediaSession' in navigator) {
+          navigator.mediaSession.playbackState = 'none';
+        }
+      };
       await audio.play();
     } else {
       throw new Error("AI TTS unavailable");

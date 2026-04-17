@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useStore } from '../store';
 import { Player } from '../types';
-import { fetchAttendanceHistory, calculateAttendanceStats } from '../src/services/attendanceService';
+import { fetchAttendanceHistory, calculateAttendanceStats, clearAttendanceHistory } from '../src/services/attendanceService';
 import { getFirestoreDateKey } from '../firebase';
 import { 
   Calendar, 
@@ -14,12 +14,13 @@ import {
   ChevronRight,
   Download,
   BarChart3,
-  X
+  X,
+  Trash2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void }> = ({ setViewMode }) => {
-  const { players: allPlayers, userRole } = useStore();
+  const { players: allPlayers, userRole, showConfirmModal, showNotification } = useStore();
   const players = useMemo(() => allPlayers.filter(p => p.status !== 'inactive'), [allPlayers]);
   const [history, setHistory] = useState<Record<string, Player[]>>({});
   const [isLoading, setIsLoading] = useState(true);
@@ -28,6 +29,7 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
   const [selectedPlayerId, setSelectedPlayerId] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState<'PLAYERS' | 'SESSIONS'>('PLAYERS');
+  const [isClearing, setIsClearing] = useState(false);
 
   const loadHistory = async () => {
     setIsLoading(true);
@@ -88,22 +90,42 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
     return months;
   }, []);
 
+  const handleClearHistory = async () => {
+    showConfirmModal(
+      "Zerar Histórico de Presença",
+      "Tem certeza que deseja apagar TODO o histórico de presença? Esta ação não pode ser desfeita.",
+      async () => {
+        setIsClearing(true);
+        try {
+          await clearAttendanceHistory();
+          await loadHistory();
+          showNotification("Histórico apagado com sucesso!", "success");
+        } catch (error) {
+          console.error("Failed to clear history", error);
+          showNotification("Erro ao apagar histórico.", "error");
+        } finally {
+          setIsClearing(false);
+        }
+      }
+    );
+  };
+
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
       {/* Header & Filters */}
-      <div className="bg-black p-8 rounded-[2.5rem] border border-white/10 shadow-2xl space-y-8">
+      <div className="bg-black p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-2xl space-y-8">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
           <div className="flex items-center gap-4">
             {setViewMode && (
               <button 
                 onClick={() => setViewMode('presence')}
-                className="p-3 bg-white/5 hover:bg-brand-primary/10 text-white/60 hover:text-brand-primary rounded-2xl transition-all border border-white/10"
+                className="p-3 bg-white/5 hover:bg-brand-primary/10 text-white/60 hover:text-brand-primary rounded-2xl transition-all border border-brand-primary/40"
               >
                 <ChevronRight className="w-6 h-6 rotate-180" />
               </button>
             )}
             <div>
-              <h2 className="text-3xl font-black text-brand-primary uppercase tracking-tighter italic flex items-center gap-3">
+              <h2 className="text-3xl font-black text-white uppercase tracking-tighter italic flex items-center gap-3">
                 <BarChart3 className="w-8 h-8 text-brand-primary" />
                 Relatório de Presença
               </h2>
@@ -111,8 +133,19 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
             </div>
           </div>
 
+          {userRole === 'ADMIN' && (
+            <button
+              onClick={handleClearHistory}
+              disabled={isClearing}
+              className="flex items-center gap-2 px-4 py-2 bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white rounded-xl font-black text-[10px] uppercase tracking-widest transition-all border border-rose-500/20 disabled:opacity-50"
+            >
+              <Trash2 className="w-4 h-4" />
+              {isClearing ? 'Apagando...' : 'Zerar Histórico'}
+            </button>
+          )}
+
           <div className="flex flex-wrap items-center gap-4 w-full md:w-auto">
-            <div className="flex items-center gap-2 bg-white/5 px-4 py-2 rounded-2xl border border-white/10 flex-1 md:flex-none">
+            <div className="flex items-center gap-2 bg-white/5 px-4 py-2 rounded-2xl border border-brand-primary/40 flex-1 md:flex-none">
               <Users className="w-4 h-4 text-white/20" />
               <select 
                 value={selectedPlayerId} 
@@ -131,7 +164,7 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
               )}
             </div>
 
-            <div className="flex items-center gap-2 bg-white/5 px-4 py-2 rounded-2xl border border-white/10 flex-1 md:flex-none">
+            <div className="flex items-center gap-2 bg-white/5 px-4 py-2 rounded-2xl border border-brand-primary/40 flex-1 md:flex-none">
               <Filter className="w-4 h-4 text-white/20" />
               <select 
                 value={filterMonth} 
@@ -149,7 +182,7 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
               </select>
             </div>
 
-            <div className="flex items-center gap-2 bg-white/5 px-4 py-2 rounded-2xl border border-white/10 flex-1 md:flex-none">
+            <div className="flex items-center gap-2 bg-white/5 px-4 py-2 rounded-2xl border border-brand-primary/40 flex-1 md:flex-none">
               <Calendar className="w-4 h-4 text-white/20" />
               <input 
                 type="date"
@@ -181,8 +214,8 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
         </div>
 
         {/* Search & Tabs */}
-        <div className="flex flex-col md:flex-row items-center justify-between gap-6 pt-6 border-t border-white/10">
-          <div className="flex gap-2 p-1.5 bg-white/5 rounded-[1.5rem] w-full md:w-fit border border-white/10">
+        <div className="flex flex-col md:flex-row items-center justify-between gap-6 pt-6 border-t border-brand-primary/40">
+          <div className="flex gap-2 p-1.5 bg-white/5 rounded-[1.5rem] w-full md:w-fit border border-brand-primary/40">
             <button
               onClick={() => setActiveTab('PLAYERS')}
               className={`flex-1 md:flex-none px-8 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${
@@ -212,7 +245,7 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
               placeholder="Buscar sócio..."
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
-              className="w-full bg-white/5 border border-white/10 rounded-2xl pl-11 pr-4 py-3 text-sm font-bold text-white placeholder:text-white/20 outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all"
+              className="w-full bg-white/5 border border-brand-primary/40 rounded-2xl pl-11 pr-4 py-3 text-sm font-bold text-white placeholder:text-white/20 outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all"
             />
           </div>
         </div>
@@ -224,10 +257,10 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
           <p className="text-xs font-black text-brand-accent uppercase tracking-widest animate-pulse">Carregando histórico...</p>
         </div>
       ) : activeTab === 'PLAYERS' ? (
-        <div className="bg-black rounded-[2.5rem] border border-white/10 shadow-2xl overflow-hidden">
+        <div className="bg-black rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-2xl overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left">
-              <thead className="bg-white/5 border-b border-white/10">
+              <thead className="bg-white/5 border-b border-brand-primary/40">
                 <tr>
                   <th className="px-8 py-5 text-[10px] font-black text-white/40 uppercase tracking-widest">Sócio</th>
                   <th className="px-8 py-5 text-[10px] font-black text-white/40 uppercase tracking-widest text-center">Presenças</th>
@@ -241,7 +274,7 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
                   <tr key={stat.playerId} className="hover:bg-white/5 transition-colors group">
                     <td className="px-8 py-5">
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-white/5 rounded-xl flex items-center justify-center font-black text-white/40 text-xs border border-white/10">
+                        <div className="w-10 h-10 bg-white/5 rounded-xl flex items-center justify-center font-black text-white/40 text-xs border border-brand-primary/40">
                           {idx + 1}
                         </div>
                         <div>
@@ -258,7 +291,7 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
                     </td>
                     <td className="px-8 py-5 text-center">
                       <div className="flex items-center justify-center gap-3">
-                        <div className="w-24 h-2 bg-white/5 rounded-full overflow-hidden border border-white/10">
+                        <div className="w-24 h-2 bg-white/5 rounded-full overflow-hidden border border-brand-primary/40">
                           <div 
                             className={`h-full rounded-full transition-all duration-1000 ${
                               stat.percentage >= 75 ? 'bg-emerald-500' : 
@@ -280,8 +313,8 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
                     <td className="px-8 py-5 text-right">
                       <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border ${
                         stat.percentage >= 75 ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500' : 
-                        stat.percentage >= 50 ? 'bg-brand-primary/10 border-brand-primary/20 text-brand-primary' : 
-                        'bg-white/5 border-white/10 text-white/40'
+                        stat.percentage >= 50 ? 'bg-brand-primary/10 border-brand-primary/40 text-brand-primary' : 
+                        'bg-white/5 border-brand-primary/40 text-white/40'
                       }`}>
                         {stat.percentage >= 75 ? 'Assíduo' : stat.percentage >= 50 ? 'Regular' : 'Ocasional'}
                       </span>
@@ -301,12 +334,12 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {sessionSummary.map(session => (
-            <div key={session.date} className="bg-black p-8 rounded-[2.5rem] border border-white/10 shadow-2xl hover:shadow-brand-primary/5 transition-all group">
+            <div key={session.date} className="bg-black p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-2xl hover:shadow-brand-primary/5 transition-all group">
               <div className="flex justify-between items-start mb-6">
-                <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center border border-white/10">
+                <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center border border-brand-primary/40">
                   <Calendar className="w-6 h-6 text-brand-primary" />
                 </div>
-                <span className="text-[10px] font-black text-white/40 uppercase tracking-widest bg-white/5 px-3 py-1 rounded-lg border border-white/10">
+                <span className="text-[10px] font-black text-white/40 uppercase tracking-widest bg-white/5 px-3 py-1 rounded-lg border border-brand-primary/40">
                   {new Date(session.date + 'T00:00:00').toLocaleDateString('pt-BR', { weekday: 'long' })}
                 </span>
               </div>
@@ -316,7 +349,7 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
               </h4>
               <p className="text-xs font-bold text-white/40 uppercase tracking-widest mb-6">Sessão de Jogo</p>
               
-              <div className="flex items-center justify-between pt-6 border-t border-white/10">
+              <div className="flex items-center justify-between pt-6 border-t border-brand-primary/40">
                 <div className="flex items-center gap-2">
                   <Users className="w-4 h-4 text-brand-primary" />
                   <span className="text-sm font-black text-white">{session.count} Sócios</span>
@@ -334,7 +367,7 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
             </div>
           ))}
           {sessionSummary.length === 0 && (
-            <div className="col-span-full py-20 text-center bg-black rounded-[2.5rem] border border-white/10 shadow-2xl">
+            <div className="col-span-full py-20 text-center bg-black rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-2xl">
               <Calendar className="w-12 h-12 text-white/10 mx-auto mb-4" />
               <p className="text-sm font-bold text-white/40 uppercase tracking-widest">Nenhuma sessão registrada neste período</p>
             </div>

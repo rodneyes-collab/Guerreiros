@@ -13,7 +13,9 @@ import {
   setDoc, 
   updateDoc,
   OperationType,
-  handleFirestoreError
+  handleFirestoreError,
+  setCurrentPlayerId,
+  trackAccess
 } from '../../firebase';
 import { useStore } from '../../store';
 import { cleanObject } from '../../utils/helpers';
@@ -188,6 +190,15 @@ export const useAuth = () => {
       if (player) {
         console.log('useAuth: Current player found!', player.name);
         setCurrentPlayer(player);
+        setCurrentPlayerId(player.id);
+        
+        // Track access once per session/login
+        const lastAccess = window.sessionStorage.getItem('last_access_tracked');
+        if (lastAccess !== player.id) {
+          trackAccess();
+          window.sessionStorage.setItem('last_access_tracked', player.id);
+        }
+
         if (!player.uid && user.uid) {
           const playerRef = doc(db, 'players', player.id);
           setDoc(playerRef, { uid: user.uid }, { merge: true }).catch(console.error);

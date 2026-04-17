@@ -2,9 +2,12 @@ import React, { useState } from 'react';
 import { Bell, X, Check, Trash2 } from 'lucide-react';
 import { useNotifications } from '../hooks/useNotifications';
 import { motion, AnimatePresence } from 'motion/react';
+import Markdown from 'react-markdown';
+import { useStore } from '../../store';
 
 export const NotificationCenter: React.FC = () => {
   const { notifications, markAsRead, deleteNotification, clearAll } = useNotifications();
+  const { setViewMode } = useStore();
   const [isOpen, setIsOpen] = useState(false);
 
   const unreadCount = notifications.filter(n => !n.read).length;
@@ -13,7 +16,7 @@ export const NotificationCenter: React.FC = () => {
     <div className="relative">
       <button 
         onClick={() => setIsOpen(!isOpen)}
-        className="relative p-2 sm:p-3 rounded-xl sm:rounded-2xl bg-white/5 text-white/80 hover:bg-brand-primary/20 hover:text-brand-primary border border-white/10 hover:border-brand-primary/50 transition-all"
+        className="relative p-2 sm:p-3 rounded-xl sm:rounded-2xl bg-white/5 text-white/80 hover:bg-brand-primary/20 hover:text-brand-primary border border-brand-primary/40 hover:border-brand-primary/50 transition-all"
       >
         <Bell className="w-5 h-5 sm:w-6 sm:h-6" />
         {unreadCount > 0 && (
@@ -34,9 +37,9 @@ export const NotificationCenter: React.FC = () => {
               initial={{ opacity: 0, y: 10, scale: 0.95 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 10, scale: 0.95 }}
-              className="absolute right-0 mt-2 w-80 sm:w-96 bg-brand-light border border-brand-primary/20 rounded-2xl shadow-2xl z-50 overflow-hidden"
+              className="fixed left-4 right-4 top-[80px] sm:absolute sm:left-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-96 bg-brand-light border border-brand-primary/40 rounded-2xl shadow-2xl z-50 overflow-hidden flex flex-col text-left"
             >
-              <div className="p-4 border-b border-white/10 flex justify-between items-center bg-black/50">
+              <div className="p-4 border-b border-brand-primary/40 flex justify-between items-center bg-black/50">
                 <h3 className="font-black text-white uppercase tracking-widest text-sm">Notificações</h3>
                 {notifications.length > 0 && (
                   <button 
@@ -64,7 +67,34 @@ export const NotificationCenter: React.FC = () => {
                           <h4 className={`text-sm font-bold ${notif.read ? 'text-white/70' : 'text-brand-primary'}`}>
                             {notif.title}
                           </h4>
-                          <p className="text-xs text-white/60 mt-1">{notif.message}</p>
+                          <div className="text-xs text-white/60 mt-1 text-left">
+                            <Markdown
+                              components={{
+                                a: ({ node, ...props }) => {
+                                  const isInternal = props.href?.startsWith(window.location.origin) || props.href?.startsWith('?');
+                                  return (
+                                    <a 
+                                      {...props} 
+                                      className="text-brand-primary font-black hover:underline cursor-pointer"
+                                      onClick={(e) => {
+                                        if (isInternal && props.href) {
+                                          e.preventDefault();
+                                          const url = new URL(props.href, window.location.origin);
+                                          const tab = url.searchParams.get('tab');
+                                          if (tab) {
+                                            setViewMode(tab as any);
+                                            setIsOpen(false);
+                                          }
+                                        }
+                                      }}
+                                    />
+                                  );
+                                }
+                              }}
+                            >
+                              {notif.message}
+                            </Markdown>
+                          </div>
                           <span className="text-[10px] text-white/30 mt-2 block">
                             {new Date(notif.createdAt).toLocaleString()}
                           </span>

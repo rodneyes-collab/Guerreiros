@@ -22,10 +22,10 @@ export const ConfirmModal: React.FC = () => {
           initial={{ opacity: 0, scale: 0.9, y: 20 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.9, y: 20 }}
-          className="relative w-full max-w-md bg-brand-secondary rounded-[2.5rem] shadow-2xl overflow-hidden border border-white/10"
+          className="relative w-full max-w-md bg-brand-secondary rounded-[2.5rem] shadow-2xl overflow-hidden border border-white/5 border-l-[8px] border-l-brand-primary"
         >
           <div className="p-8 text-center space-y-6">
-            <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mx-auto border border-white/10">
+            <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mx-auto border border-brand-primary/40">
               <AlertTriangle className="w-10 h-10 text-brand-primary" />
             </div>
             
@@ -50,7 +50,7 @@ export const ConfirmModal: React.FC = () => {
               </button>
               <button
                 onClick={hideConfirmModal}
-                className="w-full py-4 bg-white/5 hover:bg-white/10 text-white/60 font-black rounded-2xl transition-all uppercase tracking-widest text-xs border border-white/10"
+                className="w-full py-4 bg-white/5 hover:bg-white/10 text-white/60 font-black rounded-2xl transition-all uppercase tracking-widest text-xs border border-brand-primary/40"
               >
                 Cancelar
               </button>

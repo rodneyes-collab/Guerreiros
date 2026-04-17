@@ -27,7 +27,7 @@ export const Notification: React.FC = () => {
           <div className={`p-4 rounded-2xl shadow-2xl border backdrop-blur-xl flex items-start gap-4 ${
             notification.type === 'success' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-100' :
             notification.type === 'error' ? 'bg-rose-500/10 border-rose-500/20 text-rose-100' :
-            'bg-brand-primary/10 border-brand-primary/20 text-white'
+            'bg-brand-primary/10 border-brand-primary/40 text-white'
           }`}>
             <div className="shrink-0 mt-0.5">
               {notification.type === 'success' && <CheckCircle className="w-5 h-5 text-emerald-500" />}

@@ -111,20 +111,20 @@ export const MembersView: React.FC<MembersViewProps> = ({
           transition: isPulling ? 'none' : 'transform 0.3s ease, opacity 0.3s ease'
         }}
       >
-        <div className="bg-brand-secondary/30 backdrop-blur-xl p-2 rounded-full shadow-lg border border-white/10">
+        <div className="bg-brand-secondary/30 backdrop-blur-xl p-2 rounded-full shadow-lg border border-brand-primary/40">
           <RotateCcw className={`w-6 h-6 text-brand-primary ${isSyncing ? 'animate-spin' : ''}`} />
         </div>
       </div>
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
         <div>
-          <h2 className="text-4xl font-black text-brand-primary uppercase tracking-tighter">Gestão de Sócios</h2>
+          <h2 className="text-4xl font-black text-white uppercase tracking-tighter">Gestão de Sócios</h2>
           <p className="text-sm font-bold text-white/40 uppercase tracking-widest mt-2">Total de {(players?.length || 0)} membros registrados</p>
         </div>
         <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
           {userRole === 'ADMIN' && repairDatabase && (
             <button 
               onClick={repairDatabase} 
-              className="flex-1 md:flex-none bg-white/5 text-white px-6 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-white/10 transition-all border border-white/10 shadow-sm"
+              className="flex-1 md:flex-none bg-white/5 text-white px-6 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-white/10 transition-all border border-brand-primary/40 shadow-sm"
             >
               <RotateCcw className="w-5 h-5" />
               Reparar
@@ -137,10 +137,10 @@ export const MembersView: React.FC<MembersViewProps> = ({
       </div>
 
       {/* Desktop Table View */}
-      <div className="hidden md:block bg-brand-secondary/30 backdrop-blur-xl rounded-[2rem] border border-white/10 shadow-xl overflow-hidden">
+      <div className="hidden md:block bg-brand-secondary/30 backdrop-blur-xl rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
-            <thead className="bg-black/40 border-b border-white/10">
+            <thead className="bg-black/40 border-b border-brand-primary/40">
               <tr>
                 <th 
                   onClick={() => handleSort('name')}
@@ -203,7 +203,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
                     <span className="text-xs font-bold text-white/60">{translateGender(player.gender)}</span>
                   </td>
                   <td className="px-8 py-6 text-center">
-                    <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${player.isOfficialSetter ? 'bg-brand-primary/20 text-brand-primary border border-brand-primary/30' : 'bg-white/5 text-white/60 border border-white/10'}`}>
+                    <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${player.isOfficialSetter ? 'bg-brand-primary/20 text-brand-primary border border-brand-primary/30' : 'bg-white/5 text-white/60 border border-brand-primary/40'}`}>
                       {player.isOfficialSetter ? 'Levantador' : 'Atleta'}
                     </span>
                   </td>
@@ -212,7 +212,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
                   </td>
                   <td className="px-8 py-6 text-center">
                     {player.status === 'inactive' ? (
-                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/5 text-white/40 text-[10px] font-black uppercase tracking-widest border border-white/10">
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/5 text-white/40 text-[10px] font-black uppercase tracking-widest border border-brand-primary/40">
                         Inativo
                       </span>
                     ) : (
@@ -276,12 +276,12 @@ export const MembersView: React.FC<MembersViewProps> = ({
       {/* Mobile Card View */}
       <div className="md:hidden space-y-4">
         {sortedPlayers.map(player => (
-          <div key={player.id} className="bg-brand-secondary/30 backdrop-blur-xl p-6 rounded-[2.5rem] border border-white/10 shadow-xl space-y-6 relative overflow-hidden group">
+          <div key={player.id} className="bg-brand-secondary/30 backdrop-blur-xl p-6 rounded-[2.5rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-xl space-y-6 relative overflow-hidden group">
             <div className="absolute top-0 right-0 w-32 h-32 bg-brand-primary/5 rounded-full -mr-16 -mt-16 transition-transform group-hover:scale-150 duration-700"></div>
             
             <div className="flex justify-between items-start relative z-10">
               <div className="flex items-center gap-4">
-                <div className="w-12 h-12 rounded-full bg-brand-secondary flex items-center justify-center text-brand-primary font-black text-lg border-2 border-brand-primary/20">
+                <div className="w-12 h-12 rounded-full bg-brand-secondary flex items-center justify-center text-brand-primary font-black text-lg border-2 border-brand-primary/40">
                   {player.name.charAt(0)}
                 </div>
                 <div>
@@ -299,14 +299,14 @@ export const MembersView: React.FC<MembersViewProps> = ({
                     )}
                   </div>
                   <div className="flex items-center gap-2 mt-2">
-                    <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest ${player.isOfficialSetter ? 'bg-brand-primary/20 text-brand-primary' : 'bg-white/5 text-white/60 border border-white/10'}`}>
+                    <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest ${player.isOfficialSetter ? 'bg-brand-primary/20 text-brand-primary' : 'bg-white/5 text-white/60 border border-brand-primary/40'}`}>
                       {translateGender(player.gender)}
                     </span>
-                    <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest ${player.isOfficialSetter ? 'bg-brand-primary/20 text-brand-primary' : 'bg-white/5 text-white/60 border border-white/10'}`}>
+                    <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest ${player.isOfficialSetter ? 'bg-brand-primary/20 text-brand-primary' : 'bg-white/5 text-white/60 border border-brand-primary/40'}`}>
                       {player.isOfficialSetter ? 'Levantador' : 'Atleta'}
                     </span>
                     {player.status === 'inactive' ? (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/5 text-white/40 text-[8px] font-black uppercase tracking-widest border border-white/10">
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/5 text-white/40 text-[8px] font-black uppercase tracking-widest border border-brand-primary/40">
                         Inativo
                       </span>
                     ) : (

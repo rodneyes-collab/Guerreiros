@@ -17,6 +17,9 @@ import {
   ShieldCheck,
   Trash2
 } from 'lucide-react';
+import { motion } from 'motion/react';
+
+import { HelpTooltip } from '../src/components/HelpTooltip';
 
 interface HistoryViewProps {
   onDeleteMatch?: (matchId: string) => void;
@@ -53,8 +56,15 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch }) => {
 
       // Filter by Date
       if (filterDate) {
-        const d = new Date(m.timestamp);
-        const matchDateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        // filterDate is usually YYYY-MM-DD from the input type="date"
+        // Let's format the m.timestamp to match the same timezone output that input expects
+        const formatter = new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'America/Sao_Paulo',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit'
+        });
+        const matchDateStr = formatter.format(new Date(m.timestamp));
         if (matchDateStr !== filterDate) return false;
       }
 
@@ -107,8 +117,8 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch }) => {
           )}
         </div>
 
-        <div className="bg-brand-light backdrop-blur-xl rounded-[2.5rem] border border-white/10 shadow-xl overflow-hidden">
-          <div className="bg-white/5 p-8 text-white relative overflow-hidden border-b border-white/10">
+        <div className="bg-brand-light backdrop-blur-xl rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-xl overflow-hidden">
+          <div className="bg-white/5 p-8 text-white relative overflow-hidden border-b border-brand-primary/40">
             <div className="absolute top-0 right-0 p-12 opacity-10">
               <Trophy className="w-32 h-32" />
             </div>
@@ -123,7 +133,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch }) => {
                 </div>
                 <div className="flex flex-wrap items-center justify-center md:justify-start gap-4">
                   <div className="flex items-center gap-2 text-white/60 text-[10px] font-black uppercase tracking-widest">
-                    <Calendar className="w-3.5 h-3.5" /> {new Date(selectedMatch.timestamp).toLocaleDateString()}
+                    <Calendar className="w-3.5 h-3.5" /> {new Date(selectedMatch.timestamp).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
                   </div>
                   <div className="flex items-center gap-2 text-white/60 text-[10px] font-black uppercase tracking-widest">
                     <Clock className="w-3.5 h-3.5" /> {formatHour(selectedMatch.startTime)} - {formatHour(selectedMatch.endTime)} ({formatTime(selectedMatch.duration)})
@@ -169,10 +179,10 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch }) => {
 
           <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-8">
             {/* Time A */}
-            <div className={`rounded-[2rem] border p-6 ${selectedMatch.winner === 'A' ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-white/5 border-white/10'}`}>
+            <div className={`rounded-[2rem] border p-6 ${selectedMatch.winner === 'A' ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-white/5 border-brand-primary/40'}`}>
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-3">
-                  <div className="p-2 bg-white/5 rounded-xl border border-white/10">
+                  <div className="p-2 bg-white/5 rounded-xl border border-brand-primary/40">
                     <Users className="w-5 h-5 text-brand-primary" />
                   </div>
                   <h3 className="text-sm font-black text-white uppercase tracking-widest">Time A</h3>
@@ -185,24 +195,31 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch }) => {
               </div>
               <div className="space-y-3">
                 {(selectedMatch.teamA || []).map((id, idx) => (
-                  <div key={id} className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-white/10 shadow-sm">
+                  <div key={id} className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-brand-primary/40 shadow-sm">
                     <div className="flex items-center gap-3">
                       <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-[10px] font-black text-white/60">
                         {idx === 0 ? <ShieldCheck className="w-4 h-4 text-brand-primary" /> : idx + 1}
                       </div>
-                      <span className={`text-xs font-black uppercase tracking-tight ${players.find(p => p.id === id)?.isOfficialSetter ? 'text-rose-500' : 'text-white'}`}>{getPlayerName(id)}</span>
+                      <motion.span 
+                        initial={{ opacity: 0, x: -10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ type: "spring", stiffness: 300, damping: 20 }}
+                        className={`text-xs font-black uppercase tracking-tight ${players.find(p => p.id === id)?.isOfficialSetter ? 'text-rose-500' : 'text-white'}`}
+                      >
+                        {getPlayerName(id)}
+                      </motion.span>
                     </div>
-                    {idx === 0 && <span className="text-[8px] font-black text-brand-primary bg-brand-primary/10 border border-brand-primary/20 px-2 py-0.5 rounded uppercase tracking-widest">Levantador</span>}
+                    {idx === 0 && <span className="text-[8px] font-black text-brand-primary bg-brand-primary/10 border border-brand-primary/40 px-2 py-0.5 rounded uppercase tracking-widest">Levantador</span>}
                   </div>
                 ))}
               </div>
             </div>
 
             {/* Time B */}
-            <div className={`rounded-[2rem] border p-6 ${selectedMatch.winner === 'B' ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-white/5 border-white/10'}`}>
+            <div className={`rounded-[2rem] border p-6 ${selectedMatch.winner === 'B' ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-white/5 border-brand-primary/40'}`}>
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-3">
-                  <div className="p-2 bg-white/5 rounded-xl border border-white/10">
+                  <div className="p-2 bg-white/5 rounded-xl border border-brand-primary/40">
                     <Users className="w-5 h-5 text-rose-500" />
                   </div>
                   <h3 className="text-sm font-black text-white uppercase tracking-widest">Time B</h3>
@@ -215,12 +232,19 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch }) => {
               </div>
               <div className="space-y-3">
                 {(selectedMatch.teamB || []).map((id, idx) => (
-                  <div key={id} className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-white/10 shadow-sm">
+                  <div key={id} className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-brand-primary/40 shadow-sm">
                     <div className="flex items-center gap-3">
                       <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-[10px] font-black text-white/60">
                         {idx === 0 ? <ShieldCheck className="w-4 h-4 text-rose-500" /> : idx + 1}
                       </div>
-                      <span className={`text-xs font-black uppercase tracking-tight ${players.find(p => p.id === id)?.isOfficialSetter ? 'text-rose-500' : 'text-white'}`}>{getPlayerName(id)}</span>
+                      <motion.span 
+                        initial={{ opacity: 0, x: -10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ type: "spring", stiffness: 300, damping: 20 }}
+                        className={`text-xs font-black uppercase tracking-tight ${players.find(p => p.id === id)?.isOfficialSetter ? 'text-rose-500' : 'text-white'}`}
+                      >
+                        {getPlayerName(id)}
+                      </motion.span>
                     </div>
                     {idx === 0 && <span className="text-[8px] font-black text-rose-500 bg-rose-500/10 border border-rose-500/20 px-2 py-0.5 rounded uppercase tracking-widest">Levantador</span>}
                   </div>
@@ -237,8 +261,15 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch }) => {
     <div className="space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col gap-6">
         <div className="flex flex-col md:flex-row justify-between items-center gap-4">
-          <h2 className="text-2xl font-black text-brand-primary uppercase tracking-tighter flex items-center gap-3">
-            <History className="w-8 h-8 text-brand-primary" /> Histórico de Partidas
+          <h2 className="text-2xl font-black text-white uppercase tracking-tighter flex items-center gap-3">
+            <History className="w-8 h-8 text-brand-primary" /> 
+            <span className="flex items-center">
+              Histórico de Partidas
+              <HelpTooltip 
+                title="Histórico" 
+                content="Registro das últimas partidas finalizadas. Mostra os times, o placar final e permite buscar por jogador ou data."
+              />
+            </span>
           </h2>
           
           <div className="flex items-center gap-2 w-full md:w-auto">
@@ -249,12 +280,12 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch }) => {
                 placeholder="Busca rápida..." 
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-11 pr-4 py-3 bg-white/5 border border-white/10 rounded-2xl text-xs font-bold text-white focus:ring-2 focus:ring-brand-primary outline-none transition-all shadow-sm placeholder:text-white/40"
+                className="w-full pl-11 pr-4 py-3 bg-white/5 border border-brand-primary/40 rounded-2xl text-xs font-bold text-white focus:ring-2 focus:ring-brand-primary outline-none transition-all shadow-sm placeholder:text-white/40"
               />
             </div>
             <button 
               onClick={() => setIsFilterExpanded(!isFilterExpanded)}
-              className={`p-3 rounded-2xl border transition-all ${isFilterExpanded ? 'bg-brand-primary border-brand-primary text-brand-secondary' : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white'}`}
+              className={`p-3 rounded-2xl border transition-all ${isFilterExpanded ? 'bg-brand-primary border-brand-primary text-brand-secondary' : 'bg-white/5 border-brand-primary/40 text-white/60 hover:bg-white/10 hover:text-white'}`}
             >
               <Users className="w-5 h-5" />
             </button>
@@ -262,13 +293,13 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch }) => {
         </div>
 
         {isFilterExpanded && (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-6 bg-brand-light backdrop-blur-xl rounded-[2rem] border border-white/10 animate-in slide-in-from-top duration-300">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-6 bg-brand-light backdrop-blur-xl rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary animate-in slide-in-from-top duration-300">
             <div className="space-y-2">
               <label className="text-[10px] font-black text-white/40 uppercase tracking-widest px-1">Filtrar por Jogador</label>
               <select 
                 value={filterPlayerId}
                 onChange={(e) => setFilterPlayerId(e.target.value)}
-                className="w-full p-3 bg-white/5 border border-white/10 rounded-xl text-xs font-bold text-white outline-none focus:ring-2 focus:ring-brand-primary"
+                className="w-full p-3 bg-white/5 border border-brand-primary/40 rounded-xl text-xs font-bold text-white outline-none focus:ring-2 focus:ring-brand-primary"
               >
                 <option value="" className="bg-brand-secondary text-white">Todos os Jogadores</option>
                 {[...players].sort((a, b) => a.name.localeCompare(b.name)).map(p => (
@@ -282,17 +313,17 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch }) => {
                 type="date" 
                 value={filterDate}
                 onChange={(e) => setFilterDate(e.target.value)}
-                className="w-full p-3 bg-white/5 border border-white/10 rounded-xl text-xs font-bold text-white outline-none focus:ring-2 focus:ring-brand-primary"
+                className="w-full p-3 bg-white/5 border border-brand-primary/40 rounded-xl text-xs font-bold text-white outline-none focus:ring-2 focus:ring-brand-primary"
               />
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-white/40 uppercase tracking-widest px-1">Número da Partida (#)</label>
+              <label className="text-[10px] font-black text-white/40 uppercase tracking-widest px-1">Número da Partida</label>
               <input 
                 type="text" 
                 placeholder="Ex: 001"
                 value={filterMatchId}
                 onChange={(e) => setFilterMatchId(e.target.value)}
-                className="w-full p-3 bg-white/5 border border-white/10 rounded-xl text-xs font-bold text-white outline-none focus:ring-2 focus:ring-brand-primary placeholder:text-white/20"
+                className="w-full p-3 bg-white/5 border border-brand-primary/40 rounded-xl text-xs font-bold text-white outline-none focus:ring-2 focus:ring-brand-primary placeholder:text-white/20"
               />
             </div>
             <div className="sm:col-span-3 flex justify-end">
@@ -318,20 +349,20 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch }) => {
             <button
               key={match.id}
               onClick={() => setSelectedMatch(match)}
-              className="group bg-brand-light p-6 rounded-[2.5rem] border border-white/10 hover:border-brand-primary/50 hover:shadow-xl hover:shadow-brand-primary/5 transition-all text-left flex flex-col md:flex-row items-center justify-between gap-6"
+              className="group bg-brand-light p-6 rounded-[2.5rem] border border-white/5 border-l-[6px] border-l-brand-primary hover:border-brand-primary/50 hover:shadow-xl hover:shadow-brand-primary/5 transition-all text-left flex flex-col md:flex-row items-center justify-between gap-6"
             >
               <div className="flex items-center gap-6 w-full md:w-auto">
-                <div className="w-16 h-16 rounded-2xl bg-white/5 flex flex-col items-center justify-center border border-white/10 group-hover:bg-brand-primary/10 group-hover:border-brand-primary/20 transition-colors">
+                <div className="w-16 h-16 rounded-2xl bg-white/5 flex flex-col items-center justify-center border border-brand-primary/40 group-hover:bg-brand-primary/10 group-hover:border-brand-primary/40 transition-colors">
                   <span className="text-[10px] font-black text-white/60 uppercase group-hover:text-brand-primary/60">Partida</span>
                   <span className="text-lg font-black text-white group-hover:text-brand-primary">
-                    #{match.dailyNumber || match.id.split('_')[1]?.slice(-3).toUpperCase() || '---'}
+                    {match.dailyNumber || match.id.split('_')[1]?.slice(-3).toUpperCase() || '---'}
                   </span>
                 </div>
                 
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
                     <Calendar className="w-3 h-3 text-white/60" />
-                    <span className="text-[10px] font-black text-white/60 uppercase tracking-widest">{new Date(match.timestamp).toLocaleDateString()}</span>
+                    <span className="text-[10px] font-black text-white/60 uppercase tracking-widest">{new Date(match.timestamp).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</span>
                   </div>
                   <div className="flex items-center gap-4">
                     <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl transition-all ${match.winner === 'A' ? 'bg-brand-primary/10 border-2 border-brand-primary/30 shadow-sm scale-105' : 'border border-transparent'}`}>
@@ -366,15 +397,15 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch }) => {
                     <span className="text-[10px] font-black text-white/60 uppercase tracking-widest">{(match.teamA || []).length + (match.teamB || []).length} Atletas</span>
                   </div>
                 </div>
-                <div className="w-10 h-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center group-hover:bg-brand-primary group-hover:text-brand-secondary transition-all">
+                <div className="w-10 h-10 rounded-full bg-white/5 border border-brand-primary/40 flex items-center justify-center group-hover:bg-brand-primary group-hover:text-brand-secondary transition-all">
                   <ChevronRight className="w-5 h-5 text-white" />
                 </div>
               </div>
             </button>
           ))
         ) : (
-          <div className="h-64 flex flex-col items-center justify-center text-center space-y-4 bg-brand-light backdrop-blur-xl rounded-[3rem] border-4 border-dashed border-white/10">
-            <div className="bg-white/5 border border-white/10 p-6 rounded-full">
+          <div className="h-64 flex flex-col items-center justify-center text-center space-y-4 bg-brand-light backdrop-blur-xl rounded-[3rem] border-4 border-dashed border-brand-primary/40">
+            <div className="bg-white/5 border border-brand-primary/40 p-6 rounded-full">
               <History className="w-12 h-12 text-white/20" />
             </div>
             <div className="space-y-1">

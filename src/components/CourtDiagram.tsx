@@ -38,7 +38,7 @@ export const CourtDiagram: React.FC<CourtDiagramProps> = ({ teamA, teamB }) => {
           {p?.name ? p.name.split(' ')[0].substring(0, 4) : '---'}
         </span>
       </div>
-      <div className="bg-brand-secondary/90 backdrop-blur px-3 py-1 rounded-full shadow-sm border border-brand-primary/20">
+      <div className="bg-brand-secondary/90 backdrop-blur px-3 py-1 rounded-full shadow-sm border border-brand-primary/40">
         <p className="text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">Pos {pos}</p>
       </div>
     </div>
@@ -65,13 +65,13 @@ export const CourtDiagram: React.FC<CourtDiagramProps> = ({ teamA, teamB }) => {
   };
 
   return (
-    <div className="bg-black rounded-[3rem] p-8 sm:p-12 shadow-2xl border border-brand-primary/20 relative overflow-hidden">
+    <div className="bg-black rounded-[3rem] p-8 sm:p-12 shadow-2xl border border-brand-primary/40 relative overflow-hidden">
       <button 
         onClick={() => setIsComparisonMode(!isComparisonMode)}
         className={`absolute top-6 right-6 z-20 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 border ${
           isComparisonMode 
             ? 'bg-brand-primary text-brand-secondary border-brand-primary shadow-lg shadow-brand-primary/20' 
-            : 'bg-white/5 text-white/60 border-white/10 hover:bg-white/10 hover:text-white'
+            : 'bg-white/5 text-white/60 border-brand-primary/40 hover:bg-white/10 hover:text-white'
         }`}
       >
         <Swords className="w-3 h-3" />
@@ -138,7 +138,7 @@ export const CourtDiagram: React.FC<CourtDiagramProps> = ({ teamA, teamB }) => {
       </div>
 
       <div className="mt-12 flex justify-center">
-        <div className="bg-brand-primary/5 backdrop-blur px-6 py-3 rounded-2xl border border-brand-primary/20">
+        <div className="bg-brand-primary/5 backdrop-blur px-6 py-3 rounded-2xl border border-brand-primary/40">
           <p className="text-[10px] font-black text-brand-primary/80 uppercase tracking-widest text-center">
             Estratégia: Levantador fixo na Posição 3. Demais jogadores distribuídos por ELO para equilíbrio na rede.
           </p>

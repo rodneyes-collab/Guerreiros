@@ -15,7 +15,7 @@ export const RulesView: React.FC = () => {
   return (
     <div className="max-w-4xl mx-auto space-y-12 animate-in fade-in slide-in-from-bottom-4 duration-700">
       <div className="text-center space-y-4">
-        <div className="inline-flex p-4 bg-white/5 rounded-3xl text-brand-primary mb-2 border border-white/10">
+        <div className="inline-flex p-4 bg-white/5 rounded-3xl text-brand-primary mb-2 border border-brand-primary/40">
           <ShieldCheck className="w-10 h-10" />
         </div>
         <h2 className="text-5xl font-black text-white uppercase tracking-tighter">Regras & Funcionamento</h2>
@@ -23,13 +23,13 @@ export const RulesView: React.FC = () => {
       </div>
 
       <div className="grid gap-8">
-        <section className="bg-black backdrop-blur-xl p-10 rounded-[3rem] border border-white/10 shadow-sm space-y-8 relative overflow-hidden">
+        <section className="bg-black backdrop-blur-xl p-10 rounded-[3rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-sm space-y-8 relative overflow-hidden">
           <div className="absolute top-0 right-0 p-8 opacity-5">
             <Scale className="w-40 h-40 text-white" />
           </div>
           
           <div className="flex items-center gap-4 text-brand-primary">
-            <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center border border-white/10">
+            <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center border border-brand-primary/40">
               <Info className="w-6 h-6" />
             </div>
             <h3 className="text-2xl font-black uppercase tracking-tight text-white">Dinâmica de Presença</h3>
@@ -51,9 +51,9 @@ export const RulesView: React.FC = () => {
           </div>
         </section>
 
-        <section className="bg-black backdrop-blur-xl p-10 rounded-[3rem] border border-white/10 shadow-sm space-y-8 relative overflow-hidden">
+        <section className="bg-black backdrop-blur-xl p-10 rounded-[3rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-sm space-y-8 relative overflow-hidden">
           <div className="flex items-center gap-4 text-brand-primary">
-            <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center border border-white/10">
+            <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center border border-brand-primary/40">
               <ShieldCheck className="w-6 h-6" />
             </div>
             <h3 className="text-2xl font-black uppercase tracking-tight text-white">Formação de Equipes</h3>
@@ -78,9 +78,9 @@ export const RulesView: React.FC = () => {
           </div>
         </section>
 
-        <section className="bg-black backdrop-blur-xl p-10 rounded-[3rem] border border-white/10 shadow-sm space-y-8 relative overflow-hidden">
+        <section className="bg-black backdrop-blur-xl p-10 rounded-[3rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-sm space-y-8 relative overflow-hidden">
           <div className="flex items-center gap-4 text-brand-primary">
-            <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center border border-white/10">
+            <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center border border-brand-primary/40">
               <Trophy className="w-6 h-6" />
             </div>
             <h3 className="text-2xl font-black uppercase tracking-tight text-white">Sistema de Pontuação e ELO</h3>
@@ -103,9 +103,9 @@ export const RulesView: React.FC = () => {
           </div>
         </section>
 
-        <section className="bg-black backdrop-blur-xl p-10 rounded-[3rem] border border-white/10 shadow-sm space-y-8 relative overflow-hidden">
+        <section className="bg-black backdrop-blur-xl p-10 rounded-[3rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-sm space-y-8 relative overflow-hidden">
           <div className="flex items-center gap-4 text-brand-primary">
-            <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center border border-white/10">
+            <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center border border-brand-primary/40">
               <CreditCard className="w-6 h-6" />
             </div>
             <h3 className="text-2xl font-black uppercase tracking-tight text-white">Gestão Financeira</h3>
@@ -126,9 +126,9 @@ export const RulesView: React.FC = () => {
           </div>
         </section>
 
-        <section className="bg-black backdrop-blur-xl p-10 rounded-[3rem] border border-white/10 shadow-sm space-y-8 relative overflow-hidden">
+        <section className="bg-black backdrop-blur-xl p-10 rounded-[3rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-sm space-y-8 relative overflow-hidden">
           <div className="flex items-center gap-4 text-brand-primary">
-            <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center border border-white/10">
+            <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center border border-brand-primary/40">
               <Dribbble className="w-6 h-6" />
             </div>
             <h3 className="text-2xl font-black uppercase tracking-tight text-white">Uso da Quadra e Equipamentos</h3>
@@ -150,9 +150,9 @@ export const RulesView: React.FC = () => {
           </div>
         </section>
 
-        <section className="bg-black backdrop-blur-xl p-10 rounded-[3rem] border border-white/10 shadow-sm space-y-8 relative overflow-hidden">
+        <section className="bg-black backdrop-blur-xl p-10 rounded-[3rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-sm space-y-8 relative overflow-hidden">
           <div className="flex items-center gap-4 text-brand-primary">
-            <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center border border-white/10">
+            <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center border border-brand-primary/40">
               <Users className="w-6 h-6" />
             </div>
             <h3 className="text-2xl font-black uppercase tracking-tight text-white">Uso Consciente do App</h3>
@@ -174,7 +174,7 @@ export const RulesView: React.FC = () => {
         </section>
 
         <div className="grid md:grid-cols-2 gap-8">
-          <section className="bg-black p-10 rounded-[3rem] border border-emerald-500/20 space-y-6">
+          <section className="bg-black p-10 rounded-[3rem] border border-white/5 border-l-[8px] border-l-emerald-500 space-y-6">
             <div className="flex items-center gap-4 text-emerald-500">
               <CheckCircle2 className="w-8 h-8" />
               <h3 className="text-xl font-black uppercase tracking-tight">Conduta Esperada</h3>
@@ -196,7 +196,7 @@ export const RulesView: React.FC = () => {
             </ul>
           </section>
 
-          <section className="bg-black p-10 rounded-[3rem] border border-rose-500/20 space-y-6">
+          <section className="bg-black p-10 rounded-[3rem] border border-white/5 border-l-[8px] border-l-rose-500 space-y-6">
             <div className="flex items-center gap-4 text-rose-500">
               <AlertCircle className="w-8 h-8" />
               <h3 className="text-xl font-black uppercase tracking-tight">Infrações e Penalidades</h3>

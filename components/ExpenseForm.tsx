@@ -29,8 +29,8 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-in fade-in duration-300">
-      <div className="bg-brand-secondary w-full max-w-xl rounded-[2.5rem] shadow-2xl border border-white/10 overflow-hidden animate-in zoom-in-95 duration-300">
-        <div className="bg-white/5 px-8 py-6 flex justify-between items-center border-b border-white/10">
+      <div className="bg-brand-secondary w-full max-w-xl rounded-[2.5rem] shadow-2xl border border-white/5 border-l-[8px] border-l-brand-primary overflow-hidden animate-in zoom-in-95 duration-300">
+        <div className="bg-white/5 px-8 py-6 flex justify-between items-center border-b border-brand-primary/40">
           <div>
             <h3 className="text-xl font-black text-brand-primary uppercase tracking-tight">
               {editingExpense ? 'Editar Despesa' : 'Nova Despesa'}
@@ -53,7 +53,7 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
               placeholder="Ex: Aluguel da quadra - Março"
               value={expenseFormData.description}
               onChange={e => setExpenseFormData({ ...expenseFormData, description: e.target.value })}
-              className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none placeholder:text-white/20"
+              className="w-full px-6 py-4 bg-white/5 border border-brand-primary/40 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none placeholder:text-white/20"
             />
           </div>
 
@@ -68,7 +68,7 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
                 required
                 value={expenseFormData.amount || ''}
                 onChange={e => setExpenseFormData({ ...expenseFormData, amount: parseFloat(e.target.value) })}
-                className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none"
+                className="w-full px-6 py-4 bg-white/5 border border-brand-primary/40 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none"
               />
             </div>
 
@@ -81,7 +81,7 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
                 required
                 value={expenseFormData.date}
                 onChange={e => setExpenseFormData({ ...expenseFormData, date: e.target.value })}
-                className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none [color-scheme:dark]"
+                className="w-full px-6 py-4 bg-white/5 border border-brand-primary/40 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none [color-scheme:dark]"
               />
             </div>
           </div>
@@ -94,7 +94,7 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
               <select
                 value={expenseFormData.category}
                 onChange={e => setExpenseFormData({ ...expenseFormData, category: e.target.value })}
-                className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none appearance-none"
+                className="w-full px-6 py-4 bg-white/5 border border-brand-primary/40 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none appearance-none"
               >
                 {categories.map(cat => (
                   <option key={cat.value} value={cat.value} className="bg-brand-secondary text-white">{cat.label}</option>
@@ -111,7 +111,7 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
                 required
                 value={expenseFormData.month}
                 onChange={e => setExpenseFormData({ ...expenseFormData, month: e.target.value })}
-                className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none [color-scheme:dark]"
+                className="w-full px-6 py-4 bg-white/5 border border-brand-primary/40 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none [color-scheme:dark]"
               />
             </div>
           </div>
@@ -120,7 +120,7 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-widest text-white/60 hover:bg-white/10 transition-all border border-white/10"
+              className="flex-1 px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-widest text-white/60 hover:bg-white/10 transition-all border border-brand-primary/40"
             >
               Cancelar
             </button>

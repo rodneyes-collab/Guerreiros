@@ -1,5 +1,5 @@
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { 
   auth, 
   signInWithPopup, 
@@ -16,6 +16,8 @@ import {
   deleteDoc, 
   writeBatch,
   getDocs,
+  query,
+  where,
   OperationType,
   handleFirestoreError,
   trackUsage,
@@ -29,7 +31,7 @@ import { Player, Team, Match, Gender, Tournament, TournamentTeam, TournamentMatc
 import { generateTeams, generateTournamentTeams } from '../../utils/teamLogic';
 import { playerSchema, matchSchema } from '../lib/schemas';
 
-import { analyzeMatch, verifyRules, detectAnomalies } from '../../services/geminiService';
+import { analyzeMatch, verifyRules, detectAnomalies, generateTeamAnnouncementAudio } from '../../services/geminiService';
 
 export const useAppLogic = () => {
   const {
@@ -69,6 +71,7 @@ export const useAppLogic = () => {
     tempScoreA,
     tempScoreB,
     scoreMode,
+    isSyncing,
     elapsedTime,
     setIsAnalyzing,
     isAnalyzing,
@@ -92,7 +95,207 @@ export const useAppLogic = () => {
     setRivalry
   } = useStore();
 
-  // ... (previous state and functions)
+  // AI Guardian - Autonomous Data Integrity Monitor
+  useEffect(() => {
+    // Only allow one Admin client to run the Guardian to prevent race conditions
+    if (userRole !== 'ADMIN' || isSyncing || matches.length === 0) return;
+
+    const runGuardian = async () => {
+      try {
+        const now = Date.now();
+        const sixteenHoursAgo = now - (16 * 60 * 60 * 1000);
+        let currentThreshold = systemMetadata.lastResetTimestamp || sixteenHoursAgo;
+
+        if (currentThreshold > now) currentThreshold = sixteenHoursAgo;
+
+        const sessionMatches = matches.filter(m => m.timestamp > currentThreshold);
+        let hasAnomalies = false;
+        
+        // 1. Check if session matches are correctly sequenced AND have correct Brazil Date
+        const sortedByTime = [...sessionMatches].sort((a, b) => a.timestamp - b.timestamp);
+        
+        const getCorrectDate = (ts: number) => {
+          return new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'America/Sao_Paulo',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
+          }).format(new Date(ts));
+        };
+
+        const sessionBaseDate = sortedByTime.length > 0 ? getCorrectDate(sortedByTime[0].timestamp) : getCorrectDate(now);
+
+        sortedByTime.forEach((m, index) => {
+          if (m.dailyNumber !== index + 1) {
+            hasAnomalies = true;
+          }
+          if (m.date !== sessionBaseDate) {
+            hasAnomalies = true;
+          }
+        });
+
+        // 2. Check match counter integrity
+        const maxDailyNumber = sessionMatches.length;
+        const expectedCount = maxDailyNumber + (generationResult ? 1 : 0);
+        if (systemMetadata.dailyMatchCount !== expectedCount) {
+          hasAnomalies = true;
+        }
+
+        // 3. Trigger autonomous fix if required
+        // Check if ANY player has malformed ISO strings in their ELO history or dates mismatched in current session
+        const playersToFix = players.filter(p => p.eloHistory?.some((h: any) => h.date.includes('T') || (h.date === '2026-04-17' && sessionBaseDate === '2026-04-16')));
+        if (playersToFix.length > 0) hasAnomalies = true;
+
+        if (hasAnomalies) {
+          console.log('[Guardião IA] Anomalia detectada na contagem/datas de partidas ou no ELO History. Iniciando reparo autônomo...');
+          const batch = writeBatch(db);
+          let updates = 0;
+
+          // FIX PLAYER ELO HISTORY
+          playersToFix.forEach(p => {
+            if (!p.eloHistory) return;
+            const fixedHistory = p.eloHistory.map((h: any) => {
+              if (h.date.includes('T')) {
+                const ts = new Date(h.date).getTime();
+                const d = ts > currentThreshold ? sessionBaseDate : getCorrectDate(ts);
+                return { ...h, date: d };
+              }
+              // Force yesterday's matches that slipped to today back to yesterday if it's the same session
+              if (h.date !== sessionBaseDate && sortedByTime.length > 0 && h.date === getCorrectDate(sortedByTime[sortedByTime.length - 1].timestamp) && sessionBaseDate !== getCorrectDate(sortedByTime[sortedByTime.length - 1].timestamp)) {
+                 return { ...h, date: sessionBaseDate };
+              }
+              // specifically fix the 17th bug
+              if (h.date === '2026-04-17' && sessionBaseDate === '2026-04-16') {
+                 return { ...h, date: sessionBaseDate };
+              }
+              return h;
+            });
+
+            // Prevent multiple entries for the same day after flattening times
+            const deduplicatedDocs = new Map();
+            fixedHistory.forEach(h => deduplicatedDocs.set(h.date, h.elo)); // Keeps the LAST ELO of that day
+            const finalHistory = Array.from(deduplicatedDocs.entries()).map(([date, elo]) => ({ date, elo }));
+
+            batch.update(doc(db, 'players', p.id), { eloHistory: finalHistory });
+            updates++;
+          });
+
+          // SEQUENCIAL FIX BY SESSION (Ignores midnight UTC date split)
+          sortedByTime.forEach((m, index) => {
+            const expectedNumber = index + 1;
+            const matchUpdates: any = {};
+            if (m.dailyNumber !== expectedNumber) matchUpdates.dailyNumber = expectedNumber;
+            // Force the match date to be the base date of the session so they are unified
+            if (m.date !== sessionBaseDate) matchUpdates.date = sessionBaseDate;
+            
+            if (Object.keys(matchUpdates).length > 0) {
+              batch.update(doc(db, 'matches', m.id), matchUpdates);
+              updates++;
+            }
+          });
+
+          if (systemMetadata.dailyMatchCount !== expectedCount) {
+            batch.set(doc(db, 'metadata', 'system'), {
+              dailyMatchCount: expectedCount
+            }, { merge: true });
+            updates++;
+          }
+
+          if (updates > 0 || hasAnomalies) {
+            
+            // Recalcular as métricas diárias dos jogadores para garantir consistência total com as partidas de hoje
+            const resetPlayers = players.map(p => ({
+              ...p,
+              dailyMatches: 0,
+              dailyWins: 0,
+              dailyLosses: 0,
+              dailyEloGain: 0,
+              dailyResults: [],
+              playedLastMatch: false,
+              consecutiveBenched: 0
+            }));
+
+            // Organizar histórico e recalcular logicamente vitórias e derrotas
+            const sortedMatches = [...sessionMatches].sort((a, b) => a.timestamp - b.timestamp);
+            
+            sortedMatches.forEach(m => {
+              const winners = m.winner === 'A' ? m.teamA : (m.winner === 'B' ? m.teamB : []);
+              const losers = m.winner === 'A' ? m.teamB : (m.winner === 'B' ? m.teamA : []);
+              
+              if (winners.length === 0) return; // Ignore tied or unfinished matches if any
+              
+              winners.forEach(pid => {
+                const p = resetPlayers.find(rp => rp.id === pid);
+                if (p) {
+                  p.dailyMatches++;
+                  p.dailyWins++;
+                  p.dailyEloGain = (p.dailyEloGain || 0) + 25; // Base estimate for Guardian
+                  p.dailyResults = [...(p.dailyResults || []), 'V' as const];
+                  p.playedLastMatch = true;
+                  p.consecutiveBenched = 0;
+                }
+              });
+              
+              losers.forEach(pid => {
+                const p = resetPlayers.find(rp => rp.id === pid);
+                if (p) {
+                  p.dailyMatches++;
+                  p.dailyLosses++;
+                  p.dailyEloGain = (p.dailyEloGain || 0) - 20; // Base estimate for Guardian
+                  p.dailyResults = [...(p.dailyResults || []), 'D' as const];
+                  p.playedLastMatch = true;
+                  p.consecutiveBenched = 0;
+                }
+              });
+
+              // Benched consecutive calculation
+              const allPlayersInMatch = [...winners, ...losers];
+              attendance.forEach(attPlayer => {
+                if (!allPlayersInMatch.includes(attPlayer.id)) {
+                  const p = resetPlayers.find(rp => rp.id === attPlayer.id);
+                  if (p) {
+                    p.playedLastMatch = false;
+                    p.consecutiveBenched = (p.consecutiveBenched || 0) + 1;
+                  }
+                }
+              });
+            });
+
+            // Write corrected player stats to batch
+            resetPlayers.forEach(p => {
+              const original = players.find(op => op.id === p.id);
+              if (original && (p.dailyMatches !== original.dailyMatches || p.dailyWins !== original.dailyWins || p.dailyLosses !== original.dailyLosses)) {
+                batch.set(doc(db, 'players', p.id), {
+                  dailyMatches: p.dailyMatches,
+                  dailyWins: p.dailyWins,
+                  dailyLosses: p.dailyLosses,
+                  dailyEloGain: p.dailyEloGain,
+                  dailyResults: p.dailyResults,
+                  playedLastMatch: p.playedLastMatch,
+                  consecutiveBenched: p.consecutiveBenched
+                }, { merge: true });
+              }
+            });
+
+            await batch.commit();
+            
+            showNotification(`🤖 Guardião IA: Reparadas e ordenadas cronologicamente numerações de jogo e rankings corrigidos automaticamente!`, 'info');
+          }
+        }
+      } catch (err) {
+        console.error('[Guardião IA] Falha no monitoramento autônomo:', err);
+      }
+    };
+
+    // Run automatically whenever matches or generationResult finishes
+    // React's dependency array ensures this runs exactly when needed (end of match/discard)
+    // We add a slight delay to allow Firebase local cache to settle before guardian reads it
+    const timeout = setTimeout(() => {
+      runGuardian();
+    }, 2000);
+
+    return () => clearTimeout(timeout);
+  }, [userRole, matches.length, generationResult ? 'active' : 'inactive', systemMetadata.lastResetTimestamp]);
 
   const resetElo = async () => {
     showConfirmModal(
@@ -179,12 +382,9 @@ export const useAppLogic = () => {
         resetThreshold = sixteenHoursAgo;
       }
       
-      const sessionMatchesCount = (matches || []).filter(m => m.timestamp > resetThreshold).length;
-      
-      // Se o contador do sistema estiver menor que o real, corrigimos.
-      // Se estiver maior (ex: gerou mas não terminou), mantemos.
-      // Adicionamos 1 para a partida que acabou de ser finalizada
-      const finalCount = Math.max(sessionMatchesCount + 1, (systemMetadata.dailyMatchCount || 0) + 1);
+      const sessionMatches = (matches || []).filter(m => m.timestamp > resetThreshold);
+      const maxDailyNumber = sessionMatches.reduce((max, m) => Math.max(max, m.dailyNumber || 0), 0);
+      const finalCount = maxDailyNumber + 1;
       
       const match: Match = {
         id: matchId,
@@ -217,15 +417,23 @@ export const useAppLogic = () => {
       const actualA = winner === 'A' ? 1 : 0;
       
       // Base ELO change (K-factor)
-      const K = 32;
-      const baseEloChange = Math.round(K * (actualA - expectedA));
-      
-      // Bonus for score difference
-      const scoreDiff = Math.abs(finalScoreA - finalScoreB);
-      const bonus = Math.floor(scoreDiff / 5); // 1 point for every 5 points difference
-      
-      const finalEloChangeA = baseEloChange + (winner === 'A' ? bonus : -bonus);
-      const finalEloChangeB = -baseEloChange + (winner === 'B' ? bonus : -bonus);
+      // Levantadores jogam mais, então reduzimos o fator K para nivelar o ganho por volume
+      const getKFactor = (p: Player) => {
+        let K = p.isOfficialSetter ? 20 : 32;
+        
+        // Fator de estabilização (K-Factor adaptativo)
+        // Se a tendência persistir excessivamente alta ou baixa para um novato (outliers com 100% win rate etc)
+        const matchCount = p.matchesPlayed || 0;
+        if (matchCount >= 5) {
+           const winRate = matchCount > 0 ? (p.wins || 0) / matchCount : 0;
+           // Se > 80% de vitórias ou < 20% após 5 partidas, endurecemos o fator K pela metade
+           // Para suavizar a subida/descida estratosférica sem interferir tanto na justiça.
+           if (winRate > 0.8 || winRate < 0.2) {
+             K = Math.max(10, Math.floor(K * 0.6)); 
+           }
+        }
+        return K;
+      };
       
       batch.set(doc(db, 'matches', matchId), cleanObject(match));
 
@@ -239,8 +447,19 @@ export const useAppLogic = () => {
       
       // Atualizar ELO e estatísticas
       const updatePlayerStats = (p: Player, isTeamA: boolean) => {
-        const baseChange = isTeamA ? finalEloChangeA : finalEloChangeB;
-        const isWinner = (isTeamA && winner === 'A') || (!isTeamA && winner === 'B');
+        const K = getKFactor(p);
+        const expected = isTeamA ? expectedA : (1 - expectedA);
+        const actual = (isTeamA && winner === 'A') || (!isTeamA && winner === 'B') ? 1 : 0;
+        
+        const baseEloChange = Math.round(K * (actual - expected));
+        const isWinner = actual === 1;
+        
+        // Bonus for score difference
+        const scoreDiff = Math.abs(finalScoreA - finalScoreB);
+        const bonus = Math.floor(scoreDiff / 5); // 1 point for every 5 points difference
+        const finalBonus = isWinner ? bonus : -bonus;
+        
+        const baseChange = baseEloChange + finalBonus;
         
         // Bônus de Sequência (Streak)
         const dailyResults = p.dailyResults || [];
@@ -258,7 +477,8 @@ export const useAppLogic = () => {
         const playerRef = doc(db, 'players', p.id);
         const attendanceRef = doc(db, 'attendance', date, 'players', p.id);
         
-        const newHistoryEntry = { date: new Date().toISOString(), elo: newElo };
+        // ELO History date must be the localized date key, not UTC ISO
+        const newHistoryEntry = { date: getFirestoreDateKey(new Date()), elo: newElo };
         const updatedHistory = [...(p.eloHistory || []), newHistoryEntry].slice(-50); // Keep last 50 entries
         
         const updates = {
@@ -383,7 +603,25 @@ export const useAppLogic = () => {
         
         if (played) {
           const isWinner = (playedInA && winner === 'A') || (playedInB && winner === 'B');
-          const baseChange = isWinner ? 25 : -20;
+          
+          // Use a mesma lógica do cálculo oficial
+          let K = p.isOfficialSetter ? 20 : 32;
+          const matchCount = p.matchesPlayed || 0;
+          if (matchCount >= 5) {
+             const winRate = matchCount > 0 ? (p.wins || 0) / matchCount : 0;
+             if (winRate > 0.8 || winRate < 0.2) {
+               K = Math.max(10, Math.floor(K * 0.6)); 
+             }
+          }
+          const expected = playedInA ? expectedA : (1 - expectedA);
+          const actual = isWinner ? 1 : 0;
+          const baseEloChange = Math.round(K * (actual - expected));
+          
+          const scoreDiff = Math.abs(finalScoreA - finalScoreB);
+          const bonus = Math.floor(scoreDiff / 5);
+          const finalBonus = isWinner ? bonus : -bonus;
+          
+          const baseChange = baseEloChange + finalBonus;
           
           // Bônus de Sequência Local
           const dailyResults = p.dailyResults || [];
@@ -539,6 +777,21 @@ export const useAppLogic = () => {
         isPresent: true,
         timestamp: Date.now()
       }));
+
+      // Clear old reminders for this player
+      try {
+        const q = query(
+          collection(db, 'notifications'),
+          where('playerId', '==', player.id),
+          where('type', '==', 'reminder')
+        );
+        const snap = await getDocs(q);
+        const batchReminders = writeBatch(db);
+        snap.forEach(d => batchReminders.delete(d.ref));
+        await batchReminders.commit();
+      } catch (err) {
+        console.warn('Erro ao limpar lembretes antigos:', err);
+      }
       
       await trackUsage(1, 1);
       showNotification(`${nameToSave} confirmou presença!`, 'success');
@@ -1230,11 +1483,88 @@ export const useAppLogic = () => {
         updates++;
       }
       
-      // 3. Recalculate dailyMatchCount if it's 0 but there are matches today
+      // Group ALL matches by session (max 8 hours gap) and align their dates
+      const allSortedMatches = [...(matches || [])].sort((a, b) => a.timestamp - b.timestamp);
+      
+      const getCorrectDate = (ts: number) => {
+        return new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'America/Sao_Paulo',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit'
+        }).format(new Date(ts));
+      };
+
+      let currentSessionBaseDate = "";
+      let lastMatchTs = 0;
+      const MAX_GAP = 8 * 60 * 60 * 1000; // 8 hours
+
+      const dateMapping = new Map<string, string>(); // Maps old match IDs or raw dates to clean session dates
+
+      allSortedMatches.forEach(m => {
+        if (m.timestamp - lastMatchTs > MAX_GAP) {
+           // New session starts
+           currentSessionBaseDate = getCorrectDate(m.timestamp);
+        }
+        lastMatchTs = m.timestamp;
+
+        if (m.date !== currentSessionBaseDate) {
+           batch.update(doc(db, 'matches', m.id), { date: currentSessionBaseDate });
+           updates++;
+        }
+        
+        // Save mapping specifically to fix player eloHistory
+        dateMapping.set(m.date, currentSessionBaseDate); // If it previously used the wrong date, map it
+        dateMapping.set(getCorrectDate(m.timestamp), currentSessionBaseDate);
+      });
+
+      // FIX PLAYER ELO HISTORY using the session date map
+      players.forEach(p => {
+        if (!p.eloHistory) return;
+        let pUpdates = false;
+
+         const fixedHistory = p.eloHistory.map((h: any) => {
+            let mappedDate = h.date;
+            if (h.date.includes('T')) {
+               mappedDate = getCorrectDate(new Date(h.date).getTime());
+            }
+            // See if this date maps to a unified session date
+            if (dateMapping.has(mappedDate) && dateMapping.get(mappedDate) !== h.date) {
+               mappedDate = dateMapping.get(mappedDate)!;
+               pUpdates = true;
+            }
+            if (h.date !== mappedDate) pUpdates = true;
+            
+            return { ...h, date: mappedDate };
+         });
+         
+         if (pUpdates) {
+             const deduplicatedDocs = new Map();
+             fixedHistory.forEach(h => deduplicatedDocs.set(h.date, h.elo));
+             const finalHistory = Array.from(deduplicatedDocs.entries()).map(([date, elo]) => ({ date, elo }));
+             batch.update(doc(db, 'players', p.id), { eloHistory: finalHistory });
+             updates++;
+         }
+      });
+      
+      // Also sequentialize the recent session's match numbers
       const threshold = newResetThreshold || (now - (16 * 60 * 60 * 1000));
-      const sessionMatchesCount = (matches || []).filter(m => m.timestamp > threshold).length;
+      const sessionMatches = (matches || []).filter(m => m.timestamp > threshold);
+      const sortedByTime = [...sessionMatches].sort((a, b) => a.timestamp - b.timestamp);
+      
+      sortedByTime.forEach((m, index) => {
+        const expectedNumber = index + 1;
+        if (m.dailyNumber !== expectedNumber) {
+          batch.update(doc(db, 'matches', m.id), { dailyNumber: expectedNumber });
+          updates++;
+        }
+      });
+
+      // 4. Recalculate dailyMatchCount if it's out of sync
+      const maxDailyNumber = sessionMatches.length; // Now that they are strictly sequential by session
+      
       // Also account for a currently active match that hasn't finished
-      const expectedCount = sessionMatchesCount + (generationResult ? 1 : 0);
+      const expectedCount = maxDailyNumber + (generationResult ? 1 : 0);
       if (systemMetadata.dailyMatchCount !== expectedCount) {
         batch.set(doc(db, 'metadata', 'system'), {
           dailyMatchCount: expectedCount
@@ -1453,8 +1783,9 @@ export const useAppLogic = () => {
         // Calcular número da partida
         const now = Date.now();
         const threshold = systemMetadata.lastResetTimestamp || (now - (16 * 60 * 60 * 1000));
-        const sessionMatchesCount = (matches || []).filter(m => m.timestamp > threshold).length;
-        const matchNumber = isReshuffle ? sessionMatchesCount : sessionMatchesCount + 1;
+        const sessionMatches = (matches || []).filter(m => m.timestamp > threshold);
+        const maxDailyNumber = sessionMatches.reduce((max, m) => Math.max(max, m.dailyNumber || 0), 0);
+        const matchNumber = isReshuffle ? maxDailyNumber : maxDailyNumber + 1;
 
         // Nomes dos times
         const teamANames = [result.teamA.setter?.name, ...result.teamA.players.map(p => p.name)].filter(Boolean).join(', ');
@@ -1553,11 +1884,18 @@ export const useAppLogic = () => {
       setTempScoreB('0');
       setScoreMode('QUICK');
 
+      // Pre-generate audio for team announcement
+      generateTeamAnnouncementAudio(result.teamA, result.teamB).then(audio => {
+        if (audio) setNarrationAudio(audio);
+      }).catch(err => console.error("Pre-generation error:", err));
+
       if (!isReshuffle) {
         const now = Date.now();
         const threshold = systemMetadata.lastResetTimestamp || (now - (16 * 60 * 60 * 1000));
-        const sessionMatchesCount = (matches || []).filter(m => m.timestamp > threshold).length;
-        const newCount = sessionMatchesCount + 1;
+        const sessionMatches = (matches || []).filter(m => m.timestamp > threshold);
+        const maxDailyNumber = sessionMatches.reduce((max, m) => Math.max(max, m.dailyNumber || 0), 0);
+        const newCount = maxDailyNumber + 1;
+        
         setDoc(doc(db, 'metadata', 'system'), cleanObject({
           dailyMatchCount: newCount,
           matchStartTime: now
@@ -1608,19 +1946,25 @@ export const useAppLogic = () => {
         // Recalculate daily match count based on actual matches
         const now = Date.now();
         const threshold = systemMetadata.lastResetTimestamp || (now - (16 * 60 * 60 * 1000));
-        const sessionMatchesCount = (matches || []).filter(m => m.timestamp > threshold).length;
+        const sessionMatches = (matches || []).filter(m => m.timestamp > threshold);
+        const maxDailyNumber = sessionMatches.reduce((max, m) => Math.max(max, m.dailyNumber || 0), 0);
         
         batch.set(doc(db, 'metadata', 'system'), { 
           matchStartTime: null,
-          dailyMatchCount: sessionMatchesCount
+          dailyMatchCount: maxDailyNumber
         }, { merge: true });
         batch.delete(doc(db, 'metadata', 'currentMatch'));
+        
+        // Ensure we update the local state immediately to reflect the discard
+        // This fixes the issue where players still show as "Na Quadra" in the intentions list
+        useStore.setState({ generationResult: null });
+
         batch.commit().then(() => trackUsage(0, 2)).catch(err => handleFirestoreError(err, OperationType.WRITE, 'metadata/system'));
         
         setSystemMetadata({ 
           ...systemMetadata,
           matchStartTime: null,
-          dailyMatchCount: sessionMatchesCount
+          dailyMatchCount: maxDailyNumber
         });
         hideConfirmModal();
       }
@@ -1635,7 +1979,7 @@ export const useAppLogic = () => {
       const batch = writeBatch(db);
       
       // Criar ou atualizar jogador
-      const playerRef = doc(db, 'players', generateUUID());
+      const playerRef = doc(collection(db, 'players'));
       batch.set(playerRef, {
         id: playerRef.id,
         name: req.name,
@@ -1767,12 +2111,19 @@ export const useAppLogic = () => {
         }
       });
 
+      // Calculate start of day for lastResetTimestamp to avoid fetching full history
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+      const resetTimestamp = startOfDay.getTime();
+
+      const maxDailyNumber = todayMatches.reduce((max, m) => Math.max(max, m.dailyNumber || 0), 0);
+      const expectedDailyCount = maxDailyNumber + (generationResult ? 1 : 0);
+
       // 5. Ajustar metadados do sistema para mostrar as partidas
-      // Definir o timestamp para 1 para garantir que todas as partidas do dia sejam mostradas e evitar falsy
       batch.set(doc(db, 'metadata', 'system'), {
-        lastResetTimestamp: 1,
-        dailyMatchCount: todayMatches.length + (generationResult ? 1 : 0),
-        lastResetDate: today // Garantir que o date key esteja correto
+        lastResetTimestamp: resetTimestamp,
+        dailyMatchCount: expectedDailyCount,
+        lastResetDate: today 
       }, { merge: true });
 
       await batch.commit();
@@ -1781,8 +2132,8 @@ export const useAppLogic = () => {
       setPlayers(resetPlayers);
       setSystemMetadata({
         ...systemMetadata,
-        lastResetTimestamp: 1,
-        dailyMatchCount: todayMatches.length + (generationResult ? 1 : 0),
+        lastResetTimestamp: resetTimestamp,
+        dailyMatchCount: expectedDailyCount,
         lastResetDate: today
       });
       
@@ -2600,20 +2951,34 @@ export const useAppLogic = () => {
               winner = 'B';
             }
 
-            const K = 32;
-            const baseEloChange = Math.round(K * (actualA - expectedA));
-
-            const scoreDiff = Math.abs(match.scoreA - match.scoreB);
-            const bonus = winner !== 'Draw' ? Math.floor(scoreDiff / 5) : 0;
-
-            const finalEloChangeA = baseEloChange + (winner === 'A' ? bonus : (winner === 'B' ? -bonus : 0));
-            const finalEloChangeB = -baseEloChange + (winner === 'B' ? bonus : (winner === 'A' ? -bonus : 0));
+            const getKFactorLocal = (p: Player) => {
+              let K = p.isOfficialSetter ? 20 : 32;
+              const matchCount = p.matchesPlayed || 0;
+              if (matchCount >= 5) {
+                const winRate = matchCount > 0 ? (p.wins || 0) / matchCount : 0;
+                if (winRate > 0.8 || winRate < 0.2) {
+                  K = Math.max(10, Math.floor(K * 0.6)); 
+                }
+              }
+              return K;
+            };
 
             const date = getFirestoreDateKey();
 
             const updatePlayerStats = (p: Player, isTeamA: boolean) => {
-              const baseChange = isTeamA ? finalEloChangeA : finalEloChangeB;
-              const isWinner = (isTeamA && winner === 'A') || (!isTeamA && winner === 'B');
+              const K = getKFactorLocal(p);
+              const expected = isTeamA ? expectedA : (1 - expectedA);
+              const act = (isTeamA && winner === 'A') || (!isTeamA && winner === 'B') ? 1 : (winner === 'Draw' ? 0.5 : 0);
+              const baseEloChange = Math.round(K * (act - expected));
+              
+              const scoreDiff = Math.abs(match.scoreA - match.scoreB);
+              const bonus = winner !== 'Draw' ? Math.floor(scoreDiff / 5) : 0;
+              // se isTeamA e ganhou = tb ganhou
+              const wonMatch = (isTeamA && winner === 'A') || (!isTeamA && winner === 'B');
+              const finalBonus = wonMatch ? bonus : (winner === 'Draw' ? 0 : -bonus);
+
+              const baseChange = baseEloChange + finalBonus;
+              const isWinner = wonMatch;
               const isDraw = winner === 'Draw';
               
               const dailyResults = p.dailyResults || [];
@@ -2630,7 +2995,7 @@ export const useAppLogic = () => {
               const playerRef = doc(db, 'players', p.id);
               const attendanceRef = doc(db, 'attendance', date, 'players', p.id);
               
-              const newHistoryEntry = { date: new Date().toISOString(), elo: newElo };
+              const newHistoryEntry = { date: getFirestoreDateKey(new Date()), elo: newElo };
               const updatedHistory = [...(p.eloHistory || []), newHistoryEntry].slice(-50);
               
               const updates = {
@@ -2665,9 +3030,19 @@ export const useAppLogic = () => {
               const played = playedInA || playedInB;
               
               if (played) {
-                const isWinner = (playedInA && winner === 'A') || (playedInB && winner === 'B');
+                const K = getKFactorLocal(p);
+                const expected = playedInA ? expectedA : (1 - expectedA);
+                const act = (playedInA && winner === 'A') || (playedInB && winner === 'B') ? 1 : (winner === 'Draw' ? 0.5 : 0);
+                const baseEloChange = Math.round(K * (act - expected));
+
+                const scoreDiff = Math.abs(match.scoreA - match.scoreB);
+                const bonus = winner !== 'Draw' ? Math.floor(scoreDiff / 5) : 0;
+                const wonMatch = (playedInA && winner === 'A') || (playedInB && winner === 'B');
+                const finalBonus = wonMatch ? bonus : (winner === 'Draw' ? 0 : -bonus);
+
+                const baseChange = baseEloChange + finalBonus;
+                const isWinner = wonMatch;
                 const isDraw = winner === 'Draw';
-                const actualEloChange = playedInA ? finalEloChangeA : finalEloChangeB;
                 
                 const dailyResults = p.dailyResults || [];
                 let currentStreak = 0;
@@ -2676,7 +3051,7 @@ export const useAppLogic = () => {
                   else break;
                 }
                 const streakBonus = isWinner ? Math.min(8, currentStreak * 2) : 0;
-                const totalEloChange = actualEloChange + streakBonus;
+                const totalEloChange = baseChange + streakBonus;
 
                 return {
                   ...p,

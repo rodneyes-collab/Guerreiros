@@ -18,7 +18,7 @@ export const WinLossChart: React.FC<WinLossChartProps> = ({ matches, playerId, i
     return (
       <div className={`h-48 flex items-center justify-center rounded-2xl border border-dashed ${
         isDark 
-          ? 'bg-white/5 border-white/10' 
+          ? 'bg-white/5 border-brand-primary/40' 
           : 'bg-brand-light/30 border-brand-accent/20'
       }`}>
         <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Sem histórico de partidas disponível</p>

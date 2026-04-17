@@ -73,11 +73,11 @@
   }
   
   .btn-secondary {
-    @apply flex items-center justify-center gap-2 px-6 py-3 bg-brand-secondary/50 backdrop-blur-md text-white border border-white/10 font-black rounded-2xl shadow-lg hover:bg-brand-secondary/80 active:scale-95 transition-all disabled:opacity-50 disabled:pointer-events-none uppercase tracking-widest text-xs;
+    @apply flex items-center justify-center gap-2 px-6 py-3 bg-brand-secondary/50 backdrop-blur-md text-white border border-brand-primary/40 font-black rounded-2xl shadow-lg hover:bg-brand-secondary/80 active:scale-95 transition-all disabled:opacity-50 disabled:pointer-events-none uppercase tracking-widest text-xs;
   }
 
   .btn-outline {
-    @apply flex items-center justify-center gap-2 px-6 py-3 border-2 border-white/10 text-white dark:text-white font-black rounded-2xl hover:bg-white/5 active:scale-95 transition-all uppercase tracking-widest text-xs;
+    @apply flex items-center justify-center gap-2 px-6 py-3 border-2 border-brand-primary/40 text-white dark:text-white font-black rounded-2xl hover:bg-white/5 active:scale-95 transition-all uppercase tracking-widest text-xs;
   }
 
   .card {

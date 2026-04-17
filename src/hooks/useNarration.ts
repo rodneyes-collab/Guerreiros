@@ -1,7 +1,7 @@
 
 import { useEffect, useCallback } from 'react';
 import { useStore } from '../../store';
-import { generateNarrationScript, generateDailySummaryNarration, speakNarration } from '../../services/geminiService';
+import { generateNarrationScript, generateDailySummaryAudio, generateTeamAnnouncementAudio, speakNarration } from '../../services/geminiService';
 
 export const useNarration = () => {
   const { 
@@ -48,35 +48,102 @@ export const useNarration = () => {
 
     setIsNarrating(true);
     try {
-      playWhistle();
-      // Wait for whistle to finish
-      await new Promise(resolve => setTimeout(resolve, 600));
-      
-      if (type === 'teams') {
-        // If we have pre-loaded audio, use it immediately
-        if (narrationAudio) {
-          const audio = new Audio(narrationAudio);
-          await audio.play();
-        } else {
-          // Fallback if audio wasn't ready
-          const script = narrationScript || await generateNarrationScript(generationResult!.teamA, generationResult!.teamB);
-          await speakNarration(script);
-        }
-      } else if (type === 'ranking' && rankingData) {
-        const script = await generateDailySummaryNarration({
-          mvp: rankingData.dailyMvp?.name,
-          bestSetter: rankingData.dailyBestSetter?.name,
-          dailyKing: rankingData.dailyKing?.name,
-          matchesCount: rankingData.dailyMatchesCount
+      // Setup Media Session Metadata
+      if ('mediaSession' in navigator) {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: type === 'teams' ? 'Escalação das Equipes' : 'Resumo do Dia',
+          artist: 'Guerreiros Volleyball Club',
+          album: 'Guerreiros Intelligence',
+          artwork: [
+            { src: 'https://picsum.photos/seed/volleyball/96/96', sizes: '96x96', type: 'image/png' },
+            { src: 'https://picsum.photos/seed/volleyball/128/128', sizes: '128x128', type: 'image/png' },
+            { src: 'https://picsum.photos/seed/volleyball/192/192', sizes: '192x192', type: 'image/png' },
+            { src: 'https://picsum.photos/seed/volleyball/256/256', sizes: '256x256', type: 'image/png' },
+            { src: 'https://picsum.photos/seed/volleyball/384/384', sizes: '384x384', type: 'image/png' },
+            { src: 'https://picsum.photos/seed/volleyball/512/512', sizes: '512x512', type: 'image/png' },
+          ]
         });
-        await speakNarration(script);
+      }
+
+      // Start AI generation immediately if not already in store
+      const audioPromise = (async () => {
+        if (narrationAudio) return { type: 'audio', content: narrationAudio };
+
+        if (type === 'teams') {
+          const audioData = await generateTeamAnnouncementAudio(generationResult!.teamA, generationResult!.teamB);
+          if (audioData) setNarrationAudio(audioData);
+          return { type: 'audio', content: audioData };
+        } else {
+          const audioData = await generateDailySummaryAudio({
+            mvp: rankingData.dailyMvp?.name,
+            bestSetter: rankingData.dailyBestSetter?.name,
+            dailyKing: rankingData.dailyKing?.name,
+            matchesCount: rankingData.dailyMatchesCount,
+            rankingChanges: rankingData.rankingChanges // Passando as mudanças de ranking
+          });
+          if (audioData) setNarrationAudio(audioData);
+          return { type: 'audio', content: audioData };
+        }
+      })();
+
+      // Play whistle
+      playWhistle();
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Wait for audio to be ready
+      const result = await audioPromise;
+      
+      if (result.type === 'audio' && result.content) {
+        try {
+          const audio = new Audio(result.content);
+          audio.crossOrigin = "anonymous";
+
+          // Tenta forçar o Audio Focus usando Web Audio API
+          try {
+            const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+            if (AudioContextClass) {
+              const audioCtx = new AudioContextClass();
+              const source = audioCtx.createMediaElementSource(audio);
+              source.connect(audioCtx.destination);
+              if (audioCtx.state === 'suspended') {
+                await audioCtx.resume();
+              }
+            }
+          } catch (ctxError) {
+            console.warn("Web Audio API routing failed:", ctxError);
+          }
+
+          audio.onerror = (e) => {
+            console.error("Audio playback error:", e);
+            speakNarration("Racha épico hoje! Parabéns a todos!", false);
+          };
+          
+          if ('mediaSession' in navigator) {
+            navigator.mediaSession.playbackState = 'playing';
+          }
+          
+          await audio.play();
+          
+          audio.onended = () => {
+            if ('mediaSession' in navigator) {
+              navigator.mediaSession.playbackState = 'none';
+            }
+          };
+        } catch (playError) {
+          console.error("Audio play() failed:", playError);
+          await speakNarration("Racha épico hoje! Parabéns a todos!", false);
+        }
+      } else {
+        // Fallback
+        const fallback = "Racha épico hoje! Parabéns a todos!";
+        await speakNarration(fallback, false);
       }
     } catch (error) {
       console.error("Announce Error:", error);
     } finally {
       setIsNarrating(false);
     }
-  }, [generationResult, isNarrating, narrationAudio, narrationScript, setIsNarrating]);
+  }, [generationResult, isNarrating, narrationAudio, setNarrationAudio, setIsNarrating]);
 
   return { handleAnnounce };
 };

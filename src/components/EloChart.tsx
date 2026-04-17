@@ -10,7 +10,7 @@ interface EloChartProps {
 export const EloChart: React.FC<EloChartProps> = ({ history, averageElo, isDark = false }) => {
   if (!history || history.length === 0) {
     return (
-      <div className={`h-48 flex items-center justify-center rounded-2xl border border-dashed ${isDark ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'}`}>
+      <div className={`h-48 flex items-center justify-center rounded-2xl border border-dashed ${isDark ? 'bg-white/5 border-brand-primary/40' : 'bg-slate-50 border-slate-200'}`}>
         <p className={`text-xs font-bold uppercase tracking-widest ${isDark ? 'text-white/40' : 'text-slate-400'}`}>Sem histórico de ELO disponível</p>
       </div>
     );

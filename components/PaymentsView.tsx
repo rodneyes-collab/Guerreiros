@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../store';
 import { Payment, PaymentStatus, Expense } from '../types';
-import { db, doc, updateDoc } from '../firebase';
+import { db, doc, updateDoc, getFirestoreDateKey } from '../firebase';
 import { 
   Trash2, 
   Plus, 
@@ -16,6 +16,8 @@ import {
   MessageSquare,
   Copy
 } from 'lucide-react';
+
+import { HelpTooltip } from '../src/components/HelpTooltip';
 
 interface PaymentsViewProps {
   deletePayment: (id: string) => void;
@@ -262,13 +264,19 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
     <div className="space-y-8 animate-in fade-in duration-500">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
         <div>
-          <h2 className="text-4xl font-black text-brand-primary uppercase tracking-tighter">Financeiro</h2>
+          <h2 className="text-4xl font-black text-white uppercase tracking-tighter flex items-center">
+            Financeiro
+            <HelpTooltip 
+              title="Gestão Financeira" 
+              content="Acompanhe o pagamento das mensalidades e as despesas do grupo. Administradores podem registrar pagamentos, adicionar despesas e gerar relatórios para o WhatsApp."
+            />
+          </h2>
           <p className="text-sm font-bold text-white/40 uppercase tracking-widest mt-2">Gestão de mensalidades e despesas</p>
         </div>
         <div className="flex flex-col sm:flex-row gap-4 w-full md:w-auto">
           {userRole === 'ADMIN' && (
-            <div className="bg-black/40 px-6 py-4 rounded-[2rem] border border-brand-primary/20 shadow-2xl flex items-center gap-6 backdrop-blur-xl group hover:border-brand-primary/40 transition-all">
-              <div className="p-3 bg-brand-primary/10 rounded-2xl border border-brand-primary/20 group-hover:bg-brand-primary/20 transition-colors">
+            <div className="bg-black/40 px-6 py-4 rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-2xl flex items-center gap-6 backdrop-blur-xl group hover:border-brand-primary/40 transition-all">
+              <div className="p-3 bg-brand-primary/10 rounded-2xl border border-brand-primary/40 group-hover:bg-brand-primary/20 transition-colors">
                 <DollarSign className="w-5 h-5 text-brand-primary" />
               </div>
               <div className="space-y-1">
@@ -294,7 +302,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                 ) : (
                   <div className="flex items-center gap-4">
                     <p className="text-2xl font-black text-white font-mono tracking-tighter">R$ {(systemMetadata.monthlyFee || 0).toFixed(2)}</p>
-                    <button onClick={() => setIsEditingFee(true)} className="p-2 text-brand-primary/40 hover:text-brand-primary hover:bg-brand-primary/10 rounded-xl transition-all border border-transparent hover:border-brand-primary/20"><Edit2 className="w-4 h-4" /></button>
+                    <button onClick={() => setIsEditingFee(true)} className="p-2 text-brand-primary/40 hover:text-brand-primary hover:bg-brand-primary/10 rounded-xl transition-all border border-transparent hover:border-brand-primary/40"><Edit2 className="w-4 h-4" /></button>
                   </div>
                 )}
               </div>
@@ -321,7 +329,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
       </div>
 
       {/* Tabs */}
-      <div className="flex flex-wrap gap-2 p-1.5 bg-white/5 backdrop-blur-md rounded-[1.5rem] w-fit border border-white/10">
+      <div className="flex flex-wrap gap-2 p-1.5 bg-white/5 backdrop-blur-md rounded-[1.5rem] w-fit border border-brand-primary/40">
         <button
           onClick={() => setActiveTab('RECEIPTS')}
           className={`px-4 py-2 sm:px-8 sm:py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${
@@ -356,22 +364,22 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
 
       {/* Financial Summary Dashboard */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-        <div className="bg-black backdrop-blur-xl p-4 sm:p-6 rounded-[2rem] border border-white/10 shadow-sm">
+        <div className="bg-black backdrop-blur-xl p-4 sm:p-6 rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-sm">
           <p className="text-[9px] sm:text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">Total Recebido</p>
           <p className="text-xl sm:text-2xl font-black text-emerald-500 font-mono">R$ {summary.paid.toFixed(2)}</p>
         </div>
-        <div className="bg-black backdrop-blur-xl p-4 sm:p-6 rounded-[2rem] border border-white/10 shadow-sm">
+        <div className="bg-black backdrop-blur-xl p-4 sm:p-6 rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-sm">
           <p className="text-[9px] sm:text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">Total Despesas</p>
           <p className="text-xl sm:text-2xl font-black text-rose-500 font-mono">R$ {summary.expenses.toFixed(2)}</p>
         </div>
-        <div className="bg-black backdrop-blur-xl p-4 sm:p-6 rounded-[2rem] border border-white/10 shadow-sm col-span-2 sm:col-span-1">
+        <div className="bg-black backdrop-blur-xl p-4 sm:p-6 rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-sm col-span-2 sm:col-span-1">
           <p className="text-[9px] sm:text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">Saldo Atual</p>
           <p className={`text-xl sm:text-2xl font-black font-mono ${summary.balance >= 0 ? 'text-brand-primary' : 'text-rose-500'}`}>
             R$ {summary.balance.toFixed(2)}
           </p>
         </div>
         {filterMonth && (
-          <div className="bg-white/5 backdrop-blur-xl p-4 sm:p-6 rounded-[2rem] border border-white/10 shadow-sm col-span-2 sm:col-span-1">
+          <div className="bg-white/5 backdrop-blur-xl p-4 sm:p-6 rounded-[2rem] border border-brand-primary/40 shadow-sm col-span-2 sm:col-span-1">
             <p className="text-[9px] sm:text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">Orçamento Mensal ({formatMonth(filterMonth)})</p>
             <div className="flex justify-between items-end">
               <p className="text-xl sm:text-2xl font-black text-brand-primary font-mono">R$ {summary.budget.toFixed(2)}</p>
@@ -382,7 +390,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
       </div>
 
       {/* Filters */}
-      <div className="bg-black backdrop-blur-xl p-4 sm:p-6 rounded-[2rem] border border-white/10 shadow-sm grid grid-cols-2 md:flex md:flex-wrap gap-3 sm:gap-4 items-end">
+      <div className="bg-black backdrop-blur-xl p-4 sm:p-6 rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-sm grid grid-cols-2 md:flex md:flex-wrap gap-3 sm:gap-4 items-end">
         <div className="min-w-0 md:min-w-[200px] space-y-2">
           <label className="text-[10px] font-black text-brand-primary uppercase tracking-widest ml-1 flex items-center gap-2">
             <Filter className="w-3 h-3" /> Mês
@@ -390,7 +398,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
           <select
             value={filterMonth}
             onChange={e => setFilterMonth(e.target.value)}
-            className="w-full px-3 py-2 sm:px-4 sm:py-3 bg-white/5 border border-white/10 rounded-xl font-bold text-white text-xs sm:text-sm outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all appearance-none backdrop-blur-sm"
+            className="w-full px-3 py-2 sm:px-4 sm:py-3 bg-white/5 border border-brand-primary/40 rounded-xl font-bold text-white text-xs sm:text-sm outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all appearance-none backdrop-blur-sm"
           >
             <option value="" className="bg-slate-900">Todos</option>
             {uniqueMonths.map(m => (
@@ -408,7 +416,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
               type="date"
               value={filterDate}
               onChange={e => setFilterDate(e.target.value)}
-              className="w-full px-3 py-2 sm:px-4 sm:py-3 bg-white/5 border border-white/10 rounded-xl font-bold text-white text-xs sm:text-sm outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all appearance-none backdrop-blur-sm"
+              className="w-full px-3 py-2 sm:px-4 sm:py-3 bg-white/5 border border-brand-primary/40 rounded-xl font-bold text-white text-xs sm:text-sm outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all appearance-none backdrop-blur-sm"
             />
             {filterDate && (
               <button 
@@ -430,7 +438,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
               <select
                 value={filterPlayer}
                 onChange={e => setFilterPlayer(e.target.value)}
-                className="w-full px-3 py-2 sm:px-4 sm:py-3 bg-white/5 border border-white/10 rounded-xl font-bold text-white text-xs sm:text-sm outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all appearance-none backdrop-blur-sm"
+                className="w-full px-3 py-2 sm:px-4 sm:py-3 bg-white/5 border border-brand-primary/40 rounded-xl font-bold text-white text-xs sm:text-sm outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all appearance-none backdrop-blur-sm"
               >
                 <option value="" className="bg-slate-900">Todos</option>
                 {uniquePlayers.map(p => <option key={p} value={p} className="bg-slate-900">{p}</option>)}
@@ -444,7 +452,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
               <select
                 value={filterStatus}
                 onChange={e => setFilterStatus(e.target.value as PaymentStatus | '')}
-                className="w-full px-3 py-2 sm:px-4 sm:py-3 bg-white/5 border border-white/10 rounded-xl font-bold text-white text-xs sm:text-sm outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all appearance-none backdrop-blur-sm"
+                className="w-full px-3 py-2 sm:px-4 sm:py-3 bg-white/5 border border-brand-primary/40 rounded-xl font-bold text-white text-xs sm:text-sm outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all appearance-none backdrop-blur-sm"
               >
                 <option value="" className="bg-slate-900">Todos</option>
                 <option value={PaymentStatus.PAID} className="bg-slate-900">Pago</option>
@@ -458,7 +466,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
         {(filterMonth || filterPlayer || filterStatus || filterDate) && (
           <button
             onClick={() => { setFilterMonth(''); setFilterPlayer(''); setFilterStatus(''); setFilterDate(''); }}
-            className="col-span-2 md:col-span-1 p-2 sm:p-3 bg-white/5 text-white/40 rounded-xl hover:bg-white/10 transition-all border border-white/10 flex justify-center items-center h-[38px] sm:h-[46px]"
+            className="col-span-2 md:col-span-1 p-2 sm:p-3 bg-white/5 text-white/40 rounded-xl hover:bg-white/10 transition-all border border-brand-primary/40 flex justify-center items-center h-[38px] sm:h-[46px]"
             title="Limpar Filtros"
           >
             <X className="w-4 h-4 sm:w-5 sm:h-5" />
@@ -469,9 +477,9 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
       {activeTab === 'RECEIPTS' ? (
         <>
           {/* Desktop Table View - Receipts */}
-          <div className="hidden md:block bg-black backdrop-blur-xl rounded-[2rem] border border-white/10 shadow-sm overflow-hidden">
+          <div className="hidden md:block bg-black backdrop-blur-xl rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-sm overflow-hidden">
             <table className="w-full text-left">
-              <thead className="bg-black/40 border-b border-white/10">
+              <thead className="bg-black/40 border-b border-brand-primary/40">
                 <tr>
                   <th className="px-8 py-5 text-[10px] font-black text-brand-primary uppercase tracking-widest">Sócio</th>
                   <th className="px-8 py-5 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">Mês/Ref</th>
@@ -496,7 +504,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                     <td className="px-8 py-5 text-center font-mono text-sm font-black text-white">R$ {payment.amount.toFixed(2)}</td>
                     <td className="px-8 py-5 text-center">
                       {payment.method ? (
-                        <span className="text-[10px] font-bold text-white/60 uppercase tracking-widest bg-white/5 px-2 py-1 rounded-lg border border-white/10">
+                        <span className="text-[10px] font-bold text-white/60 uppercase tracking-widest bg-white/5 px-2 py-1 rounded-lg border border-brand-primary/40">
                           {payment.method}
                         </span>
                       ) : (
@@ -542,7 +550,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
             {filteredPayments.map(payment => {
               const status = getCalculatedStatus(payment, payment.month);
               return (
-              <div key={payment.id} className="bg-black backdrop-blur-xl p-4 rounded-3xl border border-white/10 shadow-sm space-y-3">
+              <div key={payment.id} className="bg-black backdrop-blur-xl p-4 rounded-3xl border border-brand-primary/40 shadow-sm space-y-3">
                 <div className="flex justify-between items-start">
                   <div>
                     <h4 className={`text-lg font-black ${status === PaymentStatus.OVERDUE ? 'text-rose-500' : 'text-white'}`}>
@@ -560,11 +568,11 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                     {getStatusIcon(status)}
                     {translateStatus(status)}
                   </span>
-                  <span className="bg-white/5 text-white/60 px-2.5 py-1 rounded-xl text-[9px] font-black uppercase tracking-widest border border-white/10">
+                  <span className="bg-white/5 text-white/60 px-2.5 py-1 rounded-xl text-[9px] font-black uppercase tracking-widest border border-brand-primary/40">
                     Vence: {new Date(payment.dueDate + 'T00:00:00').toLocaleDateString('pt-BR')}
                   </span>
                   {payment.method && (
-                    <span className="bg-brand-primary/10 text-brand-primary px-2.5 py-1 rounded-xl text-[9px] font-black uppercase tracking-widest border border-brand-primary/20">
+                    <span className="bg-brand-primary/10 text-brand-primary px-2.5 py-1 rounded-xl text-[9px] font-black uppercase tracking-widest border border-brand-primary/40">
                       {payment.method}
                     </span>
                   )}
@@ -598,9 +606,9 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
       ) : activeTab === 'EXPENSES' ? (
         <>
           {/* Desktop Table View - Expenses */}
-          <div className="hidden md:block bg-black backdrop-blur-xl rounded-[2rem] border border-white/10 shadow-sm overflow-hidden">
+          <div className="hidden md:block bg-black backdrop-blur-xl rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-sm overflow-hidden">
             <table className="w-full text-left">
-              <thead className="bg-black/40 border-b border-white/10">
+              <thead className="bg-black/40 border-b border-brand-primary/40">
                 <tr>
                   <th className="px-8 py-5 text-[10px] font-black text-brand-primary uppercase tracking-widest">Descrição</th>
                   <th className="px-8 py-5 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">Categoria</th>
@@ -617,7 +625,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                       <p className="font-black text-white">{expense.description}</p>
                     </td>
                     <td className="px-8 py-5 text-center">
-                      <span className="text-[10px] font-bold text-white/60 uppercase tracking-widest bg-white/5 px-3 py-1 rounded-lg border border-white/10">
+                      <span className="text-[10px] font-bold text-white/60 uppercase tracking-widest bg-white/5 px-3 py-1 rounded-lg border border-brand-primary/40">
                         {expense.category}
                       </span>
                     </td>
@@ -651,7 +659,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
           {/* Mobile Card View - Expenses */}
           <div className="md:hidden space-y-3">
             {filteredExpenses.map(expense => (
-              <div key={expense.id} className="bg-black backdrop-blur-xl p-4 rounded-3xl border border-white/10 shadow-sm space-y-3">
+              <div key={expense.id} className="bg-black backdrop-blur-xl p-4 rounded-3xl border border-brand-primary/40 shadow-sm space-y-3">
                 <div className="flex justify-between items-start">
                   <div>
                     <h4 className="text-lg font-black text-white">{expense.description}</h4>
@@ -663,7 +671,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                 </div>
                 
                 <div className="flex flex-wrap gap-2">
-                  <span className="bg-white/5 text-white/60 px-2.5 py-1 rounded-xl text-[9px] font-black uppercase tracking-widest border border-white/10">
+                  <span className="bg-white/5 text-white/60 px-2.5 py-1 rounded-xl text-[9px] font-black uppercase tracking-widest border border-brand-primary/40">
                     Data: {new Date(expense.date + 'T00:00:00').toLocaleDateString('pt-BR')}
                   </span>
                 </div>
@@ -687,7 +695,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
               </div>
             ))}
             {filteredExpenses.length === 0 && (
-              <div className="p-12 text-center bg-brand-secondary/30 backdrop-blur-xl rounded-[2rem] border border-white/10">
+              <div className="p-12 text-center bg-brand-secondary/30 backdrop-blur-xl rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary">
                 <DollarSign className="w-10 h-10 text-white/10 mx-auto mb-3" />
                 <p className="text-xs font-bold text-white/20 uppercase tracking-widest">Nenhuma despesa encontrada</p>
               </div>
@@ -697,7 +705,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
       ) : (
         <>
           {/* Compliance View */}
-          <div className="bg-black backdrop-blur-xl rounded-[2rem] border border-white/10 shadow-sm overflow-hidden">
+          <div className="bg-black backdrop-blur-xl rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-sm overflow-hidden">
             <div className="p-4 sm:p-8 border-b border-white/5 bg-white/5">
               <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <div>
@@ -713,7 +721,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                         placeholder="Buscar sócio..."
                         value={filterPlayer}
                         onChange={e => setFilterPlayer(e.target.value)}
-                        className="w-full bg-white/5 border border-white/10 rounded-2xl pl-11 pr-4 py-3 text-sm font-bold text-white placeholder:text-white/20 outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all backdrop-blur-sm"
+                        className="w-full bg-white/5 border border-brand-primary/40 rounded-2xl pl-11 pr-4 py-3 text-sm font-bold text-white placeholder:text-white/20 outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all backdrop-blur-sm"
                       />
                     </div>
                     {filterMonth && (
@@ -756,7 +764,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                           }).length}
                         </p>
                       </div>
-                      <div className="text-center p-2 sm:px-4 sm:py-2 bg-white/5 rounded-xl border border-white/10 min-w-[100px]">
+                      <div className="text-center p-2 sm:px-4 sm:py-2 bg-white/5 rounded-xl border border-brand-primary/40 min-w-[100px]">
                         <p className="text-[9px] sm:text-[10px] font-black text-brand-primary uppercase tracking-widest">Total Pago</p>
                         <p className="text-base sm:text-lg font-black text-brand-primary font-mono">
                           R$ {payments.filter(p => p.month === filterMonth && p.status === PaymentStatus.PAID).reduce((acc, p) => acc + p.amount, 0).toFixed(0)}
@@ -770,7 +778,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
 
             <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-left">
-                <thead className="bg-black/40 border-b border-white/10">
+                <thead className="bg-black/40 border-b border-brand-primary/40">
                   <tr>
                     <th className="px-8 py-5 text-[10px] font-black text-brand-primary uppercase tracking-widest">Sócio</th>
                     <th className="px-8 py-5 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">Status ({formatMonth(filterMonth)})</th>
@@ -819,7 +827,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                                       playerName: player.name,
                                       amount: systemMetadata.monthlyFee || 0,
                                       month: filterMonth,
-                                      dueDate: new Date().toISOString().split('T')[0],
+                                      dueDate: getFirestoreDateKey(),
                                       status: PaymentStatus.PENDING
                                     });
                                     setIsPaymentFormOpen(true);
@@ -881,7 +889,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                                   playerName: player.name,
                                   amount: systemMetadata.monthlyFee || 0,
                                   month: filterMonth,
-                                  dueDate: new Date().toISOString().split('T')[0],
+                                  dueDate: getFirestoreDateKey(),
                                   status: PaymentStatus.PENDING
                                 });
                                 setIsPaymentFormOpen(true);

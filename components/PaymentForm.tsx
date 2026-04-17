@@ -1,6 +1,7 @@
 import React from 'react';
 import { Payment, PaymentStatus } from '../types';
 import { X } from 'lucide-react';
+import { getFirestoreDateKey } from '../firebase';
 
 interface PaymentFormProps {
   isOpen: boolean;
@@ -25,8 +26,8 @@ export const PaymentForm: React.FC<PaymentFormProps> = ({
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-in fade-in duration-300">
-      <div className="bg-black w-full max-w-lg rounded-[2.5rem] shadow-2xl border border-white/10 overflow-hidden animate-in zoom-in-95 duration-300">
-        <div className="p-8 border-b border-white/10 flex justify-between items-center bg-white/5">
+      <div className="bg-black w-full max-w-lg rounded-[2.5rem] shadow-2xl border border-white/5 border-l-[8px] border-l-brand-primary overflow-hidden animate-in zoom-in-95 duration-300">
+        <div className="p-8 border-b border-brand-primary/40 flex justify-between items-center bg-white/5">
           <div>
             <h3 className="text-2xl font-black text-brand-primary uppercase tracking-tight">
               {editingPayment ? 'Editar Lançamento' : 'Novo Lançamento'}
@@ -43,7 +44,7 @@ export const PaymentForm: React.FC<PaymentFormProps> = ({
               required
               value={paymentFormData.playerId}
               onChange={e => setPaymentFormData({ ...paymentFormData, playerId: e.target.value })}
-              className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none appearance-none"
+              className="w-full px-6 py-4 bg-white/5 border border-brand-primary/40 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none appearance-none"
             >
               <option value="" className="bg-brand-secondary text-white">Selecione um sócio...</option>
               {players.sort((a,b) => (a.name || '').localeCompare(b.name || '')).map(p => (
@@ -60,7 +61,7 @@ export const PaymentForm: React.FC<PaymentFormProps> = ({
                 required
                 value={paymentFormData.month}
                 onChange={e => setPaymentFormData({ ...paymentFormData, month: e.target.value })}
-                className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none [color-scheme:dark]"
+                className="w-full px-6 py-4 bg-white/5 border border-brand-primary/40 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none [color-scheme:dark]"
               />
             </div>
             <div className="space-y-2">
@@ -71,7 +72,7 @@ export const PaymentForm: React.FC<PaymentFormProps> = ({
                 required
                 value={paymentFormData.amount}
                 onChange={e => setPaymentFormData({ ...paymentFormData, amount: parseFloat(e.target.value) })}
-                className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none"
+                className="w-full px-6 py-4 bg-white/5 border border-brand-primary/40 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none"
               />
             </div>
           </div>
@@ -84,7 +85,7 @@ export const PaymentForm: React.FC<PaymentFormProps> = ({
                 required
                 value={paymentFormData.dueDate}
                 onChange={e => setPaymentFormData({ ...paymentFormData, dueDate: e.target.value })}
-                className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none [color-scheme:dark]"
+                className="w-full px-6 py-4 bg-white/5 border border-brand-primary/40 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none [color-scheme:dark]"
               />
             </div>
             <div className="space-y-2">
@@ -95,11 +96,11 @@ export const PaymentForm: React.FC<PaymentFormProps> = ({
                   const newStatus = e.target.value as PaymentStatus;
                   const updates: any = { status: newStatus };
                   if (newStatus === PaymentStatus.PAID && !paymentFormData.paymentDate) {
-                    updates.paymentDate = new Date().toISOString().split('T')[0];
+                    updates.paymentDate = getFirestoreDateKey();
                   }
                   setPaymentFormData({ ...paymentFormData, ...updates });
                 }}
-                className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none appearance-none"
+                className="w-full px-6 py-4 bg-white/5 border border-brand-primary/40 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none appearance-none"
               >
                 <option value={PaymentStatus.PENDING} className="bg-brand-secondary text-white">Pendente</option>
                 <option value={PaymentStatus.PAID} className="bg-brand-secondary text-white">Pago</option>
@@ -114,7 +115,7 @@ export const PaymentForm: React.FC<PaymentFormProps> = ({
               <select
                 value={paymentFormData.method || ''}
                 onChange={e => setPaymentFormData({ ...paymentFormData, method: e.target.value })}
-                className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none appearance-none"
+                className="w-full px-6 py-4 bg-white/5 border border-brand-primary/40 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none appearance-none"
               >
                 <option value="" className="bg-brand-secondary text-white">Selecione...</option>
                 <option value="PIX" className="bg-brand-secondary text-white">Pix</option>
@@ -131,7 +132,7 @@ export const PaymentForm: React.FC<PaymentFormProps> = ({
                   required
                   value={paymentFormData.paymentDate || ''}
                   onChange={e => setPaymentFormData({ ...paymentFormData, paymentDate: e.target.value })}
-                  className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none [color-scheme:dark]"
+                  className="w-full px-6 py-4 bg-white/5 border border-brand-primary/40 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none [color-scheme:dark]"
                 />
               </div>
             )}
@@ -141,7 +142,7 @@ export const PaymentForm: React.FC<PaymentFormProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 px-8 py-4 bg-white/5 text-white/60 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-white/10 transition-all border border-white/10"
+              className="flex-1 px-8 py-4 bg-white/5 text-white/60 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-white/10 transition-all border border-brand-primary/40"
             >
               Cancelar
             </button>

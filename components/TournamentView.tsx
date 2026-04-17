@@ -27,6 +27,7 @@ import {
 import { useStore } from '../store';
 import { Tournament, TournamentTeam, TournamentMatch, SetScore, TournamentStrategy } from '../types';
 import { generateTournamentTeams } from '../utils/teamLogic';
+import { HelpTooltip } from '../src/components/HelpTooltip';
 
 interface TournamentViewProps {
   onStart: (config: { numTeams: number; pointsPerSet: number; setsPerMatch: number; strategy: TournamentStrategy, preGeneratedTeams?: TournamentTeam[], preGeneratedReserves?: string[] }) => Promise<void>;
@@ -263,7 +264,13 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
         <div className="space-y-8 animate-in fade-in duration-500">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
             <div>
-              <h2 className="text-2xl font-black text-white uppercase tracking-tighter">Pré-visualização dos Times</h2>
+              <h2 className="text-2xl font-black text-white uppercase tracking-tighter flex items-center">
+                Pré-visualização dos Times
+                <HelpTooltip 
+                  title="Modo Torneio" 
+                  content="Crie um torneio com os jogadores presentes. Defina o número de times, a pontuação e a estratégia (ex: Pontos Corridos). O sistema gerará os times e a tabela de jogos automaticamente."
+                />
+              </h2>
               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
                 Confira o balanceamento e faça ajustes manuais se necessário
               </p>
@@ -271,7 +278,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
             <div className="flex flex-wrap gap-3">
               <button
                 onClick={handleCancelPreview}
-                className="px-6 py-3 bg-white/5 text-slate-300 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-white/10 transition-all border border-white/10"
+                className="px-6 py-3 bg-white/5 text-slate-300 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-white/10 transition-all border border-brand-primary/40"
               >
                 Voltar
               </button>
@@ -311,8 +318,8 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
               }, 0);
 
               return (
-                <div key={team.id} className="bg-black rounded-[2rem] border border-white/10 p-6 shadow-sm hover:border-white/20 transition-all">
-                  <div className="flex items-center justify-between mb-4 pb-3 border-b border-white/10">
+                <div key={team.id} className="bg-black rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary p-6 shadow-sm hover:border-white/20 transition-all">
+                  <div className="flex items-center justify-between mb-4 pb-3 border-b border-brand-primary/40">
                     <div>
                       <h4 className="text-xs font-black text-brand-primary uppercase tracking-widest">
                         {team.name}
@@ -364,9 +371,9 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
                   const player = players.find(p => p.id === pid);
                   if (!player) return null;
                   return (
-                    <div key={player.id} className="bg-white/5 px-3 py-1.5 rounded-lg border border-white/10 shadow-sm flex items-center gap-2 group hover:border-white/20 transition-all">
+                    <div key={player.id} className="bg-white/5 px-3 py-1.5 rounded-lg border border-white/5 border-l-[4px] border-l-brand-primary shadow-sm flex items-center gap-2 group hover:border-white/20 transition-all">
                       <span className="text-[10px] font-bold text-white uppercase">{player.name}</span>
-                      <div className="flex items-center gap-1 border-l border-white/10 pl-2">
+                      <div className="flex items-center gap-1 border-l border-white/5 pl-2">
                         <span className="text-[8px] font-black text-slate-500 uppercase">ELO {player.elo}</span>
                         {player.isOfficialSetter && (
                           <span className="text-[8px] font-black text-brand-primary uppercase">L</span>
@@ -387,7 +394,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.95 }}
-                  className="bg-black border border-white/10 rounded-[3rem] w-full max-w-5xl max-h-[90vh] flex flex-col p-8 shadow-2xl"
+                  className="bg-black border border-white/5 border-l-[8px] border-l-brand-primary rounded-[3rem] w-full max-w-5xl max-h-[90vh] flex flex-col p-8 shadow-2xl"
                 >
                   <div className="flex justify-between items-center mb-8 shrink-0">
                     <h3 className="text-xl font-black text-white uppercase tracking-tighter">Trocar Jogadores</h3>
@@ -406,7 +413,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
                   <div className="flex-grow overflow-y-auto pr-2 space-y-8">
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                       {previewTeams.map(team => (
-                        <div key={team.id} className="bg-white/5 rounded-3xl p-6 border border-white/10 space-y-4">
+                        <div key={team.id} className="bg-white/5 rounded-3xl p-6 border border-white/5 border-l-[6px] border-l-brand-primary space-y-4">
                           <div className="flex justify-between items-center">
                             <h4 className="text-sm font-black text-white uppercase tracking-widest">{team.name}</h4>
                             <button 
@@ -421,7 +428,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
                             {team.players.map(pid => {
                               const player = players.find(p => p.id === pid);
                               return (
-                                <div key={pid} className="flex items-center justify-between bg-slate-800/30 p-3 rounded-xl border border-white/10">
+                                <div key={pid} className="flex items-center justify-between bg-brand-secondary/30 p-3 rounded-xl border border-white/5 border-l-[4px] border-l-brand-primary">
                                   <span className="text-xs font-bold text-slate-300 truncate">{player?.name || 'Desconhecido'}</span>
                                   <button 
                                     onClick={() => {
@@ -479,7 +486,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
                                       setManagingTeamId(null);
                                       setSubstitutingPlayerId(null);
                                     }}
-                                    className={`bg-slate-800 p-4 rounded-2xl border text-center hover:shadow-md transition-all group relative ${
+                                    className={`bg-brand-secondary/30 p-4 rounded-2xl border border-white/5 border-l-[4px] border-l-brand-primary text-center hover:shadow-md transition-all group relative ${
                                       isReserve ? 'border-emerald-500/50 hover:border-emerald-400' : 'border-brand-primary/50 hover:border-brand-primary'
                                     }`}
                                   >
@@ -523,7 +530,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
           </p>
         </div>
 
-        <div className="bg-black rounded-[2.5rem] border border-white/10 p-8 sm:p-12 shadow-lg">
+        <div className="bg-black rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary p-8 sm:p-12 shadow-lg">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
             <div className="space-y-8">
               <div className="space-y-4">
@@ -542,7 +549,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
                       className={`flex items-start gap-4 p-4 rounded-2xl border-2 transition-all text-left relative ${
                         config.strategy === strat.id 
                           ? 'bg-brand-primary/10 border-brand-primary shadow-lg shadow-brand-primary/5' 
-                          : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:border-white/20'
+                          : 'bg-white/5 border-brand-primary/40 text-slate-400 hover:bg-white/10 hover:border-white/20'
                       }`}
                     >
                       <div className={`p-2 rounded-xl ${config.strategy === strat.id ? 'bg-brand-primary text-brand-secondary' : 'bg-white/10 text-slate-500'}`}>
@@ -620,7 +627,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
               </div>
             </div>
 
-            <div className="bg-white/5 rounded-[2rem] p-8 flex flex-col justify-between border border-white/10">
+            <div className="bg-white/5 rounded-[2rem] p-8 flex flex-col justify-between border border-white/5 border-l-[6px] border-l-brand-primary">
               <div className="space-y-6">
                 <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">Sugestão do Sistema</h3>
                 <div className="space-y-4">
@@ -633,7 +640,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
                     <span className="text-sm font-black text-brand-primary uppercase">{suggestedConfig.points} pts</span>
                   </div>
 
-                  <div className="pt-4 border-t border-white/10 space-y-3">
+                  <div className="pt-4 border-t border-brand-primary/40 space-y-3">
                     <div className="flex justify-between items-center">
                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Partidas Totais</span>
                       <span className="text-xs font-black text-white">{timeEstimation.totalMatches} jogos</span>
@@ -657,7 +664,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
                     </button>
                   )}
 
-                  <div className="p-4 bg-white/5 rounded-xl border border-white/10 flex gap-3">
+                  <div className="p-4 bg-white/5 rounded-xl border border-brand-primary/40 flex gap-3">
                     <AlertCircle className="w-5 h-5 text-brand-primary shrink-0" />
                     <p className="text-[10px] font-bold text-slate-300 leading-relaxed">
                       Estimativa baseada em 40s por ponto + 3min de intervalo entre jogos.
@@ -743,8 +750,8 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
             }, 0);
 
             return (
-              <div key={team.id} className="bg-black rounded-[2rem] border border-white/10 p-6 shadow-sm hover:border-white/20 transition-all">
-                <div className="flex items-center justify-between mb-4 pb-3 border-b border-white/10">
+              <div key={team.id} className="bg-black rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary p-6 shadow-sm hover:border-white/20 transition-all">
+                <div className="flex items-center justify-between mb-4 pb-3 border-b border-brand-primary/40">
                   <div>
                     <h4 className="text-xs font-black text-brand-primary uppercase tracking-widest">
                       {team.name}
@@ -795,9 +802,9 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
 
           <div className="flex flex-wrap gap-2">
             {reservePlayers.map(player => (
-              <div key={player.id} className="bg-white/5 px-3 py-1.5 rounded-lg border border-white/10 shadow-sm flex items-center gap-2 group hover:border-white/20 transition-all">
+              <div key={player.id} className="bg-white/5 px-3 py-1.5 rounded-lg border border-brand-primary/40 shadow-sm flex items-center gap-2 group hover:border-white/20 transition-all">
                 <span className="text-[10px] font-bold text-white uppercase">{player.name}</span>
-                <div className="flex items-center gap-1 border-l border-white/10 pl-2">
+                <div className="flex items-center gap-1 border-l border-brand-primary/40 pl-2">
                   <span className="text-[8px] font-black text-slate-500 uppercase">ELO {player.elo}</span>
                   {player.isOfficialSetter && (
                     <span className="text-[8px] font-black text-brand-primary uppercase">L</span>
@@ -818,10 +825,10 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
           <h3 className="text-sm font-black text-white uppercase tracking-widest">Classificação</h3>
         </div>
 
-        <div className="bg-black rounded-[2.5rem] border border-white/10 overflow-hidden shadow-sm">
+        <div className="bg-black rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary overflow-hidden shadow-sm">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="bg-white/5 border-b border-white/10">
+              <tr className="bg-white/5 border-b border-brand-primary/40">
                 <th className="py-5 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">Pos</th>
                 <th className="py-5 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">Time</th>
                 <th className="py-5 px-4 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">P</th>
@@ -832,7 +839,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
                 <th className="py-5 px-4 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Saldo</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/10">
+            <tbody className="divide-y divide-white/5">
               {sortedTeams.map((team, idx) => (
                 <tr key={team.id} className="hover:bg-white/5 transition-colors">
                   <td className="py-5 px-6">
@@ -889,7 +896,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
                 key={match.id}
                 className={`relative overflow-hidden bg-black rounded-[2rem] border-2 transition-all duration-300 ${
                   isCompleted 
-                    ? 'border-white/10 shadow-sm' 
+                    ? 'border-brand-primary/40 shadow-sm' 
                     : 'border-brand-primary/30 shadow-md hover:border-brand-primary/50'
                 }`}
               >
@@ -904,7 +911,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${
-                        isCompleted ? 'bg-white/10 text-slate-400 border border-white/10' : 'bg-brand-primary/20 text-brand-primary border border-brand-primary/30 animate-pulse'
+                        isCompleted ? 'bg-white/10 text-slate-400 border border-brand-primary/40' : 'bg-brand-primary/20 text-brand-primary border border-brand-primary/30 animate-pulse'
                       }`}>
                         {match.bracket === 'upper' ? 'Chave Superior' : 
                          match.bracket === 'lower' ? 'Repescagem' : 
@@ -939,7 +946,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
                           </button>
                           <button
                             onClick={() => onResetMatch(match.id)}
-                            className="p-2 hover:bg-slate-700/50 rounded-xl text-slate-400 hover:text-slate-300 transition-all border border-white/10"
+                            className="p-2 hover:bg-slate-700/50 rounded-xl text-slate-400 hover:text-slate-300 transition-all border border-brand-primary/40"
                             title="Reiniciar Partida"
                           >
                             <RotateCcw className="w-4 h-4" />
@@ -978,7 +985,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
                           <span className="text-[10px] font-black text-slate-400 uppercase mt-2 tracking-widest">Sets</span>
                         </div>
                       ) : (
-                        <div className="w-12 h-12 rounded-full bg-white/5 border-2 border-dashed border-white/10 flex items-center justify-center">
+                        <div className="w-12 h-12 rounded-full bg-white/5 border-2 border-dashed border-brand-primary/40 flex items-center justify-center">
                           <Hash className="w-5 h-5 text-slate-600" />
                         </div>
                       )}
@@ -1021,7 +1028,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
                           <span className="text-[10px] font-black text-slate-400 uppercase mt-2 tracking-widest">Sets</span>
                         </div>
                       ) : (
-                        <div className="w-12 h-12 rounded-full bg-white/5 border-2 border-dashed border-white/10 flex items-center justify-center">
+                        <div className="w-12 h-12 rounded-full bg-white/5 border-2 border-dashed border-brand-primary/40 flex items-center justify-center">
                           <Hash className="w-5 h-5 text-slate-600" />
                         </div>
                       )}
@@ -1030,11 +1037,11 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
 
                   {/* Placar dos Sets */}
                   {isCompleted && match.setScores && match.setScores.length > 0 && (
-                    <div className="flex justify-center gap-3 mb-6 px-4 py-3 bg-white/5 rounded-2xl border border-white/10">
+                    <div className="flex justify-center gap-3 mb-6 px-4 py-3 bg-white/5 rounded-2xl border border-brand-primary/40">
                       {match.setScores.map((s, i) => (
                         <div key={i} className="flex flex-col items-center">
                           <span className="text-[8px] font-black text-slate-400 uppercase tracking-tighter mb-1">Set {i + 1}</span>
-                          <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-800 rounded-xl border border-white/10 shadow-sm">
+                          <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-brand-secondary/30 rounded-xl border border-white/5 border-l-[4px] border-l-brand-primary shadow-sm">
                             <span className={`text-xs font-black ${s.scoreA > s.scoreB ? 'text-brand-primary' : 'text-slate-500'}`}>{s.scoreA}</span>
                             <span className="text-[10px] font-bold text-slate-600">×</span>
                             <span className={`text-xs font-black ${s.scoreB > s.scoreA ? 'text-brand-primary' : 'text-slate-500'}`}>{s.scoreB}</span>
@@ -1045,7 +1052,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
                   )}
 
                   {/* Lista de Jogadores Expansível */}
-                  <div className="pt-4 border-t border-white/10">
+                  <div className="pt-4 border-t border-brand-primary/40">
                     <button 
                       onClick={() => toggleMatchExpansion(match.id)}
                       className="w-full flex items-center justify-center gap-2 text-[9px] font-black text-slate-400 uppercase tracking-widest hover:text-brand-primary transition-colors py-2"
@@ -1065,7 +1072,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
                           exit={{ height: 0, opacity: 0 }}
                           className="overflow-hidden"
                         >
-                          <div className="grid grid-cols-2 gap-8 mt-4 p-4 bg-white/5 rounded-2xl border border-white/10">
+                          <div className="grid grid-cols-2 gap-8 mt-4 p-4 bg-white/5 rounded-2xl border border-white/5 border-l-[6px] border-l-brand-primary">
                             <div className="space-y-2">
                               {teamA?.players.map(pid => {
                                 const player = players.find(p => p.id === pid);
@@ -1133,7 +1140,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
               initial={{ opacity: 0, scale: 0.9, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="relative w-full max-w-lg bg-black rounded-[2.5rem] shadow-2xl p-8 sm:p-12 overflow-hidden border border-white/10"
+              className="relative w-full max-w-lg bg-black rounded-[2.5rem] shadow-2xl p-8 sm:p-12 overflow-hidden border border-white/5 border-l-[8px] border-l-brand-primary"
             >
               <div className="flex justify-between items-center mb-8">
                 <h3 className="text-xl font-black text-white uppercase tracking-tighter">
@@ -1146,7 +1153,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
 
               <div className="space-y-8 max-h-[60vh] overflow-y-auto pr-2">
                 {currentSetScores.map((set, setIdx) => (
-                  <div key={setIdx} className="space-y-4 p-6 bg-white/5 rounded-3xl border border-white/10">
+                  <div key={setIdx} className="space-y-4 p-6 bg-white/5 rounded-3xl border border-white/5 border-l-[6px] border-l-brand-primary">
                     <div className="flex items-center justify-between">
                       <span className="text-[10px] font-black text-brand-primary uppercase tracking-widest">Set {setIdx + 1}</span>
                     </div>
@@ -1164,7 +1171,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
                             newScores[setIdx] = { ...newScores[setIdx], scoreA: val };
                             setCurrentSetScores(newScores);
                           }}
-                          className="w-full bg-slate-800 border-2 border-white/10 focus:border-brand-primary rounded-xl py-3 px-4 font-black text-xl text-white transition-all outline-none placeholder:text-slate-600"
+                          className="w-full bg-brand-secondary/30 border border-white/5 border-l-[4px] border-l-brand-primary focus:border-brand-primary rounded-xl py-3 px-4 font-black text-xl text-white transition-all outline-none placeholder:text-slate-600"
                           placeholder="0"
                         />
                       </div>
@@ -1181,7 +1188,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
                             newScores[setIdx] = { ...newScores[setIdx], scoreB: val };
                             setCurrentSetScores(newScores);
                           }}
-                          className="w-full bg-slate-800 border-2 border-white/10 focus:border-brand-primary rounded-xl py-3 px-4 font-black text-xl text-white transition-all outline-none placeholder:text-slate-600"
+                          className="w-full bg-brand-secondary/30 border border-white/5 border-l-[4px] border-l-brand-primary focus:border-brand-primary rounded-xl py-3 px-4 font-black text-xl text-white transition-all outline-none placeholder:text-slate-600"
                           placeholder="0"
                         />
                       </div>
@@ -1227,7 +1234,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
               initial={{ opacity: 0, scale: 0.9, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="relative w-full max-w-4xl bg-black rounded-[2.5rem] shadow-2xl p-8 overflow-hidden max-h-[90vh] flex flex-col border border-white/10"
+              className="relative w-full max-w-4xl bg-black rounded-[2.5rem] shadow-2xl p-8 overflow-hidden max-h-[90vh] flex flex-col border border-white/5 border-l-[8px] border-l-brand-primary"
             >
               <div className="flex justify-between items-center mb-8 shrink-0">
                 <h3 className="text-xl font-black text-white uppercase tracking-tighter">Gerenciar Times</h3>
@@ -1246,7 +1253,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
               <div className="flex-grow overflow-y-auto pr-2 space-y-8">
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {activeTournament.teams.map(team => (
-                    <div key={team.id} className="bg-white/5 rounded-3xl p-6 border border-white/10 space-y-4">
+                    <div key={team.id} className="bg-white/5 rounded-3xl p-6 border border-white/5 border-l-[6px] border-l-brand-primary space-y-4">
                       <div className="flex justify-between items-center">
                         <h4 className="text-sm font-black text-white uppercase tracking-widest">{team.name}</h4>
                         <button 
@@ -1261,7 +1268,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
                         {team.players.map(pid => {
                           const player = players.find(p => p.id === pid);
                           return (
-                            <div key={pid} className="flex items-center justify-between bg-slate-800/30 p-3 rounded-xl border border-white/10">
+                            <div key={pid} className="flex items-center justify-between bg-brand-secondary/30 p-3 rounded-xl border border-white/5 border-l-[4px] border-l-brand-primary">
                               <span className="text-xs font-bold text-slate-300 truncate">{player?.name || 'Desconhecido'}</span>
                               <button 
                                 onClick={() => {
@@ -1308,7 +1315,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
                                 setManagingTeamId(null);
                                 setSubstitutingPlayerId(null);
                               }}
-                              className={`bg-slate-800 p-4 rounded-2xl border text-center hover:shadow-md transition-all group relative ${
+                              className={`bg-brand-secondary/30 p-4 rounded-2xl border border-white/5 border-l-[4px] border-l-brand-primary text-center hover:shadow-md transition-all group relative ${
                                 isReserve ? 'border-emerald-500/50 hover:border-emerald-400' : 'border-brand-primary/50 hover:border-brand-primary'
                               }`}
                             >

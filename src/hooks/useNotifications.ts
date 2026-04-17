@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, deleteDoc, writeBatch } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { AppNotification } from '../../types';
 import { useStore } from '../../store';
@@ -17,11 +17,41 @@ export const useNotifications = () => {
       collection(db, 'notifications'),
       where('playerId', '==', currentPlayer.id)
     );
-    const unsub = onSnapshot(q, (snap) => {
+    const unsub = onSnapshot(q, async (snap) => {
       const notifs = snap.docs.map(d => ({ id: d.id, ...d.data() } as AppNotification));
       // Sort in memory instead of using orderBy to avoid requiring a composite index
       notifs.sort((a, b) => b.createdAt - a.createdAt);
-      setNotifications(notifs);
+
+      // Intelligent cleanup: Delete notifications older than 7 days or keep max 50
+      const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+      const oldNotifs = notifs.filter(n => n.createdAt < sevenDaysAgo);
+      const recentNotifs = notifs.filter(n => n.createdAt >= sevenDaysAgo);
+      
+      let toDelete = [...oldNotifs];
+      
+      // If still more than 50 recent notifications, delete the oldest ones
+      if (recentNotifs.length > 50) {
+        toDelete = [...toDelete, ...recentNotifs.slice(50)];
+      }
+
+      if (toDelete.length > 0) {
+        try {
+          // Firestore batch limit is 500
+          for (let i = 0; i < toDelete.length; i += 400) {
+            const chunk = toDelete.slice(i, i + 400);
+            const batch = writeBatch(db);
+            chunk.forEach(n => {
+              batch.delete(doc(db, 'notifications', n.id));
+            });
+            await batch.commit();
+          }
+        } catch (error) {
+          console.error("Error cleaning up old notifications:", error);
+        }
+      }
+
+      // Only set the ones we are keeping
+      setNotifications(recentNotifs.slice(0, 50));
     });
     return () => unsub();
   }, [currentPlayer]);

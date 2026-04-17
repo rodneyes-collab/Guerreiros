@@ -7,7 +7,7 @@ Este documento detalha as diretrizes visuais do aplicativo para garantir consist
 - **Fundo Principal:** Preto Puro (`bg-black`). Todas as telas, modais e formulários devem usar fundo preto.
 - **Cor Primária (Destaque):** Amarelo/Dourado (`brand-primary`). Utilizada para botões principais, ícones de destaque e elementos de vitória.
 - **Cor Secundária:** Preto/Cinza Escuro (`brand-secondary`). Utilizada para containers secundários ou fundos com transparência.
-- **Bordas:** Geralmente `border-brand-primary/20` ou `border-white/10`.
+- **Bordas:** Geralmente `border-brand-primary/40` ou `border-brand-primary/40`.
 - **Texto:** Branco (`text-white`) para legibilidade geral, Amarelo (`text-brand-primary`) para nomes de destaque ou títulos importantes.
 
 ## Componentes Específicos

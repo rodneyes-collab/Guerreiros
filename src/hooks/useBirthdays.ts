@@ -4,6 +4,9 @@ import { Player } from '../../types';
 import confetti from 'canvas-confetti';
 import { db, collection, doc, writeBatch, serverTimestamp } from '../../firebase';
 
+// Create a custom confetti instance with worker disabled to prevent getBoundingClientRect error in hidden iframes
+const fireConfetti = confetti.create(undefined, { useWorker: false, resize: true });
+
 export const useBirthdays = () => {
   const { players, currentPlayer, showNotification } = useStore();
   const [hasCelebrated, setHasCelebrated] = useState(false);
@@ -29,7 +32,7 @@ export const useBirthdays = () => {
 
   useEffect(() => {
     if (isMyBirthday && !hasCelebrated) {
-      confetti({
+      fireConfetti({
         particleCount: 150,
         spread: 70,
         origin: { y: 0.6 },

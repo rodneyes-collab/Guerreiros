@@ -61,39 +61,17 @@ export const useFirestoreSync = () => {
   useEffect(() => {
     if (!user) return;
 
-    const trackUsage = async () => {
-      const date = getFirestoreDateKey();
-      const monthKey = date.slice(0, 7); // YYYY-MM
-      const usageRef = doc(db, 'metadata', 'usage');
-      const monthlyUsageRef = doc(db, 'metadata', `usage_${monthKey}`);
-      
+    // Track initial load (approx 15 reads for metadata and initial snapshots)
+    const trackInitialUsage = async () => {
       try {
-        // Increment global daily usage
-        const usageSnap = await getDoc(usageRef);
-        let currentUsage = usageSnap.exists() ? usageSnap.data() as UsageStats : { reads: 0, writes: 0, lastUpdate: date };
-        
-        // Reset if new day (sync with Google's reset)
-        if (currentUsage.lastUpdate !== date) {
-          await setDoc(usageRef, { reads: 15, writes: 0, aiCalls: 0, lastUpdate: date });
-        } else {
-          await updateDoc(usageRef, { reads: increment(15), lastUpdate: date });
-        }
-
-        // Increment global monthly usage
-        try {
-          await updateDoc(monthlyUsageRef, { reads: increment(15), lastUpdate: date });
-        } catch (e: any) {
-          if (e.code === 'not-found') {
-            await setDoc(monthlyUsageRef, { reads: 15, writes: 0, aiCalls: 0, lastUpdate: date });
-          }
-        }
+        const { trackUsage } = await import('../../firebase');
+        await trackUsage(15, 0);
       } catch (e) {
-        console.warn('Usage tracking skipped (likely permission or initial load):', e);
+        console.warn('Usage tracking failed:', e);
       }
     };
 
-    // Track on load and when currentPlayer is identified
-    trackUsage();
+    trackInitialUsage();
   }, [user, currentPlayer?.id]);
 
   // Initial Data Loading

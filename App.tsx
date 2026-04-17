@@ -23,7 +23,7 @@ import {
   ListTodo
 } from 'lucide-react';
 
-import { getBrazilDay } from './firebase';
+import { getBrazilDay, getFirestoreDateKey } from './firebase';
 import { useStore } from './store';
 import { useAuth } from './src/hooks/useAuth';
 import { useFirestoreSync } from './src/hooks/useFirestoreSync';
@@ -58,7 +58,9 @@ import { CourtDiagram } from './src/components/CourtDiagram';
 import { Logo } from './src/components/Logo';
 import { clearOldStorage } from './services/geminiService';
 import { useBirthdays } from './src/hooks/useBirthdays';
+import { useWelcomeCelebration } from './src/hooks/useWelcomeCelebration';
 import { BirthdayBanner } from './src/components/BirthdayBanner';
+import { WelcomeBanner } from './src/components/WelcomeBanner';
 import { NotificationCenter } from './src/components/NotificationCenter';
 
 const App: React.FC = () => {
@@ -113,10 +115,20 @@ const App: React.FC = () => {
   } = useStore();
 
   const { todayBirthdays } = useBirthdays();
+  const { showWelcome, setShowWelcome } = useWelcomeCelebration();
 
   // Limpeza de storage antigo uma única vez no boot
   useEffect(() => {
     clearOldStorage();
+    
+    // Handle tab from URL
+    const params = new URLSearchParams(window.location.search);
+    const tab = params.get('tab');
+    if (tab && ['presence', 'history', 'generation', 'members', 'dashboard', 'rules', 'payments', 'admin', 'tournament', 'attendance_report', 'intentions'].includes(tab)) {
+      setViewMode(tab as any);
+      // Clear the param from URL without refreshing
+      window.history.replaceState({}, '', window.location.pathname);
+    }
   }, []);
 
   useEffect(() => {
@@ -204,7 +216,7 @@ const App: React.FC = () => {
   const [expenseFormData, setExpenseFormData] = useState({
     description: '',
     amount: 0,
-    date: new Date().toISOString().split('T')[0],
+    date: getFirestoreDateKey(),
     category: 'OTHER' as any,
     month: ''
   });
@@ -228,7 +240,7 @@ const App: React.FC = () => {
     matchesPlayed: 0,
     isOfficialSetter: false,
     isAdmin: false,
-    joinedAt: new Date().toISOString().split('T')[0],
+    joinedAt: getFirestoreDateKey(),
     birthDate: '',
     email: '',
     status: 'active'
@@ -244,7 +256,7 @@ const App: React.FC = () => {
         matchesPlayed: editingPlayer.matchesPlayed || 0,
         isOfficialSetter: editingPlayer.isOfficialSetter || false,
         isAdmin: editingPlayer.isAdmin || false,
-        joinedAt: editingPlayer.joinedAt || new Date().toISOString().split('T')[0],
+        joinedAt: editingPlayer.joinedAt || getFirestoreDateKey(),
         birthDate: editingPlayer.birthDate || '',
         email: editingPlayer.email || '',
         status: editingPlayer.status || 'active'
@@ -257,7 +269,7 @@ const App: React.FC = () => {
         matchesPlayed: 0,
         isOfficialSetter: false,
         isAdmin: false,
-        joinedAt: new Date().toISOString().split('T')[0],
+        joinedAt: getFirestoreDateKey(),
         birthDate: '',
         email: '',
         status: 'active'
@@ -390,8 +402,9 @@ const App: React.FC = () => {
   ].filter(item => {
     if (item.adminOnly && userRole !== 'ADMIN') return false;
     if (item.id === 'tournament' && !systemMetadata.isTournamentEnabled && userRole !== 'ADMIN') return false;
+    if (item.id === 'presence' && !isGameDay && userRole !== 'ADMIN') return false;
     return true;
-  }), [userRole, systemMetadata.isTournamentEnabled]);
+  }), [userRole, systemMetadata.isTournamentEnabled, isGameDay]);
 
   // --- Security Redirect ---
   useEffect(() => {
@@ -577,11 +590,16 @@ const App: React.FC = () => {
   return (
     <ErrorBoundary>
       <BirthdayBanner birthdays={todayBirthdays} />
+      <WelcomeBanner 
+        show={showWelcome} 
+        onClose={() => setShowWelcome(false)} 
+        playerName={currentPlayer?.name || ''} 
+      />
       <div className="min-h-screen transition-colors duration-500 pb-20 sm:pb-0 sm:pl-28 bg-brand-light">
         {/* Header */}
-        <header className="sticky top-0 z-30 relative overflow-hidden px-4 py-3 sm:px-12 sm:py-12 shadow-2xl shadow-black/50 border-b border-white/5 bg-brand-light transition-colors duration-500">
+        <header className="sticky top-0 z-30 relative px-4 py-3 sm:px-12 sm:py-12 shadow-2xl shadow-black/50 border-b border-white/5 bg-brand-light transition-colors duration-500">
           {/* Header Background Image with Overlay */}
-          <div className="absolute inset-0 z-0">
+          <div className="absolute inset-0 z-0 overflow-hidden">
             <img 
               src="https://images.unsplash.com/photo-1592656094267-764a45160876?auto=format&fit=crop&q=80&w=2000" 
               alt="Volleyball Background" 
@@ -630,7 +648,7 @@ const App: React.FC = () => {
                     forceSync();
                     showNotification('Sincronização forçada iniciada...', 'info');
                   }}
-                  className={`p-2.5 sm:p-5 rounded-xl sm:rounded-2xl transition-all border-2 ${isSyncing ? 'bg-brand-primary/20 border-brand-primary text-brand-primary animate-spin' : 'bg-white/5 text-white/80 hover:bg-brand-primary/20 hover:text-brand-primary border-white/10 hover:border-brand-primary/50'}`}
+                  className={`p-2.5 sm:p-5 rounded-xl sm:rounded-2xl transition-all border-2 ${isSyncing ? 'bg-brand-primary/20 border-brand-primary text-brand-primary animate-spin' : 'bg-white/5 text-white/80 hover:bg-brand-primary/20 hover:text-brand-primary border-brand-primary/40 hover:border-brand-primary/50'}`}
                   title="Sincronizar Agora"
                   disabled={isSyncing}
                 >
@@ -658,7 +676,7 @@ const App: React.FC = () => {
               </div>
               <button 
                 onClick={handleLogout}
-                className="p-2.5 sm:p-5 rounded-xl sm:rounded-2xl bg-white/5 text-white/60 hover:bg-rose-500/20 hover:text-rose-500 border border-white/10 hover:border-rose-500/50 transition-all group"
+                className="p-2.5 sm:p-5 rounded-xl sm:rounded-2xl bg-white/5 text-white/60 hover:bg-rose-500/20 hover:text-rose-500 border border-brand-primary/40 hover:border-rose-500/50 transition-all group"
                 title="Sair"
               >
                 <LogOut className="w-5 h-5 sm:w-8 sm:h-8 group-hover:-translate-x-1 transition-transform" />
@@ -751,7 +769,7 @@ const App: React.FC = () => {
               />
               
               {generationResult && (
-                <div className="animate-in fade-in slide-in-from-bottom-8 duration-700 bg-black rounded-[3rem] border border-brand-primary/20 p-8 sm:p-12 shadow-2xl">
+                <div className="animate-in fade-in slide-in-from-bottom-8 duration-700 bg-black rounded-[3rem] border border-brand-primary/40 p-8 sm:p-12 shadow-2xl">
                   <div className="flex items-center gap-4 mb-8">
                     <div className="h-px flex-grow bg-white/10"></div>
                     <h2 className="text-sm font-black text-white/40 uppercase tracking-[0.3em]">Posicionamento Tático</h2>

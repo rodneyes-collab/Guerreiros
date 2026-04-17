@@ -59,7 +59,7 @@ export const TeamCard: React.FC<TeamCardProps> = ({
   const suggestedPositions = getSuggestedPositions();
 
   return (
-    <div className="bg-brand-light rounded-[2rem] sm:rounded-[3rem] border border-brand-primary/20 shadow-2xl overflow-hidden flex flex-col h-full animate-in zoom-in-95 duration-500 hover:border-brand-primary/40 transition-all">
+    <div className="bg-brand-light rounded-[2rem] sm:rounded-[3rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-2xl overflow-hidden flex flex-col h-full animate-in zoom-in-95 duration-500 hover:border-brand-primary/40 transition-all">
       <div className={`p-6 sm:p-8 bg-brand-light ${textColorClass} relative border-b border-brand-primary/10`}>
         <div className="absolute top-0 right-0 p-4 sm:p-8 opacity-10">
           <Swords className={`w-12 h-12 sm:w-20 h-20 text-brand-primary`} />
@@ -92,7 +92,7 @@ export const TeamCard: React.FC<TeamCardProps> = ({
               onRemove={onRemove}
             />
           ) : (
-            <div className="p-4 sm:p-8 rounded-2xl sm:rounded-3xl border-2 border-dashed border-white/10 bg-white/5 text-center">
+            <div className="p-4 sm:p-8 rounded-2xl sm:rounded-3xl border-2 border-dashed border-brand-primary/40 bg-white/5 text-center">
               <p className="text-[10px] sm:text-sm font-black text-white/40 uppercase tracking-widest italic">Aguardando Levantador</p>
             </div>
           )}

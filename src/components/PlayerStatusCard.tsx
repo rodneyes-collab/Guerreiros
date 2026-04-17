@@ -1,7 +1,7 @@
 
 import React, { useMemo } from 'react';
 import { motion } from 'motion/react';
-import { Zap, Clock, PlayCircle, Bell, BellOff, Trophy } from 'lucide-react';
+import { Zap, Clock, PlayCircle, Smartphone, Trophy } from 'lucide-react';
 import { Player, GenerationResult, Match, SystemMetadata, Tournament } from '../../types';
 import { getPriorityQueue } from '../../utils/teamLogic';
 import { usePlayerStatusNotification } from '../hooks/usePlayerStatusNotification';
@@ -156,9 +156,9 @@ export const PlayerStatusCard: React.FC<PlayerStatusCardProps> = ({
           title={isEnabled ? "Desativar Notificações" : "Ativar Notificações"}
         >
           {isEnabled ? (
-            <Bell className="w-4 h-4 fill-current" />
+            <Smartphone className="w-4 h-4 fill-current" />
           ) : (
-            <BellOff className={`w-4 h-4 ${isRequesting ? 'opacity-50' : ''}`} />
+            <Smartphone className={`w-4 h-4 ${isRequesting ? 'opacity-50' : ''}`} />
           )}
         </button>
       )}

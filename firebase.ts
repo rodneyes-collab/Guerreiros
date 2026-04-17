@@ -91,36 +91,82 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 let pendingReads = 0;
 let pendingWrites = 0;
 let lastSyncTime = 0;
+let cachedLastUpdate: string | null = null; // Cache local para evitar getDoc desnecessário
+let currentPlayerId: string | null = null;
+let cachedPlayerLastUpdate: string | null = null;
 let isQuotaExceeded = false;
-const SYNC_INTERVAL = 30000; // 30 segundos
+const SYNC_INTERVAL = 60000; // Aumentado para 60s para máxima economia, já que a lógica está corrigida
 
-export const getFirestoreDateKey = () => {
-  // Use Brazil time (UTC-3) for consistent date keys across all users
-  const now = new Date();
-  const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
-  const brTime = new Date(utc + (3600000 * -3));
+export const setCurrentPlayerId = (id: string | null) => {
+  if (id !== currentPlayerId) {
+    currentPlayerId = id;
+    cachedPlayerLastUpdate = null;
+  }
+};
+
+export const trackAccess = async () => {
+  if (!currentPlayerId || isQuotaExceeded) return;
+  const today = getFirestoreDateKey();
+  const playerRef = doc(db, 'players', currentPlayerId);
+  try {
+    await updateDoc(playerRef, {
+      accesses: increment(1),
+      lastReadUpdate: today
+    });
+    console.log(`[Usage] Acesso registrado para o sócio: ${currentPlayerId}`);
+  } catch (e) {
+    // Se falhar porque o campo não existe ou doc não existe, tenta setDoc
+    try {
+      await setDoc(playerRef, { accesses: 1, lastReadUpdate: today }, { merge: true });
+    } catch (err) {
+      console.warn('Erro ao rastrear acesso:', err);
+    }
+  }
+};
+
+export const getFirestoreDateKey = (date?: Date) => {
+  const now = date || new Date();
   
-  const year = brTime.getUTCFullYear();
-  const month = String(brTime.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(brTime.getUTCDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  // Format the date strictly in Brazilian Timezone (America/Sao_Paulo)
+  // This avoids any local timezone or UTC offsets bugs
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  
+  // en-CA format returns YYYY-MM-DD
+  return formatter.format(now);
 };
 
 export const getBrazilDay = () => {
   const now = new Date();
-  const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
-  const brTime = new Date(utc + (3600000 * -3));
-  return brTime.getUTCDay();
+  // A bulletproof way to get 0-6 day of week in Brazil
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Sao_Paulo',
+    weekday: 'short'
+  }).formatToParts(now);
+  
+  const dayName = parts.find(p => p.type === 'weekday')?.value;
+  const days: Record<string, number> = { 'Sun': 0, 'Mon': 1, 'Tue': 2, 'Wed': 3, 'Thu': 4, 'Fri': 5, 'Sat': 6 };
+  return days[dayName || 'Sun'] || 0;
 };
 
 export const trackUsage = async (reads: number, writes: number) => {
-  if (isQuotaExceeded) return; // Para de tentar se a quota foi excedida
+  if (isQuotaExceeded) return;
 
   pendingReads += reads;
   pendingWrites += writes;
 
   const now = Date.now();
-  if (now - lastSyncTime < SYNC_INTERVAL && pendingWrites < 50) {
+  const today = getFirestoreDateKey();
+  
+  // Se mudou o dia (comparando com a data da última sincronização), força o sync
+  const lastSyncDate = lastSyncTime > 0 ? getFirestoreDateKey(new Date(lastSyncTime)) : null;
+  const isNewDay = lastSyncDate && today !== lastSyncDate;
+
+  if (!isNewDay && now - lastSyncTime < SYNC_INTERVAL && pendingWrites < 10 && pendingReads < 50) {
     return;
   }
 
@@ -130,36 +176,96 @@ export const trackUsage = async (reads: number, writes: number) => {
   pendingWrites = 0;
   lastSyncTime = now;
 
-  const today = getFirestoreDateKey();
   const monthKey = today.slice(0, 7);
   const usageRef = doc(db, 'metadata', 'usage');
   const monthlyUsageRef = doc(db, 'metadata', `usage_${monthKey}`);
+  const playerRef = currentPlayerId ? doc(db, 'players', currentPlayerId) : null;
 
   try {
-    await updateDoc(usageRef, {
-      reads: increment(readsToSync),
-      writes: increment(writesToSync),
-      lastUpdate: today
-    });
+    // Sincronização do Sócio (Individual)
+    if (playerRef) {
+      try {
+        if (cachedPlayerLastUpdate === today) {
+          await updateDoc(playerRef, {
+            reads: increment(readsToSync),
+            writes: increment(writesToSync),
+            lastReadUpdate: today
+          });
+        } else {
+          const playerSnap = await getDoc(playerRef);
+          const playerData = playerSnap.exists() ? playerSnap.data() : null;
+          const shouldResetPlayer = !playerData || !playerData.lastReadUpdate || (playerData.lastReadUpdate < today);
+
+          if (shouldResetPlayer) {
+            await setDoc(playerRef, {
+              reads: readsToSync,
+              writes: writesToSync,
+              lastReadUpdate: today
+            }, { merge: true });
+          } else {
+            await updateDoc(playerRef, {
+              reads: increment(readsToSync),
+              writes: increment(writesToSync),
+              lastReadUpdate: today
+            });
+          }
+          cachedPlayerLastUpdate = today;
+        }
+      } catch (err) {
+        console.warn('Erro ao atualizar uso do sócio:', err);
+      }
+    }
+
+    // Se já sabemos que o documento de hoje existe, apenas incrementamos (0 leituras, 1 escrita)
+    if (cachedLastUpdate === today) {
+      await updateDoc(usageRef, {
+        reads: increment(readsToSync),
+        writes: increment(writesToSync),
+        lastUpdate: today
+      });
+      console.log(`[Usage] Sincronizado: +${readsToSync}R, +${writesToSync}W (Cache)`);
+    } else {
+      // Caso contrário, verificamos uma única vez (1 leitura)
+      const usageSnap = await getDoc(usageRef);
+      const currentData = usageSnap.exists() ? usageSnap.data() : null;
+
+      // SÓ RESETAMOS se o dia no banco for ANTERIOR ao dia atual de Brasília
+      const shouldReset = !currentData || (currentData.lastUpdate < today);
+
+      if (shouldReset) {
+        console.log(`[Usage] Novo dia detectado (${today}). Resetando contadores.`);
+        await setDoc(usageRef, {
+          reads: readsToSync,
+          writes: writesToSync,
+          aiCalls: 0,
+          lastUpdate: today
+        }, { merge: true });
+      } else if (currentData.lastUpdate === today) {
+        // Mesmo dia: incrementamos
+        await updateDoc(usageRef, {
+          reads: increment(readsToSync),
+          writes: increment(writesToSync),
+          lastUpdate: today
+        });
+        console.log(`[Usage] Sincronizado: +${readsToSync}R, +${writesToSync}W (DB Sync)`);
+      } else {
+        // Caso raro: o dia no banco é FUTURO (ex: alguém em fuso horário muito adiantado)
+        await updateDoc(usageRef, {
+          reads: increment(readsToSync),
+          writes: increment(writesToSync)
+        });
+        console.log(`[Usage] Sincronizado em data futura: ${currentData.lastUpdate}`);
+      }
+      cachedLastUpdate = today;
+    }
   } catch (e: any) {
     if (e?.code === 'resource-exhausted') {
       isQuotaExceeded = true;
-      console.error('Quota do Firestore excedida. Rastreamento desativado até o próximo carregamento.');
+      console.error('Quota do Firestore excedida.');
       return;
     }
-    try {
-      await setDoc(usageRef, {
-        reads: readsToSync,
-        writes: writesToSync,
-        lastUpdate: today
-      }, { merge: true });
-    } catch (err: any) {
-      if (err?.code === 'resource-exhausted') {
-        isQuotaExceeded = true;
-      }
-      pendingReads += readsToSync;
-      pendingWrites += writesToSync;
-    }
+    // Fallback silencioso para não interromper o app
+    console.warn('Erro ao atualizar uso diário:', e);
   }
 
   try {

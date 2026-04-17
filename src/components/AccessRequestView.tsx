@@ -25,7 +25,7 @@ export const AccessRequestView: React.FC<AccessRequestViewProps> = ({
   const userEmail = user?.email || '';
   return (
     <div className="min-h-screen bg-brand-secondary flex flex-col items-center justify-center p-4">
-      <div className="max-w-md w-full bg-brand-secondary/50 backdrop-blur-xl rounded-[2.5rem] shadow-2xl p-8 md:p-12 border border-white/10 text-center space-y-8 animate-in fade-in zoom-in duration-700">
+      <div className="max-w-md w-full bg-brand-secondary/50 backdrop-blur-xl rounded-[2.5rem] shadow-2xl p-8 md:p-12 border border-brand-primary/40 text-center space-y-8 animate-in fade-in zoom-in duration-700">
         <Logo size="lg" className="mx-auto shadow-2xl shadow-brand-primary/20" />
         
         <div className="space-y-2">
@@ -34,7 +34,7 @@ export const AccessRequestView: React.FC<AccessRequestViewProps> = ({
         </div>
 
         {isRequestSubmitted ? (
-          <div className="bg-brand-primary/10 p-6 rounded-3xl border border-brand-primary/20 space-y-4">
+          <div className="bg-brand-primary/10 p-6 rounded-3xl border border-brand-primary/40 space-y-4">
             <div className="w-12 h-12 bg-brand-primary rounded-2xl flex items-center justify-center mx-auto text-brand-secondary">
               <CheckCircle2 className="w-6 h-6" />
             </div>
@@ -57,7 +57,7 @@ export const AccessRequestView: React.FC<AccessRequestViewProps> = ({
                   value={requestName}
                   onChange={(e) => setRequestName(e.target.value)}
                   placeholder="Como você é conhecido no clube?"
-                  className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl text-sm font-bold text-white focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary transition-all placeholder:text-white/20"
+                  className="w-full px-6 py-4 bg-white/5 border border-brand-primary/40 rounded-2xl text-sm font-bold text-white focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary transition-all placeholder:text-white/20"
                   required
                 />
               </div>

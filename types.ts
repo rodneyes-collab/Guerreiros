@@ -31,8 +31,11 @@ export interface Player {
   status?: string;
   createdAt?: number;
   reads?: number; // Total de leituras do sócio
+  writes?: number; // Total de escritas do sócio
+  accesses?: number; // Total de acessos/sessões do sócio
   lastReadUpdate?: string; // Data da última atualização de leitura
   fcmToken?: string; // Token para Push Notifications
+  hasSeenWelcome?: boolean; // Se o sócio já viu a mensagem de boas-vindas
 }
 
 export interface AppNotification {

@@ -48,7 +48,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
           </div>
         </div>
 
-        <div className="bg-white/5 backdrop-blur-2xl rounded-[2.5rem] shadow-2xl shadow-black/50 p-8 md:p-10 border border-white/10 space-y-8">
+        <div className="bg-white/5 backdrop-blur-2xl rounded-[2.5rem] shadow-2xl shadow-black/50 p-8 md:p-10 border border-brand-primary/40 space-y-8">
           <div className="space-y-2 text-center">
             <h2 className="text-xl font-black text-white uppercase tracking-tight">Acesso ao Clube</h2>
             <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Entre com seu e-mail de sócio</p>
@@ -64,7 +64,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   placeholder="exemplo@email.com"
                   value={magicLinkEmail}
                   onChange={(e) => setMagicLinkEmail(e.target.value)}
-                  className="w-full pl-12 pr-4 py-4 bg-slate-800/50 border border-white/10 rounded-2xl text-sm font-bold text-white focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary transition-all placeholder:text-slate-600"
+                  className="w-full pl-12 pr-4 py-4 bg-slate-800/50 border border-brand-primary/40 rounded-2xl text-sm font-bold text-white focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary transition-all placeholder:text-slate-600"
                   required
                 />
               </div>
@@ -88,7 +88,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
 
           <div className="relative">
             <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-white/10"></div>
+              <div className="w-full border-t border-brand-primary/40"></div>
             </div>
             <div className="relative flex justify-center text-sm">
               <span className="px-4 bg-transparent text-slate-400 font-black uppercase tracking-widest text-[10px]">Ou</span>

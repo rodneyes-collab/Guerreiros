@@ -32,7 +32,7 @@ import {
   BellRing,
   Eye
 } from 'lucide-react';
-import { db, doc, updateDoc, setDoc, writeBatch, collection, serverTimestamp } from '../firebase';
+import { db, doc, updateDoc, setDoc, writeBatch, collection, serverTimestamp, getDocs } from '../firebase';
 import { Player } from '../types';
 import Markdown from 'react-markdown';
 import { Logo } from '../src/components/Logo';
@@ -40,6 +40,7 @@ import { motion, AnimatePresence } from 'motion/react';
 
 import { useBirthdays } from '../src/hooks/useBirthdays';
 import { BirthdayAdminCard } from '../src/components/BirthdayAdminCard';
+import { HelpTooltip } from '../src/components/HelpTooltip';
 
 interface AdminViewProps {
   resetDailyStats: () => void;
@@ -134,7 +135,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
   if (userRole !== 'ADMIN') {
     return (
       <div className="flex flex-col items-center justify-center py-20 space-y-6">
-        <div className="p-6 bg-white/5 border border-white/10 rounded-full text-brand-primary">
+        <div className="p-6 bg-white/5 border border-brand-primary/40 rounded-full text-brand-primary">
           <Shield className="w-16 h-16" />
         </div>
         <h2 className="text-3xl font-black text-white uppercase tracking-tighter">Acesso Restrito</h2>
@@ -154,16 +155,32 @@ export const AdminView: React.FC<AdminViewProps> = ({
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
       {/* Header */}
-      <div className="flex flex-col md:flex-row justify-between items-center gap-6 bg-brand-light p-8 rounded-[2.5rem] border border-white/5 shadow-xl">
+      <div className="flex flex-col md:flex-row justify-between items-center gap-6 bg-brand-light p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-xl">
         <div className="flex items-center gap-6">
           <Logo size="md" />
           <div>
-            <h2 className="text-3xl font-black text-brand-primary uppercase tracking-tighter">Painel Admin</h2>
-            <p className="text-xs font-bold text-brand-primary uppercase tracking-[0.2em] mt-1">Guerreiros Intelligence v3.0</p>
+            <h2 className="text-3xl font-black text-white uppercase tracking-tighter flex items-center">
+              Painel Admin
+              <HelpTooltip 
+                title="Painel do Administrador" 
+                content="Área restrita para gestão do aplicativo. Aqui você pode aprovar novos sócios, editar perfis, resetar dados, criar torneios e configurar regras do sistema."
+              />
+            </h2>
+            <p className="text-xs font-bold text-white uppercase tracking-[0.2em] mt-1">Guerreiros Intelligence v3.0</p>
           </div>
         </div>
         
-        <nav className="flex items-center bg-brand-light/40 p-1.5 rounded-2xl border border-white/5 overflow-x-auto max-w-full scrollbar-hide">
+        <motion.nav 
+          initial={{ x: 0 }}
+          animate={{ x: [0, -100, 0] }}
+          transition={{ 
+            duration: 1.5, 
+            delay: 0.5,
+            ease: "easeInOut",
+            times: [0, 0.5, 1]
+          }}
+          className="flex items-center bg-brand-light/40 p-1.5 rounded-2xl border border-white/5 overflow-x-auto max-w-full scrollbar-hide"
+        >
           {tabs.map((tab) => (
             <button
               key={tab.id}
@@ -178,7 +195,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
               {tab.label}
             </button>
           ))}
-        </nav>
+        </motion.nav>
       </div>
 
       <div className="min-h-[600px]">
@@ -195,7 +212,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                 <div className="lg:col-span-2 space-y-8">
                   {/* Aniversariantes do Dia */}
                   {todayBirthdays.length > 0 && (
-                    <section className="bg-brand-primary/5 backdrop-blur-xl p-8 rounded-[2.5rem] border border-brand-primary/20 shadow-sm space-y-6">
+                    <section className="bg-brand-primary/5 backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-sm space-y-6">
                       <div className="flex items-center gap-4">
                         <Trophy className="w-6 h-6 text-brand-primary" />
                         <h3 className="text-xl font-black uppercase tracking-tight text-white">Aniversariantes do Dia</h3>
@@ -214,15 +231,15 @@ export const AdminView: React.FC<AdminViewProps> = ({
 
                   {/* Solicitações Pendentes */}
                   {pendingRequests.length > 0 && (
-                    <section className="bg-brand-light backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/10 shadow-sm space-y-6">
+                    <section className="bg-brand-light backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-sm space-y-6">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-4">
-                          <div className="w-10 h-10 bg-brand-primary/10 rounded-xl flex items-center justify-center border border-brand-primary/20">
+                          <div className="w-10 h-10 bg-brand-primary/10 rounded-xl flex items-center justify-center border border-brand-primary/40">
                             <UserPlus className="w-5 h-5 text-brand-primary" />
                           </div>
                           <div>
-                            <h3 className="text-xl font-black uppercase tracking-tight">Solicitações Pendentes</h3>
-                            <p className="text-[10px] font-bold text-brand-primary/40 uppercase tracking-widest">Novos usuários aguardando aprovação</p>
+                            <h3 className="text-xl font-black uppercase tracking-tight text-white">Solicitações Pendentes</h3>
+                            <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Novos usuários aguardando aprovação</p>
                           </div>
                         </div>
                         <span className="bg-brand-primary text-brand-secondary px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest animate-pulse">
@@ -232,7 +249,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
 
                       <div className="space-y-3">
                         {pendingRequests.map((req) => (
-                          <div key={req.id} className="bg-brand-primary/5 backdrop-blur-md rounded-2xl p-5 flex flex-col md:flex-row items-center justify-between gap-4 border border-white/5 hover:border-white/10 transition-all">
+                          <div key={req.id} className="bg-brand-primary/5 backdrop-blur-md rounded-2xl p-5 flex flex-col md:flex-row items-center justify-between gap-4 border border-white/5 hover:border-brand-primary/40 transition-all">
                             <div className="flex items-center gap-4">
                               <div className="w-10 h-10 bg-brand-primary/10 rounded-xl flex items-center justify-center text-brand-primary">
                                 <UserCheck className="w-5 h-5" />
@@ -263,12 +280,12 @@ export const AdminView: React.FC<AdminViewProps> = ({
                   )}
 
                   {/* Status do Sistema */}
-                  <section className="bg-brand-light backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/10 shadow-sm space-y-8">
+                  <section className="bg-brand-light backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-sm space-y-8">
                     <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 bg-brand-primary/10 rounded-xl flex items-center justify-center border border-brand-primary/20">
+                      <div className="w-10 h-10 bg-brand-primary/10 rounded-xl flex items-center justify-center border border-brand-primary/40">
                         <Activity className="w-5 h-5 text-brand-primary" />
                       </div>
-                      <h3 className="text-xl font-black uppercase tracking-tight">Status da Sessão</h3>
+                      <h3 className="text-xl font-black uppercase tracking-tight text-white">Status da Sessão</h3>
                     </div>
 
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -280,7 +297,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                       ].map((stat, i) => (
                         <div key={i} className="bg-brand-primary/5 p-5 rounded-2xl border border-white/5 flex flex-col items-center text-center space-y-2">
                           <stat.icon className="w-5 h-5 text-brand-primary/40" />
-                          <p className="text-[9px] font-black text-brand-primary/40 uppercase tracking-widest">{stat.label}</p>
+                          <p className="text-[9px] font-black text-white/40 uppercase tracking-widest">{stat.label}</p>
                           <p className="text-xl font-black font-mono">{stat.value}</p>
                         </div>
                       ))}
@@ -288,12 +305,12 @@ export const AdminView: React.FC<AdminViewProps> = ({
                   </section>
 
                   {/* Consumo de Recursos */}
-                  <section className="bg-brand-light backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/10 shadow-sm space-y-6">
+                  <section className="bg-brand-light backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-sm space-y-6">
                     <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 bg-brand-primary/10 rounded-xl flex items-center justify-center border border-brand-primary/20">
+                      <div className="w-10 h-10 bg-brand-primary/10 rounded-xl flex items-center justify-center border border-brand-primary/40">
                         <Zap className="w-5 h-5 text-brand-primary" />
                       </div>
-                      <h3 className="text-xl font-black uppercase tracking-tight">Consumo & Cotas</h3>
+                      <h3 className="text-xl font-black uppercase tracking-tight text-white">Consumo & Cotas</h3>
                     </div>
                     
                     <div className="space-y-6">
@@ -304,7 +321,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                       ].map((stat, i) => (
                         <div key={i} className="space-y-2">
                           <div className="flex justify-between items-end">
-                            <p className="text-[10px] font-black text-brand-primary/40 uppercase tracking-widest">{stat.label}</p>
+                            <p className="text-[10px] font-black text-white/40 uppercase tracking-widest">{stat.label}</p>
                             <p className="text-sm font-black font-mono">{stat.value} / {stat.max}</p>
                           </div>
                           <div className="h-1.5 bg-brand-primary/10 rounded-full overflow-hidden">
@@ -318,15 +335,30 @@ export const AdminView: React.FC<AdminViewProps> = ({
                         </div>
                       ))}
                     </div>
+
+                    <div className="pt-4 border-t border-white/5 space-y-2">
+                      <div className="flex items-start gap-2">
+                        <div className="w-1 h-1 bg-brand-primary rounded-full mt-1.5" />
+                        <p className="text-[9px] text-white/40 font-medium leading-relaxed">
+                          <span className="text-brand-primary font-black">Reset do App:</span> Meia-noite (Brasília). Atualmente o app usa a data de Brasília para os contadores.
+                        </p>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <div className="w-1 h-1 bg-brand-primary rounded-full mt-1.5" />
+                        <p className="text-[9px] text-white/40 font-medium leading-relaxed">
+                          <span className="text-brand-primary font-black">Reset do Google:</span> Meia-noite (Horário do Pacífico), que equivale às <span className="text-white/60">04:00 AM</span> em Brasília.
+                        </p>
+                      </div>
+                    </div>
                   </section>
                 </div>
 
                 <div className="space-y-8">
                   {/* Custos Estimados */}
-                  <section className="bg-brand-primary/5 backdrop-blur-xl p-8 rounded-[2.5rem] border border-brand-primary/20 shadow-sm text-white space-y-6">
+                  <section className="bg-brand-primary/5 backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-sm text-white space-y-6">
                     <div className="flex items-center gap-4">
                       <CreditCard className="w-5 h-5 text-brand-primary" />
-                      <h3 className="text-lg font-black uppercase tracking-tight">Custos Estimados</h3>
+                      <h3 className="text-lg font-black uppercase tracking-tight text-white">Custos Estimados</h3>
                     </div>
                     
                     <div className="bg-black/40 p-6 rounded-2xl border border-white/5">
@@ -343,8 +375,8 @@ export const AdminView: React.FC<AdminViewProps> = ({
                   </section>
 
                   {/* Configurações Rápidas */}
-                  <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/10 text-white space-y-6">
-                    <h3 className="text-lg font-black uppercase tracking-tight">Configurações</h3>
+                  <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary text-white space-y-6">
+                    <h3 className="text-lg font-black uppercase tracking-tight text-white">Configurações</h3>
                     
                     <div className="space-y-4">
                       <div className="space-y-2">
@@ -385,20 +417,20 @@ export const AdminView: React.FC<AdminViewProps> = ({
             )}
 
             {activeTab === 'members' && (
-              <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/10 shadow-sm text-white space-y-8">
+              <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-sm text-white space-y-8">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
                   <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 bg-white/5 rounded-xl flex items-center justify-center border border-white/10">
+                    <div className="w-10 h-10 bg-white/5 rounded-xl flex items-center justify-center border border-brand-primary/40">
                       <ShieldCheck className="w-5 h-5 text-brand-primary" />
                     </div>
                     <div>
-                      <h3 className="text-xl font-black uppercase tracking-tight">Controle de Acesso & Cotas</h3>
+                      <h3 className="text-xl font-black uppercase tracking-tight text-white">Controle de Acesso & Cotas</h3>
                       <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Monitoramento individual de consumo</p>
                     </div>
                   </div>
                   
-                  <div className="bg-brand-primary/10 px-4 py-2 rounded-xl border border-brand-primary/20">
-                    <p className="text-[9px] font-black text-brand-primary uppercase tracking-widest">Cota por Sócio</p>
+                  <div className="bg-brand-primary/10 px-4 py-2 rounded-xl border border-brand-primary/40">
+                    <p className="text-[9px] font-black text-white uppercase tracking-widest">Cota por Sócio</p>
                     <p className="text-sm font-black text-white">
                       ~{Math.floor((systemMetadata.dailyReadQuota || 50000) / (players.length || 1))} leituras/dia
                     </p>
@@ -411,7 +443,8 @@ export const AdminView: React.FC<AdminViewProps> = ({
                       <tr className="text-[9px] font-black text-white/30 uppercase tracking-widest">
                         <th className="px-4 py-2">Sócio</th>
                         <th className="px-4 py-2">Permissão</th>
-                        <th className="px-4 py-2">Uso Hoje</th>
+                        <th className="px-4 py-2">Acessos</th>
+                        <th className="px-4 py-2">Uso (R/W)</th>
                         <th className="px-4 py-2">Status da Cota</th>
                         <th className="px-4 py-2 text-right">Ações</th>
                       </tr>
@@ -420,8 +453,8 @@ export const AdminView: React.FC<AdminViewProps> = ({
                       {(() => {
                         const rodney = players.find(p => p.email?.toLowerCase() === 'rodneyes@gmail.com');
                         const others = players
-                          .filter(p => p.email?.toLowerCase() !== 'rodneyes@gmail.com' && (p.reads !== undefined || p.uid))
-                          .sort((a, b) => (b.reads || 0) - (a.reads || 0));
+                          .filter(p => p.email?.toLowerCase() !== 'rodneyes@gmail.com' && (p.reads !== undefined || p.uid || p.accesses !== undefined))
+                          .sort((a, b) => ((b.reads || 0) + (b.writes || 0)) - ((a.reads || 0) + (a.writes || 0)));
                         
                         const list = rodney ? [rodney, ...others] : others;
                         return list.slice(0, 20).map(player => {
@@ -442,7 +475,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                     <p className="text-xs font-black text-white uppercase tracking-tight">
                                       {player.name}
                                       {isMaster && (
-                                        <span className="ml-2 px-1.5 py-0.5 bg-brand-primary/20 text-brand-primary text-[7px] rounded-full uppercase tracking-tighter border border-brand-primary/20">Master</span>
+                                        <span className="ml-2 px-1.5 py-0.5 bg-brand-primary/20 text-brand-primary text-[7px] rounded-full uppercase tracking-tighter border border-brand-primary/40">Master</span>
                                       )}
                                     </p>
                                     <p className="text-[9px] font-bold text-white/30 uppercase tracking-widest">{player.email || 'Sem email'}</p>
@@ -451,21 +484,26 @@ export const AdminView: React.FC<AdminViewProps> = ({
                               </td>
                               <td className="px-4 py-4">
                                 {isMaster ? (
-                                  <span className="bg-brand-secondary text-brand-primary text-[7px] font-black px-2 py-0.5 rounded uppercase tracking-widest flex items-center gap-1 border border-brand-primary/20">
+                                  <span className="bg-brand-secondary text-brand-primary text-[7px] font-black px-2 py-0.5 rounded uppercase tracking-widest flex items-center gap-1 border border-brand-primary/40">
                                     <Shield className="w-2 h-2" /> Master
                                   </span>
                                 ) : isAdmin ? (
-                                  <span className="bg-brand-primary/20 text-brand-primary text-[7px] font-black px-2 py-0.5 rounded uppercase tracking-widest flex items-center gap-1 border border-brand-primary/20">
+                                  <span className="bg-brand-primary/20 text-brand-primary text-[7px] font-black px-2 py-0.5 rounded uppercase tracking-widest flex items-center gap-1 border border-brand-primary/40">
                                     <Shield className="w-2 h-2" /> Admin
                                   </span>
                                 ) : (
-                                  <span className="bg-white/5 text-white/40 text-[7px] font-black px-2 py-0.5 rounded uppercase tracking-widest border border-white/10">
+                                  <span className="bg-white/5 text-white/40 text-[7px] font-black px-2 py-0.5 rounded uppercase tracking-widest border border-brand-primary/40">
                                     Sócio
                                   </span>
                                 )}
                               </td>
                               <td className="px-4 py-4">
-                                <p className="text-xs font-black font-mono text-white/60">{usage}</p>
+                                <p className="text-xs font-black font-mono text-white/60">{player.accesses || 0}</p>
+                              </td>
+                              <td className="px-4 py-4">
+                                <p className="text-[10px] font-black font-mono text-white/60">
+                                  {player.reads || 0} <span className="text-white/20">/</span> {player.writes || 0}
+                                </p>
                               </td>
                               <td className="px-4 py-4">
                                 <div className="w-24 h-1 bg-white/5 rounded-full overflow-hidden">
@@ -506,16 +544,16 @@ export const AdminView: React.FC<AdminViewProps> = ({
             {activeTab === 'maintenance' && (
               <div className="space-y-8">
                 {/* Agente IA */}
-                <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/10 shadow-sm text-white space-y-8 relative overflow-hidden">
+                <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-sm text-white space-y-8 relative overflow-hidden">
                   <div className="absolute top-0 right-0 w-64 h-64 bg-brand-primary/5 rounded-full blur-3xl -mr-32 -mt-32"></div>
                   
                   <div className="relative flex flex-col md:flex-row md:items-center justify-between gap-6">
                     <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 bg-white/5 backdrop-blur rounded-xl flex items-center justify-center border border-white/10">
+                      <div className="w-10 h-10 bg-white/5 backdrop-blur rounded-xl flex items-center justify-center border border-brand-primary/40">
                         <Activity className="w-5 h-5 text-brand-primary" />
                       </div>
                       <div>
-                        <h3 className="text-xl font-black uppercase tracking-tight">Agente de Integridade IA</h3>
+                        <h3 className="text-xl font-black uppercase tracking-tight text-white">Agente de Integridade IA</h3>
                         <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Varrer banco de dados em busca de anomalias</p>
                       </div>
                     </div>
@@ -533,7 +571,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                         className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-black uppercase tracking-widest text-[10px] transition-all ${
                           isScanningAnomalies 
                             ? 'bg-white/5 text-white/20 cursor-not-allowed' 
-                            : 'bg-white/10 hover:bg-white/20 text-white border border-white/10'
+                            : 'bg-white/10 hover:bg-white/20 text-white border border-brand-primary/40'
                         }`}
                       >
                         {isScanningAnomalies ? (
@@ -559,12 +597,12 @@ export const AdminView: React.FC<AdminViewProps> = ({
                 </section>
 
                 {/* Manutenção de Dados */}
-                <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/10 space-y-8">
+                <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary space-y-8">
                   <div className="flex items-center gap-4 text-white">
-                    <div className="w-10 h-10 bg-white/5 rounded-xl flex items-center justify-center border border-white/10">
+                    <div className="w-10 h-10 bg-white/5 rounded-xl flex items-center justify-center border border-brand-primary/40">
                       <Database className="w-5 h-5 text-brand-primary" />
                     </div>
-                    <h3 className="text-xl font-black uppercase tracking-tight">Manutenção de Dados</h3>
+                    <h3 className="text-xl font-black uppercase tracking-tight text-white">Manutenção de Dados</h3>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -631,6 +669,42 @@ export const AdminView: React.FC<AdminViewProps> = ({
                         desc: "Reconstrói sinergias e rivalidades.", 
                         action: recalculateStats, 
                         icon: Activity 
+                      },
+                      {
+                        label: "Limpar Mensagens",
+                        desc: "Apaga todas as notificações do sistema.",
+                        action: () => {
+                          showConfirmModal(
+                            "Limpar Mensagens",
+                            "Tem certeza que deseja apagar TODAS as notificações do sistema para todos os usuários?",
+                            async () => {
+                              try {
+                                const notifsSnap = await getDocs(collection(db, 'notifications'));
+                                let count = 0;
+                                
+                                // Firestore batch limit is 500
+                                for (let i = 0; i < notifsSnap.docs.length; i += 400) {
+                                  const chunk = notifsSnap.docs.slice(i, i + 400);
+                                  const batch = writeBatch(db);
+                                  chunk.forEach(d => {
+                                    batch.delete(d.ref);
+                                    count++;
+                                  });
+                                  await batch.commit();
+                                }
+                                
+                                if (count > 0) {
+                                  showNotification(`${count} mensagens apagadas com sucesso!`, 'success');
+                                } else {
+                                  showNotification('Nenhuma mensagem para apagar.', 'info');
+                                }
+                              } catch (error) {
+                                showNotification('Erro ao apagar mensagens.', 'error');
+                              }
+                            }
+                          );
+                        },
+                        icon: Trash2
                       }
                     ].map((btn, i) => (
                       <button 
@@ -649,14 +723,14 @@ export const AdminView: React.FC<AdminViewProps> = ({
             )}
 
             {activeTab === 'tournaments' && (
-              <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/10 space-y-8">
+              <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary space-y-8">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
                   <div className="flex items-center gap-4 text-white">
-                    <div className="w-10 h-10 bg-white/5 rounded-xl flex items-center justify-center border border-white/10">
+                    <div className="w-10 h-10 bg-white/5 rounded-xl flex items-center justify-center border border-brand-primary/40">
                       <Trophy className="w-5 h-5 text-brand-primary" />
                     </div>
                     <div>
-                      <h3 className="text-xl font-black uppercase tracking-tight">Gerenciar Torneios</h3>
+                      <h3 className="text-xl font-black uppercase tracking-tight text-white">Gerenciar Torneios</h3>
                       <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Controle de visibilidade e histórico</p>
                     </div>
                   </div>
@@ -669,7 +743,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                     className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-black uppercase tracking-widest text-[10px] transition-all ${
                       systemMetadata.isTournamentEnabled 
                         ? 'bg-brand-primary text-brand-secondary shadow-lg shadow-brand-primary/20' 
-                        : 'bg-white/5 text-white/40 border border-white/10 hover:bg-white/10'
+                        : 'bg-white/5 text-white/40 border border-brand-primary/40 hover:bg-white/10'
                     }`}
                   >
                     {systemMetadata.isTournamentEnabled ? (
@@ -703,7 +777,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                           </td>
                           <td className="px-4 py-4">
                             <span className={`px-2 py-0.5 text-[7px] font-black rounded uppercase tracking-widest ${
-                              tournament.status === 'completed' ? 'bg-emerald-500/20 text-emerald-500 border border-emerald-500/20' : 'bg-brand-primary/20 text-brand-primary border border-brand-primary/20'
+                              tournament.status === 'completed' ? 'bg-emerald-500/20 text-emerald-500 border border-emerald-500/20' : 'bg-brand-primary/20 text-brand-primary border border-brand-primary/40'
                             }`}>
                               {tournament.status === 'completed' ? 'Concluído' : 'Em Andamento'}
                             </span>
@@ -727,7 +801,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                     </tbody>
                   </table>
                   {tournaments.length === 0 && (
-                    <div className="py-12 text-center bg-white/5 rounded-3xl border border-dashed border-white/10">
+                    <div className="py-12 text-center bg-white/5 rounded-3xl border border-dashed border-brand-primary/40">
                       <p className="text-[10px] font-bold text-white/20 uppercase tracking-widest">Nenhum torneio registrado</p>
                     </div>
                   )}
@@ -738,12 +812,12 @@ export const AdminView: React.FC<AdminViewProps> = ({
             {activeTab === 'system' && (
               <div className="space-y-8">
                 {/* Configurações de Visibilidade */}
-                <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/10 space-y-8">
+                <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary space-y-8">
                   <div className="flex items-center gap-4 text-white">
-                    <div className="w-10 h-10 bg-white/5 rounded-xl flex items-center justify-center border border-white/10">
+                    <div className="w-10 h-10 bg-white/5 rounded-xl flex items-center justify-center border border-brand-primary/40">
                       <Eye className="w-5 h-5 text-brand-primary" />
                     </div>
-                    <h3 className="text-xl font-black uppercase tracking-tight">Visibilidade Global</h3>
+                    <h3 className="text-xl font-black uppercase tracking-tight text-white">Visibilidade Global</h3>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -761,7 +835,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                         className={`px-4 py-2 rounded-xl font-black uppercase tracking-widest text-[9px] transition-all ${
                           systemMetadata.showEliteQueue 
                             ? 'bg-brand-primary text-brand-secondary' 
-                            : 'bg-white/10 text-white/40 border border-white/10'
+                            : 'bg-white/10 text-white/40 border border-brand-primary/40'
                         }`}
                       >
                         {systemMetadata.showEliteQueue ? 'Visível' : 'Oculto'}
@@ -771,12 +845,12 @@ export const AdminView: React.FC<AdminViewProps> = ({
                 </section>
 
                 {/* Backup & Export */}
-                <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/10 space-y-8">
+                <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary space-y-8">
                   <div className="flex items-center gap-4 text-white">
-                    <div className="w-10 h-10 bg-white/5 rounded-xl flex items-center justify-center border border-white/10">
+                    <div className="w-10 h-10 bg-white/5 rounded-xl flex items-center justify-center border border-brand-primary/40">
                       <Download className="w-5 h-5 text-brand-primary" />
                     </div>
-                    <h3 className="text-xl font-black uppercase tracking-tight">Exportação & Backup</h3>
+                    <h3 className="text-xl font-black uppercase tracking-tight text-white">Exportação & Backup</h3>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -810,10 +884,10 @@ export const AdminView: React.FC<AdminViewProps> = ({
                 </section>
 
                 {/* Zona de Perigo */}
-                <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-rose-500/20 shadow-sm space-y-6">
+                <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-rose-500 shadow-sm space-y-6">
                   <div className="flex items-center gap-4 text-rose-500">
                     <AlertTriangle className="w-6 h-6" />
-                    <h3 className="text-lg font-black uppercase tracking-tight">Zona de Perigo</h3>
+                    <h3 className="text-lg font-black uppercase tracking-tight text-white">Zona de Perigo</h3>
                   </div>
                   
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

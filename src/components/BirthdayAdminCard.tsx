@@ -33,7 +33,7 @@ export const BirthdayAdminCard: React.FC<BirthdayAdminCardProps> = ({ player, on
   };
 
   return (
-    <div className="bg-white/5 border border-white/10 rounded-[2rem] p-6 space-y-4">
+    <div className="bg-white/5 border border-brand-primary/40 rounded-[2rem] p-6 space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="p-3 bg-brand-primary/20 rounded-2xl text-brand-primary">
@@ -70,7 +70,7 @@ export const BirthdayAdminCard: React.FC<BirthdayAdminCardProps> = ({ player, on
           value={message}
           onChange={(e) => setMessage(e.target.value)}
           placeholder="Gere uma mensagem ou escreva aqui..."
-          className="w-full bg-black border border-white/10 rounded-2xl p-4 text-sm text-white focus:border-brand-primary outline-none transition-all min-h-[100px] resize-none"
+          className="w-full bg-black border border-brand-primary/40 rounded-2xl p-4 text-sm text-white focus:border-brand-primary outline-none transition-all min-h-[100px] resize-none"
         />
 
         <div className="flex gap-2">

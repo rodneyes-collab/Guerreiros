@@ -1,4 +1,5 @@
 import React from 'react';
+import { motion } from 'motion/react';
 import { useStore } from '../store';
 import { Player } from '../types';
 import { 
@@ -40,7 +41,7 @@ export const PlayerRow: React.FC<PlayerRowProps> = ({
   const displayName = p.name || fullPlayer?.name || "Sócio sem nome";
 
   return (
-    <div className={`flex items-center justify-between p-2 sm:p-5 rounded-[1.2rem] sm:rounded-[2rem] border transition-all group ${isActive ? 'bg-brand-primary/10 border-brand-primary/30 shadow-md ring-2 ring-brand-primary/20' : 'bg-brand-light border-brand-primary/20 hover:border-brand-primary/40 shadow-sm hover:shadow-md'}`}>
+    <div className={`flex items-center justify-between p-2 sm:p-5 rounded-[1.2rem] sm:rounded-[2rem] border transition-all group ${isActive ? 'bg-brand-primary/10 border border-white/5 border-l-[6px] border-l-brand-primary shadow-md ring-2 ring-brand-primary/20' : 'bg-brand-light border border-white/5 border-l-[6px] border-l-brand-primary shadow-sm hover:shadow-md'}`}>
       <div className="flex items-center gap-2 sm:gap-6 min-w-0">
         <div className="relative shrink-0">
           <div className={`w-8 h-8 sm:w-16 sm:h-16 rounded-full flex items-center justify-center text-sm sm:text-2xl font-black ${isSetter ? (isTimeA ? 'bg-brand-primary/20 text-brand-primary' : 'bg-brand-primary/20 text-brand-secondary dark:text-white') : 'bg-brand-primary/5 text-brand-secondary/40 dark:text-white/40'} border border-brand-primary/10 shadow-sm`}>
@@ -49,14 +50,25 @@ export const PlayerRow: React.FC<PlayerRowProps> = ({
           {isSetter && <div className="absolute -top-1 -right-1 sm:-top-2 sm:-right-2 w-4 h-4 sm:w-6 sm:h-6 bg-brand-primary rounded-full border-2 border-brand-nav flex items-center justify-center shadow-sm"><UserCheck className="w-2 h-2 sm:w-3 h-3 text-brand-secondary" /></div>}
         </div>
         <div className="min-w-0">
-          <p className={`text-xs sm:text-3xl font-black ${isTimeA ? 'text-brand-primary drop-shadow-[0_0_8px_rgba(245,196,41,0.3)]' : 'text-brand-secondary dark:text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.2)]'} tracking-tight leading-none truncate`}>{displayName}</p>
+          <motion.p 
+            initial={{ scale: 0.8, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ 
+              type: "spring",
+              stiffness: 400,
+              damping: 10
+            }}
+            className={`text-xs sm:text-3xl font-black ${isTimeA ? 'text-brand-primary drop-shadow-[0_0_8px_rgba(245,196,41,0.3)]' : 'text-brand-secondary dark:text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.2)]'} tracking-tight leading-none truncate`}
+          >
+            {displayName}
+          </motion.p>
           <div className="flex items-center gap-1.5 sm:gap-3 mt-1 sm:mt-2">
             <span className="text-[8px] sm:text-[11px] font-black uppercase text-brand-light bg-brand-primary px-1 py-0.5 rounded border border-brand-primary/30">{p.dailyWins || 0}V</span>
             <span className="text-[8px] sm:text-[11px] font-black uppercase text-brand-light bg-brand-secondary dark:bg-white px-1 py-0.5 rounded border border-white/30">{p.dailyLosses || 0}D</span>
             <span className="text-[8px] sm:text-[11px] text-brand-secondary/60 dark:text-white/60 font-bold uppercase flex items-center gap-1 sm:gap-2">
               <span className="hidden xs:inline">ELO:</span> <span className="text-brand-primary font-black">{p.elo}</span>
               {suggestedPosition && (
-                <span className="bg-brand-primary/10 text-brand-primary px-1 py-0.5 rounded text-[7px] sm:text-[10px] border border-brand-primary/20">P{suggestedPosition}</span>
+                <span className="bg-brand-primary/10 text-brand-primary px-1 py-0.5 rounded text-[7px] sm:text-[10px] border border-brand-primary/40">P{suggestedPosition}</span>
               )}
             </span>
           </div>
