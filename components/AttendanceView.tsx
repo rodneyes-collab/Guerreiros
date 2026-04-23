@@ -12,6 +12,9 @@ import {
   MapPin,
   CheckCircle2,
   Calendar,
+  Zap,
+  Star,
+  Shield,
   BarChart3
 } from 'lucide-react';
 
@@ -48,6 +51,14 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
   setViewMode
 }) => {
   const { attendance: allAttendance, preConfirmations: allPreConfirmations, isSyncing } = useStore();
+  const getImpactIcon = (level?: number) => {
+    switch (level) {
+      case 3: return <Zap className="w-4 h-4 text-brand-primary" fill="currentColor" />;
+      case 2: return <Star className="w-4 h-4 text-brand-primary" fill="currentColor" />;
+      default: return <Shield className="w-4 h-4 text-white/20" />;
+    }
+  };
+
   const attendance = React.useMemo(() => allAttendance.filter(p => p.status !== 'inactive'), [allAttendance]);
   const preConfirmations = React.useMemo(() => allPreConfirmations.filter(p => p.status !== 'inactive'), [allPreConfirmations]);
   const [startY, setStartY] = React.useState(0);
@@ -182,6 +193,11 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                             <span className="text-xl font-black text-brand-primary/40 w-8 italic group-hover:text-brand-primary transition-colors">#{player.arrivalOrder}</span>
                             <div>
                               <p className={`text-lg font-black flex items-center gap-2 leading-none uppercase tracking-tight ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
+                                {userRole === 'ADMIN' && (
+                                  <span className="shrink-0" title={`Nível: ${fullPlayer?.impactLevel === 3 ? 'Elite' : fullPlayer?.impactLevel === 2 ? 'Médio' : 'Base'}`}>
+                                    {getImpactIcon(fullPlayer?.impactLevel)}
+                                  </span>
+                                )}
                                 {displayName}
                                 {player.timestamp && (
                                   <span className="text-[10px] text-white/30 font-medium lowercase tracking-normal">
@@ -259,6 +275,11 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                       >
                         <div className="space-y-1">
                           <p className={`text-lg font-black flex items-center gap-2 leading-none uppercase tracking-tight ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
+                            {userRole === 'ADMIN' && (
+                              <div className="shrink-0" title={`Nível: ${player.impactLevel === 3 ? 'Elite' : player.impactLevel === 2 ? 'Médio' : 'Base'}`}>
+                                {getImpactIcon(player.impactLevel)}
+                              </div>
+                            )}
                             {player.name || "Sócio sem nome"}
                             {player.isOfficialSetter && <span className="text-[8px] font-black uppercase bg-brand-primary/10 text-brand-primary px-2 py-0.5 rounded-full border border-brand-primary/40">Levantador</span>}
                           </p>

@@ -1,7 +1,7 @@
 import React from 'react';
 import { useIntentions } from '../src/hooks/useIntentions';
 import { useStore } from '../store';
-import { CalendarCheck, Copy, BellRing, Settings, UserCheck, UserX, Clock, ArrowRight, RotateCcw, Trash2 } from 'lucide-react';
+import { CalendarCheck, Copy, BellRing, Settings, UserCheck, UserX, Clock, ArrowRight, RotateCcw, Zap, Star, Shield, Trash2 } from 'lucide-react';
 import { Player } from '../types';
 
 import { HelpTooltip } from '../src/components/HelpTooltip';
@@ -16,6 +16,14 @@ interface IntentionsViewProps {
 export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, currentPlayer, onMoveToAttendance, showNotification }) => {
   const { intentions, isLoaded, setIntent, resetIntent, clearIntentions, toggleAutomation, sendReminders, copyToWhatsApp, copyReminder } = useIntentions();
   const { players, attendance, showConfirmModal } = useStore();
+
+  const getImpactIcon = (level?: number) => {
+    switch (level) {
+      case 3: return <Zap className="w-3 h-3 text-brand-primary" fill="currentColor" />;
+      case 2: return <Star className="w-3 h-3 text-brand-primary" fill="currentColor" />;
+      default: return <Shield className="w-3 h-3 text-white/20" />;
+    }
+  };
 
   const handleConfirm = () => {
     if (currentPlayer) {
@@ -275,7 +283,14 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
                   <div key={p.id} className="flex items-center justify-between bg-brand-primary/5 p-3 rounded-xl border border-brand-primary/40">
                     <div className="flex items-center gap-3">
                       <span className="text-brand-primary font-black text-xs w-4">{i + 1}.</span>
-                      <span className="text-white text-sm font-bold">{p.name}</span>
+                      <div className="flex items-center gap-2">
+                        {userRole === 'ADMIN' && (
+                          <div className="shrink-0" title={`Nível: ${p.impactLevel === 3 ? 'Elite' : p.impactLevel === 2 ? 'Médio' : 'Base'}`}>
+                            {getImpactIcon(p.impactLevel)}
+                          </div>
+                        )}
+                        <span className="text-white text-sm font-bold">{p.name}</span>
+                      </div>
                     </div>
                     <div className="flex items-center gap-2">
                       {isCheckedIn ? (
@@ -330,14 +345,30 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
             ) : (
               filteredUndecided.map(p => (
                 <div key={p.id} className="flex items-center justify-between bg-slate-500/5 p-3 rounded-xl border border-slate-500/40">
-                  <span className="text-slate-400 text-sm font-medium">{p.name}</span>
+                  <div className="flex items-center gap-2">
+                    {userRole === 'ADMIN' && (
+                      <div className="shrink-0" title={`Nível: ${p.impactLevel === 3 ? 'Elite' : p.impactLevel === 2 ? 'Médio' : 'Base'}`}>
+                        {getImpactIcon(p.impactLevel)}
+                      </div>
+                    )}
+                    <span className="text-white text-sm font-bold">{p.name}</span>
+                  </div>
                   {userRole === 'ADMIN' && (
-                    <button
-                      onClick={() => setIntent(p.id, 'GOING')}
-                      className="text-[8px] font-black uppercase tracking-widest bg-brand-primary/10 text-brand-primary px-3 py-1.5 rounded-lg hover:bg-brand-primary hover:text-black transition-all flex items-center gap-1"
-                    >
-                      Confirmar <ArrowRight className="w-3 h-3" />
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setIntent(p.id, 'GOING')}
+                        className="text-[8px] font-black uppercase tracking-widest bg-brand-primary/10 text-brand-primary px-3 py-1.5 rounded-lg hover:bg-brand-primary hover:text-black transition-all flex items-center gap-1"
+                      >
+                        Confirmar <ArrowRight className="w-3 h-3" />
+                      </button>
+                      <button
+                        onClick={() => setIntent(p.id, 'NOT_GOING')}
+                        className="p-1.5 text-red-500 hover:bg-red-500/10 rounded-lg transition-all"
+                        title="Marcar como Ausente"
+                      >
+                        <UserX className="w-4 h-4" />
+                      </button>
+                    </div>
                   )}
                   {userRole !== 'ADMIN' && (
                     <span className="text-[8px] font-black text-brand-primary/40 uppercase tracking-widest">Aguardando</span>
@@ -365,6 +396,11 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
               notGoingPlayers.map(p => (
                 <div key={p.id} className="flex items-center justify-between bg-red-500/5 p-3 rounded-xl border border-red-500/40">
                   <div className="flex items-center gap-3 opacity-50">
+                    {userRole === 'ADMIN' && (
+                      <div className="shrink-0" title={`Nível: ${p.impactLevel === 3 ? 'Elite' : p.impactLevel === 2 ? 'Médio' : 'Base'}`}>
+                        {getImpactIcon(p.impactLevel)}
+                      </div>
+                    )}
                     <span className="text-white text-sm font-medium line-through">{p.name}</span>
                   </div>
                   {userRole === 'ADMIN' && (

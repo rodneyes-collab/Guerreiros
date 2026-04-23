@@ -1,7 +1,8 @@
 
 import React, { useMemo } from 'react';
 import { motion } from 'motion/react';
-import { Zap, Clock, PlayCircle, Smartphone, Trophy } from 'lucide-react';
+import { getPlayerTier } from '../../utils/tierUtils';
+import { Zap, Clock, PlayCircle, Smartphone, Trophy, Target } from 'lucide-react';
 import { Player, GenerationResult, Match, SystemMetadata, Tournament } from '../../types';
 import { getPriorityQueue } from '../../utils/teamLogic';
 import { usePlayerStatusNotification } from '../hooks/usePlayerStatusNotification';
@@ -133,6 +134,18 @@ export const PlayerStatusCard: React.FC<PlayerStatusCardProps> = ({
 
   return (
     <div className="flex items-center gap-2">
+      {currentPlayer && (
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/5 border border-brand-primary/20 backdrop-blur-sm"
+        >
+          <Target className={`w-3 h-3 sm:w-4 sm:h-4 ${getPlayerTier(currentPlayer).color}`} />
+          <span className={`text-[9px] sm:text-[10px] font-black uppercase tracking-wider ${getPlayerTier(currentPlayer).color}`}>
+            {getPlayerTier(currentPlayer).label}
+          </span>
+        </motion.div>
+      )}
       <motion.div
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}

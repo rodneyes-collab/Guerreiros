@@ -42,7 +42,8 @@
         "createdAt": { "type": "integer" },
         "role": { "type": "string" },
         "position": { "type": "string" },
-        "level": { "type": "string" }
+        "level": { "type": "string" },
+        "impactLevel": { "type": "integer", "enum": [1, 2, 3], "description": "1: Base, 2: Medium, 3: Elite" }
       },
       "required": ["id", "name", "gender", "elo"]
     },

@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../store';
 import { HelpTooltip } from '../src/components/HelpTooltip';
 import { getFirestoreDateKey } from '../firebase';
+import { getPlayerTier } from '../utils/tierUtils';
 import { 
   Trophy, 
   TrendingUp, 
@@ -23,7 +24,10 @@ import {
   Swords,
   History,
   X,
-  Info
+  Info,
+  Download,
+  Share2,
+  Copy
 } from 'lucide-react';
 import { 
   LineChart, 
@@ -71,7 +75,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
   resetDailyMatches,
   isDark = false
 }) => {
-  const { synergy, negativeSynergy, rivalry, players: allPlayers, matches, isSyncing, currentPlayer, setNarrationAudio } = useStore();
+  const { synergy, negativeSynergy, rivalry, players: allPlayers, matches, isSyncing, currentPlayer, setNarrationAudio, narrationAudio, showNotification } = useStore();
   const players = useMemo(() => allPlayers.filter(p => p.status !== 'inactive'), [allPlayers]);
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
 
@@ -89,6 +93,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
     }
   }, [userRole, currentPlayer, selectedPlayerId]);
   const [activeTab, setActiveTab] = useState<'daily' | 'individual'>('daily');
+  const [rankingPeriod, setRankingPeriod] = useState<'session' | 'career'>('session');
   const [selectedDailyDate, setSelectedDailyDate] = useState<string>('Hoje');
   const [rankingSearchQuery, setRankingSearchQuery] = useState('');
   const [timeRange, setTimeRange] = useState<'7' | '30' | 'all'>('all');
@@ -132,6 +137,11 @@ export const RankingView: React.FC<RankingViewProps> = ({
   const [startY, setStartY] = useState(0);
   const [pullDistance, setPullDistance] = useState(0);
   const [isPulling, setIsPulling] = useState(false);
+
+  // Limpar áudio de narração quando a data muda para evitar compartilhar áudio antigo
+  useEffect(() => {
+    setNarrationAudio(null);
+  }, [selectedDailyDate, setNarrationAudio]);
 
   const handleTouchStart = (e: React.TouchEvent) => {
     if (window.scrollY === 0) {
@@ -512,6 +522,38 @@ export const RankingView: React.FC<RankingViewProps> = ({
       .sort((a, b) => a.duration - b.duration);
   }, [selectedPlayer, matches]);
 
+  const playerConsistency = useMemo(() => {
+    if (!selectedPlayer || !matches) return { label: 'Em Evolução', color: 'text-brand-primary' };
+    
+    const playerMatches = matches
+      .filter(m => m.teamA.includes(selectedPlayer.id) || m.teamB.includes(selectedPlayer.id))
+      .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0)); // Descending by date
+      
+    if (playerMatches.length === 0) return { label: 'Sem Jogos', color: 'text-white/60' };
+    
+    const recentMatches = playerMatches.slice(0, 10);
+    const wins = recentMatches.reduce((acc, m) => {
+      const isWinner = (m.winner === 'A' && m.teamA.includes(selectedPlayer.id)) || 
+                       (m.winner === 'B' && m.teamB.includes(selectedPlayer.id));
+      return acc + (isWinner ? 1 : 0);
+    }, 0);
+    
+    // Variance analysis and streaks pattern in recent games
+    const recentWinRate = wins / recentMatches.length;
+    
+    if (recentWinRate >= 0.8) {
+      return { label: 'Implacável', color: 'text-emerald-500 flex items-center gap-1 drop-shadow-[0_0_10px_rgba(16,185,129,0.5)]' };
+    } else if (recentWinRate >= 0.6) {
+      return { label: 'Casca Grossa', color: 'text-brand-primary drop-shadow-[0_0_5px_rgba(245,196,41,0.5)]' };
+    } else if (recentWinRate >= 0.4) {
+      return { label: 'Balanceado', color: 'text-white/80' };
+    } else if (recentWinRate >= 0.2) {
+      return { label: 'Oscilante', color: 'text-orange-400' };
+    } else {
+      return { label: 'Em Queda', color: 'text-rose-500 font-bold' };
+    }
+  }, [selectedPlayer, matches]);
+
   const getTrend = (player: any) => {
     if (!player.eloHistory || player.eloHistory.length < 2) return 'neutral';
     const last = player.eloHistory[player.eloHistory.length - 1].elo;
@@ -692,7 +734,10 @@ export const RankingView: React.FC<RankingViewProps> = ({
             
             const prevIndex = previousRanking.findIndex(p => p.id === player.id);
             if (prevIndex > index) {
-              changes.push(`${player.name} subiu ${prevIndex - index} posição(ões) no ranking geral`);
+              const wins = dailyStats[player.id]?.wins || 0;
+              const matchesPlayed = dailyStats[player.id]?.matches || 0;
+              const losses = matchesPlayed - wins;
+              changes.push(`${player.name} subiu ${prevIndex - index} posição(ões) no ranking geral com ${wins} vitória(s) e ${losses} derrota(s) hoje`);
             }
           }
         });
@@ -760,6 +805,83 @@ export const RankingView: React.FC<RankingViewProps> = ({
     return Math.round(sum / players.length);
   }, [players]);
 
+  const handleCopyTextSummary = () => {
+    if (!topStats.dailyStats) return;
+
+    const today = selectedDailyDate === 'Hoje' ? getFirestoreDateKey() : selectedDailyDate;
+    
+    let text = `🏆 *RESUMO DO DIA - GUERREIROS VOLLEYBALL* 🏆\n`;
+    text += `📅 Data: ${today}\n\n`;
+
+    text += `🌟 *DESTAQUES:*\n`;
+    text += `• *MVP:* ${topStats.dailyMvp?.name || 'N/A'}\n`;
+    text += `• *Melhor Levantador:* ${topStats.dailyBestSetter?.name || 'N/A'}\n`;
+    text += `• *Rei do Dia:* ${topStats.dailyKing?.name || 'N/A'}\n\n`;
+
+    if (topStats.rankingChanges && topStats.rankingChanges.length > 0) {
+      text += `📈 *SUBIRAM NO RANKING:*\n`;
+      topStats.rankingChanges.forEach((change: string) => {
+        text += `• ${change}\n`;
+      });
+      text += `\n`;
+    }
+
+    text += `📊 *RANKING DE HOJE (ELO e CAMPANHA):*\n`;
+    
+    // Get all players who played today
+    const activeToday = players
+      .filter(p => (topStats.dailyStats[p.id]?.matches || 0) > 0)
+      .sort((a, b) => (b.elo || 0) - (a.elo || 0));
+
+    activeToday.forEach((p, idx) => {
+      const stats = topStats.dailyStats[p.id];
+      const wins = stats?.wins || 0;
+      const losses = (stats?.matches || 0) - wins;
+      text += `${idx + 1}. *${p.name}* - ${p.elo} pts (${wins}V - ${losses}D)\n`;
+    });
+
+    text += `\nTotal de partidas hoje: ${topStats.dailyMatchesCount}\n`;
+    text += `_Gerado por Guerreiros Intelligence_ 🏐`;
+
+    navigator.clipboard.writeText(text);
+    showNotification('Resumo em texto copiado para a área de transferência!', 'success');
+  };
+
+  const handleShareAudio = async () => {
+    if (!narrationAudio) return;
+    
+    try {
+      showNotification('Preparando áudio para compartilhar...', 'info');
+      const response = await fetch(narrationAudio);
+      const blob = await response.blob();
+      const fileName = `resumo_guerreiros_${selectedDailyDate === 'Hoje' ? getFirestoreDateKey() : selectedDailyDate.replace(/\//g, '-')}.wav`;
+      const file = new File([blob], fileName, { type: 'audio/wav' });
+
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: 'Resumo do Dia - Guerreiros Volleyball',
+          text: 'Confira os destaques do racha de hoje!'
+        });
+      } else {
+        // Fallback to download
+        const link = document.createElement('a');
+        link.href = narrationAudio;
+        link.download = fileName;
+        link.click();
+        showNotification('Áudio baixado! Agora você pode enviar para o grupo.', 'success');
+      }
+    } catch (e) {
+      // Ignore AbortError which happens when the user cancels the share sheet
+      if (e instanceof Error && (e.name === 'AbortError' || e.message.includes('canceled') || e.message.includes('cancelled'))) {
+        console.log("Share action was cancelled by the user");
+        return;
+      }
+      console.error("Share error:", e);
+      showNotification('Erro ao compartilhar áudio.', 'error');
+    }
+  };
+
   return (
     <div 
       className="relative space-y-8 pb-12"
@@ -795,14 +917,50 @@ export const RankingView: React.FC<RankingViewProps> = ({
         </div>
         <div className="flex w-full md:w-auto gap-3">
           {userRole === 'ADMIN' && (
-            <button 
-              onClick={() => handleAnnounceSummary(topStats)}
-              disabled={isNarratingSummary}
-              className="flex-1 md:flex-none bg-brand-primary text-brand-secondary px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-brand-primary/90 shadow-xl shadow-brand-primary/10 transition-all disabled:opacity-50 border border-brand-primary/40"
-            >
-              <Sparkles className={`w-5 h-5 ${isNarratingSummary ? 'animate-spin' : ''}`} />
-              {isNarratingSummary ? 'Narrando...' : 'Resumo IA'}
-            </button>
+            <div className="flex gap-2 w-full md:w-auto">
+              <button 
+                onClick={() => handleAnnounceSummary(topStats)}
+                disabled={isNarratingSummary}
+                className="flex-1 md:flex-none bg-brand-primary text-brand-secondary px-6 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-brand-primary/90 shadow-xl shadow-brand-primary/10 transition-all disabled:opacity-50 border border-brand-primary/40"
+              >
+                <Sparkles className={`w-5 h-5 ${isNarratingSummary ? 'animate-spin' : ''}`} />
+                {isNarratingSummary ? 'Narrando...' : 'Resumo IA'}
+              </button>
+              
+              <button 
+                onClick={async () => {
+                  if (narrationAudio) {
+                    handleShareAudio();
+                  } else if (topStats.dailyMatchesCount > 0) {
+                    showNotification('Gerando áudio para compartilhar...', 'info');
+                    handleAnnounceSummary(topStats);
+                  } else {
+                    showNotification('Não há partidas para resumir nesta data.', 'info');
+                  }
+                }}
+                disabled={isNarratingSummary}
+                className={`p-4 rounded-2xl transition-all flex items-center justify-center group border ${
+                  narrationAudio 
+                    ? 'bg-white/10 text-white border-white/10 hover:bg-white/20' 
+                    : 'bg-white/5 text-white/40 border-white/5 cursor-wait'
+                }`}
+                title="Compartilhar áudio no WhatsApp"
+              >
+                {isNarratingSummary ? (
+                  <Sparkles className="w-5 h-5 animate-spin" />
+                ) : (
+                  <Share2 className={`w-5 h-5 ${narrationAudio ? 'group-hover:scale-110' : ''} transition-transform`} />
+                )}
+              </button>
+
+              <button 
+                onClick={handleCopyTextSummary}
+                className="bg-white/10 text-white p-4 rounded-2xl hover:bg-white/20 border border-white/10 transition-all flex items-center justify-center group"
+                title="Copiar resumo em texto"
+              >
+                <Copy className="w-5 h-5 group-hover:scale-110 transition-transform" />
+              </button>
+            </div>
           )}
         </div>
       </div>
@@ -833,6 +991,73 @@ export const RankingView: React.FC<RankingViewProps> = ({
         </button>
       </div>
 
+      {/* Ranking Period Switcher */}
+      <div className={`bg-white/5 p-1 rounded-2xl flex gap-1 border border-brand-primary/40`}>
+        <button
+          onClick={() => setRankingPeriod('session')}
+          className={`flex-1 py-3 px-4 rounded-xl font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${
+            rankingPeriod === 'session' 
+              ? 'bg-brand-primary text-brand-secondary shadow-lg shadow-brand-primary/20' 
+              : `text-white/40 hover:text-white`
+          }`}
+        >
+          <History className="w-4 h-4" />
+          Sessão
+        </button>
+        <button
+          onClick={() => setRankingPeriod('career')}
+          className={`flex-1 py-3 px-4 rounded-xl font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${
+            rankingPeriod === 'career' 
+              ? 'bg-brand-primary text-brand-secondary shadow-lg shadow-brand-primary/20' 
+              : `text-white/40 hover:text-white`
+          }`}
+        >
+          <Trophy className="w-4 h-4" />
+          Acumulado
+        </button>
+      </div>
+
+      {/* Global Session Date Selector */}
+      {rankingPeriod === 'session' && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white/5 p-4 rounded-3xl border border-brand-primary/20">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-brand-primary/10 rounded-xl">
+              <Calendar className="w-5 h-5 text-brand-primary" />
+            </div>
+            <p className="text-[10px] font-black uppercase tracking-widest text-white/60">Selecionar Sessão</p>
+          </div>
+          <div className="flex items-center gap-2 overflow-x-auto pb-2 sm:pb-0 no-scrollbar">
+            {availableDates.slice(0, 5).map(date => (
+              <button
+                key={date}
+                onClick={() => setSelectedDailyDate(date)}
+                className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap border ${
+                  selectedDailyDate === date 
+                    ? 'bg-brand-primary border-brand-primary text-brand-secondary shadow-lg shadow-brand-primary/20' 
+                    : `bg-white/5 border-brand-primary/40 text-white/60 hover:text-white`
+                }`}
+              >
+                {date === 'Hoje' ? 'Hoje' : formatBrazilianDate(date)}
+              </button>
+            ))}
+            {availableDates.length > 5 && (
+              <select
+                value={availableDates.includes(selectedDailyDate) && availableDates.indexOf(selectedDailyDate) >= 5 ? selectedDailyDate : ""}
+                onChange={(e) => e.target.value && setSelectedDailyDate(e.target.value)}
+                className="bg-white/5 border border-brand-primary/40 text-white/60 text-[10px] font-black uppercase tracking-widest px-3 py-2 rounded-xl outline-none focus:border-brand-primary transition-all"
+              >
+                <option value="" disabled>Mais sessões...</option>
+                {availableDates.slice(5).map(date => (
+                  <option key={date} value={date} className="bg-brand-secondary text-white">
+                    {formatBrazilianDate(date)}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        </div>
+      )}
+
       <AnimatePresence mode="wait">
         {activeTab === 'daily' ? (
           <motion.div
@@ -842,45 +1067,18 @@ export const RankingView: React.FC<RankingViewProps> = ({
             exit={{ opacity: 0, y: -20 }}
             className="space-y-8"
           >
-            {/* Daily Results Section */}
+            {/* Results Section */}
             <section className="space-y-6">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div className="p-2 bg-brand-primary/10 rounded-xl">
                     <Sparkles className="w-5 h-5 text-brand-primary" />
                   </div>
-                  <h3 className={`text-xl font-black uppercase tracking-tight text-white`}>Destaques de Hoje</h3>
+                  <h3 className={`text-xl font-black uppercase tracking-tight text-white`}>
+                    {rankingPeriod === 'session' ? 'Destaques da Sessão' : 'Destaques Acumulados'}
+                  </h3>
                 </div>
-                <div className="flex items-center gap-2 overflow-x-auto pb-2 no-scrollbar max-w-[200px] md:max-w-none">
-                  {availableDates.slice(0, 5).map(date => (
-                    <button
-                      key={date}
-                      onClick={() => setSelectedDailyDate(date)}
-                      className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap border ${
-                        selectedDailyDate === date 
-                          ? 'bg-brand-primary border-brand-primary text-brand-secondary shadow-lg shadow-brand-primary/20' 
-                          : `bg-white/5 border-brand-primary/40 text-white/60 hover:text-white`
-                      }`}
-                    >
-                      {date === 'Hoje' ? 'Hoje' : formatBrazilianDate(date)}
-                    </button>
-                  ))}
-                  {availableDates.length > 5 && (
-                    <select
-                      value={availableDates.includes(selectedDailyDate) && availableDates.indexOf(selectedDailyDate) >= 5 ? selectedDailyDate : ""}
-                      onChange={(e) => e.target.value && setSelectedDailyDate(e.target.value)}
-                      className="bg-white/5 border border-brand-primary/40 text-white/60 text-[10px] font-black uppercase tracking-widest px-3 py-2 rounded-xl outline-none focus:border-brand-primary transition-all"
-                    >
-                      <option value="" disabled>Mais...</option>
-                      {availableDates.slice(5).map(date => (
-                        <option key={date} value={date} className="bg-brand-secondary text-white">
-                          {formatBrazilianDate(date)}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-                {userRole === 'ADMIN' && selectedDailyDate === 'Hoje' && (
+                {userRole === 'ADMIN' && rankingPeriod === 'session' && selectedDailyDate === 'Hoje' && (
                   <button 
                     onClick={resetDailyMatches}
                     className="p-2 bg-white/5 hover:bg-brand-primary/10 hover:text-brand-primary rounded-xl text-brand-accent transition-all"
@@ -900,11 +1098,19 @@ export const RankingView: React.FC<RankingViewProps> = ({
                   <div className="absolute top-0 right-0 p-6 opacity-30 group-hover:scale-110 transition-transform">
                     <Trophy className="w-12 h-12 text-yellow-400" />
                   </div>
-                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-brand-primary mb-2">MVP {selectedDailyDate === 'Hoje' ? 'do Dia' : ''}</p>
-                  <h4 className="text-xl font-black text-white truncate">{topStats.dailyMvp ? (topStats.dailyMvp.name || "Sócio sem nome") : "Nenhum"}</h4>
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-brand-primary mb-2">
+                    {rankingPeriod === 'session' ? 'MVP da Sessão' : 'MVP Histórico'}
+                  </p>
+                  <h4 className="text-xl font-black text-white truncate">
+                    {rankingPeriod === 'session' 
+                      ? (topStats.dailyMvp ? (topStats.dailyMvp.name || "Sócio sem nome") : "Nenhum")
+                      : (topStats.mvp ? (topStats.mvp.name || "Sócio sem nome") : "Nenhum")}
+                  </h4>
                   <div className="mt-4 flex items-center gap-2">
                     <span className={`bg-white/5 text-brand-primary border-brand-primary/40 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border`}>
-                      {topStats.dailyMvp ? `${Math.round((topStats.dailyStats[topStats.dailyMvp.id].wins / (topStats.dailyStats[topStats.dailyMvp.id].matches || 1)) * 100)}% Win Rate` : "Sem partidas"}
+                      {rankingPeriod === 'session'
+                        ? (topStats.dailyMvp ? `${Math.round((topStats.dailyStats[topStats.dailyMvp.id].wins / (topStats.dailyStats[topStats.dailyMvp.id].matches || 1)) * 100)}% Win Rate` : "Sem partidas")
+                        : (topStats.mvp ? `${Math.round((topStats.mvp.wins / (topStats.mvp.matchesPlayed || 1)) * 100)}% Win Rate` : "Sem partidas")}
                     </span>
                   </div>
                 </motion.div>
@@ -918,11 +1124,19 @@ export const RankingView: React.FC<RankingViewProps> = ({
                   <div className="absolute top-0 right-0 p-6 opacity-30 group-hover:scale-110 transition-transform">
                     <Target className="w-12 h-12 text-yellow-400" />
                   </div>
-                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-brand-primary mb-2">Levantador {selectedDailyDate === 'Hoje' ? 'do Dia' : ''}</p>
-                  <h4 className="text-xl font-black text-white truncate">{topStats.dailyBestSetter ? (topStats.dailyBestSetter.name || "Sócio sem nome") : "Nenhum"}</h4>
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-brand-primary mb-2">
+                    {rankingPeriod === 'session' ? 'Levantador Sessão' : 'Melhor Levantador'}
+                  </p>
+                  <h4 className="text-xl font-black text-white truncate">
+                    {rankingPeriod === 'session'
+                      ? (topStats.dailyBestSetter ? (topStats.dailyBestSetter.name || "Sócio sem nome") : "Nenhum")
+                      : (topStats.bestSetter ? (topStats.bestSetter.name || "Sócio sem nome") : "Nenhum")}
+                  </h4>
                   <div className="mt-4 flex items-center gap-2">
                     <span className={`bg-white/5 text-brand-primary border-brand-primary/40 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border`}>
-                      {topStats.dailyBestSetter ? `${Math.round((topStats.dailyStats[topStats.dailyBestSetter.id].wins / (topStats.dailyStats[topStats.dailyBestSetter.id].matches || 1)) * 100)}% Win Rate` : "Sem partidas"}
+                      {rankingPeriod === 'session'
+                        ? (topStats.dailyBestSetter ? `${Math.round((topStats.dailyStats[topStats.dailyBestSetter.id].wins / (topStats.dailyStats[topStats.dailyBestSetter.id].matches || 1)) * 100)}% Win Rate` : "Sem partidas")
+                        : (topStats.bestSetter ? `${Math.round((topStats.bestSetter.wins / (topStats.bestSetter.matchesPlayed || 1)) * 100)}% Win Rate` : "Sem partidas")}
                     </span>
                   </div>
                 </motion.div>
@@ -936,11 +1150,19 @@ export const RankingView: React.FC<RankingViewProps> = ({
                   <div className="absolute top-0 right-0 p-6 opacity-30 group-hover:scale-110 transition-transform">
                     <Zap className="w-12 h-12 text-yellow-400" />
                   </div>
-                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-brand-primary mb-2">Rei {selectedDailyDate === 'Hoje' ? 'do Dia' : ''}</p>
-                  <h4 className="text-xl font-black text-white truncate">{topStats.dailyKing ? (topStats.dailyKing.name || "Sócio sem nome") : "Nenhum"}</h4>
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-brand-primary mb-2">
+                    {rankingPeriod === 'session' ? 'Rei da Sessão' : 'Rei do ELO'}
+                  </p>
+                  <h4 className="text-xl font-black text-white truncate">
+                    {rankingPeriod === 'session'
+                      ? (topStats.dailyKing ? (topStats.dailyKing.name || "Sócio sem nome") : "Nenhum")
+                      : (topStats.topElo?.name || "Nenhum")}
+                  </h4>
                   <div className="mt-4 flex items-center gap-2">
                     <span className={`bg-white/5 text-brand-primary border-brand-primary/40 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border`}>
-                      {topStats.dailyKing ? `${topStats.dailyStats[topStats.dailyKing.id].eloGain >= 0 ? '+' : ''}${topStats.dailyStats[topStats.dailyKing.id].eloGain || 0} ELO` : "Sem partidas"}
+                      {rankingPeriod === 'session'
+                        ? (topStats.dailyKing ? `${topStats.dailyStats[topStats.dailyKing.id].eloGain >= 0 ? '+' : ''}${topStats.dailyStats[topStats.dailyKing.id].eloGain || 0} ELO` : "Sem partidas")
+                        : (topStats.topElo ? `${topStats.topElo.elo} Pontos` : "0 Pontos")}
                     </span>
                   </div>
                 </motion.div>
@@ -954,86 +1176,21 @@ export const RankingView: React.FC<RankingViewProps> = ({
                   <div className="absolute top-0 right-0 p-6 opacity-30 group-hover:scale-110 transition-transform">
                     <Activity className="w-12 h-12 text-yellow-400" />
                   </div>
-                  <p className="text-[10px] font-black text-brand-primary uppercase tracking-[0.2em] mb-2">Jogador eficiente {selectedDailyDate === 'Hoje' ? 'do dia' : ''}</p>
-                  <h4 className="text-xl font-black text-white truncate">{topStats.dailyEfficient ? (topStats.dailyEfficient.name || "Sócio sem nome") : "Nenhum"}</h4>
+                  <p className="text-[10px] font-black text-brand-primary uppercase tracking-[0.2em] mb-2">
+                    {rankingPeriod === 'session' ? 'Mais Eficiente Sessão' : 'Sócio Mais Eficiente'}
+                  </p>
+                  <h4 className="text-xl font-black text-white truncate">
+                    {rankingPeriod === 'session'
+                      ? (topStats.dailyEfficient ? (topStats.dailyEfficient.name || "Sócio sem nome") : "Nenhum")
+                      : (topStats.mostEfficient ? (topStats.mostEfficient.name || "Sócio sem nome") : "Nenhum")}
+                  </h4>
                   <div className="mt-4 flex items-center gap-2">
                     <span className={`bg-white/5 text-brand-primary border-brand-primary/40 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border`}>
-                      {topStats.dailyEfficient ? `${(topStats.dailyStats[topStats.dailyEfficient.id].eloGain / (topStats.dailyStats[topStats.dailyEfficient.id].duration || 1)).toFixed(2)} ELO/Min` : "Sem partidas"}
+                      {rankingPeriod === 'session'
+                        ? (topStats.dailyEfficient ? `${(topStats.dailyStats[topStats.dailyEfficient.id].eloGain / (topStats.dailyStats[topStats.dailyEfficient.id].duration || 1)).toFixed(2)} ELO/Min` : "Sem partidas")
+                        : (topStats.mostEfficient ? "Líder em ELO/Minuto" : "Sem partidas")}
                     </span>
                   </div>
-                </motion.div>
-              </div>
-            </section>
-
-            {/* Global Top Stats Section */}
-            <section className="space-y-6">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-brand-primary/10 rounded-xl">
-                  <Trophy className="w-5 h-5 text-brand-primary" />
-                </div>
-                <h3 className={`text-xl font-black uppercase tracking-tight text-white`}>Ranking Histórico</h3>
-              </div>
-              
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
-                <motion.div 
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className={`bg-black backdrop-blur-xl border-white/5 border-l-[6px] border-l-brand-primary p-6 md:p-8 rounded-[2rem] shadow-2xl relative overflow-hidden group border`}
-                >
-                  <div className="absolute top-0 right-0 p-4 md:p-6 opacity-30 group-hover:scale-110 transition-transform">
-                    <Trophy className="w-12 h-12 md:w-16 md:h-16 text-yellow-400" />
-                  </div>
-                  <p className="text-[9px] md:text-[10px] font-black text-brand-primary uppercase tracking-[0.2em] mb-3 md:mb-4">MVP Eficiência</p>
-                  <h3 className="text-lg md:text-2xl font-black text-white truncate">{topStats.mvp ? (topStats.mvp.name || "Sócio sem nome") : "Nenhum"}</h3>
-                  <p className="text-brand-primary font-black text-xs md:text-sm mt-1 uppercase tracking-widest">
-                    {topStats.mvp ? `${Math.round((topStats.mvp.wins / (topStats.mvp.matchesPlayed || 1)) * 100)}% Aproveitamento` : "Sem partidas"}
-                  </p>
-                </motion.div>
-
-                <motion.div 
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.1 }}
-                  className={`bg-black backdrop-blur-xl border-white/5 border-l-[6px] border-l-brand-primary p-6 md:p-8 rounded-[2rem] shadow-2xl relative overflow-hidden group border`}
-                >
-                  <div className="absolute top-0 right-0 p-4 md:p-6 opacity-30 group-hover:scale-110 transition-transform">
-                    <Target className="w-12 h-12 md:w-16 md:h-16 text-yellow-400" />
-                  </div>
-                  <p className="text-[9px] md:text-[10px] font-black text-brand-primary uppercase tracking-[0.2em] mb-3 md:mb-4">Melhor Levantador</p>
-                  <h3 className="text-lg md:text-2xl font-black text-white truncate">{topStats.bestSetter ? (topStats.bestSetter.name || "Sócio sem nome") : "Nenhum"}</h3>
-                  <p className="text-brand-primary font-black text-xs md:text-sm mt-1 uppercase tracking-widest">
-                    {topStats.bestSetter ? `${Math.round((topStats.bestSetter.wins / (topStats.bestSetter.matchesPlayed || 1)) * 100)}% Aproveitamento` : "Sem partidas"}
-                  </p>
-                </motion.div>
-
-                <motion.div 
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.2 }}
-                  className={`bg-black backdrop-blur-xl border-white/5 border-l-[6px] border-l-brand-primary p-6 md:p-8 rounded-[2rem] shadow-2xl relative overflow-hidden group border`}
-                >
-                  <div className="absolute top-0 right-0 p-4 md:p-6 opacity-30 group-hover:scale-110 transition-transform">
-                    <Zap className="w-12 h-12 md:w-16 md:h-16 text-yellow-400" />
-                  </div>
-                  <p className="text-[9px] md:text-[10px] font-black text-brand-primary uppercase tracking-[0.2em] mb-3 md:mb-4">Rei do ELO</p>
-                  <h3 className="text-lg md:text-2xl font-black text-white truncate">{topStats.topElo?.name || "Sócio sem nome" || '-'}</h3>
-                  <p className="text-brand-primary font-black text-xs md:text-sm mt-1 uppercase tracking-widest">{topStats.topElo?.elo || 0} Pontos</p>
-                </motion.div>
-
-                <motion.div 
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.3 }}
-                  className={`bg-black backdrop-blur-xl border-white/5 border-l-[6px] border-l-brand-primary p-6 md:p-8 rounded-[2rem] shadow-2xl relative overflow-hidden group border`}
-                >
-                  <div className="absolute top-0 right-0 p-4 md:p-6 opacity-30 group-hover:scale-110 transition-transform">
-                    <Activity className="w-12 h-12 md:w-16 md:h-16 text-yellow-400" />
-                  </div>
-                  <p className="text-[9px] md:text-[10px] font-black text-brand-primary uppercase tracking-[0.2em] mb-3 md:mb-4">Sócio Mais Eficiente</p>
-                  <h3 className="text-lg md:text-2xl font-black text-white truncate">{topStats.mostEfficient ? (topStats.mostEfficient.name || "Sócio sem nome") : "Nenhum"}</h3>
-                  <p className="text-brand-primary font-black text-xs md:text-sm mt-1 uppercase tracking-widest">
-                    {topStats.mostEfficient ? "Líder em ELO/Minuto" : "Sem partidas"}
-                  </p>
                 </motion.div>
               </div>
             </section>
@@ -1045,7 +1202,9 @@ export const RankingView: React.FC<RankingViewProps> = ({
             <div className="p-2 bg-brand-primary/10 rounded-xl">
               <Users className="w-5 h-5 text-brand-primary" />
             </div>
-            <h4 className={`text-xs font-black uppercase tracking-widest text-brand-primary`}>Melhores Duplas (Sinergia)</h4>
+            <h4 className={`text-xs font-black uppercase tracking-widest text-brand-primary`}>
+              Melhores Duplas {rankingPeriod === 'session' ? 'da Sessão' : '(Sinergia Geral)'}
+            </h4>
           </div>
           <div className="space-y-4">
             {globalRelationships.synergies.length > 0 ? globalRelationships.synergies.map((s, i) => (
@@ -1097,7 +1256,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
         </div>
       </div>
 
-      {/* Full Ranking for Selected Date */}
+      {/* Ranking for Selected Period */}
       <section className="space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -1105,10 +1264,14 @@ export const RankingView: React.FC<RankingViewProps> = ({
               <Filter className="w-5 h-5 text-brand-primary" />
             </div>
             <h3 className={`text-xl font-black uppercase tracking-tight text-white`}>
-              {selectedDailyDate === 'Hoje' ? 'Ranking de Hoje' : `Ranking de ${formatBrazilianDate(selectedDailyDate)}`}
+              {rankingPeriod === 'session' 
+                ? (selectedDailyDate === 'Hoje' ? 'Ranking de Hoje' : `Ranking de ${formatBrazilianDate(selectedDailyDate)}`)
+                : 'Ranking Geral Acumulado'}
               <HelpTooltip 
-                title="Ranking Ponderado" 
-                content="O sistema utiliza um fator de ponderação (ELO dinâmico) para nivelar jogadores e levantadores. Como os levantadores jogam mais partidas, o ganho de ELO por vitória é ajustado para que a eficiência (ELO/Jogo) seja o critério real de destaque, evitando que apenas o volume de jogos defina o líder."
+                title={rankingPeriod === 'session' ? "Ranking da Sessão" : "Ranking Geral"} 
+                content={rankingPeriod === 'session' 
+                  ? "Este ranking mostra o desempenho apenas na sessão selecionada, focando no ganho de ELO imediato." 
+                  : "Este é o ranking histórico acumulado de todos os tempos, baseado no ELO atual de cada sócio."}
               />
             </h3>
           </div>
@@ -1142,38 +1305,52 @@ export const RankingView: React.FC<RankingViewProps> = ({
                 {[...players]
                   .filter(p => {
                     const stats = topStats.dailyStats[p.id];
-                    const hasPlayed = stats && stats.matches > 0;
+                    const hasPlayed = rankingPeriod === 'session' ? (stats && stats.matches > 0) : (p.matchesPlayed > 0);
                     const matchesSearch = p.name.toLowerCase().includes(rankingSearchQuery.toLowerCase());
                     return hasPlayed && matchesSearch;
                   })
                   .sort((a, b) => {
-                    const statsA = topStats.dailyStats[a.id];
-                    const statsB = topStats.dailyStats[b.id];
-                    return (statsB.eloGain || 0) - (statsA.eloGain || 0) || (statsB.wins || 0) - (statsA.wins || 0);
+                    if (rankingPeriod === 'session') {
+                      const statsA = topStats.dailyStats[a.id];
+                      const statsB = topStats.dailyStats[b.id];
+                      return (statsB.eloGain || 0) - (statsA.eloGain || 0) || (statsB.wins || 0) - (statsA.wins || 0);
+                    }
+                    return (b.elo || 0) - (a.elo || 0);
                   })
                   .map((player, idx) => {
                     const stats = topStats.dailyStats[player.id];
-                    const winRate = Math.round((stats.wins / (stats.matches || 1)) * 100);
+                    const matchesPlayed = rankingPeriod === 'session' ? stats.matches : player.matchesPlayed;
+                    const wins = rankingPeriod === 'session' ? stats.wins : player.wins;
+                    const eloValue = rankingPeriod === 'session' ? stats.eloGain : Math.round(player.elo);
+                    const winRate = Math.round((wins / (matchesPlayed || 1)) * 100);
                     
                     return (
                       <tr key={player.id} className={`transition-colors group hover:bg-white/5`}>
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-3">
                             <span className="text-[10px] font-black text-white/40 w-4">{idx + 1}</span>
-                            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-black transition-colors bg-white/5 text-white/60 group-hover:bg-brand-primary/20 group-hover:text-brand-primary`}>
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-black transition-colors bg-white/5 text-white group-hover:bg-brand-primary/20 group-hover:text-brand-primary`}>
                               {player.name.charAt(0)}
                             </div>
                             <div>
                               <p className={`text-xs font-black uppercase tracking-tight text-white`}>{player.name}</p>
-                              {player.isOfficialSetter && (
-                                <span className="text-[8px] font-black text-brand-primary uppercase tracking-widest">Levantador</span>
-                              )}
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className={`text-[8px] font-black uppercase tracking-widest ${getPlayerTier(player).color}`}>
+                                  {getPlayerTier(player).label}
+                                </span>
+                                {player.isOfficialSetter && (
+                                  <>
+                                    <span className="text-[8px] text-white/20">•</span>
+                                    <span className="text-[8px] font-black text-brand-primary uppercase tracking-widest">Levantador</span>
+                                  </>
+                                )}
+                              </div>
                             </div>
                           </div>
                         </td>
-                        <td className={`px-6 py-4 text-center text-xs font-bold text-white/80`}>{stats.matches}</td>
-                        <td className="px-6 py-4 text-center text-xs font-bold text-brand-primary">{stats.wins}</td>
-                        <td className="px-6 py-4 text-center text-xs font-bold text-white/40">{stats.matches - stats.wins}</td>
+                        <td className={`px-6 py-4 text-center text-xs font-bold text-white/80`}>{matchesPlayed}</td>
+                        <td className="px-6 py-4 text-center text-xs font-bold text-brand-primary">{wins}</td>
+                        <td className="px-6 py-4 text-center text-xs font-bold text-white/40">{matchesPlayed - wins}</td>
                         <td className="px-6 py-4 text-center">
                           <span className={`text-[10px] font-black px-2 py-1 rounded-lg ${winRate >= 50 ? 'bg-brand-primary/10 text-brand-primary' : 'bg-white/10 text-white/40'}`}>
                             {winRate}%
@@ -1182,17 +1359,24 @@ export const RankingView: React.FC<RankingViewProps> = ({
                         <td className="px-6 py-4 text-center">
                           <div className="flex flex-col items-center">
                             <span className="text-[10px] font-black text-white/60">
-                              {(stats.eloGain / (stats.matches || 1)).toFixed(1)}
+                              {rankingPeriod === 'session' 
+                                ? (stats.eloGain / (stats.matches || 1)).toFixed(1)
+                                : ((player.wins || 0) / (player.matchesPlayed || 1) * 100).toFixed(0) + "%"
+                              }
                             </span>
-                            <span className="text-[8px] font-bold text-white/20 uppercase">ELO/J</span>
+                            <span className="text-[8px] font-bold text-white/20 uppercase">
+                              {rankingPeriod === 'session' ? 'ELO/J' : 'APROV.'}
+                            </span>
                           </div>
                         </td>
                         <td className="px-6 py-4 text-right">
                           <div className="flex flex-col items-end">
-                            <span className={`text-xs font-black ${stats.eloGain >= 0 ? 'text-brand-primary' : 'text-white/40'}`}>
-                              {stats.eloGain >= 0 ? '+' : ''}{stats.eloGain}
+                            <span className={`text-xs font-black ${rankingPeriod === 'career' || eloValue >= 0 ? 'text-brand-primary' : 'text-white/40'}`}>
+                              {rankingPeriod === 'session' && eloValue >= 0 ? '+' : ''}{eloValue}
                             </span>
-                            <span className="text-[8px] font-bold text-white/40 uppercase">Pontos</span>
+                            <span className="text-[8px] font-bold text-white/40 uppercase">
+                              {rankingPeriod === 'session' ? 'Pontos' : 'RANK ELO'}
+                            </span>
                           </div>
                         </td>
                       </tr>
@@ -1252,68 +1436,77 @@ export const RankingView: React.FC<RankingViewProps> = ({
           <ChevronRight className="w-5 h-5 opacity-40" />
         </div>
 
-        {selectedPlayer ? (
+          {selectedPlayer ? (
             <motion.div 
               key={selectedPlayer.id}
               initial={{ opacity: 0, scale: 0.98 }}
               animate={{ opacity: 1, scale: 1 }}
               className="space-y-8"
             >
-              {/* Profile Card */}
+              {/* Profile Card - DAILY PERFORMANCE */}
               <div className="bg-brand-light backdrop-blur-xl rounded-[3rem] p-8 text-brand-secondary dark:text-white shadow-2xl relative overflow-hidden border border-white/5 border-l-[8px] border-l-brand-primary">
                 <div className="absolute top-0 right-0 p-12 opacity-10">
-                  <Trophy className="w-32 h-32 rotate-12 text-brand-primary" />
+                  <Activity className="w-32 h-32 rotate-12 text-brand-primary" />
                 </div>
                 
                 <div className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
                   <div className="flex items-center gap-6">
-                    <div className="w-20 h-20 rounded-full bg-white/5 flex items-center justify-center text-3xl font-black border border-brand-primary/40">
+                    <div className="w-20 h-20 rounded-full bg-white/5 flex items-center justify-center text-3xl font-black border border-brand-primary/40 text-white">
                       {(selectedPlayer.name || "S").charAt(0)}
                     </div>
                     <div>
                       <h3 className={`text-3xl font-black uppercase tracking-tighter ${selectedPlayer.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>{selectedPlayer.name || "Sócio sem nome"}</h3>
-                      <p className="text-brand-primary text-xs font-black uppercase tracking-[0.2em] mt-1">Sócio Nível Pro</p>
+                      <p className={`text-xs font-black uppercase tracking-[0.2em] mt-1 ${getPlayerTier(selectedPlayer).color}`}>
+                        {getPlayerTier(selectedPlayer).label}
+                      </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-4">
                     <div className="bg-white/5 px-6 py-4 rounded-3xl border border-brand-primary/40 text-center">
-                      <p className="text-4xl font-black font-mono text-brand-primary">{selectedPlayer.elo}</p>
-                      <p className="text-[10px] font-black uppercase tracking-widest text-white/40 mt-1">Ranking Global</p>
+                      <p className="text-4xl font-black font-mono text-brand-primary">
+                        {topStats.dailyStats[selectedPlayer.id]?.eloGain >= 0 ? '+' : ''}{topStats.dailyStats[selectedPlayer.id]?.eloGain || 0}
+                      </p>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-white/40 mt-1">Saldo ELO {selectedDailyDate === 'Hoje' ? 'Hoje' : 'na Data'}</p>
                     </div>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-10">
                   <div className="bg-white/5 p-4 rounded-2xl border border-white/5">
-                    <p className="text-[8px] font-black uppercase tracking-widest opacity-60 mb-1">Vitórias</p>
-                    <p className="text-xl font-black text-brand-primary">{selectedPlayer.wins}</p>
+                    <p className="text-[8px] font-black uppercase tracking-widest text-white mb-1">Vitórias (Sessão)</p>
+                    <p className="text-xl font-black text-brand-primary">{topStats.dailyStats[selectedPlayer.id]?.wins || 0}</p>
                   </div>
                   <div className="bg-white/5 p-4 rounded-2xl border border-white/5">
-                    <p className="text-[8px] font-black uppercase tracking-widest opacity-60 mb-1">Partidas</p>
-                    <p className="text-xl font-black text-brand-primary">{selectedPlayer.matchesPlayed}</p>
+                    <p className="text-[8px] font-black uppercase tracking-widest text-white mb-1">Partidas (Sessão)</p>
+                    <p className="text-xl font-black text-brand-primary">{topStats.dailyStats[selectedPlayer.id]?.matches || 0}</p>
                   </div>
                   <div className="bg-white/5 p-4 rounded-2xl border border-white/5">
-                    <p className="text-[8px] font-black uppercase tracking-widest opacity-60 mb-1">Aproveitamento</p>
+                    <p className="text-[8px] font-black uppercase tracking-widest text-white mb-1">Aproveitamento (Sessão)</p>
                     <p className="text-xl font-black text-brand-primary">
-                      {selectedPlayer.matchesPlayed > 0 ? Math.round((selectedPlayer.wins / selectedPlayer.matchesPlayed) * 100) : 0}%
+                      {topStats.dailyStats[selectedPlayer.id]?.matches > 0 ? Math.round((topStats.dailyStats[selectedPlayer.id].wins / topStats.dailyStats[selectedPlayer.id].matches) * 100) : 0}%
                     </p>
                   </div>
                   <div className="bg-white/5 p-4 rounded-2xl border border-white/5">
-                    <p className="text-[8px] font-black uppercase tracking-widest opacity-60 mb-1">Eficiência (ELO/J)</p>
+                    <p className="text-[8px] font-black uppercase tracking-widest text-white mb-1">Eficiência (Sessão)</p>
                     <p className="text-xl font-black text-brand-primary">
-                      {((selectedPlayer.elo - 1200) / (selectedPlayer.matchesPlayed || 1)).toFixed(1)}
+                      {topStats.dailyStats[selectedPlayer.id]?.matches > 0 ? (topStats.dailyStats[selectedPlayer.id].eloGain / topStats.dailyStats[selectedPlayer.id].matches).toFixed(1) : "0.0"}
                     </p>
                   </div>
                 </div>
               </div>
 
-              {/* Accumulated Results Card */}
+              {/* Accumulated Results Card - CAREER */}
               <div className={`bg-black backdrop-blur-xl border-white/5 border-l-[6px] border-l-brand-primary p-8 rounded-[2.5rem] shadow-2xl border`}>
-                <div className="flex items-center gap-3 mb-8">
-                  <div className={`p-2 rounded-xl bg-white/5`}>
-                    <History className="w-5 h-5 text-brand-primary" />
+                <div className="flex items-center justify-between mb-8">
+                  <div className="flex items-center gap-3">
+                    <div className={`p-2 rounded-xl bg-white/5`}>
+                      <History className="w-5 h-5 text-brand-primary" />
+                    </div>
+                    <h4 className={`text-xs font-black uppercase tracking-widest text-white`}>Resultados Acumulados (Carreira)</h4>
                   </div>
-                  <h4 className={`text-xs font-black uppercase tracking-widest text-white`}>Resultados Acumulados</h4>
+                  <div className="bg-white/5 px-4 py-2 rounded-xl border border-white/5">
+                    <span className="text-[10px] font-black text-brand-primary uppercase tracking-widest">{selectedPlayer.elo} ELO Global</span>
+                  </div>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                   <div className={`p-6 rounded-[2rem] border bg-white/5 border-white/5 border-l-[6px] border-l-brand-primary`}>
@@ -1329,9 +1522,9 @@ export const RankingView: React.FC<RankingViewProps> = ({
                     <p className={`text-3xl font-black text-white/80`}>{selectedPlayer.matchesPlayed || 0}</p>
                   </div>
                   <div className={`p-6 rounded-[2rem] border bg-white/5 border-white/5 border-l-[6px] border-l-brand-primary`}>
-                    <p className="text-[9px] font-black text-white/40 uppercase tracking-widest mb-2">Saldo Vitórias</p>
-                    <p className={`text-3xl font-black ${(selectedPlayer.wins || 0) - (selectedPlayer.losses || 0) >= 0 ? 'text-brand-primary' : 'text-white/40'}`}>
-                      {(selectedPlayer.wins || 0) - (selectedPlayer.losses || 0)}
+                    <p className="text-[9px] font-black text-white/40 uppercase tracking-widest mb-2">Aproveitamento Final</p>
+                    <p className={`text-3xl font-black text-brand-primary`}>
+                      {selectedPlayer.matchesPlayed > 0 ? Math.round((selectedPlayer.wins / selectedPlayer.matchesPlayed) * 100) : 0}%
                     </p>
                   </div>
                 </div>
@@ -1605,9 +1798,15 @@ export const RankingView: React.FC<RankingViewProps> = ({
                       </p>
                     </div>
                     <div className={`p-4 rounded-2xl border bg-white/5 border-brand-primary/40`}>
-                      <p className="text-[9px] font-black text-white/40 uppercase tracking-widest mb-1">Consistência</p>
-                      <p className="text-xl font-black text-brand-primary">
-                        {selectedPlayer.matchesPlayed > 10 ? 'Alta' : 'Em Evolução'}
+                      <span className="text-[9px] font-black text-white/40 uppercase tracking-widest mb-1 flex items-center gap-1">
+                        Consistência (Até 10 Jogos)
+                        <HelpTooltip 
+                          title="Análise de Consistência"
+                          content="Analisa a variância de vitórias e derrotas com base nas suas últimas partidas (limite de 10 jogos)."
+                        />
+                      </span>
+                      <p className={`text-xl font-black ${playerConsistency.color}`}>
+                        {playerConsistency.label}
                       </p>
                     </div>
                   </div>
@@ -1930,7 +2129,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
                           }`}
                         >
                           <div className={`w-10 h-10 rounded-full flex items-center justify-center font-black ${
-                            isSelected ? 'bg-black/20 text-black' : `bg-white/5 text-white/40`
+                            isSelected ? 'bg-black/20 text-black' : `bg-white/5 text-white`
                           }`}>
                             {player.name.charAt(0)}
                           </div>

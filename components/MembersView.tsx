@@ -2,14 +2,19 @@ import React from 'react';
 import { useStore } from '../store';
 import { Player, Gender } from '../types';
 import { translateGender } from '../utils/helpers';
+import { getPlayerTier } from '../utils/tierUtils';
 import { 
   Trash2, 
   UserPlus, 
   Edit2,
   RotateCcw,
   Cake,
+  Zap,
+  Star,
+  Shield,
   UserCheck,
-  UserX
+  UserX,
+  Target
 } from 'lucide-react';
 
 interface MembersViewProps {
@@ -45,6 +50,14 @@ export const MembersView: React.FC<MembersViewProps> = ({
       key,
       direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc'
     }));
+  };
+
+  const getImpactIcon = (level?: number) => {
+    switch (level) {
+      case 3: return <Zap className="w-3 h-3 text-brand-primary" fill="currentColor" />;
+      case 2: return <Star className="w-3 h-3 text-brand-primary" fill="currentColor" />;
+      default: return <Shield className="w-3 h-3 text-white/40" />;
+    }
   };
 
   const sortedPlayers = React.useMemo(() => {
@@ -115,36 +128,36 @@ export const MembersView: React.FC<MembersViewProps> = ({
           <RotateCcw className={`w-6 h-6 text-brand-primary ${isSyncing ? 'animate-spin' : ''}`} />
         </div>
       </div>
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
         <div>
-          <h2 className="text-4xl font-black text-white uppercase tracking-tighter">Gestão de Sócios</h2>
-          <p className="text-sm font-bold text-white/40 uppercase tracking-widest mt-2">Total de {(players?.length || 0)} membros registrados</p>
+          <h2 className="text-2xl font-black text-white uppercase tracking-tighter">Gestão de Sócios</h2>
+          <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest mt-1">Total de {(players?.length || 0)} membros registrados</p>
         </div>
-        <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
           {userRole === 'ADMIN' && repairDatabase && (
             <button 
               onClick={repairDatabase} 
-              className="flex-1 md:flex-none bg-white/5 text-white px-6 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-white/10 transition-all border border-brand-primary/40 shadow-sm"
+              className="flex-1 md:flex-none bg-white/5 text-white px-4 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-white/10 transition-all border border-brand-primary/40 shadow-sm"
             >
-              <RotateCcw className="w-5 h-5" />
+              <RotateCcw className="w-4 h-4" />
               Reparar
             </button>
           )}
           {userRole === 'ADMIN' && (
-            <button onClick={() => { setEditingPlayer(null); setIsFormOpen(true); }} className="flex-1 md:flex-none bg-brand-primary text-brand-secondary px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 hover:scale-105 shadow-xl shadow-brand-primary/20 transition-all"><UserPlus className="w-5 h-5" />Novo Sócio</button>
+            <button onClick={() => { setEditingPlayer(null); setIsFormOpen(true); }} className="flex-1 md:flex-none bg-brand-primary text-brand-secondary px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 hover:scale-105 shadow-xl shadow-brand-primary/20 transition-all"><UserPlus className="w-4 h-4" />Novo Sócio</button>
           )}
         </div>
       </div>
 
       {/* Desktop Table View */}
-      <div className="hidden md:block bg-brand-secondary/30 backdrop-blur-xl rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-xl overflow-hidden">
+      <div className="hidden md:block bg-brand-secondary/30 backdrop-blur-xl rounded-[1.5rem] border border-white/5 border-l-[4px] border-l-brand-primary shadow-xl overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
+          <table className="w-full text-left border-collapse text-xs">
             <thead className="bg-black/40 border-b border-brand-primary/40">
               <tr>
                 <th 
                   onClick={() => handleSort('name')}
-                  className="px-8 py-6 text-[10px] font-black text-brand-primary uppercase tracking-widest cursor-pointer hover:opacity-80 transition-colors"
+                  className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest cursor-pointer hover:opacity-80 transition-colors"
                 >
                   <div className="flex items-center gap-2">
                     Sócio
@@ -154,13 +167,14 @@ export const MembersView: React.FC<MembersViewProps> = ({
                   </div>
                 </th>
                 {userRole === 'ADMIN' && (
-                  <th className="px-8 py-6 text-[10px] font-black text-brand-primary uppercase tracking-widest">Email</th>
+                  <th className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest">Email</th>
                 )}
-                <th className="px-8 py-6 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">Gênero</th>
-                <th className="px-8 py-6 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">Posição</th>
+                <th className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">Gênero</th>
+                <th className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">Nível</th>
+                <th className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">Posição</th>
                 <th 
                   onClick={() => handleSort('elo')}
-                  className="px-8 py-6 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center cursor-pointer hover:opacity-80 transition-colors"
+                  className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center cursor-pointer hover:opacity-80 transition-colors"
                 >
                   <div className="flex items-center justify-center gap-2">
                     ELO
@@ -169,24 +183,31 @@ export const MembersView: React.FC<MembersViewProps> = ({
                     )}
                   </div>
                 </th>
-                <th className="px-8 py-6 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">Status</th>
+                <th className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">Status</th>
                 {userRole === 'ADMIN' && (
-                  <th className="px-8 py-6 text-[10px] font-black text-brand-primary uppercase tracking-widest text-right">Ações</th>
+                  <th className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest text-right">Ações</th>
                 )}
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/5">
+            <tbody className="divide-y divide-white/5 font-medium">
               {sortedPlayers.map(player => (
                 <tr key={player.id} className="hover:bg-white/5 transition-colors group">
-                  <td className="px-8 py-5">
+                  <td className="px-3 py-2">
                     <div className="flex items-center gap-2">
-                      <p className={`font-black ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'} ${player.status === 'inactive' ? 'opacity-40' : ''}`}>
-                        {player.name || "Sócio sem nome"}
-                      </p>
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        {userRole === 'ADMIN' && (
+                          <div className="shrink-0" title={`Nível: ${player.impactLevel === 3 ? 'Elite' : player.impactLevel === 2 ? 'Médio' : 'Base'}`}>
+                            {getImpactIcon(player.impactLevel)}
+                          </div>
+                        )}
+                        <p className={`font-black text-xs truncate ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'} ${player.status === 'inactive' ? 'opacity-40' : ''}`}>
+                          {player.name || "Sócio sem nome"}
+                        </p>
+                      </div>
                       {player.birthDate && (
                         <div className="group/birthday relative">
                           <Cake className="w-4 h-4 text-brand-primary animate-pulse" />
-                          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1 bg-brand-primary text-black text-[10px] font-black uppercase rounded-lg opacity-0 group-hover/birthday:opacity-100 transition-opacity whitespace-nowrap z-50">
+                          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1 bg-brand-primary text-black text-[10px] font-black uppercase rounded-lg opacity-0 group-hover/birthday:opacity-100 transition-opacity whitespace-nowrap z-50 pointer-events-none">
                             Aniversário: {new Date(player.birthDate).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' })}
                           </div>
                         </div>
@@ -195,34 +216,54 @@ export const MembersView: React.FC<MembersViewProps> = ({
                     <p className="text-[10px] text-white/40 font-bold uppercase">{player.matchesPlayed} partidas totais</p>
                   </td>
                   {userRole === 'ADMIN' && (
-                    <td className="px-8 py-5">
-                      <p className="text-xs font-bold text-white/60">{player.email || '-'}</p>
+                    <td className="px-3 py-2">
+                      <p className="text-[9px] font-bold text-white/50">{player.email || '-'}</p>
                     </td>
                   )}
-                  <td className="px-8 py-6 text-center">
-                    <span className="text-xs font-bold text-white/60">{translateGender(player.gender)}</span>
+                  <td className="px-3 py-2 text-center text-[10px]">
+                    <span className="font-bold text-white/60">{translateGender(player.gender)}</span>
                   </td>
-                  <td className="px-8 py-6 text-center">
-                    <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${player.isOfficialSetter ? 'bg-brand-primary/20 text-brand-primary border border-brand-primary/30' : 'bg-white/5 text-white/60 border border-brand-primary/40'}`}>
-                      {player.isOfficialSetter ? 'Levantador' : 'Atleta'}
-                    </span>
+                  <td className="px-3 py-2 text-center">
+                    <div className="flex flex-col items-center gap-0.5">
+                      <span className={`text-[9px] font-black uppercase tracking-tight ${getPlayerTier(player).color}`}>
+                        {getPlayerTier(player).label}
+                      </span>
+                      {userRole === 'ADMIN' && player.impactLevel && player.impactLevel > 1 && (
+                        <span className={`text-[6px] font-black px-1 py-0.5 rounded-full uppercase tracking-tighter border ${
+                          player.impactLevel === 3 
+                            ? 'bg-brand-primary text-black border-brand-primary' 
+                            : 'bg-white/10 text-brand-primary border-brand-primary/40'
+                        }`}>
+                          {player.impactLevel === 3 ? 'Elite' : 'Médio'}
+                        </span>
+                      )}
+                    </div>
                   </td>
-                  <td className="px-8 py-6 text-center">
-                    <span className="font-black text-white">{Math.round(player.elo)}</span>
+                  <td className="px-3 py-2 text-center">
+                    {player.isOfficialSetter ? (
+                      <span className="px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-tight bg-brand-primary/20 text-brand-primary border border-brand-primary/40">
+                        Levantador
+                      </span>
+                    ) : (
+                      <span className="text-white/20 text-[9px] uppercase font-bold tracking-widest">-</span>
+                    )}
                   </td>
-                  <td className="px-8 py-6 text-center">
+                  <td className="px-3 py-2 text-center">
+                    <span className="font-black text-white text-xs">{Math.round(player.elo)}</span>
+                  </td>
+                  <td className="px-3 py-2 text-center">
                     {player.status === 'inactive' ? (
-                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/5 text-white/40 text-[10px] font-black uppercase tracking-widest border border-brand-primary/40">
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/5 text-white/40 text-[9px] font-black uppercase tracking-tight border border-brand-primary/40">
                         Inativo
                       </span>
                     ) : (
-                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-500 text-[10px] font-black uppercase tracking-widest border border-emerald-500/20">
-                        <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 text-[9px] font-black uppercase tracking-tight border border-emerald-500/20">
+                        <div className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse"></div>
                         Ativo
                       </span>
                     )}
                   </td>
-                  <td className="px-8 py-6 text-right">
+                  <td className="px-3 py-2 text-right">
                     <div className="flex items-center justify-end gap-2">
                       {userRole === 'ADMIN' && (
                         <button 
@@ -280,46 +321,67 @@ export const MembersView: React.FC<MembersViewProps> = ({
             <div className="absolute top-0 right-0 w-32 h-32 bg-brand-primary/5 rounded-full -mr-16 -mt-16 transition-transform group-hover:scale-150 duration-700"></div>
             
             <div className="flex justify-between items-start relative z-10">
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 rounded-full bg-brand-secondary flex items-center justify-center text-brand-primary font-black text-lg border-2 border-brand-primary/40">
+              <div className="flex items-center gap-4 flex-1 min-w-0 pr-2">
+                <div className="w-12 h-12 rounded-full bg-brand-secondary flex items-center justify-center text-brand-primary font-black text-lg border-2 border-brand-primary/40 shrink-0">
                   {player.name.charAt(0)}
                 </div>
-                <div>
+                <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <h4 className={`text-xl font-black uppercase tracking-tight leading-none ${player.status === 'inactive' ? 'text-white/40' : 'text-white'}`}>
+                    {userRole === 'ADMIN' && (
+                      <div className="shrink-0">
+                        {getImpactIcon(player.impactLevel)}
+                      </div>
+                    )}
+                    <h4 className={`text-xl font-black uppercase tracking-tight leading-none truncate ${player.status === 'inactive' ? 'text-white/40' : 'text-white'}`}>
                       {player.name}
                     </h4>
                     {player.birthDate && (
-                      <div className="group/birthday relative">
+                      <div className="group/birthday relative shrink-0">
                         <Cake className="w-4 h-4 text-brand-primary animate-pulse" />
-                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1 bg-brand-primary text-black text-[10px] font-black uppercase rounded-lg opacity-0 group-hover/birthday:opacity-100 transition-opacity whitespace-nowrap z-50">
+                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1 bg-brand-primary text-black text-[10px] font-black uppercase rounded-lg opacity-0 group-hover/birthday:opacity-100 transition-opacity whitespace-nowrap z-50 pointer-events-none">
                           Aniversário: {new Date(player.birthDate).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' })}
                         </div>
                       </div>
                     )}
                   </div>
-                  <div className="flex items-center gap-2 mt-2">
-                    <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest ${player.isOfficialSetter ? 'bg-brand-primary/20 text-brand-primary' : 'bg-white/5 text-white/60 border border-brand-primary/40'}`}>
-                      {translateGender(player.gender)}
-                    </span>
-                    <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest ${player.isOfficialSetter ? 'bg-brand-primary/20 text-brand-primary' : 'bg-white/5 text-white/60 border border-brand-primary/40'}`}>
-                      {player.isOfficialSetter ? 'Levantador' : 'Atleta'}
-                    </span>
-                    {player.status === 'inactive' ? (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/5 text-white/40 text-[8px] font-black uppercase tracking-widest border border-brand-primary/40">
-                        Inativo
+                  <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                    {player.birthDate && (
+                      <span className="px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest bg-brand-primary/20 text-brand-primary border border-brand-primary/40 flex items-center gap-1">
+                        <Cake className="w-2 h-2" />
+                        {new Date(player.birthDate).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' })}
                       </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 text-[8px] font-black uppercase tracking-widest border border-emerald-500/20">
-                        Ativo
+                    )}
+                    <span className="px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest bg-white/5 text-white/60 border border-white/10">
+                      {player.gender === 'MALE' ? 'Masc' : player.gender === 'FEMALE' ? 'Fem' : translateGender(player.gender)}
+                    </span>
+                    <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest bg-white/5 ${getPlayerTier(player).color} border border-white/10`}>
+                      {getPlayerTier(player).label}
+                    </span>
+                    {userRole === 'ADMIN' && player.impactLevel && player.impactLevel > 1 && (
+                      <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest ${
+                        player.impactLevel === 3 
+                          ? 'bg-brand-primary text-black border-brand-primary' 
+                          : 'bg-brand-primary/20 text-brand-primary border border-brand-primary/40'
+                      }`}>
+                        {player.impactLevel === 3 ? 'Elite' : 'Médio'}
+                      </span>
+                    )}
+                    {player.isOfficialSetter && (
+                      <span className="px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest bg-brand-primary/20 text-brand-primary border border-brand-primary/40">
+                        Levantador
+                      </span>
+                    )}
+                    {player.status === 'inactive' && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/5 text-white/40 text-[8px] font-black uppercase tracking-widest border border-white/10">
+                        Inativo
                       </span>
                     )}
                   </div>
                 </div>
               </div>
-              <div className="text-right">
+              <div className="text-right shrink-0">
                 <p className="text-2xl font-black text-brand-primary tracking-tighter leading-none">{Math.round(player.elo)}</p>
-                <p className="text-[8px] font-black text-white/40 uppercase tracking-widest mt-1">ELO Rank</p>
+                <p className="text-[8px] font-black text-white/40 uppercase tracking-widest mt-1">ELO</p>
               </div>
             </div>
             

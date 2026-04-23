@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Scale,
   Trophy,
+  Target,
   CreditCard,
   Users,
   Dribbble
@@ -100,6 +101,43 @@ export const RulesView: React.FC = () => {
                 </div>
               </div>
             ))}
+          </div>
+        </section>
+
+        <section className="bg-black backdrop-blur-xl p-10 rounded-[3rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-sm space-y-8 relative overflow-hidden">
+          <div className="flex items-center gap-4 text-brand-primary">
+            <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center border border-brand-primary/40">
+              <Target className="w-6 h-6" />
+            </div>
+            <h3 className="text-2xl font-black uppercase tracking-tight text-white">Níveis de Sócio (Tiers)</h3>
+          </div>
+
+          <div className="grid gap-4">
+            <p className="text-white/40 text-xs font-black uppercase tracking-widest mb-4">Seu nível é definido pelo ELO, volume de jogo e aproveitamento:</p>
+            <div className="grid sm:grid-cols-2 gap-4">
+              {[
+                { label: "Novato", color: "text-white/40", criteria: "Menos de 5 partidas jogadas" },
+                { label: "Bronze", color: "text-orange-500", criteria: "ELO abaixo de 1150" },
+                { label: "Prata", color: "text-slate-300", criteria: "ELO entre 1150 e 1250" },
+                { label: "Ouro", color: "text-yellow-500", criteria: "ELO entre 1250 e 1400" },
+                { label: "Elite", color: "text-brand-primary", criteria: "ELO entre 1400 e 1600" },
+                { label: "Lenda", color: "text-purple-400", criteria: "ELO entre 1600 e 1800" },
+                { label: "Mestre Supremo", color: "text-red-500", criteria: "ELO acima de 1800" }
+              ].map((tier, i) => (
+                <div key={i} className="bg-white/5 p-4 rounded-2xl border border-white/5 flex items-center justify-between group hover:border-brand-primary/20 transition-all">
+                  <div className="space-y-1">
+                    <h4 className={`text-sm font-black uppercase tracking-tight ${tier.color}`}>{tier.label}</h4>
+                    <p className="text-[10px] font-bold text-white/40 uppercase">{tier.criteria}</p>
+                  </div>
+                  <Target className={`w-5 h-5 opacity-20 group-hover:opacity-100 transition-opacity ${tier.color}`} />
+                </div>
+              ))}
+            </div>
+            <div className="mt-6 p-6 bg-brand-primary/5 rounded-[2rem] border border-brand-primary/20">
+              <p className="text-xs text-brand-primary font-bold leading-relaxed">
+                <span className="font-black uppercase tracking-wide">Refinamento:</span> Sócios Prata, Ouro e Elite podem receber o sufixo <span className="text-white">"Top"</span>, <span className="text-white">"Pro"</span> ou <span className="text-white">"Star"</span> se mantiverem um aproveitamento (Win Rate) acima da média do grupo e alta consistência.
+              </p>
+            </div>
           </div>
         </section>
 

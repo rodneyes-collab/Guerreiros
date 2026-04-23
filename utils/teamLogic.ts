@@ -301,12 +301,23 @@ export function generateTeams(attendanceList: Player[]): GenerationResult {
   });
 
   // 5. Otimização por Trocas (Refinamento de Equilíbrio)
-  const calculateTotalElo = (setter: Player | null, players: Player[]) => {
-    return players.reduce((sum, p) => sum + p.elo, 0) + (setter?.elo || 0);
+  const getImpactBonus = (level?: number) => {
+    if (level === 3) return 200; // Elite / Power
+    if (level === 2) return 75;  // Médio / Técnico
+    return 0;                    // Base
   };
 
-  let currentEloA = calculateTotalElo(setterA, playersA);
-  let currentEloB = calculateTotalElo(setterB, playersB);
+  const calculateEffectiveElo = (player: Player | null) => {
+    if (!player) return 0;
+    return (player.elo || 1200) + getImpactBonus(player.impactLevel);
+  };
+
+  const calculateTotalEffectiveElo = (setter: Player | null, players: Player[]) => {
+    return players.reduce((sum, p) => sum + calculateEffectiveElo(p), 0) + calculateEffectiveElo(setter);
+  };
+
+  let currentEloA = calculateTotalEffectiveElo(setterA, playersA);
+  let currentEloB = calculateTotalEffectiveElo(setterB, playersB);
   let improved = true;
   const swaps: { playerA: string; playerB: string }[] = [];
 
@@ -324,8 +335,8 @@ export function generateTeams(attendanceList: Player[]): GenerationResult {
         const pB = playersB[j];
 
         if (pA.gender === pB.gender) {
-          const newEloA = currentEloA - pA.elo + pB.elo;
-          const newEloB = currentEloB - pB.elo + pA.elo;
+          const newEloA = currentEloA - calculateEffectiveElo(pA) + calculateEffectiveElo(pB);
+          const newEloB = currentEloB - calculateEffectiveElo(pB) + calculateEffectiveElo(pA);
           const newDiff = Math.abs(newEloA - newEloB);
 
           if (newDiff < bestDiff) {
@@ -342,9 +353,14 @@ export function generateTeams(attendanceList: Player[]): GenerationResult {
     }
   }
 
+  // Calculate REAL ELO for display purposes
+  const realElo = (setter: Player | null, players: Player[]) => {
+    return players.reduce((sum, p) => sum + (p.elo || 1200), 0) + (setter?.elo || 0);
+  };
+
   return {
-    teamA: { setter: setterA, players: playersA, totalElo: currentEloA },
-    teamB: { setter: setterB, players: playersB, totalElo: currentEloB },
+    teamA: { setter: setterA, players: playersA, totalElo: realElo(setterA, playersA) },
+    teamB: { setter: setterB, players: playersB, totalElo: realElo(setterB, playersB) },
     swaps,
     remainingPlayers
   };

@@ -59,6 +59,7 @@ import { Logo } from './src/components/Logo';
 import { clearOldStorage } from './services/geminiService';
 import { useBirthdays } from './src/hooks/useBirthdays';
 import { useWelcomeCelebration } from './src/hooks/useWelcomeCelebration';
+import { useAdminAutomations } from './src/hooks/useAdminAutomations';
 import { BirthdayBanner } from './src/components/BirthdayBanner';
 import { WelcomeBanner } from './src/components/WelcomeBanner';
 import { NotificationCenter } from './src/components/NotificationCenter';
@@ -69,6 +70,7 @@ const App: React.FC = () => {
   useFirestoreSync();
   useDailyReset();
   usePushNotifications();
+  useAdminAutomations();
   const { handleAnnounce } = useNarration();
 
   // --- Store State ---
@@ -243,7 +245,8 @@ const App: React.FC = () => {
     joinedAt: getFirestoreDateKey(),
     birthDate: '',
     email: '',
-    status: 'active'
+    status: 'active',
+    impactLevel: 1
   });
 
   // Sync form data when editing player changes
@@ -259,7 +262,8 @@ const App: React.FC = () => {
         joinedAt: editingPlayer.joinedAt || getFirestoreDateKey(),
         birthDate: editingPlayer.birthDate || '',
         email: editingPlayer.email || '',
-        status: editingPlayer.status || 'active'
+        status: editingPlayer.status || 'active',
+        impactLevel: editingPlayer.impactLevel || 1
       });
     } else {
       setFormData({
@@ -272,7 +276,8 @@ const App: React.FC = () => {
         joinedAt: getFirestoreDateKey(),
         birthDate: '',
         email: '',
-        status: 'active'
+        status: 'active',
+        impactLevel: 1
       });
     }
   }, [editingPlayer]);
@@ -709,7 +714,7 @@ const App: React.FC = () => {
         </nav>
 
         {/* Main Content */}
-        <main className="max-w-7xl mx-auto p-6 sm:p-12">
+        <main className="max-w-[1400px] mx-auto p-4 sm:p-8 lg:p-10">
           {viewMode === 'intentions' && (
             <IntentionsView 
               userRole={userRole}
@@ -855,6 +860,9 @@ const App: React.FC = () => {
               fixDatabaseAnomalies={fixDatabaseAnomalies}
               deleteTournament={deleteTournament}
               showConfirmModal={showConfirmModal}
+              setEditingPlayer={setEditingPlayer}
+              setIsFormOpen={setIsFormOpen}
+              savePlayer={savePlayer}
             />
           )}
         </main>
@@ -869,6 +877,7 @@ const App: React.FC = () => {
           editingPlayer={editingPlayer}
           formData={formData}
           setFormData={setFormData}
+          isAdmin={userRole === 'ADMIN'}
         />
 
         <PaymentForm

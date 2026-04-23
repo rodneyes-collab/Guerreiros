@@ -30,12 +30,16 @@ export interface Player {
   dailyResults?: ('V' | 'D')[]; // Sequência de vitórias/derrotas no dia
   status?: string;
   createdAt?: number;
-  reads?: number; // Total de leituras do sócio
-  writes?: number; // Total de escritas do sócio
-  accesses?: number; // Total de acessos/sessões do sócio
+  reads?: number; // USO DIÁRIO: sessões de leitura
+  writes?: number; // USO DIÁRIO: sessões de escrita
+  totalReads?: number; // USO TOTAL/MENSAL
+  totalWrites?: number; // USO TOTAL/MENSAL
+  accesses?: number; // TOTAL de acessos/sessões do sócio
+  dailyAccesses?: number; // ACESSOS DIÁRIOS do sócio
   lastReadUpdate?: string; // Data da última atualização de leitura
   fcmToken?: string; // Token para Push Notifications
   hasSeenWelcome?: boolean; // Se o sócio já viu a mensagem de boas-vindas
+  impactLevel?: 1 | 2 | 3; // 1: Base, 2: Medium/Technique, 3: Elite/Power
 }
 
 export interface AppNotification {
@@ -199,6 +203,9 @@ export interface Tournament {
 export interface UsageStats {
   reads: number;
   writes: number;
-  aiCalls?: number; // Adicionado
+  aiCalls?: number;
+  accesses?: number;
+  officialValue?: number;
+  lastGcpSync?: string;
   lastUpdate: string;
 }

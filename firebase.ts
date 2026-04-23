@@ -14,7 +14,7 @@ import {
   signOut,
   User 
 } from 'firebase/auth';
-import { getFirestore, enableIndexedDbPersistence, collection, doc, updateDoc, onSnapshot, setDoc, deleteDoc, getDoc, getDocFromServer, getDocs, writeBatch, increment, query, where, orderBy, arrayUnion, addDoc, serverTimestamp, collectionGroup } from 'firebase/firestore';
+import { getFirestore, enableIndexedDbPersistence, collection, doc, updateDoc, onSnapshot, setDoc, deleteDoc, getDoc, getDocFromServer, getDocs, writeBatch, increment, query, where, orderBy, arrayUnion, addDoc, serverTimestamp, collectionGroup, limit } from 'firebase/firestore';
 import { getMessaging, getToken, onMessage } from 'firebase/messaging';
 import firebaseConfig from './firebase-applet-config.json';
 
@@ -109,15 +109,36 @@ export const trackAccess = async () => {
   const today = getFirestoreDateKey();
   const playerRef = doc(db, 'players', currentPlayerId);
   try {
-    await updateDoc(playerRef, {
-      accesses: increment(1),
-      lastReadUpdate: today
+    const playerSnap = await getDoc(playerRef);
+    const playerData = playerSnap.exists() ? playerSnap.data() : null;
+    const isNewDay = !playerData || !playerData.lastReadUpdate || playerData.lastReadUpdate < today;
+
+    if (isNewDay) {
+      await updateDoc(playerRef, {
+        accesses: increment(1),
+        dailyAccesses: 1,
+        lastReadUpdate: today
+      });
+    } else {
+      await updateDoc(playerRef, {
+        accesses: increment(1),
+        dailyAccesses: increment(1),
+        lastReadUpdate: today
+      });
+    }
+
+    // Incrementar o contador global de acessos também
+    const usageRef = doc(db, 'metadata', 'usage');
+    await updateDoc(usageRef, {
+      accesses: increment(1)
+    }).catch(() => {
+      setDoc(usageRef, { accesses: 1 }, { merge: true });
     });
-    console.log(`[Usage] Acesso registrado para o sócio: ${currentPlayerId}`);
+
+    console.log(`[Usage] Acesso registrado para o sócio: ${currentPlayerId} (Dia: ${isNewDay ? 1 : 'inc'})`);
   } catch (e) {
-    // Se falhar porque o campo não existe ou doc não existe, tenta setDoc
     try {
-      await setDoc(playerRef, { accesses: 1, lastReadUpdate: today }, { merge: true });
+      await setDoc(playerRef, { accesses: 1, dailyAccesses: 1, lastReadUpdate: today }, { merge: true });
     } catch (err) {
       console.warn('Erro ao rastrear acesso:', err);
     }
@@ -189,6 +210,8 @@ export const trackUsage = async (reads: number, writes: number) => {
           await updateDoc(playerRef, {
             reads: increment(readsToSync),
             writes: increment(writesToSync),
+            totalReads: increment(readsToSync),
+            totalWrites: increment(writesToSync),
             lastReadUpdate: today
           });
         } else {
@@ -200,12 +223,16 @@ export const trackUsage = async (reads: number, writes: number) => {
             await setDoc(playerRef, {
               reads: readsToSync,
               writes: writesToSync,
+              totalReads: increment(readsToSync),
+              totalWrites: increment(writesToSync),
               lastReadUpdate: today
             }, { merge: true });
           } else {
             await updateDoc(playerRef, {
               reads: increment(readsToSync),
               writes: increment(writesToSync),
+              totalReads: increment(readsToSync),
+              totalWrites: increment(writesToSync),
               lastReadUpdate: today
             });
           }
@@ -233,11 +260,25 @@ export const trackUsage = async (reads: number, writes: number) => {
       const shouldReset = !currentData || (currentData.lastUpdate < today);
 
       if (shouldReset) {
-        console.log(`[Usage] Novo dia detectado (${today}). Resetando contadores.`);
+        console.log(`[Usage] Novo dia detectado (${today}). Arquivando e resetando contadores.`);
+        // Arquivar dados do dia anterior antes de resetar
+        if (currentData && currentData.lastUpdate) {
+          try {
+            const historyRef = doc(db, 'usage_history', currentData.lastUpdate);
+            await setDoc(historyRef, {
+              ...currentData,
+              archivedAt: serverTimestamp()
+            }, { merge: true });
+          } catch (err) {
+            console.warn('Erro ao arquivar histórico de uso:', err);
+          }
+        }
+
         await setDoc(usageRef, {
           reads: readsToSync,
           writes: writesToSync,
           aiCalls: 0,
+          accesses: 0,
           lastUpdate: today
         }, { merge: true });
       } else if (currentData.lastUpdate === today) {
@@ -341,6 +382,7 @@ export {
   query, 
   where, 
   orderBy, 
+  limit,
   arrayUnion,
   addDoc,
   serverTimestamp,

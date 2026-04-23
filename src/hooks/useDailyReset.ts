@@ -49,8 +49,26 @@ export const useDailyReset = () => {
         const reset = (p: Player) => ({ ...p, dailyMatches: 0, dailyWins: 0, dailyLosses: 0, dailyEloGain: 0, dailyResults: [], playedLastMatch: false });
         
         try {
+          const usageRef = doc(db, 'metadata', 'usage');
+          const { getDoc } = await import('../../firebase');
+          const usageSnap = await getDoc(usageRef);
+          
           const batch = writeBatch(db);
           let writeCount = 0;
+          
+          // Salvar histórico do dia anterior antes de resetar
+          if (usageSnap.exists() && usageSnap.data().lastUpdate) {
+            const lastUpdate = usageSnap.data().lastUpdate;
+            if (lastUpdate < today) {
+              const historyRef = doc(db, 'usage_history', lastUpdate);
+              batch.set(historyRef, { 
+                ...usageSnap.data(),
+                lastUpdate: lastUpdate,
+                snapshotAt: Date.now() 
+              }, { merge: true });
+              writeCount++;
+            }
+          }
           
           players.forEach(p => {
             if (!p.id) return;

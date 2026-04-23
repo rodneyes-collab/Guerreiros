@@ -1,5 +1,5 @@
 
-import { GoogleGenAI, Modality } from "@google/genai";
+import { GoogleGenAI, Modality, ThinkingLevel } from "@google/genai";
 import { Team, Player, GenerationResult, Match } from "../types";
 
 // Cache persistente para evitar chamadas repetidas à IA com os mesmos dados
@@ -202,6 +202,7 @@ export const analyzeMatch = async (teamA: Team, teamB: Team): Promise<string> =>
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: prompt,
+      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
     });
     const result = response.text || "Análise indisponível.";
     analysisCache[cacheKey] = result;
@@ -262,23 +263,24 @@ export const verifyRules = async (
   const prompt = `Auditoria Técnica (Guerreiros Volleyball):
     
     DADOS ATUAIS:
-    - Presentes: ${attendanceList.map(p => `${p.name}(G:${p.gender === 'MALE' ? 'M' : 'F'}, ELO:${p.elo}, Jogos:${p.dailyMatches}, Ultima:${p.playedLastMatch ? 'Sim' : 'Não'}, Lev:${p.isOfficialSetter ? 'Sim' : 'Não'})`).join(', ')}
+    - Presentes: ${attendanceList.map(p => `${p.name}(G:${p.gender === 'MALE' ? 'M' : 'F'}, ELO:${p.elo}, Impacto:${p.impactLevel || 1}, Jogos:${p.dailyMatches}, Ultima:${p.playedLastMatch ? 'Sim' : 'Não'}, Lev:${p.isOfficialSetter ? 'Sim' : 'Não'})`).join(', ')}
     - Time A: ${result.teamA.setter?.name || 'Sem Lev'}, ${result.teamA.players.map(p => p.name).join(', ')} (Total ELO:${result.teamA.totalElo})
     - Time B: ${result.teamB.setter?.name || 'Sem Lev'}, ${result.teamB.players.map(p => p.name).join(', ')} (Total ELO:${result.teamB.totalElo})
-    - Espera: ${result.remainingPlayers.map(p => `${p.name}(Jogos:${p.dailyMatches})`).join(', ')}
+    - Espera: ${result.remainingPlayers.map(p => `${p.name}(Impacto:${p.impactLevel || 1}, Jogos:${p.dailyMatches})`).join(', ')}
     - ${lastMatchInfo}
-    - Trocas de Refinamento ELO: ${swapsInfo}
+    - Trocas de Refinamento (Impacto + ELO): ${swapsInfo}
 
     REGRAS DO CLUBE:
     1. Prioridade para quem tem MENOS jogos no dia.
     2. Critério de desempate: Quem NÃO jogou a última partida.
     3. Levantadores: Devem ser equilibrados.
-    4. Waitlist Weight: Jogadores que ficam 2 ou mais partidas seguidas fora ganham prioridade máxima para entrar.
+    4. Nível de Impacto (Novo): O sistema usa "Pontos de Pressão" ocultos (Elite:+200, Médio:+75, Base:0) somados ao ELO para equilibrar atacantes e suporte.
+    5. Waitlist Weight: Jogadores que ficam 2 ou mais partidas seguidas fora ganham prioridade máxima para entrar.
     
     TAREFA:
-    1. Levantadores: Compare os 2 escolhidos com os outros levantadores oficiais que ficaram de fora. Cite nomes e número de jogos. Justifique a escolha.
-    2. Equilíbrio e Fila (Waitlist): Compare os jogadores de linha escolhidos com os que ficaram na espera. Cite nomes, número de jogos e quantas partidas seguidas estão fora (consecutiveBenched). Explique por que estes foram escolhidos seguindo as regras de prioridade (menos jogos) e o peso de espera (quem está há mais tempo fora tem prioridade máxima).
-    3. Rodízio (Refinamento): Explique as trocas de refinamento realizadas para equilibrar o ELO. Compare os jogadores envolvidos e como isso equalizou os times tecnicamente.
+    1. Levantadores: Compare os 2 escolhidos.
+    2. Equilíbrio e Fila (Waitlist): Justifique as escolhas.
+    3. Rodízio e Impacto: Explique como os "Pontos de Pressão" ajudaram a equilibrar jogadores de alto impacto (Elite) entre as equipes para evitar que um time fique "pesado" demais ofensivamente.
 
     ESTILO: Respostas equilibradas, técnicas e diretas. Use emojis. Max 200 palavras.`;
 
@@ -286,6 +288,7 @@ export const verifyRules = async (
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: prompt,
+      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
     });
     const auditResult = response.text || "Auditoria concluída. Escalação segue os critérios de rodízio e equilíbrio do clube.";
     analysisCache[cacheKey] = auditResult;
@@ -304,19 +307,25 @@ export const generateDailySummaryNarration = async (stats: {
   bestSetter?: string; 
   dailyKing?: string;
   matchesCount?: number;
+  rankingChanges?: string[];
 }): Promise<string> => {
-  const cacheKey = `summary_v3_${stats.mvp}_${stats.bestSetter}_${stats.dailyKing}_${stats.matchesCount}`;
+  const cacheKey = `summary_v4_${stats.mvp}_${stats.bestSetter}_${stats.dailyKing}_${stats.matchesCount}_${stats.rankingChanges?.join(',')}`;
   if (analysisCache[cacheKey]) return analysisCache[cacheKey];
 
   const ai = getAI();
+  const rankingInfo = stats.rankingChanges && stats.rankingChanges.length > 0
+    ? `\n- Mudanças no Ranking Geral: ${stats.rankingChanges.join(', ')}`
+    : '';
+
   const prompt = `Você é um locutor esportivo brasileiro carismático e empolgado.
     Resumo do Dia (Guerreiros Volleyball):
     - Partidas: ${stats.matchesCount || 0}
     - MVP: ${stats.mvp || 'N/A'}
     - Melhor Levantador: ${stats.bestSetter || 'N/A'}
-    - Rei do Dia (Maior Ganho ELO): ${stats.dailyKing || 'N/A'}
+    - Rei do Dia (Maior Ganho ELO): ${stats.dailyKing || 'N/A'}${rankingInfo}
     
-    TAREFA: Gere um roteiro de locução curto (max 3 frases) que soe NATURAL e FLUIDO, como se estivesse comentando ao vivo. 
+    TAREFA: Gere um roteiro de locução curto (max 4 frases) que soe NATURAL e FLUIDO, como se estivesse comentando ao vivo. 
+    Mencione as vitórias e derrotas de quem subiu no ranking se as informações estiverem presentes.
     Use pontuação (vírgulas e pontos) para criar pausas naturais. Use gírias leves de vôlei se apropriado. 
     NÃO faça listas. NÃO dê opções. Apenas o texto da narração falada.
     Use "Equipe" em vez de "Time" para evitar erros de pronúncia.`;
@@ -325,6 +334,7 @@ export const generateDailySummaryNarration = async (stats: {
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: prompt,
+      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
     });
     const result = response.text || "Racha épico hoje! Parabéns a todos os guerreiros!";
     analysisCache[cacheKey] = result;
@@ -361,7 +371,7 @@ export const generateTeamAnnouncementAudio = async (teamA: Team, teamB: Team): P
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash-preview-tts",
+      model: "gemini-3.1-flash-tts-preview",
       contents: [{ parts: [{ text: prompt }] }],
       config: {
         responseModalities: [Modality.AUDIO],
@@ -408,15 +418,16 @@ export const generateDailySummaryAudio = async (stats: {
     - Melhor Levantador: ${stats.bestSetter || 'N/A'}
     - Rei do Dia (Maior Ganho ELO): ${stats.dailyKing || 'N/A'}${rankingInfo}
     
-    TAREFA: Narre os resultados acima de forma NATURAL, FLUIDA e RÁPIDA. 
+    TAREFA: Narre os resultados acima de forma NATURAL e FLUIDA.
+    MUITO IMPORTANTE: Você DEVE citar o NOME de todos os jogadores mencionados (MVP, Melhor Levantador e Rei do Dia) de forma clara.
     Use entonação de rádio esportivo. Não faça listas. 
-    Se houver mudanças no ranking, cite-as com empolgação (ex: "E atenção que o ranking geral pegou fogo com Fulano subindo de posição!").
+    Se houver mudanças no ranking, cite-as com empolgação, mencionando também as vitórias e derrotas que o jogador teve no dia para subir de posição.
     Fale de forma direta e enérgica.
     Use "Equipe" em vez de "Time".`;
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash-preview-tts",
+      model: "gemini-3.1-flash-tts-preview",
       contents: [{ parts: [{ text: prompt }] }],
       config: {
         responseModalities: [Modality.AUDIO],
@@ -457,7 +468,7 @@ export const getNarrationAudio = async (text: string): Promise<string | null> =>
     const styledText = `Com empolgação de locutor esportivo: ${text}`;
     
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash-preview-tts",
+      model: "gemini-3.1-flash-tts-preview",
       contents: [{ parts: [{ text: styledText }] }],
       config: {
         responseModalities: [Modality.AUDIO],
@@ -604,12 +615,61 @@ export const detectAnomalies = async (data: { players: Player[], matches: any[],
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: prompt,
+      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
     });
     return response.text || "Não foi possível realizar a varredura de anomalias no momento.";
   } catch (error: any) {
     console.error("Erro na detecção de anomalias:", error);
     if (error?.message?.includes('429')) return "Limite de requisições da IA atingido. Tente novamente mais tarde.";
     return "Falha técnica ao processar a varredura de anomalias.";
+  }
+};
+
+/**
+ * Analyzes billing costs and provides optimization suggestions using AI.
+ */
+export const analyzeBillingCosts = async (billingData: {
+  actual: number;
+  forecast: number;
+  services: { name: string, cost: number, savings?: number }[];
+  usage: any;
+}): Promise<string> => {
+  const ai = getAI();
+  
+  const prompt = `Você é um Consultor Sênior de FinOps e Especialista em Google Cloud. 
+    Analise o faturamento atual do aplicativo Guerreiros Volleyball e sugira estratégias de otimização de custos.
+
+    DADOS FINANCEIROS (1-17 Abr):
+    - Total Acumulado: R$ ${billingData.actual.toFixed(2)}
+    - Previsão Mensal: R$ ${billingData.forecast.toFixed(2)}
+    
+    DETALHE POR SERVIÇO:
+    ${billingData.services.map(s => `- ${s.name}: R$ ${s.cost.toFixed(2)}${s.savings ? ` (Economia: -R$ ${s.savings.toFixed(2)})` : ''}`).join('\n')}
+
+    MONITORAMENTO DE USO INTERNO:
+    - Leituras Firestore: ${billingData.usage.reads}
+    - Escritas Firestore: ${billingData.usage.writes}
+    - Chamadas de IA: ${billingData.usage.aiCalls}
+
+    MISSÃO:
+    1. Explique por que o Google Cloud Console e o Firebase Console mostram valores diferentes (Firebase é apenas uma sub-parte do faturamento total do Google Cloud).
+    2. Identifique o serviço "vilão" dos custos (o que está gastando mais).
+    3. Para o Cloud Run: Sugira se a configuração de "Instância Mínima = 0" e "CPU apenas durante requisição" faz sentido.
+    4. Para o Firestore: Sugira se o volume de leituras está alto para o número de sócios e sugira cache.
+    5. Para o Gemini: Explique as cotas gratuitas e se o uso atual justifica o custo.
+
+    ESTILO: Tom executivo, consultivo, direto e útil. Use Markdown e emojis. Max 250 palavras.`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: prompt,
+      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+    });
+    return response.text || "O consultor de custos está ocupado no momento. Tente novamente mais tarde.";
+  } catch (error: any) {
+    console.error("Erro na análise de custos:", error);
+    return "Não foi possível conectar com o Consultor de IA. Verifique sua conexão ou cota de IA.";
   }
 };
 
@@ -628,6 +688,7 @@ export const generateBirthdayMessage = async (playerName: string): Promise<strin
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: prompt,
+      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
     });
 
     return response.text || `Parabéns, ${playerName}! Que seu dia seja repleto de aces e vitórias dentro e fora de quadra! 🏐🎉`;

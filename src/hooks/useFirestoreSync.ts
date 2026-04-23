@@ -206,9 +206,9 @@ export const useFirestoreSync = () => {
         console.error('Firestore Sync Error (Attendance):', err);
       });
 
-      // Matches Sync (Limit to last 60 days)
-      const sixtyDaysAgo = Date.now() - (60 * 24 * 60 * 60 * 1000);
-      const matchesQuery = query(collection(db, 'matches'), where('timestamp', '>=', sixtyDaysAgo));
+      // Matches Sync (Limit to last 14 days to save Firestore reads)
+      const fourteenDaysAgo = Date.now() - (14 * 24 * 60 * 60 * 1000);
+      const matchesQuery = query(collection(db, 'matches'), where('timestamp', '>=', fourteenDaysAgo));
       unsubscribeMatches = onSnapshot(matchesQuery, (snapshot) => {
         const list: Match[] = [];
         snapshot.forEach((doc) => list.push({ ...doc.data(), id: doc.id } as Match));
