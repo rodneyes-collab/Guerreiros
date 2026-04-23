@@ -26,7 +26,18 @@ export const playerSchema = z.object({
   eloHistory: z.array(z.object({
     date: z.string(),
     elo: z.number()
-  })).optional()
+  })).optional(),
+  impactLevel: z.number().int().min(1).max(3).optional().default(1),
+  uid: z.string().optional(),
+  fcmToken: z.string().optional(),
+  hasSeenWelcome: z.boolean().optional(),
+  reads: z.number().optional(),
+  writes: z.number().optional(),
+  totalReads: z.number().optional(),
+  totalWrites: z.number().optional(),
+  accesses: z.number().optional(),
+  dailyAccesses: z.number().optional(),
+  lastReadUpdate: z.string().optional()
 });
 
 export const matchSchema = z.object({

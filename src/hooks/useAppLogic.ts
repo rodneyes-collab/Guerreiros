@@ -1212,6 +1212,7 @@ export const useAppLogic = () => {
               if (typeof p.dailyWins !== 'number') { updates.dailyWins = 0; needsFix = true; }
               if (typeof p.dailyLosses !== 'number') { updates.dailyLosses = 0; needsFix = true; }
               if (typeof p.dailyEloGain !== 'number') { updates.dailyEloGain = 0; needsFix = true; }
+              if (typeof p.impactLevel !== 'number') { updates.impactLevel = 1; needsFix = true; }
               
               // Fix gender if missing
               if (!p.gender || (p.gender !== Gender.MALE && p.gender !== Gender.FEMALE)) {
@@ -1421,6 +1422,7 @@ export const useAppLogic = () => {
         dailyWins: playerData.dailyWins || 0,
         dailyLosses: playerData.dailyLosses || 0,
         dailyEloGain: playerData.dailyEloGain || 0,
+        impactLevel: playerData.impactLevel || 1,
         status: playerData.status || 'active',
         createdAt: playerData.createdAt || Date.now()
       };
