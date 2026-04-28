@@ -56,7 +56,7 @@ import {
   Line,
   Legend
 } from 'recharts';
-import { db, doc, updateDoc, setDoc, writeBatch, collection, serverTimestamp, getDocs, query, where, orderBy, limit, getFirestoreDateKey } from '../firebase';
+import { db, doc, updateDoc, setDoc, deleteDoc, onSnapshot, writeBatch, collection, serverTimestamp, getDocs, query, where, orderBy, limit, getFirestoreDateKey } from '../firebase';
 import firebaseConfig from '../firebase-applet-config.json';
 import { Player } from '../types';
 import Markdown from 'react-markdown';
@@ -96,7 +96,7 @@ interface AdminViewProps {
   savePlayer: (player: Player) => Promise<void>;
 }
 
-type AdminTab = 'dashboard' | 'members' | 'maintenance' | 'tournaments' | 'system';
+type AdminTab = 'dashboard' | 'members' | 'maintenance' | 'tournaments' | 'system' | 'notifications';
 
 export const AdminView: React.FC<AdminViewProps> = ({
   resetDailyStats,
@@ -159,6 +159,29 @@ export const AdminView: React.FC<AdminViewProps> = ({
   const [lastSyncBreakdown, setLastSyncBreakdown] = useState<any>(null);
   const [memberSearch, setMemberSearch] = useState('');
   const [levelSuggestions, setLevelSuggestions] = useState<LevelSuggestion[]>([]);
+  const [allNotifications, setAllNotifications] = useState<any[]>([]);
+  const [loadingNotifications, setLoadingNotifications] = useState(true);
+
+  useEffect(() => {
+    if (activeTab !== 'notifications') return;
+    setLoadingNotifications(true);
+    const q = query(
+      collection(db, 'notifications'), 
+      orderBy('createdAt', 'desc'),
+      limit(100)
+    );
+    
+    const unsub = onSnapshot(q, (snap) => {
+      const notifs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setAllNotifications(notifs);
+      setLoadingNotifications(false);
+    }, (err) => {
+      console.error("error fetching all notifications", err);
+      setLoadingNotifications(false);
+    });
+    
+    return () => unsub();
+  }, [activeTab]);
 
   useEffect(() => {
     if (players.length > 0) {
@@ -323,18 +346,22 @@ export const AdminView: React.FC<AdminViewProps> = ({
       const lastSyncTime = lastSyncStr ? new Date(lastSyncStr).getTime() : 0;
       const hoursSinceSync = (now.getTime() - lastSyncTime) / (1000 * 60 * 60);
       
+      // Auto-sync today se não existe - DESABILITADO para economizar custos de Cloud Run
+      // O usuário pode sincronizar manualmente pelo botão se quiser ver.
+      /*
       if ((isNeverSyncedToday || hoursSinceSync > 4) && !isFetchingGCP && !isSyncingBilling) {
         fetchGCPData();
       }
 
       // NOVIDADE: Sincronização automática do HISTÓRICO (Últimos 7 dias) 
-      // Acontece apenas 1 vez por dia ao abrir o Dashboard
+      // Acontece apenas 1 vez por dia ao abrir o Dashboard - DESABILITADO para economia
       const lastHistoricalSync = localStorage.getItem('last_historical_sync');
       if (lastHistoricalSync !== todayStr && !isSyncingBilling && !isFetchingGCP) {
         syncHistoricalGCPData().then(() => {
           localStorage.setItem('last_historical_sync', todayStr);
         });
       }
+      */
     }
   }, [activeTab, userRole, usageStats.lastGcpSync]);
 
@@ -528,6 +555,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'members', label: 'Sócios & Acesso', icon: UsersIcon },
     { id: 'maintenance', label: 'Manutenção', icon: Database },
+    { id: 'notifications', label: 'Notificações', icon: MessageSquare },
     { id: 'tournaments', label: 'Torneios', icon: Trophy },
     { id: 'system', label: 'Sistema', icon: Settings },
   ];
@@ -1645,6 +1673,87 @@ export const AdminView: React.FC<AdminViewProps> = ({
               </div>
             )}
 
+            {activeTab === 'notifications' && (
+              <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-sm text-white space-y-8">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                  <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 bg-white/5 rounded-xl flex items-center justify-center border border-brand-primary/40">
+                      <MessageSquare className="w-5 h-5 text-brand-primary" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-black uppercase tracking-tight text-white">Monitor de Notificações</h3>
+                      <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Acompanhe todas as mensagens enviadas aos sócios</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  {loadingNotifications ? (
+                    <div className="flex justify-center py-20">
+                      <RefreshCw className="w-8 h-8 text-brand-primary animate-spin" />
+                    </div>
+                  ) : allNotifications.length === 0 ? (
+                    <div className="text-center py-20 bg-white/5 rounded-3xl border border-white/5">
+                      <p className="text-sm font-black text-white/40 uppercase">Nenhuma notificação encontrada no sistema.</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 gap-4">
+                      {allNotifications.map(notif => {
+                        const player = players.find(p => p.id === notif.playerId);
+                        return (
+                          <div key={notif.id} className="bg-white/5 border border-white/5 rounded-2xl p-6 hover:border-brand-primary/20 transition-all">
+                            <div className="flex justify-between items-start gap-4">
+                              <div className="space-y-2">
+                                <div className="flex items-center gap-2">
+                                  <span className="px-2 py-0.5 bg-brand-primary/10 text-brand-primary text-[8px] font-black rounded uppercase border border-brand-primary/20">
+                                    {notif.type || 'SISTEMA'}
+                                  </span>
+                                  <span className="text-[10px] font-black text-white uppercase tracking-tight">
+                                    Para: <span className="text-brand-primary">{player?.name || 'Sócio Desconhecido'}</span>
+                                  </span>
+                                </div>
+                                <h4 className="text-sm font-black text-white uppercase tracking-tight">{notif.title}</h4>
+                                <div className="text-xs text-white/60 leading-relaxed max-w-2xl">
+                                  <Markdown>{notif.message}</Markdown>
+                                </div>
+                                <div className="flex items-center gap-4 pt-2">
+                                  <span className="text-[9px] text-white/30 font-bold uppercase">
+                                    Enviada: {new Date(notif.createdAt).toLocaleString('pt-BR')}
+                                  </span>
+                                  {notif.read ? (
+                                    <span className="flex items-center gap-1 text-[9px] text-emerald-500 font-bold uppercase">
+                                      <Check className="w-3 h-3" /> Lida
+                                    </span>
+                                  ) : (
+                                    <span className="flex items-center gap-1 text-[9px] text-white/20 font-bold uppercase">
+                                      <Clock className="w-3 h-3" /> Pendente
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <button 
+                                onClick={async () => {
+                                  try {
+                                    await deleteDoc(doc(db, 'notifications', notif.id));
+                                    showNotification('Notificação removida.', 'success');
+                                  } catch (e) {
+                                    showNotification('Erro ao remover.', 'error');
+                                  }
+                                }}
+                                className="p-2 text-white/20 hover:text-rose-500 transition-colors"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </section>
+            )}
+
             {activeTab === 'tournaments' && (
               <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary space-y-8">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
@@ -1762,6 +1871,46 @@ export const AdminView: React.FC<AdminViewProps> = ({
                         }`}
                       >
                         {systemMetadata.showEliteQueue ? 'Visível' : 'Oculto'}
+                      </button>
+                    </div>
+                  </div>
+                </section>
+
+                {/* Automations Config */}
+                <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary space-y-8">
+                  <div className="flex items-center gap-4 text-white">
+                    <div className="w-10 h-10 bg-white/5 rounded-xl flex items-center justify-center border border-brand-primary/40">
+                      <Settings className="w-5 h-5 text-brand-primary" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-black uppercase tracking-tight text-white">Automações Diárias</h3>
+                      <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Serviço de Background (CRON)</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="flex items-center justify-between p-6 bg-white/5 border border-white/5 rounded-2xl">
+                      <div>
+                        <h4 className="font-black text-white uppercase text-[10px] tracking-widest">Mensagens de Aniversário</h4>
+                        <p className="text-white/30 text-[9px] font-medium">Verificação todo dia as 09:00 AM</p>
+                      </div>
+                      <button 
+                        onClick={() => {
+                          const newValue = systemMetadata.enableAutoBirthdays === false ? true : false;
+                          updateSystemMetadata({ enableAutoBirthdays: newValue });
+                          showNotification(`Mensagens de aniversário ${newValue ? 'Habilitadas' : 'Desabilitadas'}.`, 'info');
+                        }}
+                        className={`min-w-[80px] px-4 py-2 rounded-xl font-black uppercase tracking-widest text-[9px] transition-all flex justify-center items-center gap-2 ${
+                          systemMetadata.enableAutoBirthdays !== false
+                            ? 'bg-brand-primary text-brand-secondary shadow-[0_0_15px_rgba(255,215,0,0.3)]' 
+                            : 'bg-white/5 text-white/40 border border-brand-primary/40 hover:bg-white/10'
+                        }`}
+                      >
+                        {systemMetadata.enableAutoBirthdays !== false ? (
+                          <><Check className="w-3.5 h-3.5" /> ON</>
+                        ) : (
+                          <><X className="w-3.5 h-3.5" /> OFF</>
+                        )}
                       </button>
                     </div>
                   </div>

@@ -199,6 +199,7 @@ export const PlayerForm: React.FC<PlayerFormProps> = ({
               className="w-full px-6 py-4 bg-white/5 border border-brand-primary/40 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none appearance-none"
             >
               <option value="active" className="bg-brand-secondary text-white">Ativo</option>
+              <option value="waitlist" className="bg-brand-secondary text-white">Lista de Espera</option>
               <option value="inactive" className="bg-brand-secondary text-white">Inativo</option>
             </select>
           </div>

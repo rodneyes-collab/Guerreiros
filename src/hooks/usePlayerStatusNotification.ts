@@ -49,8 +49,11 @@ export const usePlayerStatusNotification = (
               console.log('Token FCM obtido:', token);
               // Salvar o token no perfil do jogador no Firestore
               const playerRef = doc(db, 'players', currentPlayer.id);
-              await updateDoc(playerRef, { fcmToken: token });
-              console.log('FCM Token salvo com sucesso no Firestore para o jogador:', currentPlayer.id);
+              await updateDoc(playerRef, { 
+                fcmToken: token,
+                pushEnabled: true 
+              });
+              console.log('FCM Token e Preferência salvos com sucesso no Firestore');
               
               // Mostrar notificação de sucesso
               new Notification('Notificações Ativadas!', {
@@ -150,8 +153,11 @@ export const usePlayerStatusNotification = (
     
     try {
       const playerRef = doc(db, 'players', currentPlayer.id);
-      await updateDoc(playerRef, { fcmToken: null });
-      console.log('Notificações desativadas com sucesso.');
+      await updateDoc(playerRef, { 
+        fcmToken: null,
+        pushEnabled: false
+      });
+      console.log('Notificações desativadas e preferência salva.');
       // We don't change the browser permission (can't do that via JS), 
       // but we remove the token so no more messages are sent.
     } catch (error) {
@@ -159,7 +165,7 @@ export const usePlayerStatusNotification = (
     }
   };
 
-  const isEnabled = !!currentPlayer?.fcmToken;
+  const isEnabled = currentPlayer?.pushEnabled ?? false;
 
   return { permission, isEnabled, requestPermission, disableNotifications };
 };

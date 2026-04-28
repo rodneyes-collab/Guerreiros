@@ -76,5 +76,18 @@ export const useNotifications = () => {
     notifications.forEach(n => deleteNotification(n.id));
   };
 
+  useEffect(() => {
+    if ('setAppBadge' in navigator) {
+      const unreadCount = notifications.filter(n => !n.read).length;
+      if (unreadCount > 0) {
+        // @ts-ignore - navigator.setAppBadge is not yet in standard TS dom lib sometimes
+        navigator.setAppBadge(unreadCount).catch(console.error);
+      } else {
+        // @ts-ignore
+        navigator.clearAppBadge().catch(console.error);
+      }
+    }
+  }, [notifications]);
+
   return { notifications, markAsRead, deleteNotification, clearAll };
 };

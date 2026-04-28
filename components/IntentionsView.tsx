@@ -1,8 +1,10 @@
 import React from 'react';
+import confetti from 'canvas-confetti';
 import { useIntentions } from '../src/hooks/useIntentions';
 import { useStore } from '../store';
 import { CalendarCheck, Copy, BellRing, Settings, UserCheck, UserX, Clock, ArrowRight, RotateCcw, Zap, Star, Shield, Trash2 } from 'lucide-react';
 import { Player } from '../types';
+import { getFirestoreDateKey, getBrazilDay } from '../firebase';
 
 import { HelpTooltip } from '../src/components/HelpTooltip';
 
@@ -17,6 +19,35 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
   const { intentions, isLoaded, setIntent, resetIntent, clearIntentions, toggleAutomation, sendReminders, copyToWhatsApp, copyReminder } = useIntentions();
   const { players, attendance, showConfirmModal } = useStore();
 
+  // Create confetti instance
+  const fireConfetti = React.useMemo(() => confetti.create(undefined, { useWorker: false, resize: true }), []);
+
+  const celebratePresence = () => {
+    const end = Date.now() + 2 * 1000;
+    const colors = ['#F5C429', '#FFFFFF'];
+
+    (function frame() {
+      fireConfetti({
+        particleCount: 2,
+        angle: 60,
+        spread: 55,
+        origin: { x: 0 },
+        colors: colors
+      });
+      fireConfetti({
+        particleCount: 2,
+        angle: 120,
+        spread: 55,
+        origin: { x: 1 },
+        colors: colors
+      });
+
+      if (Date.now() < end) {
+        requestAnimationFrame(frame);
+      }
+    }());
+  };
+
   const getImpactIcon = (level?: number) => {
     switch (level) {
       case 3: return <Zap className="w-3 h-3 text-brand-primary" fill="currentColor" />;
@@ -28,12 +59,16 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
   const handleConfirm = () => {
     if (currentPlayer) {
       setIntent(currentPlayer.id, 'GOING');
+      const firstName = currentPlayer.name.split(' ')[0];
+      showNotification(`Bora pra cima, ${firstName}! Sua presença foi confirmada com sucesso! 🏐🔥`, 'success');
+      celebratePresence();
     }
   };
 
   const handleDecline = () => {
     if (currentPlayer) {
       setIntent(currentPlayer.id, 'NOT_GOING');
+      showNotification('Entendido. Sentiremos sua falta nessa quinta!', 'info');
     }
   };
 
@@ -49,14 +84,18 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
   }
 
   const goingPlayers = players
-    .filter(p => intentions.responses[p.id] === 'GOING' && p.status !== 'inactive')
+    .filter(p => intentions.responses[p.id] === 'GOING' && p.status === 'active')
     .sort((a, b) => {
       const timeA = intentions.confirmationTimestamps?.[a.id] || 0;
       const timeB = intentions.confirmationTimestamps?.[b.id] || 0;
       return timeA - timeB;
     });
-  const notGoingPlayers = players.filter(p => intentions.responses[p.id] === 'NOT_GOING' && p.status !== 'inactive');
-  const undecidedPlayers = players.filter(p => !intentions.responses[p.id] && p.status !== 'inactive');
+  const notGoingPlayers = players.filter(p => intentions.responses[p.id] === 'NOT_GOING' && p.status === 'active');
+  const undecidedPlayers = players.filter(p => !intentions.responses[p.id] && p.status === 'active');
+
+  const waitlistPlayers = players
+    .filter(p => p.status === 'waitlist')
+    .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
 
   const filteredUndecided = undecidedPlayers.filter(p => 
     p.name.toLowerCase().includes(searchTerm.toLowerCase())
@@ -66,9 +105,16 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
   const isNotGoing = currentPlayer ? intentions.responses[currentPlayer.id] === 'NOT_GOING' : false;
 
   const getNextThursday = () => {
-    const d = new Date();
-    d.setDate(d.getDate() + ((4 + 7 - d.getDay()) % 7 || 7));
-    return d.toISOString().split('T')[0];
+    const todayStr = getFirestoreDateKey();
+    const [y, m, d] = todayStr.split('-').map(Number);
+    const date = new Date(y, m - 1, d);
+    const day = getBrazilDay();
+    
+    let diff = 4 - day;
+    if (diff < 0) diff += 7;
+    
+    date.setDate(date.getDate() + diff);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
   };
 
   const displayDate = intentions.targetDate || getNextThursday();
@@ -427,6 +473,40 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
           </div>
         </div>
       </div>
+
+      {/* Waitlist Section */}
+      {waitlistPlayers.length > 0 && (
+        <div className="bg-black rounded-[2rem] border border-white/5 border-l-[6px] border-l-amber-500 p-8 sm:p-10 animate-in fade-in slide-in-from-bottom-4 duration-700">
+           <div className="flex items-center justify-between mb-8">
+            <div className="flex items-center gap-3">
+              <Clock className="w-6 h-6 text-amber-500" />
+              <h3 className="text-xl font-black text-white uppercase tracking-tighter">Fila de Espera do Clube</h3>
+            </div>
+            <span className="bg-amber-500 text-black text-xs font-black px-4 py-1.5 rounded-full">{waitlistPlayers.length} / 5</span>
+          </div>
+          
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {waitlistPlayers.map((p, i) => (
+              <div key={p.id} className="bg-amber-500/5 p-4 rounded-2xl border border-amber-500/20 flex items-center justify-between group hover:border-amber-500/40 transition-all">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-brand-secondary flex items-center justify-center text-amber-500 font-black text-xs border border-amber-500/30">
+                    {i + 1}
+                  </div>
+                  <span className="text-white text-sm font-black uppercase tracking-tight">{p.name}</span>
+                </div>
+                <div className="flex items-center gap-2 opacity-40 group-hover:opacity-100 transition-opacity">
+                  <Clock className="w-3 h-3 text-amber-500" />
+                  <span className="text-[10px] font-bold text-amber-500/60 uppercase">Em Espera</span>
+                </div>
+              </div>
+            ))}
+          </div>
+          
+          <p className="mt-6 text-[10px] font-bold text-slate-500 uppercase tracking-widest text-center">
+            A lista de espera segue a ordem de cadastro. Quando um sócio ativo sair, o primeiro da lista entra automaticamente.
+          </p>
+        </div>
+      )}
 
     </div>
   );

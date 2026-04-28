@@ -38,6 +38,7 @@ export interface Player {
   dailyAccesses?: number; // ACESSOS DIÁRIOS do sócio
   lastReadUpdate?: string; // Data da última atualização de leitura
   fcmToken?: string; // Token para Push Notifications
+  pushEnabled?: boolean; // Se o sócio deseja receber notificações push
   hasSeenWelcome?: boolean; // Se o sócio já viu a mensagem de boas-vindas
   impactLevel?: 1 | 2 | 3; // 1: Base, 2: Medium/Technique, 3: Elite/Power
 }
@@ -89,9 +90,11 @@ export interface SystemMetadata {
   lastUpdate?: number;
   dailyReadQuota?: number;
   dailyAICallsQuota?: number; // Adicionado
+  activeBirthdaysIndex?: string[]; // cache de datas de aniversário (MM-DD)
   showTeamCards?: boolean;
   showWaitlist?: boolean;
   showPerformance?: boolean;
+  enableAutoBirthdays?: boolean;
   courtLocation?: { lat: number; lng: number };
   geofenceRadius?: number;
   monthlyFee?: number;

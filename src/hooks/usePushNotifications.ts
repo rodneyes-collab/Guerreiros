@@ -22,7 +22,8 @@ export const usePushNotifications = () => {
             // Only update if the token is different
             if (currentPlayer.fcmToken !== token) {
               await updateDoc(doc(db, 'players', currentPlayer.id), {
-                fcmToken: token
+                fcmToken: token,
+                pushEnabled: true
               });
               console.log('FCM Token atualizado com sucesso');
             }
@@ -35,8 +36,9 @@ export const usePushNotifications = () => {
       }
     };
 
-    // Only request if the user is logged in and doesn't have a token or if we want to ensure it's fresh
-    if (currentPlayer && !currentPlayer.fcmToken) {
+    // Only request if the user is logged in and hasn't explicitly disabled it
+    // If pushEnabled is undefined, we assume it's okay to try for first-time or legacy users
+    if (currentPlayer && currentPlayer.pushEnabled !== false && !currentPlayer.fcmToken) {
       requestPermission();
     }
   }, [currentPlayer, showNotification]);

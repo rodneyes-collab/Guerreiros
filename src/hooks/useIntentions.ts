@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { db, doc, onSnapshot, setDoc, updateDoc, writeBatch, collection, serverTimestamp, handleFirestoreError, OperationType, getDocs, query, where, deleteDoc } from '../../firebase';
+import { db, doc, onSnapshot, setDoc, updateDoc, writeBatch, collection, serverTimestamp, handleFirestoreError, OperationType, getDocs, query, where, deleteDoc, getFirestoreDateKey, getBrazilDay } from '../../firebase';
 import { IntentionsData, Player } from '../../types';
 import { useStore } from '../../store';
 
@@ -17,11 +17,39 @@ export const useIntentions = () => {
   const { players, userRole } = useStore();
   const sendingRef = useRef<Record<string, boolean>>({});
 
+  // Helper to get the correct app URL (Shared vs Dev)
+  const getAppUrl = useCallback(() => {
+    // 1. Check for explicit env variable
+    const envUrl = import.meta.env.VITE_APP_URL;
+    if (envUrl) return envUrl.replace(/\/$/, '');
+    
+    // 2. Official Production URL provided by user
+    const PROD_URL = 'https://guerreiros-volleyball-club-238897290870.us-west1.run.app';
+    
+    const origin = window.location.origin;
+    
+    // If we are in production, use the current origin
+    if (origin.includes('guerreiros-volleyball-club')) {
+      return origin;
+    }
+
+    // Default to the official PROD_URL for sharing, unless it's a dev environment where we might want to test
+    // but the user specifically asked to fix the dev URL in messages.
+    return PROD_URL;
+  }, []);
+
   // Helper to get next Thursday
   const getNextThursday = () => {
-    const d = new Date();
-    d.setDate(d.getDate() + ((4 + 7 - d.getDay()) % 7 || 7));
-    return d.toISOString().split('T')[0];
+    const todayStr = getFirestoreDateKey();
+    const [y, m, d] = todayStr.split('-').map(Number);
+    const date = new Date(y, m - 1, d);
+    const day = getBrazilDay();
+    
+    let diff = 4 - day;
+    if (diff < 0) diff += 7;
+    
+    date.setDate(date.getDate() + diff);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
   };
 
   // Listen to intentions data
@@ -142,7 +170,20 @@ export const useIntentions = () => {
                   token: admin.fcmToken,
                   notification: {
                     title: 'Confirmação na Lista',
-                    body: `${player.name} confirmou presença para quinta-feira!`
+                    body: `${player.name} confirmou presença para quinta-feira!`,
+                    sound: 'default'
+                  },
+                  android: {
+                    notification: {
+                      sound: 'default'
+                    }
+                  },
+                  apns: {
+                    payload: {
+                      aps: {
+                        sound: 'default'
+                      }
+                    }
                   },
                   createdAt: serverTimestamp()
                 });
@@ -171,7 +212,20 @@ export const useIntentions = () => {
                   token: admin.fcmToken,
                   notification: {
                     title: 'Desistência na Lista',
-                    body: `${player.name} desistiu de ir na quinta-feira. Atualize a lista!`
+                    body: `${player.name} desistiu de ir na quinta-feira. Atualize a lista!`,
+                    sound: 'default'
+                  },
+                  android: {
+                    notification: {
+                      sound: 'default'
+                    }
+                  },
+                  apns: {
+                    payload: {
+                      aps: {
+                        sound: 'default'
+                      }
+                    }
                   },
                   createdAt: serverTimestamp()
                 });
@@ -211,7 +265,20 @@ export const useIntentions = () => {
                 token: admin.fcmToken,
                 notification: {
                   title: 'Alteração na Lista',
-                  body: `${player.name} removeu a confirmação de quinta-feira.`
+                  body: `${player.name} removeu a confirmação de quinta-feira.`,
+                  sound: 'default'
+                },
+                android: {
+                  notification: {
+                    sound: 'default'
+                  }
+                },
+                apns: {
+                  payload: {
+                    aps: {
+                      sound: 'default'
+                    }
+                  }
                 },
                 createdAt: serverTimestamp()
               });
@@ -265,7 +332,7 @@ export const useIntentions = () => {
         const hasResponded = currentIntentions.responses[player.id] === 'GOING' || currentIntentions.responses[player.id] === 'NOT_GOING';
         
         if (player.status === 'active' && !hasResponded && !isAlreadyInAttendance) {
-          const appLink = `${window.location.origin}?tab=intentions`;
+          const appLink = `${getAppUrl()}?tab=intentions`;
           
           // Save to in-app notifications
           const appNotifRef = doc(collection(db, 'notifications'));
@@ -327,14 +394,14 @@ export const useIntentions = () => {
       text += `\nTotal: ${goingPlayers.length} confirmados`;
     }
 
-    text += `\n\nConfirme sua presença no app: ${window.location.origin}?tab=intentions ou no grupo do WhatsApp!`;
+    text += `\n\nConfirme sua presença no app: ${getAppUrl()}?tab=intentions ou no grupo do WhatsApp!`;
 
     navigator.clipboard.writeText(text);
     return true;
   };
 
   const copyReminder = () => {
-    const appLink = `${window.location.origin}?tab=intentions`;
+    const appLink = `${getAppUrl()}?tab=intentions`;
     const text = `E aí Guerreiro(a), vai jogar nesta Quinta?\nConfirme a sua presença direto no app: ${appLink} ou no grupo de WhatsApp.`;
     navigator.clipboard.writeText(text);
     return true;
@@ -342,47 +409,11 @@ export const useIntentions = () => {
 
   // Automatic Reminders Logic
   useEffect(() => {
-    if (!isLoaded || !intentions.automationEnabled || userRole !== 'ADMIN') return;
-
-    const checkAndSend = async () => {
-      const now = new Date();
-      const day = now.getDay(); // 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu
-      const hour = now.getHours();
-
-      let reminderKey = '';
-
-      if (day === 3) { // Wednesday
-        if (hour >= 10 && hour < 14) reminderKey = 'wed_1';
-        else if (hour >= 18) reminderKey = 'wed_2';
-      } else if (day === 4) { // Thursday
-        if (hour >= 9 && hour < 13) reminderKey = 'thu_1';
-        else if (hour >= 13 && hour < 16) reminderKey = 'thu_2';
-        else if (hour >= 16 && hour < 18) reminderKey = 'thu_3';
-      }
-
-      if (reminderKey && !intentions.remindersSent[reminderKey] && !sendingRef.current[reminderKey]) {
-        sendingRef.current[reminderKey] = true;
-        
-        try {
-          // Mark as sent first to prevent race conditions with other admins
-          await updateDoc(doc(db, 'metadata', 'intentions'), {
-            [`remindersSent.${reminderKey}`]: true
-          });
-          await sendReminders();
-          console.log(`Lembrete automático '${reminderKey}' enviado.`);
-        } catch (err) {
-          console.error('Erro ao processar lembrete automático:', err);
-          sendingRef.current[reminderKey] = false;
-        }
-      }
-    };
-
-    // Check every minute
-    const interval = setInterval(checkAndSend, 60000);
-    checkAndSend(); // Check immediately on mount
-
-    return () => clearInterval(interval);
-  }, [isLoaded, intentions.automationEnabled, intentions.remindersSent, userRole, sendReminders]);
+    // A automação agora é feita 100% pelo backend via Cloud Scheduler.
+    // O setInterval(checkAndSend, 60000) foi removido
+    // para evitar que abas esquecidas abertas pelos admins causem leituras excessivas
+    // e picos de custo no Cloud Run/Firestore.
+  }, []);
 
   return {
     intentions,

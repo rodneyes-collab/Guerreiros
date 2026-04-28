@@ -17,14 +17,24 @@ const messaging = firebase.messaging();
 messaging.onBackgroundMessage((payload) => {
   console.log('[firebase-messaging-sw.js] Received background message ', payload);
   
-  const notificationTitle = payload.notification?.title || 'Sua vez de jogar!';
+  const notificationTitle = payload.notification?.title || 'Notificação';
+  const notificationBadgeCount = payload.data?.unreadCount ? parseInt(payload.data.unreadCount) : undefined;
+  
   const notificationOptions = {
-    body: payload.notification?.body || 'Dirija-se à quadra. O jogo vai começar!',
+    body: payload.notification?.body || 'Nova mensagem',
     icon: '/pwa-192x192.png',
+    badge: '/pwa-192x192.png', // Small icon for the status bar
     vibrate: [200, 100, 200, 100, 200, 100, 200],
-    tag: 'match-start',
-    renotify: true
+    tag: payload.notification?.tag || payload.data?.type || 'app-notification-' + Date.now(),
+    renotify: true,
+    data: payload.data
   };
+
+  if (self.navigator && self.navigator.setAppBadge && notificationBadgeCount) {
+    self.navigator.setAppBadge(notificationBadgeCount);
+  } else if (self.navigator && self.navigator.setAppBadge) {
+    self.navigator.setAppBadge(); // Shows generic dot
+  }
 
   self.registration.showNotification(notificationTitle, notificationOptions);
 });

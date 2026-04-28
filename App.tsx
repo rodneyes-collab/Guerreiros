@@ -742,7 +742,7 @@ const App: React.FC = () => {
               onToggleIntention={onToggleIntention}
               refreshPlayers={refreshPlayers}
               resetDailyMatches={handleFinishDay}
-              availablePlayers={players.filter(p => p.status !== 'inactive')}
+              availablePlayers={players.filter(p => !p.status || p.status === 'active')}
               preConfirmations={preConfirmations}
               setViewMode={setViewMode}
             />

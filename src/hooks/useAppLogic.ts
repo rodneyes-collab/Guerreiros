@@ -34,6 +34,9 @@ import { playerSchema, matchSchema } from '../lib/schemas';
 import { analyzeMatch, verifyRules, detectAnomalies, generateTeamAnnouncementAudio } from '../../services/geminiService';
 
 export const useAppLogic = () => {
+  const MAX_ACTIVE_MEMBERS = 30;
+  const WAITLIST_LIMIT = 5;
+
   const {
     user,
     userRole,
@@ -94,6 +97,30 @@ export const useAppLogic = () => {
     setNegativeSynergy,
     setRivalry
   } = useStore();
+
+  // --- Birthdays Index Sync ---
+  // Mantem o indexer de aniversários atualizado para que os crons do backend leiam um único field
+  useEffect(() => {
+    if (players && players.length > 0) {
+      const indices = new Set<string>();
+      for (const p of players) {
+        if (p.status === 'active' && p.birthDate) {
+          const parts = p.birthDate.split('-');
+          if (parts.length >= 3) {
+             indices.add(`${parts[1]}-${parts[2]}`);
+          }
+        }
+      }
+      const newIndex = Array.from(indices).sort();
+      const currentIndex = systemMetadata?.activeBirthdaysIndex || [];
+      
+      const isDifferent = newIndex.length !== currentIndex.length || !newIndex.every((v, i) => v === currentIndex[i]);
+      
+      if (isDifferent) {
+         updateSystemMetadata({ activeBirthdaysIndex: newIndex });
+      }
+    }
+  }, [players, systemMetadata?.activeBirthdaysIndex]);
 
   // AI Guardian - Autonomous Data Integrity Monitor
   useEffect(() => {
@@ -851,13 +878,14 @@ export const useAppLogic = () => {
       
       if (isConfirmed) {
         await deleteDoc(preConfirmationRef);
-        showNotification('Intenção removida.', 'info');
+        showNotification('Presença removida da lista.', 'info');
       } else {
         await setDoc(preConfirmationRef, cleanObject({
           ...player,
           timestamp: Date.now()
         }));
-        showNotification('Intenção confirmada!', 'success');
+        const firstName = player.name.split(' ')[0];
+        showNotification(`Presença confirmada! Bom jogo, ${firstName}! 🏐🔥`, 'success');
       }
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'pre-confirmation');
@@ -867,14 +895,34 @@ export const useAppLogic = () => {
   };
 
   const deletePlayer = async (id: string) => {
+    const playerToDelete = players.find(p => p.id === id);
+    
     showConfirmModal(
       'Excluir Sócio',
-      'Tem certeza que deseja excluir este sócio? Esta ação é irreversível.',
+      `Tem certeza que deseja excluir ${playerToDelete?.name || 'este sócio'}? Esta ação é irreversível.`,
       async () => {
         try {
           setIsSyncing(true);
           triggerDbStatus('writing');
-          await deleteDoc(doc(db, 'players', id));
+          const batch = writeBatch(db);
+          
+          // Delete the player
+          batch.delete(doc(db, 'players', id));
+          
+          // Promote waitlist player if necessary
+          if (playerToDelete?.status === 'active') {
+            const waitlistPlayers = players
+              .filter(p => p.status === 'waitlist' && p.id !== id)
+              .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+              
+            if (waitlistPlayers.length > 0) {
+              const nextPlayer = waitlistPlayers[0];
+              batch.set(doc(db, 'players', nextPlayer.id), { status: 'active' }, { merge: true });
+              showNotification(`${nextPlayer.name} foi promovido da lista de espera para sócio ativo!`, 'success');
+            }
+          }
+          
+          await batch.commit();
           showNotification('Sócio excluído com sucesso.', 'success');
         } catch (error) {
           handleFirestoreError(error, OperationType.WRITE, 'players');
@@ -1411,6 +1459,25 @@ export const useAppLogic = () => {
       const id = playerData.id || generateUUID();
       const playerRef = doc(db, 'players', id);
       
+      const isNewPlayer = !playerData.id;
+      let finalStatus = playerData.status || 'active';
+
+      if (isNewPlayer) {
+        const activeCount = players.filter(p => p.status === 'active').length;
+        const waitlistCount = players.filter(p => p.status === 'waitlist').length;
+
+        if (activeCount >= MAX_ACTIVE_MEMBERS) {
+          if (waitlistCount >= WAITLIST_LIMIT) {
+            showNotification(`Limite de sócios (30) e lista de espera (5) atingidos. Não é possível adicionar novos sócios.`, 'error');
+            return;
+          }
+          finalStatus = 'waitlist';
+          showNotification(`Limite de 30 sócios atingido. ${playerData.name || 'O novo sócio'} foi adicionado à lista de espera.`, 'info');
+        } else {
+          finalStatus = 'active';
+        }
+      }
+      
       const finalData: any = {
         ...playerData,
         id,
@@ -1423,7 +1490,7 @@ export const useAppLogic = () => {
         dailyLosses: playerData.dailyLosses || 0,
         dailyEloGain: playerData.dailyEloGain || 0,
         impactLevel: playerData.impactLevel || 1,
-        status: playerData.status || 'active',
+        status: finalStatus,
         createdAt: playerData.createdAt || Date.now()
       };
 

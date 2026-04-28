@@ -46,7 +46,7 @@ export const useDailyReset = () => {
       const performReset = async () => {
         isResettingRef.current = true;
         console.log("Novo dia detectado. Zerando estatísticas...");
-        const reset = (p: Player) => ({ ...p, dailyMatches: 0, dailyWins: 0, dailyLosses: 0, dailyEloGain: 0, dailyResults: [], playedLastMatch: false });
+        const reset = (p: Player) => ({ ...p, dailyMatches: 0, dailyWins: 0, dailyLosses: 0, dailyEloGain: 0, dailyResults: [], playedLastMatch: false, reads: 0, writes: 0 });
         
         try {
           const usageRef = doc(db, 'metadata', 'usage');
@@ -73,7 +73,7 @@ export const useDailyReset = () => {
           players.forEach(p => {
             if (!p.id) return;
             // Só atualiza se houver estatísticas para zerar
-            if (p.dailyMatches > 0 || p.dailyWins > 0 || p.dailyLosses > 0 || p.dailyEloGain !== 0 || (p.dailyResults && p.dailyResults.length > 0) || p.playedLastMatch) {
+            if (p.dailyMatches > 0 || p.dailyWins > 0 || p.dailyLosses > 0 || p.dailyEloGain !== 0 || (p.dailyResults && p.dailyResults.length > 0) || p.playedLastMatch || (p.reads && p.reads > 0) || (p.writes && p.writes > 0)) {
               const playerRef = doc(db, 'players', p.id);
               batch.set(playerRef, { 
                 dailyMatches: 0, 
@@ -82,7 +82,8 @@ export const useDailyReset = () => {
                 dailyEloGain: 0,
                 dailyResults: [],
                 playedLastMatch: false,
-                reads: 0
+                reads: 0,
+                writes: 0
               }, { merge: true });
               writeCount++;
             }

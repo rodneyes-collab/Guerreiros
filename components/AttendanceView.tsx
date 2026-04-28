@@ -59,8 +59,8 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
     }
   };
 
-  const attendance = React.useMemo(() => allAttendance.filter(p => p.status !== 'inactive'), [allAttendance]);
-  const preConfirmations = React.useMemo(() => allPreConfirmations.filter(p => p.status !== 'inactive'), [allPreConfirmations]);
+  const attendance = React.useMemo(() => allAttendance.filter(p => !p.status || p.status === 'active'), [allAttendance]);
+  const preConfirmations = React.useMemo(() => allPreConfirmations.filter(p => !p.status || p.status === 'active'), [allPreConfirmations]);
   const [startY, setStartY] = React.useState(0);
   const [pullDistance, setPullDistance] = React.useState(0);
   const [isPulling, setIsPulling] = React.useState(false);
@@ -276,9 +276,9 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                         <div className="space-y-1">
                           <p className={`text-lg font-black flex items-center gap-2 leading-none uppercase tracking-tight ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
                             {userRole === 'ADMIN' && (
-                              <div className="shrink-0" title={`Nível: ${player.impactLevel === 3 ? 'Elite' : player.impactLevel === 2 ? 'Médio' : 'Base'}`}>
+                              <span className="shrink-0" title={`Nível: ${player.impactLevel === 3 ? 'Elite' : player.impactLevel === 2 ? 'Médio' : 'Base'}`}>
                                 {getImpactIcon(player.impactLevel)}
-                              </div>
+                              </span>
                             )}
                             {player.name || "Sócio sem nome"}
                             {player.isOfficialSetter && <span className="text-[8px] font-black uppercase bg-brand-primary/10 text-brand-primary px-2 py-0.5 rounded-full border border-brand-primary/40">Levantador</span>}
