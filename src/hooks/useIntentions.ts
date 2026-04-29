@@ -149,9 +149,22 @@ export const useIntentions = () => {
         const batch = writeBatch(db);
         const admins = players.filter(p => p.isAdmin);
         
+        // Prepare to fetch unread counts for all admins
+        const adminCounts = await Promise.all(admins.map(async (admin) => {
+          if (admin.id === playerId || !admin.fcmToken) return { id: admin.id, count: 1 };
+          try {
+            const q = query(collection(db, 'notifications'), where('playerId', '==', admin.id), where('read', '==', false));
+            const snap = await getDocs(q);
+            return { id: admin.id, count: snap.size + 1 };
+          } catch (e) {
+            return { id: admin.id, count: 1 };
+          }
+        }));
+
         if (status === 'GOING') {
           admins.forEach(admin => {
             if (admin.id !== playerId) {
+              const unreadCount = adminCounts.find(c => c.id === admin.id)?.count || 1;
               // In-app notification
               const appNotifRef = doc(collection(db, 'notifications'));
               batch.set(appNotifRef, {
@@ -164,7 +177,7 @@ export const useIntentions = () => {
               });
 
               // FCM notification
-              if (admin.fcmToken) {
+              if (admin.fcmToken && useStore.getState().systemMetadata.pushNotificationsGlobalEnabled !== false) {
                 const notifRef = doc(collection(db, 'fcm_messages'));
                 batch.set(notifRef, {
                   token: admin.fcmToken,
@@ -172,6 +185,10 @@ export const useIntentions = () => {
                     title: 'Confirmação na Lista',
                     body: `${player.name} confirmou presença para quinta-feira!`,
                     sound: 'default'
+                  },
+                  data: {
+                    unreadCount: String(unreadCount),
+                    type: 'system'
                   },
                   android: {
                     notification: {
@@ -194,6 +211,7 @@ export const useIntentions = () => {
         } else if (status === 'NOT_GOING' && previousStatus === 'GOING') {
           admins.forEach(admin => {
             if (admin.id !== playerId) {
+              const unreadCount = adminCounts.find(c => c.id === admin.id)?.count || 1;
               // In-app notification
               const appNotifRef = doc(collection(db, 'notifications'));
               batch.set(appNotifRef, {
@@ -206,7 +224,7 @@ export const useIntentions = () => {
               });
 
               // FCM notification
-              if (admin.fcmToken) {
+              if (admin.fcmToken && useStore.getState().systemMetadata.pushNotificationsGlobalEnabled !== false) {
                 const notifRef = doc(collection(db, 'fcm_messages'));
                 batch.set(notifRef, {
                   token: admin.fcmToken,
@@ -214,6 +232,10 @@ export const useIntentions = () => {
                     title: 'Desistência na Lista',
                     body: `${player.name} desistiu de ir na quinta-feira. Atualize a lista!`,
                     sound: 'default'
+                  },
+                  data: {
+                    unreadCount: String(unreadCount),
+                    type: 'system'
                   },
                   android: {
                     notification: {
@@ -258,9 +280,10 @@ export const useIntentions = () => {
         if (player) {
           const batch = writeBatch(db);
           const admins = players.filter(p => p.isAdmin && p.fcmToken);
-          admins.forEach(admin => {
-            if (admin.id !== playerId) {
-              const notifRef = doc(collection(db, 'fcm_messages'));
+          if (useStore.getState().systemMetadata.pushNotificationsGlobalEnabled !== false) {
+            admins.forEach(admin => {
+              if (admin.id !== playerId) {
+                const notifRef = doc(collection(db, 'fcm_messages'));
               batch.set(notifRef, {
                 token: admin.fcmToken,
                 notification: {
@@ -282,12 +305,13 @@ export const useIntentions = () => {
                 },
                 createdAt: serverTimestamp()
               });
-            }
-          });
-          await batch.commit();
-        }
+          }
+        });
+        await batch.commit();
       }
-    } catch (err) {
+    }
+  }
+} catch (err) {
       console.error('Erro ao resetar intenção:', err);
       handleFirestoreError(err, OperationType.UPDATE, 'metadata/intentions');
     }
@@ -326,6 +350,23 @@ export const useIntentions = () => {
       const currentAttendance = currentStore.attendance;
       const currentIntentions = intentions; // Use current intentions from state
 
+      // Prepare unread counts for non-responded players
+      const notificationData = await Promise.all(players.map(async (p) => {
+        const isAlreadyInAttendance = currentAttendance.some(a => a.id === p.id);
+        const hasResponded = currentIntentions.responses[p.id] === 'GOING' || currentIntentions.responses[p.id] === 'NOT_GOING';
+        
+        if (p.status === 'active' && !hasResponded && !isAlreadyInAttendance && p.fcmToken) {
+          try {
+            const q = query(collection(db, 'notifications'), where('playerId', '==', p.id), where('read', '==', false));
+            const snap = await getDocs(q);
+            return { id: p.id, unreadCount: snap.size + 1 };
+          } catch (e) {
+            return { id: p.id, unreadCount: 1 };
+          }
+        }
+        return { id: p.id, unreadCount: 1 };
+      }));
+
       players.forEach(player => {
         // Don't send reminder if player has already responded or is already in attendance
         const isAlreadyInAttendance = currentAttendance.some(a => a.id === player.id);
@@ -333,6 +374,7 @@ export const useIntentions = () => {
         
         if (player.status === 'active' && !hasResponded && !isAlreadyInAttendance) {
           const appLink = `${getAppUrl()}?tab=intentions`;
+          const unreadCount = notificationData.find(d => d.id === player.id)?.unreadCount || 1;
           
           // Save to in-app notifications
           const appNotifRef = doc(collection(db, 'notifications'));
@@ -346,13 +388,30 @@ export const useIntentions = () => {
           });
 
           // If player has FCM token, also send push notification via fcm_messages
-          if (player.fcmToken) {
+          if (player.fcmToken && useStore.getState().systemMetadata.pushNotificationsGlobalEnabled !== false) {
             const notifRef = doc(collection(db, 'fcm_messages'));
             batch.set(notifRef, {
               token: player.fcmToken,
               notification: {
                 title: 'Aviso de Presença',
-                body: customMessage || `E aí Guerreiro(a), vai jogar nesta Quinta? Confirme no app: ${appLink}`
+                body: customMessage || `E aí Guerreiro(a), vai jogar nesta Quinta? Confirme no app: ${appLink}`,
+                sound: 'default'
+              },
+              data: {
+                unreadCount: String(unreadCount),
+                type: 'reminder'
+              },
+              android: {
+                notification: {
+                  sound: 'default'
+                }
+              },
+              apns: {
+                payload: {
+                  aps: {
+                    sound: 'default'
+                  }
+                }
               },
               createdAt: serverTimestamp()
             });

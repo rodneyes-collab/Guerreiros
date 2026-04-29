@@ -583,6 +583,18 @@ export const useAppLogic = () => {
       batch.delete(doc(db, 'metadata', 'currentMatch'));
 
       // Notificar jogadores sobre o resultado da partida
+      const playersToNotify = [...teamA, ...teamB];
+      const notificationData = await Promise.all(playersToNotify.map(async (p) => {
+        if (!p.id || !p.fcmToken) return { id: p.id, unreadCount: 1 };
+        try {
+          const q = query(collection(db, 'notifications'), where('playerId', '==', p.id), where('read', '==', false));
+          const snap = await getDocs(q);
+          return { id: p.id, unreadCount: snap.size + 1 };
+        } catch (e) {
+          return { id: p.id, unreadCount: 1 };
+        }
+      }));
+
       const notifyResult = (p: Player, isTeamA: boolean) => {
         const isWinner = (isTeamA && winner === 'A') || (!isTeamA && winner === 'B');
         const title = isWinner ? 'Vitória! 🏆' : 'Fim de Jogo';
@@ -600,11 +612,16 @@ export const useAppLogic = () => {
           type: 'match'
         });
 
-        if (p.fcmToken) {
+        if (p.fcmToken && systemMetadata.pushNotificationsGlobalEnabled !== false && systemMetadata.matchNotificationsGlobalEnabled !== false && p.matchNotificationsEnabled !== false) {
+          const unreadCount = notificationData.find(d => d.id === p.id)?.unreadCount || 1;
           const fcmRef = doc(collection(db, 'fcm_messages'));
           batch.set(fcmRef, {
             token: p.fcmToken,
-            notification: { title, body: message },
+            notification: { title, body: message, sound: 'default' },
+            data: {
+              unreadCount: String(unreadCount),
+              type: 'match'
+            },
             createdAt: serverTimestamp()
           });
         }
@@ -1863,6 +1880,25 @@ export const useAppLogic = () => {
         const batch = writeBatch(db);
         let hasNotifications = false;
 
+        // Prepare unread counts for all players involved in the notification
+        const playersToNotify = [
+          result.teamA.setter, 
+          ...result.teamA.players, 
+          result.teamB.setter, 
+          ...result.teamB.players, 
+          ...result.remainingPlayers.slice(0, 12)
+        ].filter(p => p && p.id && p.fcmToken);
+
+        const notificationData = await Promise.all(playersToNotify.map(async (p) => {
+          try {
+            const q = query(collection(db, 'notifications'), where('playerId', '==', p!.id), where('read', '==', false));
+            const snap = await getDocs(q);
+            return { id: p!.id, unreadCount: snap.size + 1 };
+          } catch (e) {
+            return { id: p!.id, unreadCount: 1 };
+          }
+        }));
+
         // Função auxiliar para enfileirar notificação
         const queueNotification = (player: Player | null | undefined, title: string, body: string) => {
           if (player) {
@@ -1878,11 +1914,16 @@ export const useAppLogic = () => {
             });
 
             // Legacy FCM trigger (optional, if Cloud Function is not yet deployed or for redundancy)
-            if (player.fcmToken) {
+            if (player.fcmToken && systemMetadata.pushNotificationsGlobalEnabled !== false && systemMetadata.matchNotificationsGlobalEnabled !== false && player.matchNotificationsEnabled !== false) {
+              const unreadCount = notificationData.find(d => d.id === player.id)?.unreadCount || 1;
               const notificationRef = doc(collection(db, 'fcm_messages'));
               batch.set(notificationRef, {
                 token: player.fcmToken,
-                notification: { title, body },
+                notification: { title, body: body, sound: 'default' },
+                data: {
+                  unreadCount: String(unreadCount),
+                  type: 'match'
+                },
                 createdAt: serverTimestamp()
               });
             }

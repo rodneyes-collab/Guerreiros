@@ -285,7 +285,7 @@ app.get("/api/billing/real-time", async (req, res) => {
         details: error.message,
         serviceAccount: serviceAccountEmail,
         helpLink: "https://console.developers.google.com/iam-admin/iam",
-        projectId: projectId || "desconhecido"
+        projectId: configProjectId || "desconhecido"
       });
     }
   });
@@ -421,12 +421,41 @@ app.get("/api/billing/real-time", async (req, res) => {
 
           // FCM (Push)
           if (player.fcmToken && player.pushEnabled !== false) {
+            // Count unread (including the one we just added)
+            let unreadCount = 1;
+            try {
+              const unreadSnap = await db.collection('notifications')
+                .where('playerId', '==', player.id)
+                .where('read', '==', false)
+                .get();
+              unreadCount = unreadSnap.size + 1;
+            } catch (pErr) {
+              console.error(`Erro ao contar unread para ${player.id}:`, pErr);
+            }
+
             const fcmRef = db.collection('fcm_messages').doc();
             batch.set(fcmRef, {
               token: player.fcmToken,
               notification: {
                 title: 'Aviso de Presença',
-                body: message
+                body: message,
+                sound: 'default'
+              },
+              data: {
+                unreadCount: String(unreadCount),
+                type: 'reminder'
+              },
+              android: {
+                notification: {
+                  sound: 'default'
+                }
+              },
+              apns: {
+                payload: {
+                  aps: {
+                    sound: 'default'
+                  }
+                }
               },
               createdAt: admin.firestore.FieldValue.serverTimestamp()
             });
@@ -525,6 +554,18 @@ app.get("/api/billing/real-time", async (req, res) => {
 
             // Notificação Push pelo celular com Bip Sonoro (FCM)
             if (player.fcmToken && player.pushEnabled !== false) {
+              // Count unread (including the one we just added)
+              let unreadCount = 1;
+              try {
+                const unreadSnap = await db.collection('notifications')
+                  .where('playerId', '==', player.id)
+                  .where('read', '==', false)
+                  .get();
+                unreadCount = unreadSnap.size + 1;
+              } catch (pErr) {
+                console.error(`Erro ao contar unread para ${player.id}:`, pErr);
+              }
+
               const fcmRef = db.collection('fcm_messages').doc();
               batch.set(fcmRef, {
                 token: player.fcmToken,
@@ -532,6 +573,10 @@ app.get("/api/billing/real-time", async (req, res) => {
                   title: '🎉 Aniversário no Clube!',
                   body: message,
                   sound: 'default'
+                },
+                data: {
+                  unreadCount: String(unreadCount),
+                  type: 'birthday'
                 },
                 android: {
                   notification: {
@@ -560,6 +605,73 @@ app.get("/api/billing/real-time", async (req, res) => {
       }
     } catch (err) {
       console.error('[Automation] Erro na rotina de aniversários:', err);
+      return res.status(500).json({ error: String(err) });
+    }
+  });
+
+  // Rota para Reset Diário (Agendar no Scheduler para: 0 0 * * *)
+  // Zera estatísticas diárias de jogadores às 00:00 AM (Horário de Brasília)
+  app.all('/api/crons/daily-reset', async (req, res) => {
+    console.log('[Automation] Iniciando reset diário...');
+    try {
+      const now = new Date();
+      const brOffset = -3;
+      const brTime = new Date(now.getTime() + brOffset * 3600 * 1000);
+      const todayKey = `${brTime.getFullYear()}-${String(brTime.getMonth() + 1).padStart(2, '0')}-${String(brTime.getDate()).padStart(2, '0')}`;
+
+      const systemRef = db.doc('metadata/system');
+      const systemSnap = await systemRef.get();
+      
+      if (systemSnap.exists && systemSnap.data()?.lastResetDate === todayKey) {
+        return res.json({ status: "skipped", reason: "Já resetado hoje" });
+      }
+
+      const playersSnap = await db.collection('players').get();
+      const batch = db.batch();
+      let writeCount = 0;
+
+      // Reset de cada jogador
+      playersSnap.docs.forEach(doc => {
+        const p = doc.data();
+        if (p.dailyMatches > 0 || p.dailyWins > 0 || p.dailyLosses > 0 || p.dailyEloGain !== 0 || (p.dailyResults && p.dailyResults.length > 0) || p.playedLastMatch) {
+          batch.update(doc.ref, {
+            dailyMatches: 0,
+            dailyWins: 0,
+            dailyLosses: 0,
+            dailyEloGain: 0,
+            dailyResults: [],
+            playedLastMatch: false,
+            reads: 0,
+            writes: 0
+          });
+          writeCount++;
+        }
+      });
+
+      // Atualiza metadados do sistema
+      batch.update(systemRef, {
+        lastResetDate: todayKey,
+        lastResetTimestamp: admin.firestore.FieldValue.serverTimestamp(),
+        dailyMatchCount: 0,
+        matchStartTime: null
+      });
+      
+      // Zera estatísticas globais de uso
+      batch.set(db.doc('metadata/usage'), { reads: 0, writes: 0, lastUpdate: todayKey });
+      
+      // Remove partida atual se houver
+      batch.delete(db.doc('metadata/currentMatch'));
+      
+      writeCount += 3;
+
+      if (writeCount > 0) {
+        await batch.commit();
+      }
+
+      console.log(`[Automation] Reset diário concluído (${todayKey}). ${writeCount} documentos afetados.`);
+      return res.json({ status: "success", todayKey, writeCount });
+    } catch (err) {
+      console.error('[Automation] Erro no reset diário:', err);
       return res.status(500).json({ error: String(err) });
     }
   });

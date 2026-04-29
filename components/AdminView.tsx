@@ -34,35 +34,15 @@ import {
   CreditCard,
   BellRing,
   Eye,
-  Cpu,
-  Bot,
-  Calendar,
-  DollarSign,
-  ExternalLink,
   Edit2,
   Star
 } from 'lucide-react';
-import { 
-  AreaChart, 
-  Area, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip as RechartsTooltip, 
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-  ComposedChart,
-  Line,
-  Legend
-} from 'recharts';
 import { db, doc, updateDoc, setDoc, deleteDoc, onSnapshot, writeBatch, collection, serverTimestamp, getDocs, query, where, orderBy, limit, getFirestoreDateKey } from '../firebase';
 import firebaseConfig from '../firebase-applet-config.json';
 import { Player } from '../types';
 import Markdown from 'react-markdown';
 import { Logo } from '../src/components/Logo';
 import { motion, AnimatePresence } from 'motion/react';
-import { analyzeBillingCosts } from '../services/geminiService';
 
 import { useBirthdays } from '../src/hooks/useBirthdays';
 import { BirthdayAdminCard } from '../src/components/BirthdayAdminCard';
@@ -144,19 +124,6 @@ export const AdminView: React.FC<AdminViewProps> = ({
   const { todayBirthdays, sendBirthdayPush } = useBirthdays();
 
   const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
-  const [billingAnalysis, setBillingAnalysis] = useState<string | null>(null);
-  const [isMonitoringDisabled, setIsMonitoringDisabled] = useState(false);
-  const [activeServiceAccount, setActiveServiceAccount] = useState<string | null>(null);
-  const [isAnalyzingBilling, setIsAnalyzingBilling] = useState(false);
-  const [weeklyReports, setWeeklyReports] = useState<any[]>([]);
-  const [billingHistory, setBillingHistory] = useState<any[]>([]);
-  const [dailyUsageHistory, setDailyUsageHistory] = useState<any[]>([]);
-  const [isLoadingReports, setIsLoadingReports] = useState(false);
-  const [syncDate, setSyncDate] = useState(getFirestoreDateKey());
-  const [syncValue, setSyncValue] = useState('');
-  const [isSyncingBilling, setIsSyncingBilling] = useState(false);
-  const [isFetchingGCP, setIsFetchingGCP] = useState(false);
-  const [lastSyncBreakdown, setLastSyncBreakdown] = useState<any>(null);
   const [memberSearch, setMemberSearch] = useState('');
   const [levelSuggestions, setLevelSuggestions] = useState<LevelSuggestion[]>([]);
   const [allNotifications, setAllNotifications] = useState<any[]>([]);
@@ -208,314 +175,11 @@ export const AdminView: React.FC<AdminViewProps> = ({
 
   const getImpactIcon = (level?: number) => {
     switch (level) {
-      case 3: return <Zap className="w-3 h-3 text-brand-primary" fill="currentColor" />;
-      case 2: return <Star className="w-3 h-3 text-brand-primary" fill="currentColor" />;
-      default: return <Shield className="w-3 h-3 text-white/20" />;
+      case 3: return <Trophy className="w-3.5 h-3.5 text-brand-primary" />;
+      case 2: return <Activity className="w-3.5 h-3.5 text-brand-primary/60" />;
+      default: return <UsersIcon className="w-3.5 h-3.5 text-white/20" />;
     }
   };
-
-  const syncGCPDataForDate = async (targetDateStr: string): Promise<boolean> => {
-    try {
-      const resp = await fetch(`/api/billing/real-time?date=${targetDateStr}`);
-      
-      const contentType = resp.headers.get("content-type");
-      if (!contentType || !contentType.includes("application/json")) {
-        const text = await resp.text();
-        if (text.includes("Starting Server...")) {
-          throw new Error("O servidor está acordando. Aguarde 5 segundos e tente novamente.");
-        }
-        throw new Error(`O servidor retornou um formato inesperado. Erro HTTP: ${resp.status}`);
-      }
-
-      const data = await resp.json();
-      
-      if (data.estimatedCostBRL === null && !data.metricsAvailable) {
-        showNotification('Métricas indisponíveis no Google Monitoring no momento. Tente novamente em 15 min.', 'info');
-        return false;
-      }
-      
-      if (data.success === false && data.isGcpError) {
-        if (data.serviceAccount) setActiveServiceAccount(data.serviceAccount);
-        else setActiveServiceAccount('ais-sandbox@ais-us-east1-3182cc021eb343ff9.iam.gserviceaccount.com');
-        setIsMonitoringDisabled(true);
-        if (data.errorType === 'API_DISABLED') {
-          showNotification('Acesso Negado. Veja as instruções no painel abaixo.', 'error');
-        } else {
-          showNotification(`Acesso Negado: O App não tem autorização IAM. Veja abaixo.`, 'error');
-        }
-        return false;
-      }
-
-      if (!resp.ok) return false;
-      
-      const val = data.estimatedCostBRL;
-      const breakdown = data.breakdown;
-      const today = getFirestoreDateKey();
-      
-      if (targetDateStr === today) {
-        const usageRef = doc(db, 'metadata', 'usage');
-        const updatePayload = { 
-          officialValue: val,
-          breakdown: breakdown || null,
-          lastGcpSync: new Date().toISOString()
-        };
-        await updateDoc(usageRef, updatePayload).catch(() => setDoc(usageRef, updatePayload, { merge: true }));
-        setUsageStats({ 
-          ...usageStats, 
-          officialValue: val,
-          lastGcpSync: updatePayload.lastGcpSync
-        });
-        setLastSyncBreakdown(breakdown);
-      } else {
-        const historyRef = doc(db, 'usage_history', targetDateStr);
-        const historyDoc = {
-          officialValue: val,
-          breakdown: breakdown || null,
-          updatedAt: serverTimestamp()
-        };
-        await updateDoc(historyRef, historyDoc).catch(() => setDoc(historyRef, { 
-          ...historyDoc,
-          lastUpdate: targetDateStr
-        }, { merge: true }));
-      }
-      return true;
-    } catch (error: any) {
-      console.error(`[Admin] Erro no fetch para ${targetDateStr}:`, error);
-      throw error;
-    }
-  };
-
-  const fetchGCPData = async () => {
-    setIsFetchingGCP(true);
-    setIsMonitoringDisabled(false);
-    setActiveServiceAccount(null);
-    try {
-      await syncGCPDataForDate(syncDate);
-      showNotification(`Sincronizado via Google monitoring!`, 'success');
-      
-      const dailySnap = await getDocs(query(collection(db, 'usage_history'), limit(60)));
-      const dailyData = dailySnap.docs
-        .map(doc => ({ id: doc.id, ...(doc.data() as any) }))
-        .sort((a, b) => (a.lastUpdate || '').localeCompare(b.lastUpdate || ''));
-      setDailyUsageHistory(dailyData);
-    } catch (error: any) {
-      showNotification(`Erro de conexão: ${error.message || 'Falha ao buscar dados'}.`, 'error');
-    } finally {
-      setIsFetchingGCP(false);
-    }
-  };
-
-  const syncHistoricalGCPData = async () => {
-    setIsSyncingBilling(true); // Reusing the boolean flag
-    setIsMonitoringDisabled(false);
-    setActiveServiceAccount(null);
-    try {
-      const today = new Date();
-      // Sync last 7 days
-      for (let i = 0; i <= 7; i++) {
-        const targetDate = new Date(today);
-        targetDate.setDate(targetDate.getDate() - i);
-        const dateStr = targetDate.toISOString().split('T')[0];
-        
-        const success = await syncGCPDataForDate(dateStr);
-        if (!success) break; 
-      }
-      
-      showNotification('Histórico dos últimos 7 dias sincronizado com sucesso!', 'success');
-      
-      const dailySnap = await getDocs(query(collection(db, 'usage_history'), limit(60)));
-      const dailyData = dailySnap.docs
-        .map(doc => ({ id: doc.id, ...(doc.data() as any) }))
-        .sort((a, b) => (a.lastUpdate || '').localeCompare(b.lastUpdate || ''));
-      setDailyUsageHistory(dailyData);
-    } catch (error: any) {
-      showNotification(`Falha ao sincronizar histórico: ${error.message}`, 'error');
-    } finally {
-      setIsSyncingBilling(false);
-    }
-  };
-
-  useEffect(() => {
-    if (activeTab === 'dashboard' && userRole === 'ADMIN') {
-      const lastSyncStr = usageStats.lastGcpSync;
-      const now = new Date();
-      const todayStr = now.toISOString().split('T')[0];
-      
-      // Auto-sync today if never synced today or if last sync was more than 4 hours ago
-      const isNeverSyncedToday = !lastSyncStr || !lastSyncStr.startsWith(todayStr);
-      const lastSyncTime = lastSyncStr ? new Date(lastSyncStr).getTime() : 0;
-      const hoursSinceSync = (now.getTime() - lastSyncTime) / (1000 * 60 * 60);
-      
-      // Auto-sync today se não existe - DESABILITADO para economizar custos de Cloud Run
-      // O usuário pode sincronizar manualmente pelo botão se quiser ver.
-      /*
-      if ((isNeverSyncedToday || hoursSinceSync > 4) && !isFetchingGCP && !isSyncingBilling) {
-        fetchGCPData();
-      }
-
-      // NOVIDADE: Sincronização automática do HISTÓRICO (Últimos 7 dias) 
-      // Acontece apenas 1 vez por dia ao abrir o Dashboard - DESABILITADO para economia
-      const lastHistoricalSync = localStorage.getItem('last_historical_sync');
-      if (lastHistoricalSync !== todayStr && !isSyncingBilling && !isFetchingGCP) {
-        syncHistoricalGCPData().then(() => {
-          localStorage.setItem('last_historical_sync', todayStr);
-        });
-      }
-      */
-    }
-  }, [activeTab, userRole, usageStats.lastGcpSync]);
-
-  useEffect(() => {
-    const fetchReports = async () => {
-      if (activeTab === 'dashboard') {
-        setIsLoadingReports(true);
-        try {
-          const reportsSnap = await getDocs(query(collection(db, 'reports'), where('type', '==', 'WEEKLY_BILLING')));
-          const data = reportsSnap.docs
-            .map(doc => ({ id: doc.id, ...(doc.data() as any) }))
-            .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
-          setWeeklyReports(data);
-
-          const historySnap = await getDocs(query(collection(db, 'billing_history')));
-          const historyData = historySnap.docs
-            .map(doc => ({ id: doc.id, ...(doc.data() as any) }))
-            .sort((a, b) => (b.month || '').localeCompare(a.month || ''));
-          setBillingHistory(historyData);
-
-          const dailySnap = await getDocs(query(collection(db, 'usage_history'), limit(60)));
-          const dailyData = dailySnap.docs
-            .map(doc => ({ id: doc.id, ...(doc.data() as any) }))
-            .sort((a, b) => (a.lastUpdate || '').localeCompare(b.lastUpdate || ''));
-          setDailyUsageHistory(dailyData);
-        } catch (error) {
-          console.error("Erro ao carregar relatórios/histórico:", error);
-        } finally {
-          setIsLoadingReports(false);
-        }
-      }
-    };
-    fetchReports();
-  }, [activeTab]);
-
-  const chartData = useMemo(() => {
-    // Adicionar o uso de hoje ao histórico para o gráfico ficar completo
-    const todayKey = getFirestoreDateKey();
-    const todayData = {
-      lastUpdate: todayKey,
-      reads: usageStats.reads || 0,
-      writes: usageStats.writes || 0,
-      aiCalls: usageStats.aiCalls || 0,
-      accesses: usageStats.accesses || 0,
-      officialValue: usageStats.officialValue
-    };
-    
-    // Filtrar dados do mês atual
-    const currentMonth = todayKey.slice(0, 7);
-    const monthlyHistory = dailyUsageHistory.filter(d => d.lastUpdate.startsWith(currentMonth) && d.lastUpdate !== todayKey);
-    
-    // Agora usamos APENAS dados reais registrados. Se não houver registro para um dia, ele não aparece no gráfico.
-    let combinedData = [...monthlyHistory, todayData].sort((a,b) => a.lastUpdate.localeCompare(b.lastUpdate));
-    
-    let accumulated = 0;
-    return combinedData.map(day => {
-      let dailyTotal = 0;
-      let breakdown = { cloudRun: '0.00', firestore: '0.00', gemini: '0.00' };
-      
-      // CÁLCULO FINAL: Prioridade para Valor Oficial, mas se oficial for 0 e tivermos acessos, usamos a estimativa
-      // Isso evita o gráfico "zerado" quando o Google Monitoring está com delay mas o app está sendo usado.
-      const accessesCount = day.accesses || 0;
-      const cRun = accessesCount > 0 ? (0.04 + (accessesCount * 0.01)) : 0; 
-      const fStore = ((day.reads || 0) / 10000) * 0.12 + ((day.writes || 0) / 5000) * 0.18;
-      const gApi = (day.aiCalls || 0) * 0.08;
-      const estimatedDayTotal = cRun + fStore + gApi;
-
-      if (day.officialValue !== undefined && day.officialValue !== null && day.officialValue > 0) {
-        dailyTotal = day.officialValue;
-        breakdown = {
-          cloudRun: dailyTotal.toFixed(3),
-          firestore: '0.00',
-          gemini: '0.00'
-        };
-      } else {
-        dailyTotal = estimatedDayTotal;
-        breakdown = {
-          cloudRun: cRun.toFixed(3),
-          firestore: fStore.toFixed(3),
-          gemini: gApi.toFixed(3)
-        };
-      }
-
-      accumulated += dailyTotal;
-      
-      return {
-        date: day.lastUpdate.split('-').slice(2).join('/'), 
-        'Valor do Dia': Number(dailyTotal.toFixed(dailyTotal < 1 ? 3 : 2)),
-        'Valor Acumulado': Number(accumulated.toFixed(accumulated < 1 ? 3 : 2)),
-        breakdown
-      };
-    });
-  }, [dailyUsageHistory, usageStats]);
-
-  const billingSummary = useMemo(() => {
-    // --- DADOS REAIS DO CONSOLE (FORNECIDOS PELO USUÁRIO PARA ABRIL/2026) ---
-    // Período: 1-21 de Abril
-    const officialActualApril = 42.15;
-    const officialForecastApril = 41.78;
-    const officialCloudRun = 29.13;
-    const officialGemini = 12.38;
-    const officialFirestore = 0.64;
-
-    if (chartData.length === 0) {
-      return {
-        totalActualBRL: officialActualApril,
-        totalForecastBRL: officialForecastApril,
-        totalCloudRun: officialCloudRun,
-        totalFirestore: officialFirestore,
-        totalGemini: officialGemini,
-        periodLabel: '1-21 Abr',
-        currentMonthName: 'Abril'
-      };
-    }
-    
-    const lastEntry = chartData[chartData.length - 1];
-    const estimatedSum = lastEntry['Valor Acumulado'];
-    
-    // Se o acumulado estimado for menor que o valor oficial de 21 dias, usamos o oficial
-    // Isso garante que o resumo nunca recue em relação ao dado verificado pelo usuário
-    const totalActualBRL = Math.max(officialActualApril, estimatedSum);
-    
-    const now = new Date();
-    const daysElapsed = now.getDate();
-    const totalDaysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-    
-    // Calcula a previsão baseada no valor real oficial até dia 21 + projeção dos dias restantes
-    const totalForecastBRL = totalActualBRL > officialActualApril 
-      ? (totalActualBRL / daysElapsed) * totalDaysInMonth
-      : officialForecastApril;
-    
-    let totalCloudRun = officialCloudRun;
-    let totalFirestore = officialFirestore;
-    let totalGemini = officialGemini;
-    
-    // Soma apenas a diferença das estimativas recentes após o dia 21, se houver
-    if (estimatedSum > officialActualApril) {
-      // Nota: Aqui poderíamos refinar a distribuição por serviço da diferença
-    }
-
-    const monthNames = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
-    const currentMonthName = monthNames[now.getMonth()];
-    const periodLabel = daysElapsed <= 21 ? '1-21 Abr (Verificado)' : `1-${daysElapsed} ${currentMonthName}`;
-
-    return {
-      totalActualBRL,
-      totalForecastBRL,
-      totalCloudRun,
-      totalFirestore,
-      totalGemini,
-      periodLabel,
-      currentMonthName
-    };
-  }, [chartData]);
 
   const toggleAdmin = async (player: Player) => {
     if (player.email?.trim().toLowerCase() === 'rodneyes@gmail.com') {
@@ -762,457 +426,6 @@ export const AdminView: React.FC<AdminViewProps> = ({
                 </div>
 
                 <div className="space-y-8">
-                  {/* Custos Estimados (Google Billing Dashboard) */}
-                  <section className="bg-brand-primary/5 backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-sm text-white space-y-6">
-                    <div className="flex flex-col gap-2">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-4">
-                          <CreditCard className="w-5 h-5 text-brand-primary" />
-                          <h3 className="text-xl font-black uppercase tracking-tight text-white">Custos Google Cloud</h3>
-                        </div>
-                        {usageStats.lastGcpSync && (
-                          <div className="flex items-center gap-2 px-3 py-1 bg-white/5 rounded-full border border-white/5">
-                            <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
-                            <span className="text-[8px] font-black text-white/40 uppercase tracking-widest">
-                              Sinc: {new Date(usageStats.lastGcpSync).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                      <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest pl-9">Faturamento Real em R$ (Câmbio ~5.25)</p>
-                    </div>
-
-                    {/* Gráfico de Custos Diários */}
-                    {chartData.length > 0 && (
-                      <div className="bg-black/40 p-6 rounded-3xl border border-white/5 h-[300px] w-full">
-                        <div className="flex items-center justify-between mb-4">
-                          <p className="text-[10px] font-black text-white/40 uppercase tracking-widest flex items-center gap-2">
-                             <Activity className="w-3 h-3 text-brand-primary" /> Faturamento Real Consolidado (Abril)
-                          </p>
-                          <div className="flex items-center gap-4">
-                            <div className="flex items-center gap-2">
-                              <div className="w-2 h-2 rounded-full bg-brand-primary"></div>
-                              <span className="text-[8px] font-black uppercase text-white/30">Consolidado Console GCP</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <div className="w-2 h-2 rounded-full bg-blue-500"></div>
-                              <span className="text-[8px] font-black uppercase text-white/30">Acumulado</span>
-                            </div>
-                          </div>
-                        </div>
-                        <ResponsiveContainer width="100%" height="100%">
-                          <ComposedChart data={chartData}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
-                            <XAxis 
-                              dataKey="date" 
-                              fontSize={9} 
-                              fontWeight="bold"
-                              axisLine={false}
-                              tickLine={false}
-                              tick={{ fill: '#ffffff40' }}
-                            />
-                            <YAxis 
-                              fontSize={9}
-                              fontWeight="bold"
-                              axisLine={false}
-                              tickLine={false}
-                              tick={{ fill: '#ffffff40' }}
-                              tickFormatter={(val) => `R$${val}`}
-                            />
-                            <RechartsTooltip 
-                              content={({ active, payload, label }) => {
-                                if (active && payload && payload.length) {
-                                  const data = payload[0].payload;
-                                  return (
-                                    <div className="bg-black border border-brand-primary/20 p-4 rounded-2xl shadow-2xl backdrop-blur-xl">
-                                      <p className="text-[10px] font-black text-white/40 uppercase mb-3 border-b border-white/5 pb-2">Detalhes: {label}</p>
-                                      <div className="space-y-2">
-                                        <div className="flex justify-between gap-8">
-                                          <span className="text-[9px] font-bold text-white/60 uppercase">Cloud Run (Fixo/Base)</span>
-                                          <span className="text-[10px] font-mono font-black text-white">R$ {data.breakdown.cloudRun}</span>
-                                        </div>
-                                        <div className="flex justify-between gap-8">
-                                          <span className="text-[9px] font-bold text-emerald-500/60 uppercase">Firestore</span>
-                                          <span className="text-[10px] font-mono font-black text-white">R$ {data.breakdown.firestore}</span>
-                                        </div>
-                                        <div className="flex justify-between gap-8">
-                                          <span className="text-[9px] font-bold text-purple-500/60 uppercase">Gemini API</span>
-                                          <span className="text-[10px] font-mono font-black text-white">R$ {data.breakdown.gemini}</span>
-                                        </div>
-                                        <div className="pt-2 mt-2 border-t border-white/5 flex justify-between gap-8">
-                                          <span className="text-[9px] font-black text-brand-primary uppercase">Total do Dia</span>
-                                          <span className="text-[10px] font-mono font-black text-brand-primary">R$ {data['Valor do Dia']}</span>
-                                        </div>
-                                        <div className="flex justify-between gap-8">
-                                          <span className="text-[9px] font-black text-blue-500 uppercase">Acumulado Mês</span>
-                                          <span className="text-[10px] font-mono font-black text-blue-500">R$ {data['Valor Acumulado']}</span>
-                                        </div>
-                                      </div>
-                                    </div>
-                                  );
-                                }
-                                return null;
-                              }}
-                            />
-                            <Bar 
-                              dataKey="Valor do Dia" 
-                              fill="#f5c429" 
-                              radius={[4, 4, 0, 0]} 
-                              opacity={0.8}
-                              barSize={20}
-                            />
-                            <Line 
-                              type="monotone" 
-                              dataKey="Valor Acumulado" 
-                              stroke="#3b82f6" 
-                              strokeWidth={3}
-                              dot={{ fill: '#3b82f6', r: 4 }}
-                              activeDot={{ r: 6, stroke: '#fff', strokeWidth: 2 }}
-                            />
-                          </ComposedChart>
-                        </ResponsiveContainer>
-                      </div>
-                    )}
-
-                    <div className="space-y-3">
-                      {(() => {
-                        const mReads = monthlyUsageStats?.reads || 0;
-                        const mWrites = monthlyUsageStats?.writes || 0;
-                        const mAiCalls = monthlyUsageStats?.aiCalls || 0;
-
-                        const { 
-                          totalActualBRL, 
-                          totalForecastBRL, 
-                          totalCloudRun, 
-                          totalFirestore, 
-                          totalGemini,
-                          periodLabel,
-                          currentMonthName
-                        } = billingSummary || {
-                          totalActualBRL: 0,
-                          totalForecastBRL: 0,
-                          totalCloudRun: 0,
-                          totalFirestore: 0,
-                          totalGemini: 0,
-                          periodLabel: '...',
-                          currentMonthName: '...'
-                        };
-
-                        const handleAIAnalysis = async () => {
-                          setIsAnalyzingBilling(true);
-                          try {
-                            const services = [
-                              { name: 'Cloud Run', cost: totalCloudRun },
-                              { name: 'Gemini API', cost: totalGemini },
-                              { name: 'Firestore', cost: totalFirestore }
-                            ];
-                            const report = await analyzeBillingCosts({
-                              actual: totalActualBRL,
-                              forecast: totalForecastBRL,
-                              services,
-                              usage: { reads: mReads, writes: mWrites, aiCalls: mAiCalls }
-                            });
-                            setBillingAnalysis(report);
-                          } catch (error) {
-                            console.error(error);
-                          } finally {
-                            setIsAnalyzingBilling(false);
-                          }
-                        };
-
-                        return (
-                          <div className="space-y-6">
-                            {/* Forecast & Current Header */}
-                            <div className="grid grid-cols-2 gap-3">
-                              <div className="bg-black/40 p-4 rounded-2xl border border-white/5 flex flex-col items-center justify-center">
-                                <p className="text-[8px] font-black text-white/40 uppercase tracking-widest mb-1">Total Fatura ({periodLabel})</p>
-                                <div className="flex items-baseline gap-1">
-                                  <span className="text-[10px] font-black text-brand-primary/60">R$</span>
-                                  <span className="text-2xl font-black text-brand-primary font-mono">{totalActualBRL.toFixed(2)}</span>
-                                </div>
-                                <p className="text-[7px] text-white/20 mt-1 uppercase font-bold tracking-tighter">Google Cloud + Firebase</p>
-                              </div>
-                              <div className="bg-brand-primary/10 p-4 rounded-2xl border border-brand-primary/20 flex flex-col items-center justify-center relative overflow-hidden">
-                                <div className="absolute top-0 right-0 p-1">
-                                  <Zap className="w-2 h-2 text-brand-primary animate-pulse" />
-                                </div>
-                                <p className="text-[8px] font-black text-brand-primary uppercase tracking-widest mb-1">Previsão ({currentMonthName})</p>
-                                <div className="flex items-baseline gap-1">
-                                  <span className="text-[10px] font-black text-brand-primary/60">R$</span>
-                                  <span className="text-2xl font-black text-brand-primary font-mono">{totalForecastBRL.toFixed(2)}</span>
-                                </div>
-                              </div>
-                            </div>
-
-                            <button 
-                              onClick={handleAIAnalysis}
-                              disabled={isAnalyzingBilling}
-                              className="w-full py-3 bg-brand-primary text-black font-black uppercase tracking-widest text-[10px] rounded-xl hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-                            >
-                              {isAnalyzingBilling ? (
-                                <>
-                                  <div className="w-3 h-3 border-2 border-black border-t-transparent rounded-full animate-spin" />
-                                  Consultando FinOps AI...
-                                </>
-                              ) : (
-                                <>
-                                  <Cpu className="w-4 h-4" />
-                                  Analisar Custos com IA
-                                </>
-                              )}
-                            </button>
-
-                            {/* Alerta de API Desativada */}
-                            {isMonitoringDisabled && (
-                              <motion.div 
-                                initial={{ opacity: 0, scale: 0.95 }}
-                                animate={{ opacity: 1, scale: 1 }}
-                                className="bg-amber-500/10 border-2 border-amber-500/40 p-5 rounded-[2rem] flex flex-col items-center text-center space-y-3"
-                              >
-                                <AlertTriangle className="w-8 h-8 text-amber-500 animate-bounce" />
-                                <h3 className="text-[11px] font-black uppercase text-amber-500 tracking-widest text-center">Acesso Negado (Google Cloud)</h3>
-                                <p className="text-[9px] font-medium text-white/60 leading-tight">
-                                  O Google Cloud bloqueou a leitura. Dê a permissão Service Usage Consumer para o e-mail:
-                                </p>
-                                <div className="bg-black/80 px-3 py-2 rounded-lg border border-white/20 select-all w-full text-center">
-                                  <code className="text-[10px] text-brand-primary font-mono select-all font-bold">
-                                    {activeServiceAccount || 'ais-sandbox@ais-us-east1-3182cc021eb343ff9.iam.gserviceaccount.com'}
-                                  </code>
-                                </div>
-                                <p className="text-[9px] font-medium text-white/60 leading-tight">
-                                  no projeto: <span className="text-amber-500 font-mono">volleyclub-manager</span>.
-                                </p>
-                                <a 
-                                  href="https://console.developers.google.com/iam-admin/iam?project=volleyclub-manager"
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-2 px-6 py-2.5 bg-amber-500 text-black font-black uppercase tracking-widest text-[9px] rounded-xl hover:bg-amber-400 transition-colors shadow-lg shadow-amber-500/20"
-                                >
-                                  <ExternalLink className="w-3 h-3" />
-                                  Abrir Gerenciador de IAM
-                                </a>
-                              </motion.div>
-                            )}
-
-                            {/* Módulo de Sincronização Automática */}
-                            <div className="bg-black/40 backdrop-blur-xl p-6 rounded-[2rem] border border-white/5 space-y-4">
-                              <div className="flex items-center gap-3">
-                                <div className="w-8 h-8 bg-brand-primary/10 rounded-lg flex items-center justify-center border border-brand-primary/40">
-                                  <RefreshCw className="w-4 h-4 text-brand-primary" />
-                                </div>
-                                <div>
-                                  <h4 className="text-[10px] font-black uppercase tracking-widest text-white">Sincronização Operacional Oficial</h4>
-                                  <p className="text-[8px] font-bold text-white/30 uppercase tracking-tighter">
-                                    Projeto: <span className="text-brand-primary">{firebaseConfig.projectId}</span> | Coleta automática de métricas
-                                  </p>
-                                </div>
-                              </div>
-
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <button 
-                                  onClick={fetchGCPData}
-                                  disabled={isFetchingGCP || isSyncingBilling}
-                                  className="w-full py-3 bg-black/60 border border-brand-primary/20 hover:border-brand-primary/60 text-brand-primary rounded-xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 group disabled:opacity-50"
-                                >
-                                  {isFetchingGCP ? (
-                                    <RefreshCw className="w-4 h-4 animate-spin" />
-                                  ) : (
-                                    <LinkIcon className="w-4 h-4 group-hover:rotate-12 transition-transform" />
-                                  )}
-                                  {isFetchingGCP ? 'Sincronizando...' : 'Sincronizar Hoje'}
-                                </button>
-                                
-                                <button 
-                                  onClick={syncHistoricalGCPData}
-                                  disabled={isSyncingBilling || isFetchingGCP}
-                                  className="w-full py-3 bg-white/10 border border-white/20 hover:border-white/40 text-white rounded-xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 group disabled:opacity-50"
-                                >
-                                  {isSyncingBilling ? (
-                                    <RefreshCw className="w-4 h-4 animate-spin text-white" />
-                                  ) : (
-                                    <Calendar className="w-4 h-4 text-white" />
-                                  )}
-                                  {isSyncingBilling ? 'Calculando Histórico...' : 'Sincronizar Últimos 7 Dias'}
-                                </button>
-                              </div>
-
-                              {lastSyncBreakdown && (
-                                <motion.div 
-                                  initial={{ opacity: 0, height: 0 }}
-                                  animate={{ opacity: 1, height: 'auto' }}
-                                  className="pt-4 border-t border-white/5 space-y-3"
-                                >
-                                  <div className="flex items-center gap-2 mb-1">
-                                    <Activity className="w-3 h-3 text-brand-primary" />
-                                    <p className="text-[9px] font-black text-white/60 uppercase tracking-widest">Detalhamento Técnico de Hoje</p>
-                                    {(lastSyncBreakdown?.cpuBRL === 0 && lastSyncBreakdown?.memoryBRL === 0) && (
-                                      <span className="text-[7px] text-white/20 animate-pulse">(Aguardando métricas do Google...)</span>
-                                    )}
-                                  </div>
-                                  <div className="grid grid-cols-3 gap-2">
-                                    <div className="bg-white/5 p-3 rounded-xl border border-white/5">
-                                      <p className="text-[7px] font-black text-white/30 uppercase mb-1">vCPU-Scale</p>
-                                      <p className="text-[11px] font-black text-brand-primary">R$ {lastSyncBreakdown.cpuBRL.toFixed(4)}</p>
-                                    </div>
-                                    <div className="bg-white/5 p-3 rounded-xl border border-white/5">
-                                      <p className="text-[7px] font-black text-white/30 uppercase mb-1">RAM-Seconds</p>
-                                      <p className="text-[11px] font-black text-brand-primary">R$ {lastSyncBreakdown.memoryBRL.toFixed(4)}</p>
-                                    </div>
-                                    <div className="bg-white/5 p-3 rounded-xl border border-white/5">
-                                      <p className="text-[7px] font-black text-white/30 uppercase mb-1">Rede/Requests</p>
-                                      <p className="text-[11px] font-black text-brand-primary">R$ {lastSyncBreakdown.requestsBRL.toFixed(4)}</p>
-                                    </div>
-                                  </div>
-                                </motion.div>
-                              )}
-                            </div>
-
-                            {billingAnalysis && (
-                              <motion.div 
-                                initial={{ opacity: 0, y: 10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                className="bg-brand-primary/10 p-5 rounded-2xl border border-brand-primary/20 text-[11px] leading-relaxed text-white/90"
-                              >
-                                <div className="flex items-center gap-2 mb-3">
-                                  <Bot className="w-4 h-4 text-brand-primary" />
-                                  <p className="font-black uppercase tracking-widest text-brand-primary">Consultoria FinOps IA</p>
-                                </div>
-                                <div className="prose prose-invert prose-xs max-w-none">
-                                  <Markdown>{billingAnalysis}</Markdown>
-                                </div>
-                                <div className="flex justify-between items-center mt-4">
-                                  <button 
-                                    onClick={() => setBillingAnalysis(null)}
-                                    className="text-[9px] font-black uppercase text-white/30 hover:text-white transition-colors"
-                                  >
-                                    Fechar Relatório
-                                  </button>
-                                  {weeklyReports.length > 0 && (
-                                     <p className="text-[8px] font-black text-brand-primary/40 uppercase tracking-widest">IA Master Admin</p>
-                                  )}
-                                </div>
-                              </motion.div>
-                            )}
-
-                            {weeklyReports.length > 0 && !billingAnalysis && (
-                              <div className="space-y-3">
-                                <div className="flex items-center gap-2 mb-1">
-                                  <History className="w-3 h-3 text-white/20" />
-                                  <p className="text-[9px] font-black text-white/20 uppercase tracking-widest">Relatórios Automatizados (Sextas)</p>
-                                </div>
-                                <div className="grid grid-cols-1 gap-2">
-                                  {weeklyReports.slice(0, 3).map((report) => (
-                                    <button
-                                      key={report.id}
-                                      onClick={() => setBillingAnalysis(report.report)}
-                                      className="flex items-center justify-between p-3 bg-white/5 border border-white/5 rounded-xl hover:bg-white/10 transition-all text-left group"
-                                    >
-                                      <div>
-                                        <p className="text-[10px] font-black text-white uppercase tracking-tighter">Relatório de {report.date}</p>
-                                        <p className="text-[8px] text-white/40 uppercase font-black">Previsão: R$ {report.data?.forecastBRL?.toFixed(2)}</p>
-                                      </div>
-                                      <div className="p-2 rounded-lg bg-brand-primary/10 text-brand-primary group-hover:scale-110 transition-transform">
-                                        <Eye className="w-3 h-3" />
-                                      </div>
-                                    </button>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-
-                            {billingHistory.length > 0 && !billingAnalysis && (
-                              <div className="space-y-3">
-                                <div className="flex items-center gap-2 mb-1">
-                                  <CreditCard className="w-3 h-3 text-white/20" />
-                                  <p className="text-[9px] font-black text-white/20 uppercase tracking-widest">Histórico de Faturas Mensais</p>
-                                </div>
-                                <div className="grid grid-cols-1 gap-2">
-                                  {billingHistory.slice(0, 3).map((h) => (
-                                    <div
-                                      key={h.id}
-                                      className="flex items-center justify-between p-3 bg-white/5 border border-white/5 rounded-xl text-left"
-                                    >
-                                      <div>
-                                        <p className="text-[10px] font-black text-white uppercase tracking-tighter">Competência: {h.month}</p>
-                                        <p className="text-[8px] text-emerald-500/60 uppercase font-black">Fechado em: R$ {h.data?.actualBRL?.toFixed(2)}</p>
-                                      </div>
-                                      <div className="text-right">
-                                        <p className="text-[10px] font-black text-brand-primary font-mono">R$ {h.data?.actualBRL?.toFixed(2)}</p>
-                                        <p className="text-[7px] text-white/30 uppercase font-bold">Total Final</p>
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-
-                            <div className="space-y-2">
-                              {/* Cloud Run Service */}
-                              <div className="bg-brand-primary/5 p-4 rounded-2xl border border-white/5 space-y-3">
-                                <div className="flex items-center justify-between">
-                                  <div className="flex items-center gap-3">
-                                    <LayoutDashboard className="w-4 h-4 text-brand-primary" />
-                                    <p className="text-xs font-black text-white uppercase tracking-tighter">Cloud Run</p>
-                                  </div>
-                                  <span className="text-sm font-black text-brand-primary font-mono">R$ {totalCloudRun.toFixed(2)}</span>
-                                </div>
-                              </div>
-
-                              {/* Gemini API */}
-                              <div className="bg-black/40 p-4 rounded-2xl border border-white/5 flex items-center justify-between">
-                                <div className="flex items-center gap-3">
-                                  <Zap className="w-4 h-4 text-purple-500" />
-                                  <div>
-                                    <p className="text-xs font-black text-white uppercase tracking-tighter">Gemini API</p>
-                                    <p className="text-[8px] text-white/40 uppercase font-black">GenAI Tokens & Request</p>
-                                  </div>
-                                </div>
-                                <span className="text-sm font-black text-white font-mono">R$ {totalGemini.toFixed(2)}</span>
-                              </div>
-
-                              {/* App Engine / Firestore */}
-                              <div className="bg-black/40 p-4 rounded-2xl border border-white/5 flex items-center justify-between">
-                                <div className="flex items-center gap-3">
-                                  <Database className="w-4 h-4 text-emerald-500" />
-                                  <div>
-                                    <p className="text-xs font-black text-white uppercase tracking-tighter">Firestore (App Engine)</p>
-                                    <p className="text-[8px] text-white/40 uppercase font-black">Storage & Operations</p>
-                                  </div>
-                                </div>
-                                <span className="text-sm font-black text-white font-mono">R$ {totalFirestore.toFixed(2)}</span>
-                              </div>
-                            </div>
-
-                            {/* Detalhamento do Monitoramento Online */}
-                            <div className="p-4 bg-white/5 rounded-2xl border border-white/5 space-y-3">
-                              <p className="text-[8px] font-black text-white/40 uppercase tracking-[0.2em] text-center">Monitoramento Interno do App</p>
-                              <div className="flex justify-around">
-                                <div className="text-center">
-                                  <p className="text-[10px] font-black text-white">{mReads.toLocaleString()}</p>
-                                  <p className="text-[7px] font-bold text-white/20 uppercase">Reads</p>
-                                </div>
-                                <div className="text-center">
-                                  <p className="text-[10px] font-black text-white">{mWrites.toLocaleString()}</p>
-                                  <p className="text-[7px] font-bold text-white/20 uppercase">Writes</p>
-                                </div>
-                                <div className="text-center">
-                                  <p className="text-[10px] font-black text-white">{mAiCalls.toLocaleString()}</p>
-                                  <p className="text-[7px] font-bold text-white/20 uppercase">AI Calls</p>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })()}
-                    </div>
-                    
-                    <div className="pt-2 border-t border-white/5">
-                      <p className="text-[8px] text-white/30 leading-relaxed italic text-center uppercase tracking-widest font-black">
-                        Valores descontam os limites do modelo "Spark Plan" (Free Tier mensal).
-                      </p>
-                    </div>
-                  </section>
-
                   {/* Configurações Rápidas */}
                   <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary text-white space-y-6">
                     <h3 className="text-lg font-black uppercase tracking-tight text-white">Configurações</h3>
@@ -1684,6 +897,68 @@ export const AdminView: React.FC<AdminViewProps> = ({
                       <h3 className="text-xl font-black uppercase tracking-tight text-white">Monitor de Notificações</h3>
                       <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Acompanhe todas as mensagens enviadas aos sócios</p>
                     </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 bg-white/5 rounded-3xl border border-white/5 border-l-4 border-l-brand-primary">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 bg-brand-primary/10 rounded-2xl flex items-center justify-center border border-brand-primary/20">
+                        <Trophy className={`w-5 h-5 ${systemMetadata.matchNotificationsGlobalEnabled !== false ? 'text-brand-primary animate-pulse' : 'text-white/20'}`} />
+                      </div>
+                      <div>
+                        <h4 className="text-[12px] font-black text-white uppercase tracking-tight">Alertas de Partidas</h4>
+                        <p className="text-[9px] font-bold uppercase tracking-widest">
+                          {systemMetadata.matchNotificationsGlobalEnabled !== false 
+                            ? <span className="text-emerald-400">Ativado para o grupo</span> 
+                            : <span className="text-rose-400">Desativado para o grupo</span>}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        const newState = systemMetadata.matchNotificationsGlobalEnabled === false;
+                        updateSystemMetadata({ matchNotificationsGlobalEnabled: newState });
+                        showNotification(newState ? 'Alertas de partidas ativados!' : 'Alertas de partidas desativados.', newState ? 'success' : 'info');
+                      }}
+                      className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                        systemMetadata.matchNotificationsGlobalEnabled !== false
+                          ? 'bg-rose-500/10 text-rose-500 border border-rose-500/30'
+                          : 'bg-brand-primary text-black'
+                      }`}
+                    >
+                      {systemMetadata.matchNotificationsGlobalEnabled !== false ? 'Desativar' : 'Ativar'}
+                    </button>
+                  </div>
+
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 bg-white/5 rounded-3xl border border-white/5 border-l-4 border-l-brand-primary">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 bg-brand-primary/10 rounded-2xl flex items-center justify-center border border-brand-primary/20">
+                        <BellRing className={`w-5 h-5 ${systemMetadata.pushNotificationsGlobalEnabled !== false ? 'text-brand-primary animate-bounce' : 'text-white/20'}`} />
+                      </div>
+                      <div>
+                        <h4 className="text-[12px] font-black text-white uppercase tracking-tight">Push Notifications (Global)</h4>
+                        <p className="text-[9px] font-bold uppercase tracking-widest">
+                          {systemMetadata.pushNotificationsGlobalEnabled !== false 
+                            ? <span className="text-emerald-400">Master Switch: ON</span> 
+                            : <span className="text-rose-400">Master Switch: OFF</span>}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        const newState = systemMetadata.pushNotificationsGlobalEnabled === false;
+                        updateSystemMetadata({ pushNotificationsGlobalEnabled: newState });
+                        showNotification(newState ? 'Notificações Push Master ativadas!' : 'TODAS as notificações Push desativadas globalmente.', newState ? 'success' : 'info');
+                      }}
+                      className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                        systemMetadata.pushNotificationsGlobalEnabled !== false
+                          ? 'bg-rose-500/10 text-rose-500 border border-rose-500/30'
+                          : 'bg-brand-primary text-black'
+                      }`}
+                    >
+                      {systemMetadata.pushNotificationsGlobalEnabled !== false ? 'DESATIVAR TUDO' : 'ATIVAR TUDO'}
+                    </button>
                   </div>
                 </div>
 

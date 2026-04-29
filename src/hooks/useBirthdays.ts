@@ -51,19 +51,23 @@ export const useBirthdays = () => {
       // For now, let's send to all players who have a token
       const playersWithToken = players.filter(p => p.fcmToken && p.id !== player.id);
       
-      playersWithToken.forEach(p => {
-        const notifRef = doc(collection(db, 'fcm_messages'));
-        batch.set(notifRef, {
-          token: p.fcmToken,
-          notification: {
-            title: '🎉 Aniversariante do Dia!',
-            body: `Hoje é aniversário de ${player.name}! Vamos dar os parabéns no grupo! 🎂🏐`
-          },
-          createdAt: serverTimestamp()
+      const { systemMetadata } = useStore.getState();
+      if (systemMetadata.pushNotificationsGlobalEnabled !== false) {
+        playersWithToken.forEach(p => {
+          const notifRef = doc(collection(db, 'fcm_messages'));
+          batch.set(notifRef, {
+            token: p.fcmToken,
+            notification: {
+              title: '🎉 Aniversariante do Dia!',
+              body: `Hoje é aniversário de ${player.name}! Vamos dar os parabéns no grupo! 🎂🏐`,
+              sound: 'default'
+            },
+            createdAt: serverTimestamp()
+          });
         });
-      });
+        await batch.commit();
+      }
 
-      await batch.commit();
       showNotification(`Notificações de aniversário enviadas para o grupo!`, 'success');
     } catch (error) {
       console.error("Error sending birthday push:", error);

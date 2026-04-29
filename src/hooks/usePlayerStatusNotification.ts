@@ -166,6 +166,18 @@ export const usePlayerStatusNotification = (
   };
 
   const isEnabled = currentPlayer?.pushEnabled ?? false;
+  const isMatchEnabled = currentPlayer?.matchNotificationsEnabled ?? true;
 
-  return { permission, isEnabled, requestPermission, disableNotifications };
+  const toggleMatchNotifications = async () => {
+    if (!currentPlayer) return;
+    try {
+      const newState = !isMatchEnabled;
+      const playerRef = doc(db, 'players', currentPlayer.id);
+      await updateDoc(playerRef, { matchNotificationsEnabled: newState });
+    } catch (error) {
+      console.error('Erro ao alternar notificações de partida:', error);
+    }
+  };
+
+  return { permission, isEnabled, isMatchEnabled, requestPermission, disableNotifications, toggleMatchNotifications };
 };

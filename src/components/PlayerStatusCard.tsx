@@ -26,13 +26,20 @@ export const PlayerStatusCard: React.FC<PlayerStatusCardProps> = ({
   activeTournament
 }) => {
   const showNotification = useStore(state => state.showNotification);
-  const { isEnabled, requestPermission, disableNotifications } = usePlayerStatusNotification(
+  const { 
+    isEnabled, 
+    isMatchEnabled,
+    requestPermission, 
+    disableNotifications,
+    toggleMatchNotifications
+  } = usePlayerStatusNotification(
     currentPlayer, 
     generationResult,
     matches,
     systemMetadata
   );
   const [isRequesting, setIsRequesting] = React.useState(false);
+  const [isTogglingMatch, setIsTogglingMatch] = React.useState(false);
 
   const handleToggleNotifications = async () => {
     console.log('handleToggleNotifications: isEnabled =', isEnabled, 'isRequesting =', isRequesting);
@@ -56,6 +63,19 @@ export const PlayerStatusCard: React.FC<PlayerStatusCardProps> = ({
       if (showNotification) showNotification('Erro ao processar notificações.', 'error');
     } finally {
       setIsRequesting(false);
+    }
+  };
+
+  const handleToggleMatchNotifications = async () => {
+    if (isTogglingMatch) return;
+    setIsTogglingMatch(true);
+    try {
+      await toggleMatchNotifications();
+      showNotification(isMatchEnabled ? 'Alertas de partidas desativados.' : 'Alertas de partidas ativados!', 'success');
+    } catch (error) {
+      console.error('Erro ao alternar alertas de partida:', error);
+    } finally {
+      setIsTogglingMatch(false);
     }
   };
 
@@ -173,6 +193,21 @@ export const PlayerStatusCard: React.FC<PlayerStatusCardProps> = ({
           ) : (
             <Smartphone className={`w-4 h-4 ${isRequesting ? 'opacity-50' : ''}`} />
           )}
+        </button>
+      )}
+
+      {currentPlayer && isEnabled && (
+        <button
+          onClick={handleToggleMatchNotifications}
+          disabled={isTogglingMatch}
+          className={`flex items-center justify-center w-8 h-8 rounded-full transition-all ${
+            isMatchEnabled 
+              ? 'bg-amber-500 text-black shadow-[0_0_15px_rgba(245,158,11,0.4)] hover:bg-amber-400' 
+              : 'bg-brand-primary/10 border border-brand-primary/30 text-brand-primary hover:bg-brand-primary/20'
+          } ${isTogglingMatch ? 'animate-pulse' : ''}`}
+          title={isMatchEnabled ? "Desativar Alertas de Resultados" : "Ativar Alertas de Resultados"}
+        >
+          <Trophy className={`w-4 h-4 ${isMatchEnabled ? 'fill-current' : ''} ${isTogglingMatch ? 'animate-bounce' : ''}`} />
         </button>
       )}
     </div>

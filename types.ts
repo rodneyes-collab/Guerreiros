@@ -39,6 +39,7 @@ export interface Player {
   lastReadUpdate?: string; // Data da última atualização de leitura
   fcmToken?: string; // Token para Push Notifications
   pushEnabled?: boolean; // Se o sócio deseja receber notificações push
+  matchNotificationsEnabled?: boolean; // Se o sócio deseja receber notificações de resultados de partidas
   hasSeenWelcome?: boolean; // Se o sócio já viu a mensagem de boas-vindas
   impactLevel?: 1 | 2 | 3; // 1: Base, 2: Medium/Technique, 3: Elite/Power
 }
@@ -100,6 +101,8 @@ export interface SystemMetadata {
   monthlyFee?: number;
   isTournamentEnabled?: boolean;
   showEliteQueue?: boolean;
+  matchNotificationsGlobalEnabled?: boolean;
+  pushNotificationsGlobalEnabled?: boolean;
 }
 
 export enum PaymentStatus {

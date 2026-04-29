@@ -66,7 +66,7 @@ service cloud.firestore {
         'dailyEloGain', 'wins', 'losses', 'eloHistory', 'isAdmin', 
         'joinedAt', 'playedLastMatch', 'birthDate', 'updatedAt', 'uid', 'dailyResults',
         'arrivalOrder', 'isPresent', 'timestamp', 'status', 'createdAt',
-        'role', 'position', 'level', 'consecutiveBenched', 'reads', 'writes', 'accesses', 'lastReadUpdate', 'fcmToken', 'pushEnabled', 'impactLevel'
+        'role', 'position', 'level', 'consecutiveBenched', 'reads', 'writes', 'accesses', 'lastReadUpdate', 'fcmToken', 'pushEnabled', 'matchNotificationsEnabled', 'impactLevel'
       ];
       return hasOnlyAllowedFields(data, allowedFields) &&
              (!('id' in data) || data.id is string) &&
@@ -105,6 +105,7 @@ service cloud.firestore {
              (!('lastReadUpdate' in data) || data.lastReadUpdate is string) &&
              (!('fcmToken' in data) || data.fcmToken == null || data.fcmToken is string) &&
              (!('pushEnabled' in data) || data.pushEnabled is bool) &&
+             (!('matchNotificationsEnabled' in data) || data.matchNotificationsEnabled is bool) &&
              (!('impactLevel' in data) || data.impactLevel is int);
     }
 
@@ -151,7 +152,7 @@ service cloud.firestore {
       allow update: if (isAdmin() || 
                         (isAuthenticated() && 
                          (
-                           (resource.data.uid == request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['fcmToken', 'pushEnabled', 'impactLevel', 'reads', 'writes', 'accesses', 'lastReadUpdate'])) ||
+                           (resource.data.uid == request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['fcmToken', 'pushEnabled', 'matchNotificationsEnabled', 'impactLevel', 'reads', 'writes', 'accesses', 'lastReadUpdate'])) ||
                            ((!('uid' in resource.data) || resource.data.uid == null || resource.data.uid == "") && request.resource.data.diff(resource.data).affectedKeys().hasAny(['uid']) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['uid', 'email']) && request.resource.data.uid == request.auth.uid)
                          )
                         )
