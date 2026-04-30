@@ -27,7 +27,7 @@ api.get("/health", async (req, res) => {
   });
 });
 
-const { GoogleGenAI, Modality, ThinkingLevel } = require("@google/genai");
+const { GoogleGenAI } = require("@google/genai");
 
 // Rota para debug de identidade
 api.get("/debug-identity", async (req, res) => {
@@ -51,15 +51,15 @@ api.post("/gemini", async (req, res) => {
   }
 
   try {
-    const genAI = new GoogleGenAI(apiKey);
+    const ai = new GoogleGenAI({ apiKey });
     const modelName = isTTS ? "gemini-3.1-flash-tts-preview" : (req.body.model || "gemini-3-flash-preview");
     
     if (isTTS) {
       // Regra específica para TTS (Audio Mode)
-      const model = genAI.getGenerativeModel({ model: modelName });
-      const response = await model.generateContent({
+      const response = await ai.models.generateContent({
+        model: modelName,
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
+        config: {
           responseModalities: ["AUDIO"],
           speechConfig: {
             voiceConfig: { 
@@ -68,19 +68,18 @@ api.post("/gemini", async (req, res) => {
           },
         },
       });
-      const candidate = response.response.candidates?.[0];
+      const candidate = response.candidates?.[0];
       const part = candidate?.content?.parts?.[0];
       const data = part?.inlineData?.data;
       return res.json({ audio: data });
     } else {
       // Texto normal
-      const model = genAI.getGenerativeModel({ 
+      const response = await ai.models.generateContent({
         model: modelName,
-        generationConfig: config || { thinkingConfig: { thinkingLevel: 'LOW' } }
+        contents: prompt,
+        config: config || { thinkingConfig: { thinkingLevel: 'LOW' } }
       });
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      return res.json({ text: response.text() });
+      return res.json({ text: response.text });
     }
   } catch (err) {
     console.error("Gemini Error:", err);
