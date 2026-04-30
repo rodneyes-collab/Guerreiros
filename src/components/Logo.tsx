@@ -49,7 +49,7 @@ export const Logo: React.FC<LogoProps> = ({ className = '', size = 'md' }) => {
       {useImage ? (
         <img 
           src="/logo.png" 
-          alt="Guerreiros V.C." 
+          alt="Guerreiros Volei Club" 
           className="w-full h-full object-contain p-1"
           onError={() => setUseImage(false)}
           referrerPolicy="no-referrer"

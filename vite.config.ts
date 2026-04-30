@@ -19,27 +19,17 @@ export default defineConfig(({ mode }) => {
         tailwindcss(),
         VitePWA({
           registerType: 'autoUpdate',
-          includeAssets: ['logo.png'],
+          includeAssets: ['logo.svg'],
           manifest: {
-            name: 'Guerreiros Volei',
-            short_name: 'Guerreiros Volei',
+            name: 'Guerreiros Volleyball Club',
+            short_name: 'Guerreiros VC',
             description: 'Sistema de gestão de clubes de vôlei e geração de times equilibrados.',
-            theme_color: '#064e3b',
+            theme_color: '#000000',
             icons: [
               {
-                src: 'logo.png',
-                sizes: '192x192',
-                type: 'image/png'
-              },
-              {
-                src: 'logo.png',
-                sizes: '512x512',
-                type: 'image/png'
-              },
-              {
-                src: 'logo.png',
-                sizes: '512x512',
-                type: 'image/png',
+                src: 'logo.svg',
+                sizes: '192x192 512x512',
+                type: 'image/svg+xml',
                 purpose: 'any maskable'
               }
             ]

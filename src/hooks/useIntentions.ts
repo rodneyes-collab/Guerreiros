@@ -24,12 +24,12 @@ export const useIntentions = () => {
     if (envUrl) return envUrl.replace(/\/$/, '');
     
     // 2. Official Production URL provided by user
-    const PROD_URL = 'https://guerreiros-volleyball-club-238897290870.us-west1.run.app';
+    const PROD_URL = 'https://volleyclub-manager.web.app';
     
     const origin = window.location.origin;
     
-    // If we are in production, use the current origin
-    if (origin.includes('guerreiros-volleyball-club')) {
+    // If we are in production or preview, use the current origin
+    if (origin.includes('guerreiros-volleyball-club') || origin.includes('ais-pre-') || origin.includes('volleyclub-manager')) {
       return origin;
     }
 

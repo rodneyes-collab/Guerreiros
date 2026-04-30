@@ -43,260 +43,51 @@ async function startServer() {
   app.use(cors());
   app.use(express.json());
 
-  // API Routes
-  app.get("/api/health", async (req, res) => {
-    console.log("[Server] Health check requested");
-    let dbStatus = "unknown";
+  // --- NOTA: EM PRODUÇÃO, O FIREBASE HOSTING E CLOUD FUNCTIONS ASSUMEM TUDO ---
+  // --- ESTE ARQUIVO SERVER.TS É USADO APENAS PARA O AMBIENTE DE DESENVOLVIMENTO ---
+
+  // Proxy simples para as Cloud Functions em ambiente de desenvolvimento
+  app.post("/api/gemini", async (req, res) => {
+    // Redireciona para um simulador local ou usa a key do env se disponível
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) return res.status(500).json({ error: "API Key missing in Dev Env" });
+
     try {
-      await db.collection("test").doc("connection").get();
-      dbStatus = "connected";
-    } catch (e: any) {
-      dbStatus = `error: ${e.message}`;
-    }
-    res.json({ 
-      status: "ok", 
-      db: dbStatus,
-      projectId: configProjectId,
-      timestamp: new Date().toISOString() 
-    });
-  });
+      const { GoogleGenAI, Modality, ThinkingLevel } = await import("@google/genai");
+      const ai = new GoogleGenAI(apiKey);
+      const { prompt, isTTS } = req.body;
+      const modelName = isTTS ? "gemini-3.1-flash-tts-preview" : (req.body.model || "gemini-3-flash-preview");
 
-  app.get("/api/test", (req, res) => {
-    console.log("[Server] Test route hit");
-    res.json({ message: "API is reachable" });
-  });
-
-// Rota para debug de identidade (apenas para verificação)
-app.get("/api/debug-identity", async (req, res) => {
-  try {
-    const { GoogleAuth } = require("google-auth-library");
-    const auth = new GoogleAuth();
-    const client = await auth.getClient();
-    let email = (client as any).email || (client as any).client_email || "Not found in client";
-    
-    // Try metadata server directly
-    const metadataUrl = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email";
-    const metadataResp = await fetch(metadataUrl, { headers: { "Metadata-Flavor": "Google" } }).catch(() => null);
-    if (metadataResp?.ok) {
-      email = await metadataResp.text();
-    }
-    
-    res.json({ email, env: process.env.GOOGLE_CLOUD_PROJECT });
-  } catch (err: any) {
-    res.json({ error: err.message });
-  }
-});
-
-// Rota para capturar métricas REAIS do Google Cloud Monitoring
-let globalAuth: GoogleAuth | null = null;
-let globalMetricsClient: MetricServiceClient | null = null;
-
-app.get("/api/billing/real-time", async (req, res) => {
-  const targetDateStr = req.query.date as string;
-  
-  try {
-    if (!globalAuth) globalAuth = new GoogleAuth();
-    let serviceAccountEmail = "rodneyes@gmail.com";
-    try {
-      // Tenta obter o e-mail real da conta de serviço via servidor de metadados (Cloud Run)
-      const client = await globalAuth.getClient();
-      serviceAccountEmail = (client as any).email || (client as any).client_email || "rodneyes@gmail.com";
-      
-      // Fallback para metadados se não encontrado no cliente
-      if (serviceAccountEmail === "rodneyes@gmail.com") {
-        const metadataUrl = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email";
-        const metadataResp = await fetch(metadataUrl, { headers: { "Metadata-Flavor": "Google" }, signal: AbortSignal.timeout(2000) }).catch(() => null);
-        if (metadataResp?.ok) {
-          serviceAccountEmail = await metadataResp.text();
-        }
-      }
-    } catch (e) {
-      console.warn("[Server] Falha ao descobrir e-mail da SA:", e);
-    }
-    const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
-    let projectId = configProjectId;
-    try {
-      const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-      if (config.projectId) projectId = config.projectId;
-    } catch (e) {}
-
-    console.log(`[Server] Buscando métricas para o projeto: ${projectId} | Identidade ativa: ${serviceAccountEmail}`);
-
-    if (!globalMetricsClient) globalMetricsClient = new MetricServiceClient();
-    const metricsClient = globalMetricsClient;
-    let startTime: Date;
-    let endTime: Date;
-
-    if (targetDateStr) {
-      // Busca um dia específico (00:00:00 até 23:59:59 daquele dia no fuso de SP)
-      // Como o fuso de SP é UTC-3, precisamos buscar de 03:00 (UTC) do dia até 02:59 (UTC) do dia seguinte.
-      startTime = new Date(`${targetDateStr}T03:00:00Z`);
-      const nextDay = new Date(startTime);
-      nextDay.setUTCDate(nextDay.getUTCDate() + 1);
-      nextDay.setUTCHours(2, 59, 59, 999);
-      endTime = nextDay;
-    } else {
-      // Padrão: Últimas 24h em UTC para garantir dados consistentes
-      endTime = new Date();
-      startTime = new Date(endTime.getTime() - 24 * 60 * 60 * 1000);
-    }
-
-      // Captura métrica de uso de CPU do Cloud Run
-      let timeSeries: any[] = [];
-      let cpuMetricAvailable = false;
-      try {
-        const [response] = await metricsClient.listTimeSeries({
-          name: metricsClient.projectPath(projectId),
-          filter: 'metric.type = "run.googleapis.com/cpu/usage_time"',
-          interval: {
-            startTime: { seconds: Math.floor(startTime.getTime() / 1000) },
-            endTime: { seconds: Math.floor(endTime.getTime() / 1000) },
+      if (isTTS) {
+        const response = await ai.getGenerativeModel({ model: modelName }).generateContent({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            responseModalities: [Modality.AUDIO],
+            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } } },
           },
-          aggregation: {
-            alignmentPeriod: { seconds: 60 },
-            perSeriesAligner: 'ALIGN_SUM',
-            crossSeriesReducer: 'REDUCE_SUM',
-          }
-        }, { timeout: 10000 });
-        timeSeries = response;
-        cpuMetricAvailable = timeSeries.length > 0;
-      } catch (err: any) {
-        console.warn(`[Server] CPU metric not found or unavailable, assuming 0: ${err.message}`);
+        });
+        const data = response.response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+        res.json({ audio: data });
+      } else {
+        const result = await ai.getGenerativeModel({ model: modelName }).generateContent({
+          contents: prompt,
+          generationConfig: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } } as any
+        });
+        res.json({ text: result.response.text() });
       }
-
-      let totalCpuSeconds = 0;
-      timeSeries.forEach(serie => {
-        serie.points?.forEach((point: any) => {
-          if (point.value?.doubleValue) totalCpuSeconds += point.value.doubleValue;
-        });
-      });
-
-      // Captura métrica de memória (Utilização média em Bytes)
-      let memorySeries: any[] = [];
-      try {
-        const [response] = await metricsClient.listTimeSeries({
-          name: metricsClient.projectPath(projectId),
-          filter: 'metric.type = "run.googleapis.com/container/memory/usage"',
-          interval: {
-            startTime: { seconds: Math.floor(startTime.getTime() / 1000) },
-            endTime: { seconds: Math.floor(endTime.getTime() / 1000) },
-          },
-          aggregation: {
-            alignmentPeriod: { seconds: 60 },
-            perSeriesAligner: 'ALIGN_MEAN',
-            crossSeriesReducer: 'REDUCE_SUM',
-          }
-        }, { timeout: 10000 });
-        memorySeries = response;
-      } catch (err: any) {
-        console.warn(`[Server] Memory metric not found or unavailable, assuming 0: ${err.message}`);
-      }
-
-      let totalMemoryBytesAvg = 0;
-      let memoryPointsCount = 0;
-      memorySeries.forEach(serie => {
-        serie.points?.forEach((point: any) => {
-          if (point.value?.doubleValue) {
-            totalMemoryBytesAvg += point.value.doubleValue;
-            memoryPointsCount++;
-          }
-        });
-      });
-      if (memoryPointsCount > 0) totalMemoryBytesAvg = totalMemoryBytesAvg / memoryPointsCount;
-
-      const durationSeconds = Math.max(1, Math.floor((endTime.getTime() - startTime.getTime()) / 1000));
-      const totalMemoryByteSeconds = totalMemoryBytesAvg * durationSeconds;
-
-      // Captura métrica de requests
-      let totalRequests = 0;
-      try {
-        const [response] = await metricsClient.listTimeSeries({
-          name: metricsClient.projectPath(projectId),
-          filter: 'metric.type = "run.googleapis.com/request_count"',
-          interval: {
-            startTime: { seconds: Math.floor(startTime.getTime() / 1000) },
-            endTime: { seconds: Math.floor(endTime.getTime() / 1000) },
-          },
-          aggregation: {
-            alignmentPeriod: { seconds: 60 },
-            perSeriesAligner: 'ALIGN_SUM',
-            crossSeriesReducer: 'REDUCE_SUM',
-          }
-        }, { timeout: 10000 });
-        response.forEach(serie => {
-          serie.points?.forEach((point: any) => {
-            if (point.value?.int64Value) totalRequests += Number(point.value.int64Value);
-          });
-        });
-      } catch (e) {}
-
-      // Cálculo financeiro refinado (vCPU, GiB-seconds e Requests)
-      const cpuCost = totalCpuSeconds * 0.00003360; // USD 
-      const memoryCost = (totalMemoryByteSeconds / (1024 * 1024 * 1024)) * 0.00000360; // GiB-sec estimativa
-      const requestCost = (totalRequests / 1000000) * 0.40; // USD por milhão de requests
-      
-      const estimatedCostBRL = (cpuCost + memoryCost + requestCost) * 5.25; // Conversão BRL
-
-      res.json({ 
-        projectId,
-        date: targetDateStr || "last_24h",
-        usage: {
-          cpuSeconds: totalCpuSeconds,
-          memoryBytes: totalMemoryBytesAvg,
-          requests: totalRequests
-        },
-        breakdown: {
-          cpuBRL: Number((cpuCost * 5.25).toFixed(4)),
-          memoryBRL: Number((memoryCost * 5.25).toFixed(4)),
-          requestsBRL: Number((requestCost * 5.25).toFixed(4))
-        },
-        estimatedCostBRL: (cpuMetricAvailable || totalRequests > 0) ? Number(estimatedCostBRL.toFixed(4)) : null,
-        metricsAvailable: cpuMetricAvailable,
-        status: "success"
-      });
-    } catch (error: any) {
-      console.error("Erro ao buscar métricas GCP:", error);
-      
-      const errorMessageStr = error.message || "";
-      const isApiDisabled = errorMessageStr.includes("has not been used") || errorMessageStr.includes("is disabled");
-      const isIamError = errorMessageStr.includes("Caller does not have required permission");
-      
-      // Retornamos 200 mesmo em caso de erro para evitar que o Nginx/Proxy intercepte e retorne HTML
-      if (!globalAuth) globalAuth = new GoogleAuth();
-      let serviceAccountEmail = "rodneyes@gmail.com";
-      try {
-        const authClient = await globalAuth.getClient();
-        serviceAccountEmail = (authClient as any).email || (authClient as any).client_email || "rodneyes@gmail.com";
-        
-        if (serviceAccountEmail === "rodneyes@gmail.com") {
-          const metadataUrl = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email";
-          const metadataResp = await fetch(metadataUrl, { headers: { "Metadata-Flavor": "Google" }, signal: AbortSignal.timeout(2000) }).catch(() => null);
-          if (metadataResp?.ok) {
-            serviceAccountEmail = await metadataResp.text();
-          }
-        }
-      } catch (e) {}
-
-      return res.status(200).json({ 
-        success: false,
-        isGcpError: true,
-        errorType: isApiDisabled ? "API_DISABLED" : "IAM_PERMISSION_DENIED",
-        error: isApiDisabled ? "API de Monitoramento Desativada" : "Erro de Permissão IAM",
-        details: error.message,
-        serviceAccount: serviceAccountEmail,
-        helpLink: "https://console.developers.google.com/iam-admin/iam",
-        projectId: configProjectId || "desconhecido"
-      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
-  // Global Error Handler to avoid HTML error pages
-  app.use((err: any, req: any, res: any, next: any) => {
-    console.error("[Server Error]", err);
-    res.status(500).json({ 
-      error: "Erro interno no servidor",
-      details: err.message 
-    });
+  // Mock de Billing para desenvolvimento
+  app.get("/api/billing/real-time", (req, res) => {
+    res.json({ status: "mock", message: "Use Cloud Functions for real metrics" });
+  });
+
+  // Health check
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", mode: "development" });
   });
 
   // Vite middleware for development

@@ -157,14 +157,26 @@ const pcmToWavUrl = (pcmBase64: string, sampleRate: number = 24000): string => {
 };
 
 /**
- * Helper to get a fresh instance of the Gemini AI client.
+ * Helper to call the Gemini Cloud Function proxy.
  */
-const getAI = (isTTS = false) => {
-  const key = isTTS 
-    ? (process.env.API_KEY || process.env.GEMINI_API_KEY) 
-    : process.env.GEMINI_API_KEY;
+const callGeminiProxy = async (payload: any): Promise<any> => {
+  try {
+    const response = await fetch('/api/gemini', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
     
-  return new GoogleGenAI({ apiKey: key || "" });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(err.error || `HTTP error! status: ${response.status}`);
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error("[Gemini Proxy] Error:", error);
+    throw error;
+  }
 };
 
 /**
@@ -177,8 +189,6 @@ export const analyzeMatch = async (teamA: Team, teamB: Team): Promise<string> =>
 
   if (analysisCache[cacheKey]) return analysisCache[cacheKey];
 
-  const ai = getAI();
-  
   const formatPlayer = (p: Player) => `${p.name} (ELO:${p.elo}, Vit:${p.wins})`;
   const playersA = [teamA.setter, ...teamA.players].filter((p): p is Player => p !== null).map(formatPlayer).join(', ');
   const playersB = [teamB.setter, ...teamB.players].filter((p): p is Player => p !== null).map(formatPlayer).join(', ');
@@ -199,17 +209,12 @@ export const analyzeMatch = async (teamA: Team, teamB: Team): Promise<string> =>
     ESTILO: Analítico, direto e profissional. Max 80 palavras.`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: prompt,
-      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
-    });
-    const result = response.text || "Análise indisponível.";
+    const data = await callGeminiProxy({ prompt, tool: 'analysis' });
+    const result = data.text || "Análise indisponível.";
     analysisCache[cacheKey] = result;
     saveCache(analysisCache);
     return result;
   } catch (error: any) {
-    if (error?.message?.includes('429')) return "Limite de IA atingido.";
     return "Falha na análise técnica.";
   }
 };
@@ -241,8 +246,6 @@ export const verifyRules = async (
 
   if (analysisCache[cacheKey]) return analysisCache[cacheKey];
 
-  const ai = getAI();
-  
   // Mapear nomes para os IDs da última partida para facilitar a leitura da IA
   const getNamesFromIds = (ids: string[]) => {
     return ids.map(id => attendanceList.find(p => p.id === id)?.name || id).join(', ');
@@ -285,12 +288,8 @@ export const verifyRules = async (
     ESTILO: Respostas equilibradas, técnicas e diretas. Use emojis. Max 200 palavras.`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: prompt,
-      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
-    });
-    const auditResult = response.text || "Auditoria concluída. Escalação segue os critérios de rodízio e equilíbrio do clube.";
+    const data = await callGeminiProxy({ prompt, tool: 'audit' });
+    const auditResult = data.text || "Auditoria concluída.";
     analysisCache[cacheKey] = auditResult;
     saveCache(analysisCache);
     return auditResult;
@@ -312,7 +311,6 @@ export const generateDailySummaryNarration = async (stats: {
   const cacheKey = `summary_v4_${stats.mvp}_${stats.bestSetter}_${stats.dailyKing}_${stats.matchesCount}_${stats.rankingChanges?.join(',')}`;
   if (analysisCache[cacheKey]) return analysisCache[cacheKey];
 
-  const ai = getAI();
   const rankingInfo = stats.rankingChanges && stats.rankingChanges.length > 0
     ? `\n- Mudanças no Ranking Geral: ${stats.rankingChanges.join(', ')}`
     : '';
@@ -331,12 +329,8 @@ export const generateDailySummaryNarration = async (stats: {
     Use "Equipe" em vez de "Time" para evitar erros de pronúncia.`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: prompt,
-      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
-    });
-    const result = response.text || "Racha épico hoje! Parabéns a todos os guerreiros!";
+    const data = await callGeminiProxy({ prompt, tool: 'summary' });
+    const result = data.text || "Racha épico hoje!";
     analysisCache[cacheKey] = result;
     saveCache(analysisCache);
     return result;
@@ -355,7 +349,6 @@ export const generateTeamAnnouncementAudio = async (teamA: Team, teamB: Team): P
   const cacheKey = `teams_audio_v1_${teamANames}_vs_${teamBNames}`;
   if (analysisCache[cacheKey]) return analysisCache[cacheKey];
 
-  const ai = getAI(true);
   const prompt = `Você é um locutor esportivo brasileiro carismático e empolgado.
     
     TAREFA: Narre a escalação das duas equipes abaixo de forma NATURAL, FLUIDA e RÁPIDA. 
@@ -370,22 +363,9 @@ export const generateTeamAnnouncementAudio = async (teamA: Team, teamB: Team): P
     - Use "Equipe" em vez de "Time".`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3.1-flash-tts-preview",
-      contents: [{ parts: [{ text: prompt }] }],
-      config: {
-        responseModalities: [Modality.AUDIO],
-        speechConfig: {
-          voiceConfig: { 
-            prebuiltVoiceConfig: { voiceName: 'Zephyr' } 
-          },
-        },
-      },
-    });
-    
-    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    const data = await callGeminiProxy({ prompt, isTTS: true, tool: 'teams_audio' });
+    const base64Audio = data.audio;
     const result = base64Audio ? pcmToWavUrl(base64Audio) : null;
-    
     return result;
   } catch (error: any) {
     console.error("Error generating team announcement audio:", error);
@@ -406,7 +386,6 @@ export const generateDailySummaryAudio = async (stats: {
   const cacheKey = `summary_audio_v4_${stats.mvp}_${stats.bestSetter}_${stats.dailyKing}_${stats.matchesCount}_${stats.rankingChanges?.join(',')}`;
   if (analysisCache[cacheKey]) return analysisCache[cacheKey];
 
-  const ai = getAI(true);
   const rankingInfo = stats.rankingChanges && stats.rankingChanges.length > 0
     ? `\n- Mudanças no Ranking Geral: ${stats.rankingChanges.join(', ')}`
     : '';
@@ -426,27 +405,9 @@ export const generateDailySummaryAudio = async (stats: {
     Use "Equipe" em vez de "Time".`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3.1-flash-tts-preview",
-      contents: [{ parts: [{ text: prompt }] }],
-      config: {
-        responseModalities: [Modality.AUDIO],
-        speechConfig: {
-          voiceConfig: { 
-            prebuiltVoiceConfig: { voiceName: 'Zephyr' } 
-          },
-        },
-      },
-    });
-    
-    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    const data = await callGeminiProxy({ prompt, isTTS: true, tool: 'summary_audio' });
+    const base64Audio = data.audio;
     const result = base64Audio ? pcmToWavUrl(base64Audio) : null;
-    
-    if (result) {
-      // Don't cache Blob URLs in localStorage as they are session-specific
-      // But we can cache the base64 if needed. For now let's just return.
-    }
-    
     return result;
   } catch (error: any) {
     console.error("Error generating summary audio:", error);
@@ -462,27 +423,12 @@ export const getNarrationAudio = async (text: string): Promise<string | null> =>
   const cacheKey = `tts_${btoa(unescape(encodeURIComponent(text.substring(0, 100))))}`;
   if (analysisCache[cacheKey]) return analysisCache[cacheKey];
 
-  const ai = getAI(true);
   try {
     // Prefixo mais simples que o modelo entende como instrução de estilo sem ler literalmente
     const styledText = `Com empolgação de locutor esportivo: ${text}`;
-    
-    const response = await ai.models.generateContent({
-      model: "gemini-3.1-flash-tts-preview",
-      contents: [{ parts: [{ text: styledText }] }],
-      config: {
-        responseModalities: [Modality.AUDIO],
-        speechConfig: {
-          voiceConfig: { 
-            // 'Zephyr' é naturalmente mais rápido e enérgico
-            prebuiltVoiceConfig: { voiceName: 'Zephyr' } 
-          },
-        },
-      },
-    });
-    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    const data = await callGeminiProxy({ prompt: styledText, isTTS: true, tool: 'narration' });
+    const base64Audio = data.audio;
     const result = base64Audio ? pcmToWavUrl(base64Audio) : null;
-    
     return result;
   } catch (error: any) {
     return null;
@@ -584,8 +530,6 @@ export const speakNarration = async (text: string, forceAIVoice = false): Promis
  * Scans the database data to identify anomalies using AI.
  */
 export const detectAnomalies = async (data: { players: Player[], matches: any[], metadata: any }): Promise<string> => {
-  const ai = getAI();
-  
   const prompt = `Você é um Agente de IA Especialista em Integridade de Dados para o Guerreiros Volleyball Club. 
     Sua missão é varrer os dados do banco de dados e identificar ANOMALIAS, INCONSISTÊNCIAS ou possíveis ERROS que possam causar crashes ou injustiças no sistema.
 
@@ -612,15 +556,9 @@ export const detectAnomalies = async (data: { players: Player[], matches: any[],
     Mantenha o tom profissional e técnico. Max 300 palavras.`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: prompt,
-      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
-    });
-    return response.text || "Não foi possível realizar a varredura de anomalias no momento.";
+    const res = await callGeminiProxy({ prompt, tool: 'anomalies' });
+    return res.text || "Sem anomalias detectadas.";
   } catch (error: any) {
-    console.error("Erro na detecção de anomalias:", error);
-    if (error?.message?.includes('429')) return "Limite de requisições da IA atingido. Tente novamente mais tarde.";
     return "Falha técnica ao processar a varredura de anomalias.";
   }
 };
@@ -634,8 +572,6 @@ export const analyzeBillingCosts = async (billingData: {
   services: { name: string, cost: number, savings?: number }[];
   usage: any;
 }): Promise<string> => {
-  const ai = getAI();
-  
   const prompt = `Você é um Consultor Sênior de FinOps e Especialista em Google Cloud. 
     Analise o faturamento atual do aplicativo Guerreiros Volleyball e sugira estratégias de otimização de custos.
 
@@ -661,15 +597,11 @@ export const analyzeBillingCosts = async (billingData: {
     ESTILO: Tom executivo, consultivo, direto e útil. Use Markdown e emojis. Max 250 palavras.`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: prompt,
-      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
-    });
-    return response.text || "O consultor de custos está ocupado no momento. Tente novamente mais tarde.";
+    const res = await callGeminiProxy({ prompt, tool: 'billing' });
+    return res.text || "Consulta de custos concluída.";
   } catch (error: any) {
     console.error("Erro na análise de custos:", error);
-    return "Não foi possível conectar com o Consultor de IA. Verifique sua conexão ou cota de IA.";
+    return "Consulta indisponível.";
   }
 };
 
@@ -677,7 +609,6 @@ export const analyzeBillingCosts = async (billingData: {
  * Generates a creative birthday message for a player.
  */
 export const generateBirthdayMessage = async (playerName: string): Promise<string> => {
-  const ai = getAI();
   const prompt = `Gere uma mensagem de aniversário curta, criativa e animada para um sócio de um clube de vôlei. 
     O nome do sócio é "${playerName}". 
     A mensagem deve ser em português, usar emojis de vôlei e festa, e ter um tom de união e celebração. 
@@ -685,16 +616,10 @@ export const generateBirthdayMessage = async (playerName: string): Promise<strin
     Não use aspas na resposta. Max 50 palavras.`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: prompt,
-      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
-    });
-
-    return response.text || `Parabéns, ${playerName}! Que seu dia seja repleto de aces e vitórias dentro e fora de quadra! 🏐🎉`;
+    const res = await callGeminiProxy({ prompt, tool: 'birthday' });
+    return res.text || `Parabéns, ${playerName}! 🏐🎉`;
   } catch (error) {
-    console.error("Error generating birthday message:", error);
-    return `Parabéns, ${playerName}! Que seu dia seja repleto de aces e vitórias dentro e fora de quadra! 🏐🎉`;
+    return `Parabéns, ${playerName}! 🏐🎉`;
   }
 };
 
