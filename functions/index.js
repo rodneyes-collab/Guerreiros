@@ -51,16 +51,16 @@ api.post("/gemini", async (req, res) => {
   }
 
   try {
-    const ai = new GoogleGenAI({ apiKey });
+    const genAI = new GoogleGenAI(apiKey);
     const modelName = isTTS ? "gemini-3.1-flash-tts-preview" : (req.body.model || "gemini-3-flash-preview");
     
     if (isTTS) {
       // Regra específica para TTS (Audio Mode)
-      const response = await ai.models.generateContent({
-        model: modelName,
+      const model = genAI.getGenerativeModel({ model: modelName });
+      const response = await model.generateContent({
         contents: [{ parts: [{ text: prompt }] }],
-        config: {
-          responseModalities: [Modality.AUDIO],
+        generationConfig: {
+          responseModalities: ["AUDIO"],
           speechConfig: {
             voiceConfig: { 
               prebuiltVoiceConfig: { voiceName: 'Zephyr' } 
@@ -68,18 +68,19 @@ api.post("/gemini", async (req, res) => {
           },
         },
       });
-      const candidate = response.candidates?.[0];
+      const candidate = response.response.candidates?.[0];
       const part = candidate?.content?.parts?.[0];
       const data = part?.inlineData?.data;
       return res.json({ audio: data });
     } else {
       // Texto normal
-      const response = await ai.models.generateContent({
+      const model = genAI.getGenerativeModel({ 
         model: modelName,
-        contents: prompt,
-        config: config || { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+        generationConfig: config || { thinkingConfig: { thinkingLevel: 'LOW' } }
       });
-      return res.json({ text: response.text });
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      return res.json({ text: response.text() });
     }
   } catch (err) {
     console.error("Gemini Error:", err);
