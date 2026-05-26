@@ -55,11 +55,14 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
 
   const attendance = React.useMemo(() => allAttendance.filter(p => (!p.status || p.status === 'active') && !p.isDM), [allAttendance]);
 
-  const { topPlayers, remainingPlayers } = React.useMemo(() => {
-    return getPriorityQueue(attendance, 12, 2);
+  const displayedAttendance = React.useMemo(() => {
+    return [...attendance].sort((a, b) => {
+      if (a.arrivalOrder !== b.arrivalOrder) {
+        return (a.arrivalOrder ?? 999) - (b.arrivalOrder ?? 999);
+      }
+      return (a.timestamp || 0) - (b.timestamp || 0);
+    });
   }, [attendance]);
-
-  const prioritizedAttendance = React.useMemo(() => [...topPlayers, ...remainingPlayers], [topPlayers, remainingPlayers]);
 
   const getImpactIcon = (level?: number) => {
     switch (level) {
@@ -160,15 +163,17 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                     <>
                       <button 
                         onClick={clearAttendance} 
+                        disabled={isSyncing}
                         title="Limpar lista" 
-                        className="p-3 text-white/40 hover:text-red-400 hover:bg-red-500/10 rounded-xl transition-all group/btn"
+                        className={`p-3 rounded-xl transition-all group/btn ${isSyncing ? 'text-white/10' : 'text-white/40 hover:text-red-400 hover:bg-red-500/10'}`}
                       >
                         <Trash2 className="w-6 h-6 group-hover/btn:scale-110 transition-transform"/>
                       </button>
                       <button 
                         onClick={resetDailyMatches} 
+                        disabled={isSyncing}
                         title="Finalizar dia" 
-                        className="p-3 text-white/40 hover:text-brand-primary hover:bg-brand-primary/10 rounded-xl transition-all group/btn"
+                        className={`p-3 rounded-xl transition-all group/btn ${isSyncing ? 'text-white/10' : 'text-white/40 hover:text-brand-primary hover:bg-brand-primary/10'}`}
                       >
                         <RotateCcw className="w-6 h-6 group-hover/btn:rotate-180 transition-transform duration-500"/>
                       </button>
@@ -186,7 +191,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                     <p className="text-white/40 text-lg font-black uppercase tracking-widest italic">Aguardando convocações...</p>
                   </div>
                 ) : (
-                  prioritizedAttendance
+                  displayedAttendance
                     .map((player, idx) => {
                       const fullPlayer = availablePlayers.find(p => p.id === player.id);
                       const displayName = player.name || fullPlayer?.name || "Sócio sem nome";
@@ -194,16 +199,15 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                       const generationResult = useStore.getState().generationResult;
                       const isCurrentlyBenched = generationResult?.remainingPlayers?.some(rp => rp.id === player.id);
                       const displayBenchedCount = (player.consecutiveBenched || 0) + (isCurrentlyBenched ? 1 : 0);
-                      const isTop12 = idx < 12;
                       
                       return (
-                        <div key={player.id || `attendance-${idx}`} className={`flex items-center justify-between p-4 rounded-2xl border transition-all group shadow-sm hover:shadow-xl hover:-translate-y-0.5 bg-brand-light ${isTop12 ? 'border-brand-primary/60 bg-brand-primary/5' : 'border-brand-primary/20'} hover:border-brand-primary/50`}>
+                        <div key={player.id || `attendance-${idx}`} className="flex items-center justify-between p-4 rounded-2xl border transition-all group shadow-sm hover:shadow-xl hover:-translate-y-0.5 bg-brand-light border-brand-primary/20 hover:border-brand-primary/50">
                           <div className="flex items-center gap-4">
                             <div className="flex flex-col items-center justify-center w-8">
-                              <span className={`text-xl font-black italic transition-colors ${isTop12 ? 'text-brand-primary' : 'text-brand-primary/40'}`}>
-                                #{idx + 1}
+                              <span className="text-xl font-black italic transition-colors text-brand-primary/40">
+                                #{player.arrivalOrder || idx + 1}
                               </span>
-                              <span className="text-[8px] font-black text-white/30 uppercase tracking-tighter">Fila</span>
+                              <span className="text-[8px] font-black text-white/30 uppercase tracking-tighter">Chegada</span>
                             </div>
                             <div>
                               <p className={`text-lg font-black flex items-center gap-2 leading-none uppercase tracking-tight ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
@@ -234,16 +238,16 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                                 )}
                               </p>
                               <p className="text-[9px] font-black text-white/20 uppercase tracking-widest mt-1 italic">
-                                Chegada: #{player.arrivalOrder} <span className="mx-2 text-white/10">|</span> 
-                                Partidas: {player.dailyMatches || 0} <span className="mx-2 text-white/10">|</span> 
-                                {isTop12 ? <span className="text-brand-primary/80 font-black tracking-[0.2em]">PROVÁVEL ESCALADO</span> : <span className="text-white/40">LISTA DE ESPERA</span>}
+                                Ordem: #{player.arrivalOrder} <span className="mx-2 text-white/10">|</span> 
+                                Partidas: {player.dailyMatches || 0}
                               </p>
                             </div>
                           </div>
                           {userRole === 'ADMIN' && (
                             <button 
                               onClick={() => removeAttendance(player.id)} 
-                              className="p-2 text-white/20 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all"
+                              disabled={isSyncing}
+                              className={`p-2 rounded-lg transition-all ${isSyncing ? 'text-white/5' : 'text-white/20 hover:text-red-400 hover:bg-red-500/10'}`}
                             >
                               <X className="w-6 h-6" />
                             </button>
@@ -298,7 +302,8 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                       <button 
                         key={player.id || `available-${idx}`} 
                         onClick={() => registerAttendance(player)} 
-                        className={`flex items-center justify-between p-4 rounded-2xl border hover:shadow-2xl transition-all text-left group hover:-translate-y-0.5 bg-brand-light border-brand-primary/40 hover:border-brand-primary/50`}
+                        disabled={isSyncing}
+                        className={`flex items-center justify-between p-4 rounded-2xl border hover:shadow-2xl transition-all text-left group hover:-translate-y-0.5 bg-brand-light border-brand-primary/40 hover:border-brand-primary/50 ${isSyncing ? 'opacity-50 cursor-not-allowed' : ''}`}
                       >
                         <div className="space-y-1">
                           <p className={`text-lg font-black flex items-center gap-2 leading-none uppercase tracking-tight ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>

@@ -507,8 +507,8 @@ export const useAppLogic = () => {
           updates.trueSkill = trueskillUpdate;
         }
 
-        batch.set(playerRef, updates, { merge: true });
-        batch.set(attendanceRef, updates, { merge: true });
+        batch.set(playerRef, cleanObject(updates), { merge: true });
+        batch.set(attendanceRef, cleanObject(updates), { merge: true });
       };
       
       teamA.forEach(p => updatePlayerStats(p, true));
@@ -559,8 +559,8 @@ export const useAppLogic = () => {
 
       generationResult.remainingPlayers.forEach(p => {
         const newConsecutiveBenched = (p.consecutiveBenched || 0) + 1;
-        batch.set(doc(db, 'players', p.id), { playedLastMatch: false, consecutiveBenched: newConsecutiveBenched }, { merge: true });
-        batch.set(doc(db, 'attendance', date, 'players', p.id), { playedLastMatch: false, consecutiveBenched: newConsecutiveBenched }, { merge: true });
+        batch.set(doc(db, 'players', p.id), cleanObject({ playedLastMatch: false, consecutiveBenched: newConsecutiveBenched }), { merge: true });
+        batch.set(doc(db, 'attendance', date, 'players', p.id), cleanObject({ playedLastMatch: false, consecutiveBenched: newConsecutiveBenched }), { merge: true });
       });
       
       // Limpar partida atual do Firestore
@@ -1038,8 +1038,10 @@ export const useAppLogic = () => {
           // Log match deletion
           await logAction(AuditAction.DELETE_MATCH, matchId, `Partida #${matchToDelete.dailyNumber || '?'}`);
           
-          // 2. Reverter as estatísticas dos jogadores
+          // 2. Reverter as estatísticas dos jogadores que participaram
           const allPlayersInMatch = [...(matchToDelete.teamA || []), ...(matchToDelete.teamB || [])];
+          const matchDate = matchToDelete.date;
+          const isToday = matchDate === getFirestoreDateKey();
           
           allPlayersInMatch.forEach(pid => {
             const p = players.find(player => player.id === pid);
@@ -1048,16 +1050,17 @@ export const useAppLogic = () => {
             const isWinner = (matchToDelete.winner === 'A' && matchToDelete.teamA.includes(pid)) || 
                              (matchToDelete.winner === 'B' && matchToDelete.teamB.includes(pid));
             const isTeamA = matchToDelete.teamA.includes(pid);
-            const eloChange = isWinner ? 25 : -20;
+            
+            const eloChange = isWinner ? 20 : -20;
             
             let updatedHistory = [...(p.eloHistory || [])];
             let previousElo = p.elo;
             
-            // Tentar encontrar a entrada exata no histórico para remover
             const matchTime = new Date(matchToDelete.endTime).getTime();
             const entryIndex = updatedHistory.findIndex(entry => {
-              const entryTime = new Date(entry.date).getTime();
-              return Math.abs(entryTime - matchTime) < 60000; // dentro de 60 segundos
+              const entryTime = new Date(entry.timestamp || 0).getTime();
+              if (entry.matchId === matchId) return true;
+              return Math.abs(entryTime - matchTime) < 60000;
             });
             
             if (entryIndex !== -1) {
@@ -1075,7 +1078,7 @@ export const useAppLogic = () => {
             }
             
             const results = [...(p.dailyResults || [])];
-            if (results.length > 0) {
+            if (isToday && results.length > 0) {
               const expectedResult = isWinner ? 'V' : 'D';
               const lastIdx = results.lastIndexOf(expectedResult);
               if (lastIdx !== -1) {
@@ -1090,25 +1093,212 @@ export const useAppLogic = () => {
               pointsAgainst: Math.max(0, (p.pointsAgainst || 0) - (isTeamA ? matchToDelete.scoreB : matchToDelete.scoreA)),
               wins: isWinner ? Math.max(0, (p.wins || 0) - 1) : (p.wins || 0),
               losses: !isWinner ? Math.max(0, (p.losses || 0) - 1) : (p.losses || 0),
-              dailyMatches: Math.max(0, (p.dailyMatches || 0) - 1),
-              dailyWins: isWinner ? Math.max(0, (p.dailyWins || 0) - 1) : (p.dailyWins || 0),
-              dailyLosses: !isWinner ? Math.max(0, (p.dailyLosses || 0) - 1) : (p.dailyLosses || 0),
-              dailyEloGain: (p.dailyEloGain || 0) - eloChange,
+              dailyMatches: isToday ? Math.max(0, (p.dailyMatches || 0) - 1) : (p.dailyMatches || 0),
+              dailyWins: isToday ? (isWinner ? Math.max(0, (p.dailyWins || 0) - 1) : (p.dailyWins || 0)) : (p.dailyWins || 0),
+              dailyLosses: isToday ? (!isWinner ? Math.max(0, (p.dailyLosses || 0) - 1) : (p.dailyLosses || 0)) : (p.dailyLosses || 0),
+              dailyEloGain: isToday ? (p.dailyEloGain || 0) - eloChange : (p.dailyEloGain || 0),
               dailyResults: results,
-              eloHistory: updatedHistory
+              eloHistory: updatedHistory,
+              playedLastMatch: false
             };
             
             batch.set(doc(db, 'players', p.id), updates, { merge: true });
-            batch.set(doc(db, 'attendance', matchToDelete.date, 'players', p.id), updates, { merge: true });
+            batch.set(doc(db, 'attendance', matchDate, 'players', p.id), updates, { merge: true });
           });
+
+          // 2. Restaurar status de banco e quem jogou por último
+          const remainingMatches = matches.filter(m => m.id !== matchId && m.date === matchDate).sort((a, b) => b.timestamp - a.timestamp);
+          if (remainingMatches.length > 0) {
+            const lastMatch = remainingMatches[0];
+            const participants = [...(lastMatch.teamA || []), ...(lastMatch.teamB || [])];
+            players.forEach(p => {
+              const isParticipant = participants.includes(p.id);
+              const updates = {
+                playedLastMatch: isParticipant,
+                consecutiveBenched: allPlayersInMatch.includes(p.id) ? 0 : Math.max(0, (p.consecutiveBenched || 0) - 1)
+              };
+              batch.set(doc(db, 'players', p.id), cleanObject(updates), { merge: true });
+              batch.set(doc(db, 'attendance', matchDate, 'players', p.id), cleanObject(updates), { merge: true });
+            });
+          } else {
+            players.forEach(p => {
+              const updates = { 
+                playedLastMatch: false, 
+                dailyMatches: 0, 
+                dailyWins: 0, 
+                dailyLosses: 0, 
+                dailyResults: [], 
+                dailyEloGain: 0,
+                consecutiveBenched: 0 
+              };
+              batch.set(doc(db, 'players', p.id), cleanObject(updates), { merge: true });
+              batch.set(doc(db, 'attendance', matchDate, 'players', p.id), cleanObject(updates), { merge: true });
+            });
+          }
           
           await batch.commit();
           
           setMatches(matches.filter(m => m.id !== matchId));
+          await refreshPlayers();
           
           showNotification('Partida e estatísticas excluídas com sucesso.', 'success');
         } catch (error) {
           handleFirestoreError(error, OperationType.DELETE, `matches/${matchId}`);
+        } finally {
+          setIsSyncing(false);
+          hideConfirmModal();
+        }
+      }
+    );
+  };
+
+  const deleteMatchesByDate = async (date: string) => {
+    const matchesToDelete = matches.filter(m => m.date === date);
+    if (matchesToDelete.length === 0) {
+      showNotification(`Nenhuma partida encontrada para a data ${date}.`, 'info');
+      return;
+    }
+
+    const formattedDate = date.split('-').reverse().join('/');
+    
+    showConfirmModal(
+      'Excluir Partidas do Dia',
+      `Deseja realmente excluir TODAS as ${matchesToDelete.length} partidas do dia ${formattedDate}? As estatísticas dos sócios serão revertidas cronologicamente. Esta ação é irreversível.`,
+      async () => {
+        try {
+          setIsSyncing(true);
+          triggerDbStatus('writing');
+          
+          const batch = writeBatch(db);
+          
+          // Ordenar por timestamp decrescente para reverter do mais novo para o mais antigo
+          const sortedMatches = [...matchesToDelete].sort((a, b) => b.timestamp - a.timestamp);
+          
+          let localPlayers = [...players];
+          const today = getFirestoreDateKey();
+          const isToday = date === today;
+          
+          for (const match of sortedMatches) {
+            batch.delete(doc(db, 'matches', match.id));
+            await logAction(AuditAction.DELETE_MATCH, match.id, `Exclusão em massa: Partida #${match.dailyNumber || '?'}`);
+            
+            const allPlayersInMatch = [...(match.teamA || []), ...(match.teamB || [])];
+            
+            allPlayersInMatch.forEach(pid => {
+              const pIdx = localPlayers.findIndex(lp => lp.id === pid);
+              if (pIdx === -1) return;
+              const p = localPlayers[pIdx];
+              
+              const isWinner = (match.winner === 'A' && match.teamA.includes(pid)) || 
+                               (match.winner === 'B' && match.teamB.includes(pid));
+              const isTeamA = match.teamA.includes(pid);
+              
+              const eloChange = isWinner ? 20 : -20;
+              
+              let updatedHistory = [...(p.eloHistory || [])];
+              let previousElo = p.elo;
+              
+              const matchTime = new Date(match.endTime).getTime();
+              const entryIndex = updatedHistory.findIndex(entry => {
+                const entryTime = new Date(entry.timestamp || 0).getTime();
+                if (entry.matchId === match.id) return true;
+                return Math.abs(entryTime - matchTime) < 60000;
+              });
+              
+              if (entryIndex !== -1) {
+                if (entryIndex > 0) {
+                  previousElo = updatedHistory[entryIndex - 1].elo;
+                } else {
+                  previousElo = Math.max(800, p.elo - eloChange);
+                }
+                updatedHistory.splice(entryIndex, 1);
+              } else {
+                previousElo = Math.max(800, p.elo - eloChange);
+                if (updatedHistory.length > 0) {
+                  updatedHistory.pop();
+                }
+              }
+              
+              const results = [...(p.dailyResults || [])];
+              if (isToday && results.length > 0) {
+                const expectedResult = isWinner ? 'V' : 'D';
+                const lastIdx = results.lastIndexOf(expectedResult);
+                if (lastIdx !== -1) {
+                  results.splice(lastIdx, 1);
+                }
+              }
+              
+              const updates = {
+                ...p,
+                elo: previousElo,
+                matchesPlayed: Math.max(0, (p.matchesPlayed || 0) - 1),
+                pointsFor: Math.max(0, (p.pointsFor || 0) - (isTeamA ? match.scoreA : match.scoreB)),
+                pointsAgainst: Math.max(0, (p.pointsAgainst || 0) - (isTeamA ? match.scoreB : match.scoreA)),
+                wins: isWinner ? Math.max(0, (p.wins || 0) - 1) : (p.wins || 0),
+                losses: !isWinner ? Math.max(0, (p.losses || 0) - 1) : (p.losses || 0),
+                dailyMatches: isToday ? Math.max(0, (p.dailyMatches || 0) - 1) : (p.dailyMatches || 0),
+                dailyWins: isToday ? (isWinner ? Math.max(0, (p.dailyWins || 0) - 1) : (p.dailyWins || 0)) : (p.dailyWins || 0),
+                dailyLosses: isToday ? (!isWinner ? Math.max(0, (p.dailyLosses || 0) - 1) : (p.dailyLosses || 0)) : (p.dailyLosses || 0),
+                dailyEloGain: isToday ? (p.dailyEloGain || 0) - eloChange : (p.dailyEloGain || 0),
+                dailyResults: isToday ? results : p.dailyResults,
+                eloHistory: updatedHistory,
+                playedLastMatch: isToday ? false : p.playedLastMatch
+              };
+              
+              localPlayers[pIdx] = updates as any;
+            });
+          }
+
+          if (isToday) {
+            // Forçar reset de todos os campos diários para garantir que a fila de espera esteja limpa
+            localPlayers.forEach((p, idx) => {
+              localPlayers[idx] = {
+                ...p,
+                dailyMatches: 0,
+                dailyWins: 0,
+                dailyLosses: 0,
+                dailyEloGain: 0,
+                dailyResults: [],
+                playedLastMatch: false,
+                consecutiveBenched: 0
+              } as any;
+            });
+          }
+
+          // Aplicar atualizações ao lote
+          // Identificar quem está presente hoje para não registrar ausentes por acidente
+          const attendanceIds = new Set(attendance.map(a => a.id));
+          
+          localPlayers.forEach(p => {
+            const cleanedPlayer = cleanObject(p);
+            // Atualizar cadastro global
+            batch.set(doc(db, 'players', p.id), cleanedPlayer, { merge: true });
+            
+            // ATENÇÃO: Só atualizar o documento de presença se o sócio estiver realmente lá
+            // Caso contrário, o deleteMatches transformaria todos os sócios em "Presentes"
+            if (attendanceIds.has(p.id)) {
+              batch.set(doc(db, 'attendance', date, 'players', p.id), cleanedPlayer, { merge: true });
+            }
+          });
+          
+          await batch.commit();
+          
+          // Atualizar o estado local imediatamente para evitar race conditions antes da sincronização
+          setPlayers(localPlayers);
+          if (isToday) {
+            setAttendance(prev => prev.map(a => {
+              const updated = localPlayers.find(p => p.id === a.id);
+              if (updated) return { ...a, ...updated };
+              return a;
+            }));
+          }
+          
+          setMatches(matches.filter(m => m.date !== date));
+          await refreshPlayers();
+          
+          showNotification(`${matchesToDelete.length} partidas e estatísticas removidas.`, 'success');
+        } catch (error) {
+          handleFirestoreError(error, OperationType.DELETE, `matches-by-date/${date}`);
         } finally {
           setIsSyncing(false);
           hideConfirmModal();
@@ -2013,31 +2203,31 @@ export const useAppLogic = () => {
 
     const performGeneration = async () => {
       if (navigator.vibrate) navigator.vibrate(50);
+      setIsSyncing(true);
+      triggerDbStatus('writing');
 
-      // Reunir formações anteriores para evitar repetições
+      let result: any = null;
       const now = Date.now();
       const threshold = systemMetadata.lastResetTimestamp || (now - (16 * 60 * 60 * 1000));
       const sessionMatches = (matches || []).filter(m => m.timestamp > threshold);
-      
-      const previousFormations = sessionMatches.map(m => ({
-        setterA: m.teamA[0],
-        playersA: m.teamA.slice(1),
-        setterB: m.teamB[0],
-        playersB: m.teamB.slice(1)
-      }));
 
-      const generationResult = generateTeams(playersToUse, previousFormations);
-      const result: any = { ...generationResult, timestamp: Date.now() };
-      
-      // Persistir partida no Firestore para outros admins
       try {
+        // Reunir formações anteriores para evitar repetições
+        const previousFormations = sessionMatches.map(m => ({
+          setterA: m.teamA[0],
+          playersA: m.teamA.slice(1),
+          setterB: m.teamB[0],
+          playersB: m.teamB.slice(1)
+        }));
+
+        const generationResult = generateTeams(playersToUse, previousFormations);
+        result = { ...generationResult, timestamp: now };
+        
+        // Persistir partida no Firestore para outros admins
         await setDoc(doc(db, 'metadata', 'currentMatch'), cleanObject(result));
         await trackUsage(0, 1);
 
         // Calcular número da partida
-        const now = Date.now();
-        const threshold = systemMetadata.lastResetTimestamp || (now - (16 * 60 * 60 * 1000));
-        const sessionMatches = (matches || []).filter(m => m.timestamp > threshold);
         const maxDailyNumber = sessionMatches.reduce((max, m) => Math.max(max, m.dailyNumber || 0), 0);
         const matchNumber = isReshuffle ? maxDailyNumber : maxDailyNumber + 1;
 
@@ -2151,6 +2341,9 @@ export const useAppLogic = () => {
 
       } catch (err) {
         console.error("Erro ao persistir partida ou enviar notificações:", err);
+        showNotification("Erro ao processar escalação. Tente novamente.", "error");
+      } finally {
+        setIsSyncing(false);
       }
 
       setGenerationResult(result);
@@ -2169,9 +2362,6 @@ export const useAppLogic = () => {
       }).catch(err => console.error("Pre-generation error:", err));
 
       if (!isReshuffle) {
-        const now = Date.now();
-        const threshold = systemMetadata.lastResetTimestamp || (now - (16 * 60 * 60 * 1000));
-        const sessionMatches = (matches || []).filter(m => m.timestamp > threshold);
         const maxDailyNumber = sessionMatches.reduce((max, m) => Math.max(max, m.dailyNumber || 0), 0);
         const newCount = maxDailyNumber + 1;
         
@@ -3611,6 +3801,7 @@ export const useAppLogic = () => {
     clearAllHistory,
     clearMatchesOnly,
     deleteMatch,
+    deleteMatchesByDate,
     clearAllDatabase,
     refreshPlayers,
     deletePayment,

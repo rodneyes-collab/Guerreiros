@@ -26,9 +26,10 @@ import { HelpTooltip } from '../src/components/HelpTooltip';
 
 interface HistoryViewProps {
   onDeleteMatch?: (matchId: string) => void;
+  onDeleteMatchesByDate?: (date: string) => void;
 }
 
-export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch }) => {
+export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDeleteMatchesByDate }) => {
   const { matches, players: allPlayers, userRole, currentPlayer, attendance: allAttendance } = useStore();
   const players = React.useMemo(() => allPlayers.filter(p => p.status !== 'inactive'), [allPlayers]);
   const attendance = React.useMemo(() => allAttendance.filter(p => p.status !== 'inactive'), [allAttendance]);
@@ -338,17 +339,32 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch }) => {
               </div>
               <div>
                 <h3 className="text-xs font-black text-white uppercase tracking-[0.3em]">Performance da Sessão</h3>
-                <select 
-                  value={performanceDate}
-                  onChange={(e) => setPerformanceDate(e.target.value)}
-                  className="bg-transparent text-[10px] font-black text-brand-primary uppercase tracking-[0.2em] mt-1 cursor-pointer outline-none"
-                >
-                  {availableDates.map(date => (
-                    <option key={date} value={date} className="bg-brand-secondary text-white">
-                      {date === 'Hoje' ? date : date.split('-').reverse().join('/')}
-                    </option>
-                  ))}
-                </select>
+                <div className="flex items-center gap-4 mt-1">
+                  <select 
+                    value={performanceDate}
+                    onChange={(e) => setPerformanceDate(e.target.value)}
+                    className="bg-transparent text-[10px] font-black text-brand-primary uppercase tracking-[0.2em] cursor-pointer outline-none"
+                  >
+                    {availableDates.map(date => (
+                      <option key={date} value={date} className="bg-brand-secondary text-white">
+                        {date === 'Hoje' ? date : date.split('-').reverse().join('/')}
+                      </option>
+                    ))}
+                  </select>
+
+                  {userRole === 'ADMIN' && onDeleteMatchesByDate && displayMatches.length > 0 && (
+                    <button
+                      onClick={() => {
+                        const targetDate = performanceDate === 'Hoje' ? getFirestoreDateKey() : performanceDate;
+                        onDeleteMatchesByDate(targetDate);
+                      }}
+                      className="flex items-center gap-1.5 text-[9px] font-black text-rose-500 hover:text-rose-400 uppercase tracking-widest transition-colors"
+                      title="Excluir todas as partidas deste dia"
+                    >
+                      <Trash2 className="w-3 h-3" /> Excluir Dia
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           </div>

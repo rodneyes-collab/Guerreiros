@@ -39,7 +39,7 @@ interface TournamentViewProps {
 }
 
 export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecord, onResetMatch, onEnd, onAddPlayer, onSubstitute }) => {
-  const { activeTournament, attendance: allAttendance, userRole, players: allPlayers } = useStore();
+  const { activeTournament, attendance: allAttendance, userRole, players: allPlayers, isSyncing } = useStore();
   const players = useMemo(() => allPlayers.filter(p => p.status !== 'inactive' && !p.isDM), [allPlayers]);
   const attendance = useMemo(() => allAttendance.filter(p => p.status !== 'inactive' && !p.isDM), [allAttendance]);
   const [isStarting, setIsStarting] = useState(false);
@@ -296,10 +296,10 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
               </button>
               <button
                 onClick={handleStart}
-                disabled={isStarting}
+                disabled={isStarting || isSyncing}
                 className="px-6 py-3 bg-brand-primary text-brand-secondary rounded-xl font-black text-[10px] uppercase tracking-widest hover:scale-[1.02] active:scale-95 transition-all flex items-center gap-2 shadow-lg shadow-brand-primary/20 disabled:opacity-50"
               >
-                {isStarting ? (
+                {isStarting || isSyncing ? (
                   <div className="w-4 h-4 border-2 border-brand-secondary border-t-transparent rounded-full animate-spin" />
                 ) : (
                   <>
@@ -725,9 +725,10 @@ export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecor
           {userRole === 'ADMIN' && (
             <button
               onClick={onEnd}
-              className="px-6 py-3 bg-rose-900/40 text-rose-400 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-900/50 transition-all border border-rose-700/50"
+              disabled={isSyncing}
+              className={`px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all border ${isSyncing ? 'bg-rose-900/20 text-rose-400/40 border-rose-700/20' : 'bg-rose-900/40 text-rose-400 hover:bg-rose-900/50 border-rose-700/50'}`}
             >
-              Encerrar Torneio
+              {isSyncing ? 'Sincronizando...' : 'Encerrar Torneio'}
             </button>
           )}
         </div>

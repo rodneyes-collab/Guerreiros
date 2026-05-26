@@ -120,7 +120,7 @@ export const checkSimilarity = (result: GenerationResult, previousFormations: {s
 };
 
 // Function to apply forced swaps to increase variety
-export const applyForcedSwaps = (result: GenerationResult): GenerationResult => {
+export const applyForcedSwaps = (result: GenerationResult, bottomTwoIds?: Set<string>): GenerationResult => {
   const teamA = result.teamA;
   const teamB = result.teamB;
 
@@ -155,36 +155,81 @@ export const applyForcedSwaps = (result: GenerationResult): GenerationResult => 
     playersB = playersB.map(p => p.id === womanB.id ? womanA : p);
   }
 
-  return {
+  const newResult: GenerationResult = {
     ...result,
     teamA: { ...teamA, setter: newSetterA, players: playersA },
     teamB: { ...teamB, setter: newSetterB, players: playersB },
     swaps: [...(result.swaps || []), { playerA: 'Forced Swap', playerB: 'Adjustment' }]
   };
+
+  // Re-validate Bottom Two after forced swap
+  if (bottomTwoIds) {
+    const checkBottomTwo = (s: Player | null, pls: Player[]) => {
+      const ids = new Set([s?.id, ...pls.map(p => p.id)].filter(Boolean));
+      return Array.from(bottomTwoIds).filter(id => ids.has(id)).length;
+    };
+
+    let b2A = checkBottomTwo(newResult.teamA.setter, newResult.teamA.players);
+    if (b2A === 2 || b2A === 0) {
+      // Re-fix it
+      const isBothInA = b2A === 2;
+      const sPlayers = isBothInA ? newResult.teamA.players : newResult.teamB.players;
+      const tPlayers = isBothInA ? newResult.teamB.players : newResult.teamA.players;
+      const setterS = isBothInA ? newResult.teamA.setter : newResult.teamB.setter;
+
+      const pMov = sPlayers.find(p => bottomTwoIds.has(p.id));
+      if (pMov) {
+        const pTar = tPlayers.find(p => p.gender === pMov.gender && !bottomTwoIds.has(p.id)) || 
+                     tPlayers.find(p => !bottomTwoIds.has(p.id));
+        if (pTar) {
+          const idxS = sPlayers.indexOf(pMov);
+          const idxT = tPlayers.indexOf(pTar);
+          sPlayers[idxS] = pTar;
+          tPlayers[idxT] = pMov;
+        }
+      } else if (setterS && bottomTwoIds.has(setterS.id)) {
+        // If setter is the one to move, it's more complex, but we can just swap another player
+        // to balance genders if needed, but here we just need them separated.
+        // Actually if setter is B2, and another player is B2, and they are together,
+        // moving the non-setter B2 works.
+        const otherB2 = sPlayers.find(p => bottomTwoIds.has(p.id));
+        if (otherB2) {
+           const pTar = tPlayers.find(p => p.gender === otherB2.gender && !bottomTwoIds.has(p.id)) || 
+                        tPlayers.find(p => !bottomTwoIds.has(p.id));
+           if (pTar) {
+             const idxS = sPlayers.indexOf(otherB2);
+             const idxT = tPlayers.indexOf(pTar);
+             sPlayers[idxS] = pTar;
+             tPlayers[idxT] = otherB2;
+           }
+        }
+      }
+    }
+  }
+
+  return newResult;
 };
 
 export function getPriorityQueue(attendanceList: Player[], count: number = 12, maxSetters: number = 2): { topPlayers: Player[], remainingPlayers: Player[] } {
   const sortByPriority = (a: Player, b: Player) => {
-    const orderA = a.arrivalOrder ?? 999;
-    const orderB = b.arrivalOrder ?? 999;
-
     // NÍVEL 1: Rodagem Imediata - Prioridade absoluta para quem NÃO jogou a última partida
-    // Isso evita que jogadores repitam partidas consecutivas (back-to-back)
     const playedA = a.playedLastMatch ? 1 : 0;
     const playedB = b.playedLastMatch ? 1 : 0;
     if (playedA !== playedB) return playedA - playedB;
-    if (orderA !== orderB) return orderA - orderB;
 
     // NÍVEL 2: Volume de Jogo - Desempate para quem jogou MENOS no total do dia
     const matchesA = a.dailyMatches || 0;
     const matchesB = b.dailyMatches || 0;
     if (matchesA !== matchesB) return matchesA - matchesB;
-    if (orderA !== orderB) return orderA - orderB;
 
     // NÍVEL 3: Consistência de Banco - Quem está há mais tempo sentado (consecutivamente)
     const benchedA = a.consecutiveBenched || 0;
     const benchedB = b.consecutiveBenched || 0;
     if (benchedA !== benchedB) return benchedB - benchedA;
+
+    // NÍVEL 4: Ordem de Chegada - Critério final de desempate (Prioridade na Fila de Presença)
+    const orderA = a.arrivalOrder ?? 999;
+    const orderB = b.arrivalOrder ?? 999;
     if (orderA !== orderB) return orderA - orderB;
 
     return 0;
@@ -201,8 +246,8 @@ export function getPriorityQueue(attendanceList: Player[], count: number = 12, m
   const neededNonSetters = count - selectedSetters.length;
   const selectedNonSetters = allNonSetters.slice(0, neededNonSetters);
 
-  // 4. Combine to form the match pool
-  const topPlayers = [...selectedSetters, ...selectedNonSetters];
+  // 4. Combine to form the match pool and sort by priority (respects arrival order for tie-breaks)
+  const topPlayers = [...selectedSetters, ...selectedNonSetters].sort(sortByPriority);
   
   // 5. Remaining players are those not selected, sorted by priority for the waitlist
   const selectedIds = new Set(topPlayers.map(p => p.id));
@@ -452,14 +497,39 @@ export function generateTeams(attendanceList: Player[], previousFormations?: {se
     }
   }
 
-  const men = poolNonSetters.filter(p => p.gender === Gender.MALE).sort((a, b) => getElo(b) - getElo(a));
-  const women = poolNonSetters.filter(p => p.gender === Gender.FEMALE).sort((a, b) => getElo(b) - getElo(a));
-
   let playersA: Player[] = [];
   let playersB: Player[] = [];
 
   const requiredA = setterA ? 5 : 6;
   const requiredB = setterB ? 5 : 6;
+
+  // Rule: Mandatory separation of the 2 players with lowest practical skills (Bottom 2)
+  // We identify them from the matchPool and ensure they start on different teams.
+  const setterIds = new Set([setterA?.id, setterB?.id].filter(Boolean));
+  const bottomTwoArray = techSorted.slice(0, 2);
+  const bottomTwoSetters = bottomTwoArray.filter(p => setterIds.has(p.id));
+  const bottomTwoNonSetters = bottomTwoArray.filter(p => !setterIds.has(p.id));
+
+  // Pre-assignment logic to ensure separation
+  if (bottomTwoSetters.length === 1) {
+    // One B2 is a setter, assign the other B2 to the opposite team's player list
+    const otherB2 = bottomTwoNonSetters[0];
+    if (setterA?.id === bottomTwoSetters[0].id) {
+       playersB.push(otherB2);
+    } else {
+       playersA.push(otherB2);
+    }
+  } else if (bottomTwoSetters.length === 0 && bottomTwoNonSetters.length === 2) {
+    // Both are non-setters, assign one to A and one to B randomly
+    const shuffledB2 = [...bottomTwoNonSetters].sort(() => Math.random() - 0.5);
+    playersA.push(shuffledB2[0]);
+    playersB.push(shuffledB2[1]);
+  }
+  // (If both are setters, they are already separated into A and B)
+
+  const preAssignedIds = new Set([...playersA, ...playersB].map(p => p.id));
+  const men = poolNonSetters.filter(p => p.gender === Gender.MALE && !preAssignedIds.has(p.id));
+  const women = poolNonSetters.filter(p => p.gender === Gender.FEMALE && !preAssignedIds.has(p.id));
 
   // Randomize initial team choice for the greedy distribution
   const firstTeam = Math.random() > 0.5 ? 'A' : 'B';
@@ -575,11 +645,10 @@ export function generateTeams(attendanceList: Player[], previousFormations?: {se
                                    calculateRecurrencePenalty(setterB, tempPlayersB, previousFormations || []);
 
           // Penalidade para as 2 jogadoras mais fracas ficarem juntas
-          const tempIdsA = new Set(tempPlayersA.map(p => p.id));
-          if (setterA) tempIdsA.add(setterA.id);
+          const tempIdsA = new Set([setterA?.id, ...tempPlayersA.map(p => p.id)].filter(Boolean));
           const bottomTwoCountInTempA = Array.from(bottomTwoIds).filter(id => tempIdsA.has(id)).length;
           // Se Count for 2 ou 0, significa que estão juntas (ou no A ou no B)
-          const bottomTwoTogetherPenalty = (bottomTwoCountInTempA === 2 || bottomTwoCountInTempA === 0) ? 5000 : 0;
+          const bottomTwoTogetherPenalty = (bottomTwoCountInTempA === 2 || bottomTwoCountInTempA === 0) ? 10000 : 0;
 
           // Combined score with symmetry weight, RECURRENCE PENALTY and BOTTOM 2 SPLIT
           // Aumentamos o peso do diffBot4 para garantir que os mais fracos fiquem separados
@@ -597,10 +666,9 @@ export function generateTeams(attendanceList: Player[], previousFormations?: {se
           const currentRecurrence = calculateRecurrencePenalty(setterA, playersA, previousFormations || []) + 
                                   calculateRecurrencePenalty(setterB, playersB, previousFormations || []);
 
-          const currentIdsA = new Set(playersA.map(p => p.id));
-          if (setterA) currentIdsA.add(setterA.id);
+          const currentIdsA = new Set([setterA?.id, ...playersA.map(p => p.id)].filter(Boolean));
           const bottomTwoCountInCurrA = Array.from(bottomTwoIds).filter(id => currentIdsA.has(id)).length;
-          const currentBottomTwoPenalty = (bottomTwoCountInCurrA === 2 || bottomTwoCountInCurrA === 0) ? 5000 : 0;
+          const currentBottomTwoPenalty = (bottomTwoCountInCurrA === 2 || bottomTwoCountInCurrA === 0) ? 10000 : 0;
 
           const currentScore = Math.abs(currentMetricsA.totalElo - currentMetricsB.totalElo) + 
                                Math.abs(currentMetricsA.top4Elo - currentMetricsB.top4Elo) * 0.8 +
@@ -681,30 +749,31 @@ export function generateTeams(attendanceList: Player[], previousFormations?: {se
 
   // --- CAMADA DE AUTO-CORREÇÃO (GARANTIA DO AGENTE DE BALANCEAMENTO) ---
   // O Agente de IA valida se a regra de separação das 2 jogadoras mais fracas foi cumprida.
-  const checkBottomTwo = (sA: Player | null, pA: Player[]) => {
-    const idsA = new Set(pA.map(p => p.id));
-    if (sA) idsA.add(sA.id);
-    return Array.from(bottomTwoIds).filter(id => idsA.has(id)).length;
+  const checkBottomTwo = (s: Player | null, pls: Player[]) => {
+    const ids = new Set([s?.id, ...pls.map(p => p.id)].filter(Boolean));
+    return Array.from(bottomTwoIds).filter(id => ids.has(id)).length;
   };
 
   let b2CountInA = checkBottomTwo(setterA, playersA);
   if (b2CountInA === 2 || b2CountInA === 0) {
-    // CORREÇÃO AUTOMÁTICA: As duas menores técnicas estão no mesmo time.
-    // O sistema força uma troca imediata para garantir a regra.
-    const sourceTeam = b2CountInA === 2 ? playersA : playersB;
-    const targetTeam = b2CountInA === 2 ? playersB : playersA;
-    
-    // Identifica qual dos dois B2 será movido
-    const pMove = sourceTeam.find(p => bottomTwoIds.has(p.id));
-    // Identifica um alvo no outro time (que não seja o outro B2) para troca
-    const pTarget = targetTeam.find(p => !bottomTwoIds.has(p.id));
+    const isBothInA = b2CountInA === 2;
+    const sPlayers = isBothInA ? playersA : playersB;
+    const tPlayers = isBothInA ? playersB : playersA;
 
-    if (pMove && pTarget) {
-      const idxS = sourceTeam.indexOf(pMove);
-      const idxT = targetTeam.indexOf(pTarget);
-      sourceTeam[idxS] = pTarget;
-      targetTeam[idxT] = pMove;
-      swaps.push({ playerA: `AUTO-FIX: ${pMove.name}`, playerB: pTarget.name });
+    // Tenta mover qualquer um dos Bottom 2 que esteja na lista de jogadores
+    const pMov = sPlayers.find(p => bottomTwoIds.has(p.id));
+    if (pMov) {
+      // Prioridade: manter gênero. Secundário: qualquer troca possível
+      const pTar = tPlayers.find(p => p.gender === pMov.gender && !bottomTwoIds.has(p.id)) || 
+                   tPlayers.find(p => !bottomTwoIds.has(p.id));
+      
+      if (pTar) {
+        const idxS = sPlayers.indexOf(pMov);
+        const idxT = tPlayers.indexOf(pTar);
+        sPlayers[idxS] = pTar;
+        tPlayers[idxT] = pMov;
+        swaps.push({ playerA: `AUTO-FIX: ${pMov.name}`, playerB: pTar.name });
+      }
     }
   }
 
@@ -737,7 +806,7 @@ export function generateTeams(attendanceList: Player[], previousFormations?: {se
 
   // Check similarity and apply forced swaps if needed
   if (previousFormations && checkSimilarity(result, previousFormations)) {
-    return applyForcedSwaps(result);
+    return applyForcedSwaps(result, bottomTwoIds);
   }
 
   return result;

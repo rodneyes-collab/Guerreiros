@@ -41,6 +41,7 @@ interface MatchViewProps {
   onGenerate: (onlyCurrentPlayers?: boolean) => void;
   onDiscard: () => void;
   onFinishDay: () => void;
+  onDeleteMatchesByDate: (date: string) => void;
   onFinishMatch: (winner: 'A' | 'B', scoreA?: number, scoreB?: number) => void;
   onVerifyRules: () => void;
   onAnalyzeMatch: () => void;
@@ -60,6 +61,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
   onGenerate,
   onDiscard,
   onFinishDay,
+  onDeleteMatchesByDate,
   onFinishMatch,
   onVerifyRules,
   onAnalyzeMatch,
@@ -254,13 +256,24 @@ export const MatchView: React.FC<MatchViewProps> = ({
 
       {/* Botões de Ação Administrativa */}
       {userRole === 'ADMIN' && (
-        <div className="bg-black/40 backdrop-blur-md p-4 sm:p-6 rounded-[2rem] sm:rounded-[3rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-inner mb-6">
+        <div className="bg-black/40 backdrop-blur-md p-4 sm:p-6 rounded-[2rem] sm:rounded-[3rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-inner mb-6 flex flex-col sm:flex-row gap-4">
           <button 
             onClick={onFinishDay} 
-            className="w-full flex items-center justify-center gap-2 text-[10px] font-black uppercase px-6 py-4 rounded-2xl border border-red-500/30 bg-black text-red-500 hover:bg-red-500/10 transition-all shadow-lg"
+            disabled={isSyncing}
+            className={`flex-1 flex items-center justify-center gap-2 text-[10px] font-black uppercase px-6 py-4 rounded-2xl border transition-all shadow-lg ${isSyncing ? 'bg-black/50 border-white/5 text-white/20' : 'border-red-500/30 bg-black text-red-500 hover:bg-red-500/10'}`}
           >
-            <X className="w-4 h-4" /> Finalizar Dia
+            <X className="w-4 h-4" /> {isSyncing ? 'Sincronizando...' : 'Finalizar Dia'}
           </button>
+          
+          {todayMatches.length > 0 && (
+            <button 
+              onClick={() => onDeleteMatchesByDate(today)} 
+              disabled={isSyncing}
+              className={`flex-1 flex items-center justify-center gap-2 text-[10px] font-black uppercase px-6 py-4 rounded-2xl border transition-all shadow-lg ${isSyncing ? 'bg-black/50 border-white/5 text-white/20' : 'border-rose-500/30 bg-black text-rose-500 hover:bg-rose-500/10'}`}
+            >
+              <Trash2 className="w-4 h-4" /> {isSyncing ? 'Excluindo...' : 'Excluir Partidas de Hoje'}
+            </button>
+          )}
         </div>
       )}
 
@@ -320,13 +333,13 @@ export const MatchView: React.FC<MatchViewProps> = ({
                     <Scale className="w-5 h-5 text-brand-primary" />
                   </div>
                 </div>
-                <button 
-                  onClick={() => onGenerate()} 
-                  disabled={attendance.length < 12}
-                  className="w-full bg-brand-primary hover:bg-brand-primary/90 disabled:bg-brand-secondary disabled:text-white/40 text-brand-secondary font-black py-6 rounded-3xl shadow-2xl shadow-brand-primary/20 transition-all flex items-center justify-center gap-4 uppercase tracking-[0.2em] text-sm hover:scale-105 active:scale-95 border border-brand-primary/40 disabled:border-brand-primary/40"
-                >
-                  Escalar Elite <ArrowRight className="w-5 h-5" />
-                </button>
+                    <button 
+                      onClick={() => onGenerate()} 
+                      disabled={attendance.length < 12 || isSyncing}
+                      className="w-full bg-brand-primary hover:bg-brand-primary/90 disabled:bg-brand-secondary disabled:text-white/40 text-brand-secondary font-black py-6 rounded-3xl shadow-2xl shadow-brand-primary/20 transition-all flex items-center justify-center gap-4 uppercase tracking-[0.2em] text-sm hover:scale-105 active:scale-95 border border-brand-primary/40 disabled:border-brand-primary/40"
+                    >
+                      {isSyncing ? 'Preparando...' : 'Escalar Elite'} <ArrowRight className="w-5 h-5" />
+                    </button>
               </>
             ) : (
               <div className="bg-brand-secondary/50 p-6 rounded-3xl border border-brand-primary/10">
@@ -342,16 +355,16 @@ export const MatchView: React.FC<MatchViewProps> = ({
                 <span className="text-xs font-black text-white uppercase tracking-[0.3em]">Gestão de Fila e Prioridade de Elite</span>
               </div>
 
-              {/* Grupo 1: Prováveis Próximos (Top 12) */}
+              {/* Fila de Prioridade */}
               <div className="space-y-6">
                 <div className="flex items-center gap-4">
                   <div className="h-px flex-1 bg-brand-primary/10" />
-                  <span className="text-[10px] font-black text-brand-primary uppercase tracking-[0.2em]">Prováveis Próximos (Top 12)</span>
+                  <span className="text-[10px] font-black text-brand-primary uppercase tracking-[0.2em]">Próximos na Fila</span>
                   <div className="h-px flex-1 bg-brand-primary/10" />
                 </div>
                 
                 <div className="flex overflow-x-auto pb-6 -mx-4 px-4 sm:mx-0 sm:px-0 sm:flex-wrap sm:justify-center gap-4 snap-x scrollbar-hide">
-                  {priorityPlayers.slice(0, 12).map((p) => (
+                  {priorityPlayers.slice(0, 16).map((p) => (
                     <div 
                       key={p.id} 
                       className={`relative flex flex-col items-center px-6 py-4 rounded-[2rem] border shadow-xl transition-all duration-500 bg-black shrink-0 snap-center min-w-[140px] group hover:-translate-y-2 ${
@@ -367,11 +380,6 @@ export const MatchView: React.FC<MatchViewProps> = ({
                         <span className="text-[9px] opacity-40 font-black">
                           {Math.round(calculateEffectiveElo(p))}
                         </span>
-                        {p.timestamp && (
-                          <span className="text-[8px] text-white/30 font-medium lowercase tracking-normal">
-                            {new Date(p.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                          </span>
-                        )}
                         {p.isOfficialSetter && (
                           <span className="w-2 h-2 rounded-full bg-brand-primary shadow-[0_0_8px_rgba(245,196,41,0.8)] animate-pulse" title="Levantador Oficial" />
                         )}
@@ -387,30 +395,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
                   ))}
                 </div>
               </div>
-
-              {/* Grupo 2: Demais na Fila (13+) */}
-              {priorityPlayers.length > 12 && (
-                <div className="space-y-6 mt-10">
-                  <div className="flex items-center gap-4">
-                    <div className="h-px flex-1 bg-brand-primary/10" />
-                    <span className="text-[10px] font-black text-brand-primary uppercase tracking-[0.2em]">Demais na Fila</span>
-                    <div className="h-px flex-1 bg-brand-primary/10" />
-                  </div>
-                  
-                  <div className="flex overflow-x-auto pb-4 -mx-4 px-4 sm:mx-0 sm:px-0 sm:flex-wrap sm:justify-center gap-3 scrollbar-hide">
-                    {priorityPlayers.slice(12).map((p) => (
-                      <div 
-                        key={p.id} 
-                        className="flex items-center gap-3 bg-black border border-brand-primary/10 px-5 py-2.5 rounded-2xl shrink-0 hover:bg-white/5 transition-colors"
-                      >
-                        <span className="text-[10px] font-black text-white uppercase tracking-tight">{p.name}</span>
-                        <span className="text-[9px] font-black text-brand-primary uppercase bg-brand-primary/10 px-2 py-0.5 rounded-lg border border-brand-primary/40">{p.consecutiveBenched} {p.consecutiveBenched <= 1 ? 'partida' : 'partidas'} fora</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
+              
               <p className="text-[10px] text-white/40 font-black uppercase tracking-[0.2em] mt-10 text-center italic">
                 * Algoritmo de Prioridade: Menos jogos e maior tempo de banco
               </p>
@@ -740,18 +725,20 @@ export const MatchView: React.FC<MatchViewProps> = ({
                       <div className="flex flex-row items-center justify-center gap-3 sm:gap-8 w-full">
                         <button 
                           onClick={() => handleWinnerClick('A')}
-                          className="w-1/2 bg-brand-primary hover:bg-brand-primary/90 text-black px-2 py-4 sm:px-8 sm:py-6 rounded-2xl sm:rounded-3xl font-black text-[10px] sm:text-sm uppercase tracking-widest shadow-xl shadow-brand-primary/20 transition-all hover:scale-105 active:scale-95 flex flex-col sm:flex-row items-center justify-center gap-1.5 sm:gap-3"
+                          disabled={isSyncing}
+                          className={`w-1/2 px-2 py-4 sm:px-8 sm:py-6 rounded-2xl sm:rounded-3xl font-black text-[10px] sm:text-sm uppercase tracking-widest shadow-xl transition-all flex flex-col sm:flex-row items-center justify-center gap-1.5 sm:gap-3 ${isSyncing ? 'bg-brand-primary/50 text-black/50 cursor-not-allowed opacity-50' : 'bg-brand-primary hover:bg-brand-primary/90 text-black hover:scale-105 active:scale-95 shadow-brand-primary/20'}`}
                         >
-                          <span>Vitória A</span> <Trophy className="w-4 h-4 sm:w-5 sm:h-5" />
+                          <span>{isSyncing ? 'Carregando...' : 'Vitória A'}</span> <Trophy className="w-4 h-4 sm:w-5 sm:h-5" />
                         </button>
 
                         <div className="hidden sm:block w-px h-16 bg-white/10" />
 
                         <button 
                           onClick={() => handleWinnerClick('B')}
-                          className="w-1/2 bg-white hover:bg-gray-200 text-black px-2 py-4 sm:px-8 sm:py-6 rounded-2xl sm:rounded-3xl font-black text-[10px] sm:text-sm uppercase tracking-widest shadow-xl shadow-white/20 transition-all hover:scale-105 active:scale-95 flex flex-col sm:flex-row items-center justify-center gap-1.5 sm:gap-3"
+                          disabled={isSyncing}
+                          className={`w-1/2 px-2 py-4 sm:px-8 sm:py-6 rounded-2xl sm:rounded-3xl font-black text-[10px] sm:text-sm uppercase tracking-widest shadow-xl transition-all flex flex-col sm:flex-row items-center justify-center gap-1.5 sm:gap-3 ${isSyncing ? 'bg-white/50 text-black/50 cursor-not-allowed opacity-50' : 'bg-white hover:bg-gray-200 text-black hover:scale-105 active:scale-95 shadow-white/20'}`}
                         >
-                          <span>Vitória B</span> <Trophy className="w-4 h-4 sm:w-5 sm:h-5" />
+                          <span>{isSyncing ? 'Carregando...' : 'Vitória B'}</span> <Trophy className="w-4 h-4 sm:w-5 sm:h-5" />
                         </button>
                       </div>
                     ) : (

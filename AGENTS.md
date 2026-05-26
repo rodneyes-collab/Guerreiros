@@ -51,12 +51,16 @@ O sistema agora separa a **Eficiência Técnica** (usada para equilibrar times) 
 
 ### 3. Distribuição e Balanceamento
 - **Distribuição Alternada (ABAB):** Após definir os levantadores, os jogadores restantes são ordenados por **Eficiência Técnica** e distribuídos entre Time A e Time B seguindo o padrão ABAB ABAB.
+- **Penalidade de Recorrência:** O sistema aplica uma "multa" no score de equilíbrio se muitas duplas ou núcleos de jogadores se repetirem em relação à última partida. Isso força a alternância de parceiros mesmo em grupos fixos de 12 jogadores.
+- **Separação Técnica Obrigatória (Bottom 2):** As duas jogadoras com a menor **Soma de Habilidades Práticas** (Saque, Ataque, Defesa, Levantamento) são obrigatoriamente separadas entre os times. Elas são protegidas da aleatoriedade inicial para garantir que o ABAB as coloque em lados opostos.
 - **Refinamento por Trocas (Optimizer):** O sistema realiza milhares de simulações de trocas (respeitando o gênero) para minimizar as diferenças de Eficiência Total, Destaques (Top 4) e Simetria.
+- **Agente de Auto-Correção:** Uma camada final de validação (Agente de IA de Balanceamento) verifica se as regras críticas (como a separação das 2 jogadoras mais fracas) foram cumpridas e realiza trocas automáticas de emergência caso identifique alguma violação antes de exibir a escalação.
 
 ### 4. Gênero
 - O sistema mantém o equilíbrio de gênero entre as equipes durante todas as fases de troca e balanceamento.
 
 ## Diretrizes de Implementação
+- **Proteção de Sincronização:** Durante o envio de dados ou geração de times, o botão de "Nova Escalação" e "Confirmar Vitória" deve ser desabilitado acompanhado de um indicador visual de "Guerreiros Intelligence" para evitar corrupção de estado ou cliques duplos.
 - Sempre priorizar o uso de classes utilitárias do Tailwind CSS.
 - Manter o efeito "vazado" em indicadores de status (fundo colorido com texto na cor do fundo principal, que é preto).
 - Evitar o uso de cores genéricas (como `bg-emerald-500` ou `bg-red-500`) em favor do padrão Amarelo/Branco estabelecido para performance.

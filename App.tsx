@@ -164,6 +164,7 @@ const App: React.FC = () => {
     handleGenerate,
     handleDiscard,
     handleFinishDay,
+    deleteMatchesByDate,
     handleFinishMatch,
     handleAnalyzeMatch,
     handleVerifyRules,
@@ -887,6 +888,7 @@ const App: React.FC = () => {
                   onGenerate={handleGenerate}
                   onDiscard={handleDiscard}
                   onFinishDay={handleFinishDay}
+                  onDeleteMatchesByDate={deleteMatchesByDate}
                   onFinishMatch={handleFinishMatch}
                   onVerifyRules={handleVerifyRules}
                   onAnalyzeMatch={handleAnalyzeMatch}
@@ -917,7 +919,7 @@ const App: React.FC = () => {
           )}
 
           {viewMode === 'history' && (
-            <HistoryView onDeleteMatch={deleteMatch} />
+            <HistoryView onDeleteMatch={deleteMatch} onDeleteMatchesByDate={deleteMatchesByDate} />
           )}
 
           {viewMode === 'tournament' && (
