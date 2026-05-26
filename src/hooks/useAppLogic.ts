@@ -11,6 +11,7 @@ import {
   db, 
   doc, 
   setDoc, 
+  updateDoc,
   addDoc, 
   collection, 
   deleteDoc, 
@@ -27,82 +28,86 @@ import {
 } from '../../firebase';
 import { useStore } from '../../store';
 import { cleanObject, generateUUID } from '../../utils/helpers';
+import { calculateTrueSkillUpdate } from '../utils/trueSkill';
 import { Player, Team, Match, Gender, Tournament, TournamentTeam, TournamentMatch, SetScore, SystemMetadata, TournamentStrategy } from '../../types';
 import { generateTeams, generateTournamentTeams } from '../../utils/teamLogic';
 import { playerSchema, matchSchema } from '../lib/schemas';
 
 import { analyzeMatch, verifyRules, detectAnomalies, generateTeamAnnouncementAudio } from '../../services/geminiService';
+import { logAction, AuditAction } from '../../services/auditService';
 
 export const useAppLogic = () => {
-  const MAX_ACTIVE_MEMBERS = 30;
+  const MAX_ACTIVE_MEMBERS = 32;
   const WAITLIST_LIMIT = 5;
 
-  const {
-    user,
-    userRole,
-    players,
-    attendance,
-    preConfirmations,
-    matches,
-    systemMetadata,
-    generationResult,
-    setPlayers,
-    setAttendance,
-    setMatches,
-    setGenerationResult,
-    setSystemMetadata,
-    setViewMode,
-    showNotification,
-    showConfirmModal,
-    hideConfirmModal,
-    setAnalysis,
-    setRuleVerification,
-    setScoreA,
-    setScoreB,
-    setTempScoreA,
-    setTempScoreB,
-    setScoreMode,
-    setNarrationScript,
-    setNarrationAudio,
-    setIsSyncing,
-    setDbStatus,
-    setUser,
-    setUserRole,
-    setCurrentPlayer,
-    scoreA,
-    scoreB,
-    tempScoreA,
-    tempScoreB,
-    scoreMode,
-    isSyncing,
-    elapsedTime,
-    setIsAnalyzing,
-    isAnalyzing,
-    isVerifyingRules,
-    isScanningAnomalies,
-    anomalyReport,
-    setIsVerifyingRules,
-    setIsScanningAnomalies,
-    setAnomalyReport,
-    setIsLoggingOut,
-    setUsageStats,
-    usageStats,
-    synergy,
-    negativeSynergy,
-    rivalry,
-    activeTournament,
-    setTournaments,
-    setActiveTournament,
-    setSynergy,
-    setNegativeSynergy,
-    setRivalry
-  } = useStore();
+  const user = useStore(state => state.user);
+  const userRole = useStore(state => state.userRole);
+  const players = useStore(state => state.players);
+  const attendance = useStore(state => state.attendance);
+  const preConfirmations = useStore(state => state.preConfirmations);
+  const matches = useStore(state => state.matches);
+  const systemMetadata = useStore(state => state.systemMetadata);
+  const generationResult = useStore(state => state.generationResult);
+  const setPlayers = useStore(state => state.setPlayers);
+  const setAttendance = useStore(state => state.setAttendance);
+  const setMatches = useStore(state => state.setMatches);
+  const setGenerationResult = useStore(state => state.setGenerationResult);
+  const setSystemMetadata = useStore(state => state.setSystemMetadata);
+  const setViewMode = useStore(state => state.setViewMode);
+  const showNotification = useStore(state => state.showNotification);
+  const showConfirmModal = useStore(state => state.showConfirmModal);
+  const hideConfirmModal = useStore(state => state.hideConfirmModal);
+  const setAnalysis = useStore(state => state.setAnalysis);
+  const setRuleVerification = useStore(state => state.setRuleVerification);
+  const setScoreA = useStore(state => state.setScoreA);
+  const setScoreB = useStore(state => state.setScoreB);
+  const setTempScoreA = useStore(state => state.setTempScoreA);
+  const setTempScoreB = useStore(state => state.setTempScoreB);
+  const setScoreMode = useStore(state => state.setScoreMode);
+  const setNarrationScript = useStore(state => state.setNarrationScript);
+  const setNarrationAudio = useStore(state => state.setNarrationAudio);
+  const setIsSyncing = useStore(state => state.setIsSyncing);
+  const setDbStatus = useStore(state => state.setDbStatus);
+  const setUser = useStore(state => state.setUser);
+  const setUserRole = useStore(state => state.setUserRole);
+  const setCurrentPlayer = useStore(state => state.setCurrentPlayer);
+  const scoreA = useStore(state => state.scoreA);
+  const scoreB = useStore(state => state.scoreB);
+  const tempScoreA = useStore(state => state.tempScoreA);
+  const tempScoreB = useStore(state => state.tempScoreB);
+  const scoreMode = useStore(state => state.scoreMode);
+  const isSyncing = useStore(state => state.isSyncing);
+  const elapsedTime = useStore(state => state.elapsedTime);
+  const setIsAnalyzing = useStore(state => state.setIsAnalyzing);
+  const isAnalyzing = useStore(state => state.isAnalyzing);
+  const isVerifyingRules = useStore(state => state.isVerifyingRules);
+  const isScanningAnomalies = useStore(state => state.isScanningAnomalies);
+  const anomalyReport = useStore(state => state.anomalyReport);
+  const setIsVerifyingRules = useStore(state => state.setIsVerifyingRules);
+  const setIsScanningAnomalies = useStore(state => state.setIsScanningAnomalies);
+  const setAnomalyReport = useStore(state => state.setAnomalyReport);
+  const setIsLoggingOut = useStore(state => state.setIsLoggingOut);
+  const setUsageStats = useStore(state => state.setUsageStats);
+  const usageStats = useStore(state => state.usageStats);
+  const synergy = useStore(state => state.synergy);
+  const negativeSynergy = useStore(state => state.negativeSynergy);
+  const rivalry = useStore(state => state.rivalry);
+  const payments = useStore(state => state.payments);
+  const expenses = useStore(state => state.expenses);
+  const activeTournament = useStore(state => state.activeTournament);
+  const setTournaments = useStore(state => state.setTournaments);
+  const setActiveTournament = useStore(state => state.setActiveTournament);
+  const setSynergy = useStore(state => state.setSynergy);
+  const setNegativeSynergy = useStore(state => state.setNegativeSynergy);
+  const setRivalry = useStore(state => state.setRivalry);
 
   // --- Birthdays Index Sync ---
   // Mantem o indexer de aniversários atualizado para que os crons do backend leiam um único field
   useEffect(() => {
-    if (players && players.length > 0) {
-      const indices = new Set<string>();
+    // Only admins should maintain the system-wide birthday index
+    if (userRole !== 'ADMIN' || !players || players.length === 0) return;
+
+    const indices = new Set<string>();
       for (const p of players) {
         if (p.status === 'active' && p.birthDate) {
           const parts = p.birthDate.split('-');
@@ -119,8 +124,7 @@ export const useAppLogic = () => {
       if (isDifferent) {
          updateSystemMetadata({ activeBirthdaysIndex: newIndex });
       }
-    }
-  }, [players, systemMetadata?.activeBirthdaysIndex]);
+  }, [players, systemMetadata?.activeBirthdaysIndex, userRole]);
 
   // AI Guardian - Autonomous Data Integrity Monitor
   useEffect(() => {
@@ -128,6 +132,9 @@ export const useAppLogic = () => {
     if (userRole !== 'ADMIN' || isSyncing || matches.length === 0) return;
 
     const runGuardian = async () => {
+      // Ensure user is authenticated and is an admin before attempting writes
+      if (!auth.currentUser || userRole !== 'ADMIN') return;
+
       try {
         const now = Date.now();
         const sixteenHoursAgo = now - (16 * 60 * 60 * 1000);
@@ -174,7 +181,7 @@ export const useAppLogic = () => {
         if (playersToFix.length > 0) hasAnomalies = true;
 
         if (hasAnomalies) {
-          console.log('[Guardião IA] Anomalia detectada na contagem/datas de partidas ou no ELO History. Iniciando reparo autônomo...');
+          // console.log('[Guardião IA] Anomalia detectada na contagem/datas de partidas ou no ELO History. Iniciando reparo autônomo...');
           const batch = writeBatch(db);
           let updates = 0;
 
@@ -213,7 +220,7 @@ export const useAppLogic = () => {
             const matchUpdates: any = {};
             if (m.dailyNumber !== expectedNumber) matchUpdates.dailyNumber = expectedNumber;
             // Force the match date to be the base date of the session so they are unified
-            if (m.date !== sessionBaseDate) matchUpdates.date = sessionBaseDate;
+            // if (m.date !== sessionBaseDate) matchUpdates.date = sessionBaseDate;
             
             if (Object.keys(matchUpdates).length > 0) {
               batch.update(doc(db, 'matches', m.id), matchUpdates);
@@ -306,11 +313,11 @@ export const useAppLogic = () => {
 
             await batch.commit();
             
-            showNotification(`🤖 Guardião IA: Reparadas e ordenadas cronologicamente numerações de jogo e rankings corrigidos automaticamente!`, 'info');
+            // showNotification(`🤖 Guardião IA: Reparadas e ordenadas cronologicamente numerações de jogo e rankings corrigidos automaticamente!`, 'info');
           }
         }
       } catch (err) {
-        console.error('[Guardião IA] Falha no monitoramento autônomo:', err);
+        // console.error('[Guardião IA] Falha no monitoramento autônomo:', err);
       }
     };
 
@@ -365,7 +372,7 @@ export const useAppLogic = () => {
     );
   };
 
-  const handleFinishMatch = async (winner: 'A' | 'B') => {
+  const handleFinishMatch = async (winner: 'A' | 'B', manualScoreA?: number, manualScoreB?: number) => {
     if (!generationResult) return;
     
     try {
@@ -377,19 +384,21 @@ export const useAppLogic = () => {
       const timestamp = Date.now();
       const date = getFirestoreDateKey();
       
-      // Sync scores if in SCORE mode
-      let finalScoreA = scoreA;
-      let finalScoreB = scoreB;
+      // Sync scores if in SCORE mode or manual scores provided
+      let finalScoreA = manualScoreA !== undefined ? manualScoreA : scoreA;
+      let finalScoreB = manualScoreB !== undefined ? manualScoreB : scoreB;
       
-      if (scoreMode === 'SCORE') {
-        finalScoreA = parseInt(tempScoreA) || 0;
-        finalScoreB = parseInt(tempScoreB) || 0;
-      } else if (scoreMode === 'QUICK') {
-        // In QUICK mode, if scores are 0-0 but winner is defined, 
-        // we set a default like 25-23 to avoid 0-0 matches in history
-        if (finalScoreA === 0 && finalScoreB === 0) {
-          finalScoreA = winner === 'A' ? 25 : 23;
-          finalScoreB = winner === 'B' ? 25 : 23;
+      if (manualScoreA === undefined && manualScoreB === undefined) {
+        if (scoreMode === 'SCORE') {
+          finalScoreA = parseInt(tempScoreA) || 0;
+          finalScoreB = parseInt(tempScoreB) || 0;
+        } else if (scoreMode === 'QUICK') {
+          // In QUICK mode, if scores are 0-0 but winner is defined, 
+          // we set a default like 25-23 to avoid 0-0 matches in history
+          if (finalScoreA === 0 && finalScoreB === 0) {
+            finalScoreA = winner === 'A' ? 25 : 23;
+            finalScoreB = winner === 'B' ? 25 : 23;
+          }
         }
       }
       
@@ -436,31 +445,9 @@ export const useAppLogic = () => {
       const teamA = [generationResult.teamA.setter, ...generationResult.teamA.players].filter(Boolean) as Player[];
       const teamB = [generationResult.teamB.setter, ...generationResult.teamB.players].filter(Boolean) as Player[];
       
-      const avgEloA = teamA.reduce((sum, p) => sum + p.elo, 0) / teamA.length;
-      const avgEloB = teamB.reduce((sum, p) => sum + p.elo, 0) / teamB.length;
-      
-      // Expected score for Team A
-      const expectedA = 1 / (1 + Math.pow(10, (avgEloB - avgEloA) / 400));
-      const actualA = winner === 'A' ? 1 : 0;
-      
-      // Base ELO change (K-factor)
-      // Levantadores jogam mais, então reduzimos o fator K para nivelar o ganho por volume
-      const getKFactor = (p: Player) => {
-        let K = p.isOfficialSetter ? 20 : 32;
-        
-        // Fator de estabilização (K-Factor adaptativo)
-        // Se a tendência persistir excessivamente alta ou baixa para um novato (outliers com 100% win rate etc)
-        const matchCount = p.matchesPlayed || 0;
-        if (matchCount >= 5) {
-           const winRate = matchCount > 0 ? (p.wins || 0) / matchCount : 0;
-           // Se > 80% de vitórias ou < 20% após 5 partidas, endurecemos o fator K pela metade
-           // Para suavizar a subida/descida estratosférica sem interferir tanto na justiça.
-           if (winRate > 0.8 || winRate < 0.2) {
-             K = Math.max(10, Math.floor(K * 0.6)); 
-           }
-        }
-        return K;
-      };
+      const tsUpdates = calculateTrueSkillUpdate(teamA, teamB, winner);
+      const tsMap = new Map<string, { mu: number; sigma: number }>();
+      tsUpdates.forEach(u => tsMap.set(u.playerId, u.newTrueSkill));
       
       batch.set(doc(db, 'matches', matchId), cleanObject(match));
 
@@ -474,43 +461,35 @@ export const useAppLogic = () => {
       
       // Atualizar ELO e estatísticas
       const updatePlayerStats = (p: Player, isTeamA: boolean) => {
-        const K = getKFactor(p);
-        const expected = isTeamA ? expectedA : (1 - expectedA);
-        const actual = (isTeamA && winner === 'A') || (!isTeamA && winner === 'B') ? 1 : 0;
+        const isWinner = (isTeamA && winner === 'A') || (!isTeamA && winner === 'B');
         
-        const baseEloChange = Math.round(K * (actual - expected));
-        const isWinner = actual === 1;
+        // Regra Pedida: +20 para vitória, -20 para derrota (Fixo)
+        const totalEloChange = isWinner ? 20 : -20;
         
-        // Bonus for score difference
-        const scoreDiff = Math.abs(finalScoreA - finalScoreB);
-        const bonus = Math.floor(scoreDiff / 5); // 1 point for every 5 points difference
-        const finalBonus = isWinner ? bonus : -bonus;
-        
-        const baseChange = baseEloChange + finalBonus;
-        
-        // Bônus de Sequência (Streak)
-        const dailyResults = p.dailyResults || [];
-        let currentStreak = 0;
-        for (let i = dailyResults.length - 1; i >= 0; i--) {
-          if (dailyResults[i] === 'V') currentStreak++;
-          else break;
-        }
-        
-        // +2 por vitória na sequência (2ª=2, 3ª=4, 4ª=6, 5ª+=8)
-        const streakBonus = isWinner ? Math.min(8, currentStreak * 2) : 0;
-        const totalEloChange = baseChange + streakBonus;
+        // Acúmulo de pontos pró e contra
+        const pFor = isTeamA ? finalScoreA : finalScoreB;
+        const pAgainst = isTeamA ? finalScoreB : finalScoreA;
         
         const newElo = Math.max(800, p.elo + totalEloChange);
         const playerRef = doc(db, 'players', p.id);
         const attendanceRef = doc(db, 'attendance', date, 'players', p.id);
         
-        // ELO History date must be the localized date key, not UTC ISO
-        const newHistoryEntry = { date: getFirestoreDateKey(new Date()), elo: newElo };
-        const updatedHistory = [...(p.eloHistory || []), newHistoryEntry].slice(-50); // Keep last 50 entries
+        // ELO History with more metadata for the statement view
+        const newHistoryEntry = { 
+          date: date, 
+          elo: newElo, 
+          matchId: matchId,
+          change: totalEloChange,
+          timestamp: timestamp,
+          result: (isWinner ? 'V' : 'D') as 'V' | 'D'
+        };
+        const updatedHistory = [...(p.eloHistory || []), newHistoryEntry].slice(-200); // Increased buffer to 200
         
-        const updates = {
+        const updates: any = {
           elo: newElo,
           matchesPlayed: (p.matchesPlayed || 0) + 1,
+          pointsFor: (p.pointsFor || 0) + pFor,
+          pointsAgainst: (p.pointsAgainst || 0) + pAgainst,
           wins: isWinner ? (p.wins || 0) + 1 : (p.wins || 0),
           losses: !isWinner ? (p.losses || 0) + 1 : (p.losses || 0),
           dailyMatches: (p.dailyMatches || 0) + 1,
@@ -523,6 +502,11 @@ export const useAppLogic = () => {
           eloHistory: updatedHistory
         };
         
+        const trueskillUpdate = tsMap.get(p.id);
+        if (trueskillUpdate) {
+          updates.trueSkill = trueskillUpdate;
+        }
+
         batch.set(playerRef, updates, { merge: true });
         batch.set(attendanceRef, updates, { merge: true });
       };
@@ -587,7 +571,7 @@ export const useAppLogic = () => {
       const notificationData = await Promise.all(playersToNotify.map(async (p) => {
         if (!p.id || !p.fcmToken) return { id: p.id, unreadCount: 1 };
         try {
-          const q = query(collection(db, 'notifications'), where('playerId', '==', p.id), where('read', '==', false));
+          const q = query(collection(db, 'notifications'), where('playerUid', '==', p.uid), where('read', '==', false));
           const snap = await getDocs(q);
           return { id: p.id, unreadCount: snap.size + 1 };
         } catch (e) {
@@ -605,6 +589,7 @@ export const useAppLogic = () => {
         const appNotifRef = doc(collection(db, 'notifications'));
         batch.set(appNotifRef, {
           playerId: p.id,
+          playerUid: p.uid || null,
           title,
           message,
           createdAt: Date.now(),
@@ -612,7 +597,7 @@ export const useAppLogic = () => {
           type: 'match'
         });
 
-        if (p.fcmToken && systemMetadata.pushNotificationsGlobalEnabled !== false && systemMetadata.matchNotificationsGlobalEnabled !== false && p.matchNotificationsEnabled !== false) {
+        if (p.fcmToken && systemMetadata.matchNotificationsGlobalEnabled !== false && p.matchNotificationsEnabled !== false) {
           const unreadCount = notificationData.find(d => d.id === p.id)?.unreadCount || 1;
           const fcmRef = doc(collection(db, 'fcm_messages'));
           batch.set(fcmRef, {
@@ -647,35 +632,7 @@ export const useAppLogic = () => {
         
         if (played) {
           const isWinner = (playedInA && winner === 'A') || (playedInB && winner === 'B');
-          
-          // Use a mesma lógica do cálculo oficial
-          let K = p.isOfficialSetter ? 20 : 32;
-          const matchCount = p.matchesPlayed || 0;
-          if (matchCount >= 5) {
-             const winRate = matchCount > 0 ? (p.wins || 0) / matchCount : 0;
-             if (winRate > 0.8 || winRate < 0.2) {
-               K = Math.max(10, Math.floor(K * 0.6)); 
-             }
-          }
-          const expected = playedInA ? expectedA : (1 - expectedA);
-          const actual = isWinner ? 1 : 0;
-          const baseEloChange = Math.round(K * (actual - expected));
-          
-          const scoreDiff = Math.abs(finalScoreA - finalScoreB);
-          const bonus = Math.floor(scoreDiff / 5);
-          const finalBonus = isWinner ? bonus : -bonus;
-          
-          const baseChange = baseEloChange + finalBonus;
-          
-          // Bônus de Sequência Local
-          const dailyResults = p.dailyResults || [];
-          let currentStreak = 0;
-          for (let i = dailyResults.length - 1; i >= 0; i--) {
-            if (dailyResults[i] === 'V') currentStreak++;
-            else break;
-          }
-          const streakBonus = isWinner ? Math.min(8, currentStreak * 2) : 0;
-          const eloChange = baseChange + streakBonus;
+          const eloChange = isWinner ? 20 : -20;
 
           return {
             ...p,
@@ -740,8 +697,8 @@ export const useAppLogic = () => {
       setAnalysis('');
       
       const result = await analyzeMatch(
-        generationResult.teamA,
-        generationResult.teamB
+        generationResult,
+        attendance
       );
       
       setAnalysis(result);
@@ -826,7 +783,7 @@ export const useAppLogic = () => {
       try {
         const q = query(
           collection(db, 'notifications'),
-          where('playerId', '==', player.id),
+          where('playerUid', '==', player.uid || ''),
           where('type', '==', 'reminder')
         );
         const snap = await getDocs(q);
@@ -851,7 +808,19 @@ export const useAppLogic = () => {
       setIsSyncing(true);
       triggerDbStatus('writing');
       const dateKey = getFirestoreDateKey();
-      await deleteDoc(doc(db, 'attendance', dateKey, 'players', playerId));
+      const attendanceRef = doc(db, 'attendance', dateKey, 'players', playerId);
+      
+      // Instead of deleting, we mark as left to preserve session tracking data
+      // This helps with "Time Off Court" calculations in reports
+      await updateDoc(attendanceRef, {
+        status: 'left',
+        leftAt: Date.now()
+      }).catch(async (err) => {
+        // If update fails (e.g. doc doesn't exist or permissions), fallback to delete or just ignore
+        if (err.code === 'not-found') return;
+        await deleteDoc(attendanceRef);
+      });
+
       await trackUsage(0, 1);
       showNotification('Presença removida.', 'info');
     } catch (error) {
@@ -926,6 +895,9 @@ export const useAppLogic = () => {
           // Delete the player
           batch.delete(doc(db, 'players', id));
           
+          // Log the deletion
+          await logAction(AuditAction.DELETE_PLAYER, id, playerToDelete?.name || 'Sócio excluído');
+          
           // Promote waitlist player if necessary
           if (playerToDelete?.status === 'active') {
             const waitlistPlayers = players
@@ -963,6 +935,9 @@ export const useAppLogic = () => {
           players.forEach(p => {
             batch.delete(doc(db, 'players', p.id));
           });
+          
+          await logAction(AuditAction.CLEAR_ALL_PLAYERS, 'ALL', 'Todos os Sócios');
+          
           await batch.commit();
           showNotification('Todos os sócios foram excluídos.', 'success');
         } catch (error) {
@@ -1060,6 +1035,9 @@ export const useAppLogic = () => {
           // 1. Excluir o documento da partida
           batch.delete(doc(db, 'matches', matchId));
           
+          // Log match deletion
+          await logAction(AuditAction.DELETE_MATCH, matchId, `Partida #${matchToDelete.dailyNumber || '?'}`);
+          
           // 2. Reverter as estatísticas dos jogadores
           const allPlayersInMatch = [...(matchToDelete.teamA || []), ...(matchToDelete.teamB || [])];
           
@@ -1069,6 +1047,7 @@ export const useAppLogic = () => {
             
             const isWinner = (matchToDelete.winner === 'A' && matchToDelete.teamA.includes(pid)) || 
                              (matchToDelete.winner === 'B' && matchToDelete.teamB.includes(pid));
+            const isTeamA = matchToDelete.teamA.includes(pid);
             const eloChange = isWinner ? 25 : -20;
             
             let updatedHistory = [...(p.eloHistory || [])];
@@ -1107,6 +1086,8 @@ export const useAppLogic = () => {
             const updates = {
               elo: previousElo,
               matchesPlayed: Math.max(0, (p.matchesPlayed || 0) - 1),
+              pointsFor: Math.max(0, (p.pointsFor || 0) - (isTeamA ? matchToDelete.scoreA : matchToDelete.scoreB)),
+              pointsAgainst: Math.max(0, (p.pointsAgainst || 0) - (isTeamA ? matchToDelete.scoreB : matchToDelete.scoreA)),
               wins: isWinner ? Math.max(0, (p.wins || 0) - 1) : (p.wins || 0),
               losses: !isWinner ? Math.max(0, (p.losses || 0) - 1) : (p.losses || 0),
               dailyMatches: Math.max(0, (p.dailyMatches || 0) - 1),
@@ -1256,11 +1237,35 @@ export const useAppLogic = () => {
           const batch = writeBatch(db);
           let deletedCount = 0;
           let fixedCount = 0;
+          let mergedCount = 0;
+          
+          // 1. Deduplication pass in the database
+          const seenEmails = new Map<string, string>(); // email -> originalId
+          const seenUids = new Map<string, string>(); // uid -> originalId
           
           players.forEach(p => {
             if (!p.id) return;
             
-            // Delete players with no name or empty name
+            // Check for duplicates by email or UID
+            const email = p.email?.trim().toLowerCase();
+            const uid = p.uid;
+            
+            let primaryId: string | null = null;
+            if (email && seenEmails.has(email)) primaryId = seenEmails.get(email)!;
+            else if (uid && seenUids.has(uid)) primaryId = seenUids.get(uid)!;
+            
+            if (primaryId && primaryId !== p.id) {
+              // This is a duplicate. We should delete it. 
+              // (In a more advanced version, we'd merge match history too)
+              batch.delete(doc(db, 'players', p.id));
+              mergedCount++;
+              return;
+            }
+            
+            if (email) seenEmails.set(email, p.id);
+            if (uid) seenUids.set(uid, p.id);
+
+            // 2. Original Repair Logic (Basic fields)
             if (!p.name || p.name.trim() === '') {
               batch.delete(doc(db, 'players', p.id));
               deletedCount++;
@@ -1274,25 +1279,11 @@ export const useAppLogic = () => {
               if (typeof p.wins !== 'number') { updates.wins = 0; needsFix = true; }
               if (typeof p.losses !== 'number') { updates.losses = 0; needsFix = true; }
               if (typeof p.dailyMatches !== 'number') { updates.dailyMatches = 0; needsFix = true; }
-              if (typeof p.dailyWins !== 'number') { updates.dailyWins = 0; needsFix = true; }
-              if (typeof p.dailyLosses !== 'number') { updates.dailyLosses = 0; needsFix = true; }
-              if (typeof p.dailyEloGain !== 'number') { updates.dailyEloGain = 0; needsFix = true; }
-              if (typeof p.impactLevel !== 'number') { updates.impactLevel = 1; needsFix = true; }
-              
-              // Fix gender if missing
-              if (!p.gender || (p.gender !== Gender.MALE && p.gender !== Gender.FEMALE)) {
-                updates.gender = Gender.MALE;
-                needsFix = true;
-              }
-
-              // Initialize eloHistory if missing
-              if (!p.eloHistory || p.eloHistory.length === 0) {
-                updates.eloHistory = [{ date: getFirestoreDateKey(), elo: p.elo || 1200 }];
-                needsFix = true;
-              }
+              if (typeof p.isOfficialSetter !== 'boolean') { updates.isOfficialSetter = false; needsFix = true; }
+              if (typeof p.isAdmin !== 'boolean') { updates.isAdmin = false; needsFix = true; }
               
               if (needsFix) {
-                batch.set(doc(db, 'players', p.id), updates, { merge: true });
+                batch.update(doc(db, 'players', p.id), updates);
                 fixedCount++;
               }
             }
@@ -1400,9 +1391,20 @@ export const useAppLogic = () => {
             });
           });
 
-          batch.set(doc(db, 'metadata', 'synergy'), newSynergy);
-          batch.set(doc(db, 'metadata', 'negative_synergy'), newNegativeSynergy);
-          batch.set(doc(db, 'metadata', 'rivalry'), newRivalry);
+          // New: Deduplicate Payments
+          const seenPayments = new Set<string>();
+          let paymentDuplicatesRemoved = 0;
+
+          (payments || []).forEach(p => {
+            // Unify player, month and amount to identify duplicates
+            const key = `${p.playerId}_${p.month}_${p.amount}`;
+            if (seenPayments.has(key)) {
+              batch.delete(doc(db, 'payments', p.id));
+              paymentDuplicatesRemoved++;
+            } else {
+              seenPayments.add(key);
+            }
+          });
           
           await batch.commit();
 
@@ -1410,7 +1412,7 @@ export const useAppLogic = () => {
           setNegativeSynergy(newNegativeSynergy);
           setRivalry(newRivalry);
 
-          showNotification(`Banco reparado! ${deletedCount} excluídos, ${fixedCount} corrigidos e sinergias recalculadas.`, 'success');
+          showNotification(`Banco reparado! ${deletedCount} excluídos, ${fixedCount} corrigidos, ${paymentDuplicatesRemoved} duplicatas financeiras removidas e sinergias recalculadas.`, 'success');
         } catch (error) {
           handleFirestoreError(error, OperationType.WRITE, 'repair-database');
         } finally {
@@ -1474,6 +1476,7 @@ export const useAppLogic = () => {
       triggerDbStatus('writing');
       
       const id = playerData.id || generateUUID();
+      const existingPlayer = players.find(p => p.id === id);
       const playerRef = doc(db, 'players', id);
       
       const isNewPlayer = !playerData.id;
@@ -1485,11 +1488,11 @@ export const useAppLogic = () => {
 
         if (activeCount >= MAX_ACTIVE_MEMBERS) {
           if (waitlistCount >= WAITLIST_LIMIT) {
-            showNotification(`Limite de sócios (30) e lista de espera (5) atingidos. Não é possível adicionar novos sócios.`, 'error');
+            showNotification(`Limite de sócios (32) e lista de espera (5) atingidos. Não é possível adicionar novos sócios.`, 'error');
             return;
           }
           finalStatus = 'waitlist';
-          showNotification(`Limite de 30 sócios atingido. ${playerData.name || 'O novo sócio'} foi adicionado à lista de espera.`, 'info');
+          showNotification(`Limite de 32 sócios atingido. ${playerData.name || 'O novo sócio'} foi adicionado à lista de espera.`, 'info');
         } else {
           finalStatus = 'active';
         }
@@ -1520,6 +1523,30 @@ export const useAppLogic = () => {
 
       await setDoc(playerRef, cleanObject(validatedData), { merge: true });
       await trackUsage(0, 1);
+
+      // Audit Logging
+      if (isNewPlayer) {
+        await logAction(AuditAction.CREATE_PLAYER, id, validatedData.name);
+      } else if (existingPlayer) {
+        // Detect Status changes
+        if (existingPlayer.status !== finalStatus) {
+          if (finalStatus === 'inactive') {
+            await logAction(AuditAction.INACTIVATE_PLAYER, id, validatedData.name);
+          } else if (finalStatus === 'active') {
+            await logAction(AuditAction.ACTIVATE_PLAYER, id, validatedData.name);
+          }
+        }
+        
+        // Detect DM changes
+        if (existingPlayer.isDM !== validatedData.isDM) {
+          if (validatedData.isDM) {
+            await logAction(AuditAction.ENTER_DM, id, validatedData.name);
+          } else {
+            await logAction(AuditAction.EXIT_DM, id, validatedData.name);
+          }
+        }
+      }
+
       showNotification(playerData.id ? 'Sócio atualizado!' : 'Sócio cadastrado!', 'success');
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'players-save');
@@ -1537,7 +1564,7 @@ export const useAppLogic = () => {
     try {
       setIsSyncing(true);
       triggerDbStatus('writing');
-      showNotification('Corrigindo anomalias no banco de dados...', 'info');
+      showNotification('Iniciando Auditoria e Reparo de Dados...', 'info');
       
       const batch = writeBatch(db);
       const now = Date.now();
@@ -1556,10 +1583,7 @@ export const useAppLogic = () => {
         }
       });
 
-      // 2. Fix future dates (e.g. 2026 dates when current year is earlier, or just sync to now if they are > now)
-      // Actually, if the environment is 2026, Date.now() is 2026.
-      // If the user meant the dates are in the future relative to the *real* current time, we can't easily know the real time if Date.now() is 2026.
-      // But we can fix the reset timestamp if it's > Date.now()
+      // 2. Fix future dates and reset threshold
       let newResetThreshold = systemMetadata.lastResetTimestamp;
       if (systemMetadata.lastResetTimestamp && systemMetadata.lastResetTimestamp > now) {
         newResetThreshold = now - (16 * 60 * 60 * 1000); // 16 hours ago
@@ -1569,7 +1593,6 @@ export const useAppLogic = () => {
         updates++;
       }
       
-      // Group ALL matches by session (max 8 hours gap) and align their dates
       const allSortedMatches = [...(matches || [])].sort((a, b) => a.timestamp - b.timestamp);
       
       const getCorrectDate = (ts: number) => {
@@ -1584,73 +1607,66 @@ export const useAppLogic = () => {
       let currentSessionBaseDate = "";
       let lastMatchTs = 0;
       const MAX_GAP = 8 * 60 * 60 * 1000; // 8 hours
-
-      const dateMapping = new Map<string, string>(); // Maps old match IDs or raw dates to clean session dates
+      const dateMapping = new Map<string, string>(); // Maps old match dates to clean session dates
 
       allSortedMatches.forEach(m => {
         if (m.timestamp - lastMatchTs > MAX_GAP) {
-           // New session starts
            currentSessionBaseDate = getCorrectDate(m.timestamp);
         }
         lastMatchTs = m.timestamp;
+        
+        dateMapping.set(m.date, currentSessionBaseDate);
 
         if (m.date !== currentSessionBaseDate) {
-           batch.update(doc(db, 'matches', m.id), { date: currentSessionBaseDate });
-           updates++;
-        }
-        
-        // Save mapping specifically to fix player eloHistory
-        dateMapping.set(m.date, currentSessionBaseDate); // If it previously used the wrong date, map it
-        dateMapping.set(getCorrectDate(m.timestamp), currentSessionBaseDate);
-      });
-
-      // FIX PLAYER ELO HISTORY using the session date map
-      players.forEach(p => {
-        if (!p.eloHistory) return;
-        let pUpdates = false;
-
-         const fixedHistory = p.eloHistory.map((h: any) => {
-            let mappedDate = h.date;
-            if (h.date.includes('T')) {
-               mappedDate = getCorrectDate(new Date(h.date).getTime());
-            }
-            // See if this date maps to a unified session date
-            if (dateMapping.has(mappedDate) && dateMapping.get(mappedDate) !== h.date) {
-               mappedDate = dateMapping.get(mappedDate)!;
-               pUpdates = true;
-            }
-            if (h.date !== mappedDate) pUpdates = true;
-            
-            return { ...h, date: mappedDate };
-         });
-         
-         if (pUpdates) {
-             const deduplicatedDocs = new Map();
-             fixedHistory.forEach(h => deduplicatedDocs.set(h.date, h.elo));
-             const finalHistory = Array.from(deduplicatedDocs.entries()).map(([date, elo]) => ({ date, elo }));
-             batch.update(doc(db, 'players', p.id), { eloHistory: finalHistory });
-             updates++;
-         }
-      });
-      
-      // Also sequentialize the recent session's match numbers
-      const threshold = newResetThreshold || (now - (16 * 60 * 60 * 1000));
-      const sessionMatches = (matches || []).filter(m => m.timestamp > threshold);
-      const sortedByTime = [...sessionMatches].sort((a, b) => a.timestamp - b.timestamp);
-      
-      sortedByTime.forEach((m, index) => {
-        const expectedNumber = index + 1;
-        if (m.dailyNumber !== expectedNumber) {
-          batch.update(doc(db, 'matches', m.id), { dailyNumber: expectedNumber });
+          batch.set(doc(db, 'matches', m.id), { date: currentSessionBaseDate }, { merge: true });
           updates++;
         }
       });
 
-      // 4. Recalculate dailyMatchCount if it's out of sync
-      const maxDailyNumber = sessionMatches.length; // Now that they are strictly sequential by session
-      
-      // Also account for a currently active match that hasn't finished
-      const expectedCount = maxDailyNumber + (generationResult ? 1 : 0);
+      // 3. Fix Player Elo History (Flatten same-day entries, fix dates)
+      players.forEach(p => {
+        if (!p.eloHistory || p.eloHistory.length === 0) return;
+        
+        let historyChanged = false;
+        const cleanedHistory = p.eloHistory.map((h: any) => {
+          let hDate = h.date;
+          // Fix ISO strings
+          if (hDate.includes('T')) {
+            hDate = getCorrectDate(new Date(hDate).getTime());
+            historyChanged = true;
+          }
+          // Align with session dates
+          if (dateMapping.has(hDate) && dateMapping.get(hDate) !== hDate) {
+            hDate = dateMapping.get(hDate)!;
+            historyChanged = true;
+          }
+
+          return { ...h, date: hDate };
+        });
+
+        // Deduplicate entries for the same day (keep last one)
+        const dayMap = new Map();
+        cleanedHistory.forEach(h => {
+          dayMap.set(h.date, h.elo);
+        });
+
+        if (dayMap.size !== p.eloHistory.length) historyChanged = true;
+
+        if (historyChanged) {
+          const finalHistory = Array.from(dayMap.entries())
+            .map(([date, elo]) => ({ date, elo }))
+            .sort((a, b) => a.date.localeCompare(b.date));
+
+          batch.set(doc(db, 'players', p.id), { eloHistory: finalHistory }, { merge: true });
+          updates++;
+        }
+      });
+
+      // 4. Fix Metadata Count
+      const sessionThreshold = newResetThreshold || (now - 16 * 60 * 60 * 1000);
+      const sessionMatches = allSortedMatches.filter(m => m.timestamp > sessionThreshold);
+      const expectedCount = sessionMatches.length + (generationResult ? 1 : 0);
+
       if (systemMetadata.dailyMatchCount !== expectedCount) {
         batch.set(doc(db, 'metadata', 'system'), {
           dailyMatchCount: expectedCount
@@ -1660,18 +1676,123 @@ export const useAppLogic = () => {
 
       if (updates > 0) {
         await batch.commit();
-        showNotification(`Corrigidas ${updates} anomalias com sucesso!`, 'success');
-        triggerSync(); // Reload to apply changes
+        showNotification(`Auditoria Finalizada: ${updates} inconsistências corrigidas com sucesso!`, 'success');
       } else {
-        showNotification('Nenhuma anomalia crítica encontrada para correção automática.', 'info');
+        showNotification('Nenhuma anomalia crítica encontrada para correção.', 'info');
       }
     } catch (error) {
+      console.error('Erro ao corrigir anomalias:', error);
       handleFirestoreError(error, OperationType.WRITE, 'fix-anomalies');
-      showNotification('Erro ao corrigir anomalias.', 'error');
     } finally {
       setIsSyncing(false);
     }
   };
+
+
+  const recalculateAllElo = async () => {
+    try {
+      setIsSyncing(true);
+      triggerDbStatus('writing');
+      showNotification('Recalculando todos os pontos ELO desde o início...', 'info');
+
+      // 1. Pegar todos os jogadores e limpar estatísticas para o estado inicial
+      const initialPlayers = players.map(p => ({
+        ...p,
+        elo: 1200,
+        wins: 0,
+        losses: 0,
+        matchesPlayed: 0,
+        pointsFor: 0,
+        pointsAgainst: 0,
+        eloHistory: [],
+        dailyEloGain: 0,
+        dailyWins: 0,
+        dailyLosses: 0,
+        dailyMatches: 0,
+        dailyResults: [],
+        trueSkill: { mu: 25, sigma: 25 / 3 }
+      }));
+
+      const playerMap = new Map<string, any>();
+      initialPlayers.forEach(p => playerMap.set(p.id, p));
+
+      // 2. Ordenar todas as partidas cronologicamente
+      const sortedMatches = [...matches].sort((a, b) => a.timestamp - b.timestamp);
+
+      // 3. Processar cada partida
+      sortedMatches.forEach(m => {
+        const winner = m.winner;
+        if (!winner) return;
+
+        const teamAIds = m.teamA;
+        const teamBIds = m.teamB;
+
+        const teamAPlayers = teamAIds.map(id => playerMap.get(id)).filter(Boolean);
+        const teamBPlayers = teamBIds.map(id => playerMap.get(id)).filter(Boolean);
+
+        // Update Eficiência Técnica (Cálculo para balanceamento de times)
+        const tsUpdates = calculateTrueSkillUpdate(teamAPlayers, teamBPlayers, winner);
+        tsUpdates.forEach(u => {
+          const p = playerMap.get(u.playerId);
+          if (p) p.trueSkill = u.newTrueSkill;
+        });
+
+        // Update ELO Fixo (+20/-20)
+        const updateStats = (pId: string, isTeamA: boolean) => {
+          const p = playerMap.get(pId);
+          if (!p) return;
+
+          const isWinner = (isTeamA && winner === 'A') || (!isTeamA && winner === 'B');
+          const change = isWinner ? 20 : -20;
+          const newElo = Math.max(800, p.elo + change);
+
+          p.elo = newElo;
+          p.matchesPlayed++;
+          if (isWinner) p.wins++; else p.losses++;
+          
+          p.pointsFor += isTeamA ? (m.scoreA || 0) : (m.scoreB || 0);
+          p.pointsAgainst += isTeamA ? (m.scoreB || 0) : (m.scoreA || 0);
+
+          p.eloHistory.push({
+            date: m.date,
+            elo: newElo,
+            matchId: m.id,
+            change: change,
+            timestamp: m.timestamp,
+            result: isWinner ? 'V' : 'D'
+          });
+        };
+
+        teamAIds.forEach(id => updateStats(id, true));
+        teamBIds.forEach(id => updateStats(id, false));
+      });
+
+      // 4. Salvar tudo em batches (limite 500 ops por batch)
+      const playerStates = Array.from(playerMap.values());
+      const BATCH_SIZE = 100; // Safer batch size
+      for (let i = 0; i < playerStates.length; i += BATCH_SIZE) {
+        const batch = writeBatch(db);
+        const chunk = playerStates.slice(i, i + BATCH_SIZE);
+        chunk.forEach(p => {
+          const playerRef = doc(db, 'players', p.id);
+          // Fatiar histórico para não exceder limites de documento
+          const finalHistory = (p.eloHistory || []).slice(-200);
+          batch.set(playerRef, cleanObject({ ...p, eloHistory: finalHistory }), { merge: true });
+        });
+        await batch.commit();
+      }
+
+      showNotification('Recálculo de ELO concluído com sucesso!', 'success');
+      // Forçar atualização local
+      useStore.setState(state => ({ syncTrigger: state.syncTrigger + 1 }));
+    } catch (error) {
+      console.error('Erro no recálculo:', error);
+      showNotification('Falha ao recalcular pontos ELO.', 'error');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
 
   const handleScanAnomalies = async () => {
     if (!checkAIQuota()) return;
@@ -1722,7 +1843,37 @@ export const useAppLogic = () => {
   const handleGoogleLogin = async () => {
     try {
       setIsLoggingIn(true);
-      const result = await signInWithPopup(auth, googleProvider);
+      
+      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      const isInIframe = window.self !== window.top;
+      const isStandalone = window.matchMedia('(display-mode: standalone)').matches || !!(window.navigator as any).standalone;
+      
+      // Standalone PWAs and Iframe environments are highly sensitive to partitioned storage which causes signInWithRedirect to fail (missing initial state).
+      // Standard mobile browsers outside standalone mode can support redirect if popups are blocked.
+      // Therefore, we ALWAYS try popup first, as it is much cleaner and preserves state on modern mobile/tablets/desktop/PWAs.
+      let result;
+      try {
+        console.log('Initiating Google Sign-In with popup. Standalone:', isStandalone, 'Iframe:', isInIframe);
+        result = await signInWithPopup(auth, googleProvider);
+      } catch (popupError: any) {
+        console.warn('Google Sign-In with popup failed or was blocked:', popupError);
+        
+        // Fall back to redirect login only if popups are blocked AND we are in a safe redirect environment (no iframe, not standalone PWA)
+        const isPopupBlocked = popupError.code === 'auth/popup-blocked' || popupError.code === 'auth/cancelled-popup-request';
+        
+        if (!isInIframe && !isStandalone && (isMobile || isPopupBlocked)) {
+          console.log('Falling back to redirect login...');
+          await signInWithRedirect(auth, googleProvider);
+          return; // Redirecting...
+        }
+        
+        if (isStandalone && isPopupBlocked) {
+          showNotification('O pop-up de login foi bloqueado. Por favor, libere pop-ups nas configurações de seu navegador ou do aparelho.', 'error');
+        }
+        
+        throw popupError;
+      }
+
       const user = result.user;
       
       if (!user.email) {
@@ -1837,7 +1988,10 @@ export const useAppLogic = () => {
           ...(generationResult.teamB.setter ? [generationResult.teamB.setter] : []),
           ...generationResult.teamB.players
         ]
-      : attendance;
+      : attendance.filter(p => !p.status || p.status === 'active');
+
+    // Filter out DMs
+    playersToUse = playersToUse.filter(p => !p.isDM);
 
     // Enrich players with full data from the master players list to ensure no missing fields
     playersToUse = playersToUse.map(p => {
@@ -1859,7 +2013,21 @@ export const useAppLogic = () => {
 
     const performGeneration = async () => {
       if (navigator.vibrate) navigator.vibrate(50);
-      const result = { ...generateTeams(playersToUse), timestamp: Date.now() };
+
+      // Reunir formações anteriores para evitar repetições
+      const now = Date.now();
+      const threshold = systemMetadata.lastResetTimestamp || (now - (16 * 60 * 60 * 1000));
+      const sessionMatches = (matches || []).filter(m => m.timestamp > threshold);
+      
+      const previousFormations = sessionMatches.map(m => ({
+        setterA: m.teamA[0],
+        playersA: m.teamA.slice(1),
+        setterB: m.teamB[0],
+        playersB: m.teamB.slice(1)
+      }));
+
+      const generationResult = generateTeams(playersToUse, previousFormations);
+      const result: any = { ...generationResult, timestamp: Date.now() };
       
       // Persistir partida no Firestore para outros admins
       try {
@@ -1891,7 +2059,7 @@ export const useAppLogic = () => {
 
         const notificationData = await Promise.all(playersToNotify.map(async (p) => {
           try {
-            const q = query(collection(db, 'notifications'), where('playerId', '==', p!.id), where('read', '==', false));
+            const q = query(collection(db, 'notifications'), where('playerUid', '==', p!.uid), where('read', '==', false));
             const snap = await getDocs(q);
             return { id: p!.id, unreadCount: snap.size + 1 };
           } catch (e) {
@@ -1906,6 +2074,7 @@ export const useAppLogic = () => {
             const appNotifRef = doc(collection(db, 'notifications'));
             batch.set(appNotifRef, {
               playerId: player.id,
+              playerUid: player.uid || null,
               title,
               message: body,
               createdAt: Date.now(),
@@ -1914,7 +2083,7 @@ export const useAppLogic = () => {
             });
 
             // Legacy FCM trigger (optional, if Cloud Function is not yet deployed or for redundancy)
-            if (player.fcmToken && systemMetadata.pushNotificationsGlobalEnabled !== false && systemMetadata.matchNotificationsGlobalEnabled !== false && player.matchNotificationsEnabled !== false) {
+            if (player.fcmToken && systemMetadata.matchNotificationsGlobalEnabled !== false && player.matchNotificationsEnabled !== false) {
               const unreadCount = notificationData.find(d => d.id === player.id)?.unreadCount || 1;
               const notificationRef = doc(collection(db, 'fcm_messages'));
               batch.set(notificationRef, {
@@ -2428,13 +2597,38 @@ export const useAppLogic = () => {
     try {
       setIsSyncing(true);
       triggerDbStatus('writing');
+
+      // Prevent duplicates if it's a new entry
+      if (!id) {
+        const existingDuplicate = (payments || []).find(p => 
+          p.playerId === paymentData.playerId && 
+          p.month === paymentData.month && 
+          p.amount === paymentData.amount &&
+          p.status === paymentData.status
+        );
+        
+        if (existingDuplicate) {
+           showNotification('Este lançamento já existe para este sócio e mês.', 'info');
+           return true; 
+        }
+      }
       
       const paymentId = id || generateUUID();
       const timestamp = Date.now();
       
+      // Look up playerUid if possible
+      let playerUid = null;
+      if (paymentData.playerId) {
+        const player = players.find(p => p.id === paymentData.playerId);
+        if (player?.uid) {
+          playerUid = player.uid;
+        }
+      }
+
       const payment: any = {
         ...paymentData,
         id: paymentId,
+        playerUid,
         updatedAt: timestamp
       };
       
@@ -3046,11 +3240,6 @@ export const useAppLogic = () => {
           const playersB = teamB.players.map(id => players.find(p => p.id === id)).filter(Boolean) as Player[];
 
           if (playersA.length > 0 && playersB.length > 0) {
-            const avgEloA = playersA.reduce((sum, p) => sum + p.elo, 0) / playersA.length;
-            const avgEloB = playersB.reduce((sum, p) => sum + p.elo, 0) / playersB.length;
-
-            const expectedA = 1 / (1 + Math.pow(10, (avgEloB - avgEloA) / 400));
-            
             let actualA = 0.5; // Draw
             let winner: 'A' | 'B' | 'Draw' = 'Draw';
             if (match.setsA > match.setsB) {
@@ -3061,54 +3250,35 @@ export const useAppLogic = () => {
               winner = 'B';
             }
 
-            const getKFactorLocal = (p: Player) => {
-              let K = p.isOfficialSetter ? 20 : 32;
-              const matchCount = p.matchesPlayed || 0;
-              if (matchCount >= 5) {
-                const winRate = matchCount > 0 ? (p.wins || 0) / matchCount : 0;
-                if (winRate > 0.8 || winRate < 0.2) {
-                  K = Math.max(10, Math.floor(K * 0.6)); 
-                }
-              }
-              return K;
-            };
+            const tsUpdates = calculateTrueSkillUpdate(playersA, playersB, winner);
+            const tsMap = new Map<string, { mu: number; sigma: number }>();
+            tsUpdates.forEach(u => tsMap.set(u.playerId, u.newTrueSkill));
 
             const date = getFirestoreDateKey();
 
             const updatePlayerStats = (p: Player, isTeamA: boolean) => {
-              const K = getKFactorLocal(p);
-              const expected = isTeamA ? expectedA : (1 - expectedA);
-              const act = (isTeamA && winner === 'A') || (!isTeamA && winner === 'B') ? 1 : (winner === 'Draw' ? 0.5 : 0);
-              const baseEloChange = Math.round(K * (act - expected));
-              
-              const scoreDiff = Math.abs(match.scoreA - match.scoreB);
-              const bonus = winner !== 'Draw' ? Math.floor(scoreDiff / 5) : 0;
-              // se isTeamA e ganhou = tb ganhou
+              // Regra Pedida: +20 para vitória, -20 para derrota (Fixo)
               const wonMatch = (isTeamA && winner === 'A') || (!isTeamA && winner === 'B');
-              const finalBonus = wonMatch ? bonus : (winner === 'Draw' ? 0 : -bonus);
-
-              const baseChange = baseEloChange + finalBonus;
+              const totalEloChange = wonMatch ? 20 : (winner === 'Draw' ? 0 : -20);
+              
+              const newElo = Math.max(800, p.elo + totalEloChange);
               const isWinner = wonMatch;
               const isDraw = winner === 'Draw';
               
-              const dailyResults = p.dailyResults || [];
-              let currentStreak = 0;
-              for (let i = dailyResults.length - 1; i >= 0; i--) {
-                if (dailyResults[i] === 'V') currentStreak++;
-                else break;
-              }
-              
-              const streakBonus = isWinner ? Math.min(8, currentStreak * 2) : 0;
-              const totalEloChange = baseChange + streakBonus;
-              
-              const newElo = Math.max(800, p.elo + totalEloChange);
               const playerRef = doc(db, 'players', p.id);
               const attendanceRef = doc(db, 'attendance', date, 'players', p.id);
               
-              const newHistoryEntry = { date: getFirestoreDateKey(new Date()), elo: newElo };
-              const updatedHistory = [...(p.eloHistory || []), newHistoryEntry].slice(-50);
+              const newHistoryEntry = { 
+                date: getFirestoreDateKey(new Date()), 
+                elo: newElo,
+                matchId: match.id,
+                change: totalEloChange,
+                timestamp: Date.now(),
+                result: (wonMatch ? 'V' : 'D') as 'V' | 'D'
+              };
+              const updatedHistory = [...(p.eloHistory || []), newHistoryEntry].slice(-200);
               
-              const updates = {
+              const updates: any = {
                 elo: newElo,
                 matchesPlayed: (p.matchesPlayed || 0) + 1,
                 wins: isWinner ? (p.wins || 0) + 1 : (p.wins || 0),
@@ -3122,6 +3292,11 @@ export const useAppLogic = () => {
                 consecutiveBenched: 0,
                 eloHistory: updatedHistory
               };
+
+              const trueskillUpdate = tsMap.get(p.id);
+              if (trueskillUpdate) {
+                updates.trueSkill = trueskillUpdate;
+              }
               
               batch.set(playerRef, updates, { merge: true });
               
@@ -3140,29 +3315,11 @@ export const useAppLogic = () => {
               const played = playedInA || playedInB;
               
               if (played) {
-                const K = getKFactorLocal(p);
-                const expected = playedInA ? expectedA : (1 - expectedA);
-                const act = (playedInA && winner === 'A') || (playedInB && winner === 'B') ? 1 : (winner === 'Draw' ? 0.5 : 0);
-                const baseEloChange = Math.round(K * (act - expected));
-
-                const scoreDiff = Math.abs(match.scoreA - match.scoreB);
-                const bonus = winner !== 'Draw' ? Math.floor(scoreDiff / 5) : 0;
                 const wonMatch = (playedInA && winner === 'A') || (playedInB && winner === 'B');
-                const finalBonus = wonMatch ? bonus : (winner === 'Draw' ? 0 : -bonus);
-
-                const baseChange = baseEloChange + finalBonus;
+                const totalEloChange = wonMatch ? 20 : (winner === 'Draw' ? 0 : -20);
                 const isWinner = wonMatch;
                 const isDraw = winner === 'Draw';
                 
-                const dailyResults = p.dailyResults || [];
-                let currentStreak = 0;
-                for (let i = dailyResults.length - 1; i >= 0; i--) {
-                  if (dailyResults[i] === 'V') currentStreak++;
-                  else break;
-                }
-                const streakBonus = isWinner ? Math.min(8, currentStreak * 2) : 0;
-                const totalEloChange = baseChange + streakBonus;
-
                 return {
                   ...p,
                   elo: Math.max(800, p.elo + totalEloChange),
@@ -3422,6 +3579,7 @@ export const useAppLogic = () => {
     isNarratingSummary,
     createDataSnapshot,
     fixDatabaseAnomalies,
+    recalculateAllElo,
     handleScanAnomalies,
     handleLogout,
     handleGoogleLogin,

@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useStore } from '../store';
 import { Match, Player } from '../types';
 import { formatTime } from '../utils/helpers';
+import { WinLossChart } from '../src/components/WinLossChart';
+import { getFirestoreDateKey } from '../firebase';
 import { 
   Trophy, 
   Clock, 
@@ -15,7 +17,8 @@ import {
   Hash,
   User,
   ShieldCheck,
-  Trash2
+  Trash2,
+  BarChart3
 } from 'lucide-react';
 import { motion } from 'motion/react';
 
@@ -26,8 +29,59 @@ interface HistoryViewProps {
 }
 
 export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch }) => {
-  const { matches, players: allPlayers, userRole } = useStore();
+  const { matches, players: allPlayers, userRole, currentPlayer, attendance: allAttendance } = useStore();
   const players = React.useMemo(() => allPlayers.filter(p => p.status !== 'inactive'), [allPlayers]);
+  const attendance = React.useMemo(() => allAttendance.filter(p => p.status !== 'inactive'), [allAttendance]);
+  
+  const [performanceDate, setPerformanceDate] = useState(getFirestoreDateKey());
+  const displayMatches = React.useMemo(() => {
+    const targetDate = performanceDate === 'Hoje' ? getFirestoreDateKey() : performanceDate;
+    return matches.filter(m => {
+      return m.date === targetDate;
+    }).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+  }, [matches, performanceDate]);
+
+  const participants = useMemo(() => {
+    const participantData: Record<string, { matches: number, wins: number, losses: number }> = {};
+    
+    displayMatches.forEach(match => {
+      const allPlayersInMatch = [...(match.teamA || []), ...(match.teamB || [])];
+      
+      allPlayersInMatch.forEach(id => {
+        if (!participantData[id]) {
+          participantData[id] = { matches: 0, wins: 0, losses: 0 };
+        }
+        
+        participantData[id].matches += 1;
+        
+        const isTeamA = (match.teamA || []).includes(id);
+        const isTeamB = (match.teamB || []).includes(id);
+        const won = (isTeamA && match.winner === 'A') || (isTeamB && match.winner === 'B');
+        
+        if (won) {
+          participantData[id].wins += 1;
+        } else {
+          participantData[id].losses += 1;
+        }
+      });
+    });
+    
+    return allPlayers.filter(p => participantData[p.id]).map(p => ({
+      ...p,
+      sessionMatches: participantData[p.id].matches,
+      sessionWins: participantData[p.id].wins,
+      sessionLosses: participantData[p.id].losses
+    })).sort((a, b) => (a.arrivalOrder || 0) - (b.arrivalOrder || 0));
+  }, [displayMatches, allPlayers]);
+
+  const availableDates = useMemo(() => {
+    const today = getFirestoreDateKey();
+    const dates = new Set(matches.map(m => m.date));
+    // Remove a data de hoje do set para não duplicar com o rótulo "Hoje"
+    dates.delete(today);
+    const sortedDates = Array.from(dates).sort((a, b) => b.localeCompare(a));
+    return ['Hoje', ...sortedDates];
+  }, [matches]);
   const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterPlayerId, setFilterPlayerId] = useState<string>('');
@@ -42,6 +96,26 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch }) => {
   const formatHour = (timestamp?: number) => {
     if (!timestamp) return '--:--';
     return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const renderScore = (match: Match, team: 'A' | 'B') => {
+    // Se a partida tem placares registrados (pelo menos um diferente de 0 ou modo não é QUICK)
+    const hasScores = match.scoreA > 0 || match.scoreB > 0;
+    
+    if (hasScores) {
+      return (
+        <span className={`text-lg font-black ${match.winner === team ? 'text-brand-primary' : 'text-white'}`}>
+          {team === 'A' ? match.scoreA : match.scoreB}
+        </span>
+      );
+    }
+    
+    // Fallback para partidas antigas sem placar
+    return (
+      <span className={`text-sm font-black italic ${match.winner === team ? 'text-brand-primary' : 'text-white/40'}`}>
+        {match.winner === team ? '15' : '--'}
+      </span>
+    );
   };
 
   const normalize = (str: string) => 
@@ -147,31 +221,26 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch }) => {
               <div className="flex items-center gap-8">
                 <div className="text-center">
                   <p className="text-[10px] font-black text-brand-primary uppercase tracking-widest mb-1">Time A</p>
-                  {selectedMatch.mode !== 'QUICK' ? (
-                    <div className="flex flex-col items-center gap-2">
+                  <div className="flex flex-col items-center gap-2">
+                    {selectedMatch.scoreA > 0 || selectedMatch.scoreB > 0 ? (
                       <p className="text-5xl font-black tracking-tighter">{selectedMatch.scoreA}</p>
-                      {selectedMatch.winner === 'A' && <Trophy className="w-12 h-12 text-brand-primary drop-shadow-[0_0_15px_rgba(245,196,41,0.4)] fill-brand-primary" />}
-                    </div>
-                  ) : (
-                    <div className="h-[3.75rem] flex items-center justify-center">
-                      {selectedMatch.winner === 'A' && <Trophy className="w-20 h-20 text-brand-primary drop-shadow-[0_0_15px_rgba(245,196,41,0.4)] fill-brand-primary" />}
-                    </div>
-                  )}
+                    ) : (
+                      <p className="text-5xl font-black tracking-tighter text-white/20">{selectedMatch.winner === 'A' ? '15' : '--'}</p>
+                    )}
+                    {selectedMatch.winner === 'A' && <Trophy className="w-12 h-12 text-brand-primary drop-shadow-[0_0_15px_rgba(245,196,41,0.4)] fill-brand-primary" />}
+                  </div>
                 </div>
                 <div className="text-2xl font-black text-white/20">VS</div>
                 <div className="text-center">
                   <p className="text-[10px] font-black text-rose-400 uppercase tracking-widest mb-1">Time B</p>
-                  {selectedMatch.winner === 'B' ? (
-                    <div className="h-[3.75rem] flex items-center justify-center">
-                      <Trophy className="w-20 h-20 text-brand-primary drop-shadow-[0_0_15px_rgba(245,196,41,0.4)] fill-brand-primary" />
-                    </div>
-                  ) : (
-                    selectedMatch.mode !== 'QUICK' && (
-                      <div className="flex flex-col items-center gap-2">
-                        <p className="text-5xl font-black tracking-tighter">{selectedMatch.scoreB}</p>
-                      </div>
-                    )
-                  )}
+                  <div className="flex flex-col items-center gap-2">
+                    {selectedMatch.scoreA > 0 || selectedMatch.scoreB > 0 ? (
+                      <p className="text-5xl font-black tracking-tighter">{selectedMatch.scoreB}</p>
+                    ) : (
+                      <p className="text-5xl font-black tracking-tighter text-white/20">{selectedMatch.winner === 'B' ? '15' : '--'}</p>
+                    )}
+                    {selectedMatch.winner === 'B' && <Trophy className="w-12 h-12 text-brand-primary drop-shadow-[0_0_15px_rgba(245,196,41,0.4)] fill-brand-primary" />}
+                  </div>
                 </div>
               </div>
             </div>
@@ -260,6 +329,119 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch }) => {
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col gap-6">
+
+        <div className="bg-black rounded-[3rem] border border-white/5 border-l-[8px] border-brand-primary p-10 shadow-2xl overflow-hidden">
+          <div className="flex items-center justify-between mb-10">
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-brand-secondary rounded-2xl border border-brand-primary/40">
+                <BarChart3 className="w-6 h-6 text-brand-primary" />
+              </div>
+              <div>
+                <h3 className="text-xs font-black text-white uppercase tracking-[0.3em]">Performance da Sessão</h3>
+                <select 
+                  value={performanceDate}
+                  onChange={(e) => setPerformanceDate(e.target.value)}
+                  className="bg-transparent text-[10px] font-black text-brand-primary uppercase tracking-[0.2em] mt-1 cursor-pointer outline-none"
+                >
+                  {availableDates.map(date => (
+                    <option key={date} value={date} className="bg-brand-secondary text-white">
+                      {date === 'Hoje' ? date : date.split('-').reverse().join('/')}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div className="relative">
+            <div className="overflow-x-auto pb-6 -mx-10 px-10">
+              <table className="min-w-full border-separate border-spacing-y-2">
+                <thead>
+                  <tr>
+                    <th className="text-left py-4 px-6 text-[10px] font-black text-white/40 uppercase tracking-[0.2em] sticky left-0 bg-black z-20">Guerreiro</th>
+                    {displayMatches.map((_, i) => (
+                      <th key={i} className="py-4 px-2 text-center min-w-[60px]">
+                        <div className="mx-auto w-10 h-10 rounded-xl bg-black border border-brand-primary/40 text-brand-primary flex items-center justify-center text-[10px] font-black shadow-lg uppercase tracking-widest">
+                          B{i + 1}
+                        </div>
+                      </th>
+                    ))}
+                    {displayMatches.length === 0 && (
+                      <th className="py-4 px-2 text-center min-w-[60px]">
+                        <div className="mx-auto w-10 h-10 rounded-xl bg-black border border-brand-primary/40 text-brand-primary flex items-center justify-center text-[10px] font-black shadow-lg uppercase tracking-widest">
+                          B1
+                        </div>
+                      </th>
+                    )}
+                    <th className="py-4 px-6 text-center text-[10px] font-black text-white/40 uppercase tracking-[0.2em] min-w-[100px]">Saldo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {participants.map((player, idx) => {
+                    const displayName = player.name || "Sócio sem nome";
+                    const arrivalOrder = player.arrivalOrder || 0;
+
+                    return (
+                      <tr key={player.id || `participant-row-${idx}`} className="group">
+                        <td className="py-4 px-6 sticky left-0 bg-black z-10 border-y border-l border-brand-primary/40 rounded-l-2xl group-hover:bg-brand-secondary transition-colors">
+                          <div className="flex items-center gap-4">
+                            <div className="w-8 h-8 rounded-xl bg-black border border-brand-primary/40 text-brand-primary flex items-center justify-center text-[10px] font-black shadow-lg">
+                              {arrivalOrder || '?'}
+                            </div>
+                            <div>
+                              <p className={`text-xs font-black uppercase tracking-tight ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>{displayName}</p>
+                              <p className="text-[9px] font-black text-white/40 uppercase tracking-widest mt-0.5">Nível Pro</p>
+                            </div>
+                          </div>
+                        </td>
+                        {displayMatches.map((match, mIdx) => {
+                          const isTeamA = (match.teamA || []).includes(player.id);
+                          const isTeamB = (match.teamB || []).includes(player.id);
+                          const played = isTeamA || isTeamB;
+                          const won = (isTeamA && match.winner === 'A') || (isTeamB && match.winner === 'B');
+                          
+                          return (
+                            <td 
+                              key={match.id || `match-cell-${mIdx}`} 
+                              className="py-4 px-2 text-center border-y border-brand-primary/40 group-hover:bg-brand-secondary transition-colors"
+                              title={match.scoreA > 0 || match.scoreB > 0 ? `Placar: ${match.scoreA} x ${match.scoreB}` : 'Placar não registrado'}
+                            >
+                              {played ? (
+                                <div className={`inline-flex items-center justify-center w-10 h-10 rounded-xl font-black text-xs shadow-lg transition-all group-hover:scale-110 border ${won ? 'bg-brand-primary border-brand-primary/30 text-black' : 'bg-white border-white/30 text-black'}`}>
+                                  {won ? 'V' : 'D'}
+                                </div>
+                              ) : (
+                                <div className="w-10 h-10 mx-auto rounded-xl border border-dashed border-brand-primary/40 flex items-center justify-center">
+                                  <div className="w-1 h-1 rounded-full bg-brand-primary/20" />
+                                </div>
+                              )}
+                            </td>
+                          );
+                        })}
+                        {displayMatches.length === 0 && (
+                          <td className="py-4 px-2 text-center border-y border-brand-primary/40 group-hover:bg-brand-secondary transition-colors">
+                            <div className="w-10 h-10 mx-auto rounded-xl border border-dashed border-brand-primary/40 flex items-center justify-center">
+                              <div className="w-1 h-1 rounded-full bg-brand-primary/20" />
+                            </div>
+                          </td>
+                        )}
+                        <td className="py-4 px-6 text-center border-y border-r border-brand-primary/40 rounded-r-2xl group-hover:bg-brand-secondary transition-colors">
+                          <div className="flex flex-col items-center">
+                            <span className="text-xs font-black text-white uppercase tracking-tight">{player.sessionMatches} Jogos</span>
+                            <div className="flex gap-2 mt-1.5">
+                              <span className="text-[9px] font-black text-black bg-brand-primary px-2 py-0.5 rounded-lg border border-brand-primary/40">{player.sessionWins}V</span>
+                              <span className="text-[9px] font-black text-black bg-white px-2 py-0.5 rounded-lg border border-brand-primary/40">{player.sessionLosses}D</span>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    ); })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
         <div className="flex flex-col md:flex-row justify-between items-center gap-4">
           <h2 className="text-2xl font-black text-white uppercase tracking-tighter flex items-center gap-3">
             <History className="w-8 h-8 text-brand-primary" /> 
@@ -368,15 +550,11 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch }) => {
                     <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl transition-all ${match.winner === 'A' ? 'bg-brand-primary/10 border-2 border-brand-primary/30 shadow-sm scale-105' : 'border border-transparent'}`}>
                       {match.winner === 'A' && <Trophy className="w-5 h-5 text-brand-primary fill-brand-primary" />}
                       <span className={`text-sm font-black uppercase tracking-tighter ${match.winner === 'A' ? 'text-brand-primary' : 'text-white/60'}`}>Time A</span>
-                      {match.mode !== 'QUICK' && (
-                        <span className={`text-lg font-black ${match.winner === 'A' ? 'text-brand-primary' : 'text-white'}`}>{match.scoreA}</span>
-                      )}
+                      {renderScore(match, 'A')}
                     </div>
                     <div className="text-xs font-black text-white/20 italic">VS</div>
                     <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl transition-all ${match.winner === 'B' ? 'bg-brand-primary/10 border-2 border-brand-primary/30 shadow-sm scale-105' : 'border border-transparent'}`}>
-                      {match.mode !== 'QUICK' && (
-                        <span className={`text-lg font-black ${match.winner === 'B' ? 'text-brand-primary' : 'text-white'}`}>{match.scoreB}</span>
-                      )}
+                      {renderScore(match, 'B')}
                       <span className={`text-sm font-black uppercase tracking-tighter ${match.winner === 'B' ? 'text-brand-primary' : 'text-white/60'}`}>Time B</span>
                       {match.winner === 'B' && <Trophy className="w-5 h-5 text-brand-primary fill-brand-primary" />}
                     </div>

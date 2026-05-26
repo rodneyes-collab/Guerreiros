@@ -24,12 +24,12 @@ export const useIntentions = () => {
     if (envUrl) return envUrl.replace(/\/$/, '');
     
     // 2. Official Production URL provided by user
-    const PROD_URL = 'https://volleyclub-manager.web.app';
+    const PROD_URL = 'https://guerreiros-volleyball-club-238897290870.us-west1.run.app';
     
     const origin = window.location.origin;
     
-    // If we are in production or preview, use the current origin
-    if (origin.includes('guerreiros-volleyball-club') || origin.includes('ais-pre-') || origin.includes('volleyclub-manager')) {
+    // If we are in production, use the current origin
+    if (origin.includes('guerreiros-volleyball-club')) {
       return origin;
     }
 
@@ -108,11 +108,11 @@ export const useIntentions = () => {
     resetIntentionsIfNeeded();
   }, [intentions.targetDate, resetIntentionsIfNeeded]);
 
-  const clearRemindersForPlayer = async (playerId: string) => {
+  const clearRemindersForPlayer = async (playerId: string, playerUid?: string) => {
     try {
       const q = query(
         collection(db, 'notifications'),
-        where('playerId', '==', playerId),
+        where('playerUid', '==', playerUid || ''),
         where('type', '==', 'reminder')
       );
       const snap = await getDocs(q);
@@ -126,6 +126,7 @@ export const useIntentions = () => {
 
   const setIntent = async (playerId: string, status: 'GOING' | 'NOT_GOING') => {
     try {
+      const player = players.find(p => p.id === playerId);
       const previousStatus = intentions.responses[playerId];
       const newResponses = { ...intentions.responses, [playerId]: status };
       
@@ -136,7 +137,7 @@ export const useIntentions = () => {
       if (status === 'GOING' && previousStatus !== 'GOING') {
         updates[`confirmationTimestamps.${playerId}`] = Date.now();
         // Clear old reminders if confirming
-        await clearRemindersForPlayer(playerId);
+        await clearRemindersForPlayer(playerId, player?.uid);
       } else if (status === 'NOT_GOING') {
         updates[`confirmationTimestamps.${playerId}`] = null;
       }
@@ -144,7 +145,6 @@ export const useIntentions = () => {
       await updateDoc(doc(db, 'metadata', 'intentions'), updates);
 
       // Notify admins silently
-      const player = players.find(p => p.id === playerId);
       if (player) {
         const batch = writeBatch(db);
         const admins = players.filter(p => p.isAdmin);
@@ -153,7 +153,7 @@ export const useIntentions = () => {
         const adminCounts = await Promise.all(admins.map(async (admin) => {
           if (admin.id === playerId || !admin.fcmToken) return { id: admin.id, count: 1 };
           try {
-            const q = query(collection(db, 'notifications'), where('playerId', '==', admin.id), where('read', '==', false));
+            const q = query(collection(db, 'notifications'), where('playerUid', '==', admin.uid), where('read', '==', false));
             const snap = await getDocs(q);
             return { id: admin.id, count: snap.size + 1 };
           } catch (e) {
@@ -162,96 +162,122 @@ export const useIntentions = () => {
         }));
 
         if (status === 'GOING') {
-          admins.forEach(admin => {
-            if (admin.id !== playerId) {
-              const unreadCount = adminCounts.find(c => c.id === admin.id)?.count || 1;
-              // In-app notification
-              const appNotifRef = doc(collection(db, 'notifications'));
-              batch.set(appNotifRef, {
-                playerId: admin.id,
-                title: 'Confirmação na Lista',
-                message: `${player.name} confirmou presença para quinta-feira!`,
-                createdAt: Date.now(),
-                read: false,
-                type: 'system'
-              });
+          // --- Player Notification ---
+          const appNotifRefPlayer = doc(collection(db, 'notifications'));
+          batch.set(appNotifRefPlayer, {
+            playerId: player.id,
+            playerUid: player.uid || null,
+            title: 'Confirmação',
+            message: 'Presença confirmada!',
+            createdAt: Date.now(),
+            read: false,
+            type: 'system'
+          });
 
-              // FCM notification
-              if (admin.fcmToken && useStore.getState().systemMetadata.pushNotificationsGlobalEnabled !== false) {
-                const notifRef = doc(collection(db, 'fcm_messages'));
-                batch.set(notifRef, {
-                  token: admin.fcmToken,
+          // --- Admin Notifications ---
+          admins.forEach(admin => {
+            const unreadCount = adminCounts.find(c => c.id === admin.id)?.count || 1;
+            
+            // In-app notification
+            const appNotifRefAdmin = doc(collection(db, 'notifications'));
+            batch.set(appNotifRefAdmin, {
+              playerId: admin.id,
+              playerUid: admin.uid || null,
+              title: 'Confirmação na Lista',
+              message: `${player.name} confirmou presença para quinta-feira!`,
+              createdAt: Date.now(),
+              read: false,
+              type: 'system'
+            });
+
+            // FCM notification
+            if (admin.fcmToken) {
+              const notifRef = doc(collection(db, 'fcm_messages'));
+              batch.set(notifRef, {
+                token: admin.fcmToken,
+                notification: {
+                  title: 'Confirmação na Lista',
+                  body: `${player.name} confirmou presença para quinta-feira!`,
+                  sound: 'default'
+                },
+                data: {
+                  unreadCount: String(unreadCount),
+                  type: 'system'
+                },
+                android: {
                   notification: {
-                    title: 'Confirmação na Lista',
-                    body: `${player.name} confirmou presença para quinta-feira!`,
                     sound: 'default'
-                  },
-                  data: {
-                    unreadCount: String(unreadCount),
-                    type: 'system'
-                  },
-                  android: {
-                    notification: {
+                  }
+                },
+                apns: {
+                  payload: {
+                    aps: {
                       sound: 'default'
                     }
-                  },
-                  apns: {
-                    payload: {
-                      aps: {
-                        sound: 'default'
-                      }
-                    }
-                  },
-                  createdAt: serverTimestamp()
-                });
-              }
+                  }
+                },
+                createdAt: serverTimestamp()
+              });
             }
           });
           await batch.commit();
         } else if (status === 'NOT_GOING' && previousStatus === 'GOING') {
-          admins.forEach(admin => {
-            if (admin.id !== playerId) {
-              const unreadCount = adminCounts.find(c => c.id === admin.id)?.count || 1;
-              // In-app notification
-              const appNotifRef = doc(collection(db, 'notifications'));
-              batch.set(appNotifRef, {
-                playerId: admin.id,
-                title: 'Desistência na Lista',
-                message: `${player.name} desistiu de ir na quinta-feira. Atualize a lista!`,
-                createdAt: Date.now(),
-                read: false,
-                type: 'system'
-              });
+          // --- Player Notification ---
+          const appNotifRefPlayer = doc(collection(db, 'notifications'));
+          batch.set(appNotifRefPlayer, {
+            playerId: player.id,
+            playerUid: player.uid || null,
+            title: 'Desistência',
+            message: 'Desistência registrada.',
+            createdAt: Date.now(),
+            read: false,
+            type: 'system'
+          });
 
-              // FCM notification
-              if (admin.fcmToken && useStore.getState().systemMetadata.pushNotificationsGlobalEnabled !== false) {
-                const notifRef = doc(collection(db, 'fcm_messages'));
-                batch.set(notifRef, {
-                  token: admin.fcmToken,
+          // --- Admin Notifications ---
+          admins.forEach(admin => {
+            const unreadCount = adminCounts.find(c => c.id === admin.id)?.count || 1;
+            
+            // In-app notification
+            const appNotifRefAdmin = doc(collection(db, 'notifications'));
+            batch.set(appNotifRefAdmin, {
+              playerId: admin.id,
+              playerUid: admin.uid || null,
+              title: 'Desistência na Lista',
+              message: `${player.name} desistiu de ir na quinta-feira. Atualize a lista!`,
+              createdAt: Date.now(),
+              read: false,
+              type: 'system'
+            });
+
+            // FCM notification
+            if (admin.fcmToken) {
+              const notifRef = doc(collection(db, 'fcm_messages'));
+              batch.set(notifRef, {
+                token: admin.fcmToken,
+                notification: {
+                  title: 'Desistência na Lista',
+                  body: `${player.name} desistiu de ir na quinta-feira. Atualize a lista!`,
+                  sound: 'default'
+                },
+                data: {
+                  unreadCount: String(unreadCount),
+                  type: 'system'
+                },
+                android: {
                   notification: {
-                    title: 'Desistência na Lista',
-                    body: `${player.name} desistiu de ir na quinta-feira. Atualize a lista!`,
                     sound: 'default'
-                  },
-                  data: {
-                    unreadCount: String(unreadCount),
-                    type: 'system'
-                  },
-                  android: {
-                    notification: {
+                  }
+                },
+                apns: {
+                  payload: {
+                    aps: {
                       sound: 'default'
                     }
-                  },
-                  apns: {
-                    payload: {
-                      aps: {
-                        sound: 'default'
-                      }
-                    }
-                  },
-                  createdAt: serverTimestamp()
-                });
-              }
+                  }
+                },
+                createdAt: serverTimestamp()
+              });
             }
           });
           await batch.commit();
@@ -280,10 +306,9 @@ export const useIntentions = () => {
         if (player) {
           const batch = writeBatch(db);
           const admins = players.filter(p => p.isAdmin && p.fcmToken);
-          if (useStore.getState().systemMetadata.pushNotificationsGlobalEnabled !== false) {
-            admins.forEach(admin => {
-              if (admin.id !== playerId) {
-                const notifRef = doc(collection(db, 'fcm_messages'));
+          admins.forEach(admin => {
+            if (admin.id !== playerId) {
+              const notifRef = doc(collection(db, 'fcm_messages'));
               batch.set(notifRef, {
                 token: admin.fcmToken,
                 notification: {
@@ -305,13 +330,12 @@ export const useIntentions = () => {
                 },
                 createdAt: serverTimestamp()
               });
-          }
-        });
-        await batch.commit();
+            }
+          });
+          await batch.commit();
+        }
       }
-    }
-  }
-} catch (err) {
+    } catch (err) {
       console.error('Erro ao resetar intenção:', err);
       handleFirestoreError(err, OperationType.UPDATE, 'metadata/intentions');
     }
@@ -357,7 +381,7 @@ export const useIntentions = () => {
         
         if (p.status === 'active' && !hasResponded && !isAlreadyInAttendance && p.fcmToken) {
           try {
-            const q = query(collection(db, 'notifications'), where('playerId', '==', p.id), where('read', '==', false));
+            const q = query(collection(db, 'notifications'), where('playerUid', '==', p.uid), where('read', '==', false));
             const snap = await getDocs(q);
             return { id: p.id, unreadCount: snap.size + 1 };
           } catch (e) {
@@ -380,6 +404,7 @@ export const useIntentions = () => {
           const appNotifRef = doc(collection(db, 'notifications'));
           batch.set(appNotifRef, {
             playerId: player.id,
+            playerUid: player.uid || null,
             title: 'Aviso de Presença',
             message: customMessage || `E aí Guerreiro(a), vai jogar nesta Quinta? [Clique aqui para confirmar](${appLink}) ou no grupo de WhatsApp.`,
             createdAt: Date.now(),
@@ -388,7 +413,7 @@ export const useIntentions = () => {
           });
 
           // If player has FCM token, also send push notification via fcm_messages
-          if (player.fcmToken && useStore.getState().systemMetadata.pushNotificationsGlobalEnabled !== false) {
+          if (player.fcmToken) {
             const notifRef = doc(collection(db, 'fcm_messages'));
             batch.set(notifRef, {
               token: player.fcmToken,

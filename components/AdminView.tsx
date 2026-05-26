@@ -34,21 +34,88 @@ import {
   CreditCard,
   BellRing,
   Eye,
+  Cpu,
+  Bot,
+  Calendar,
+  DollarSign,
+  ExternalLink,
   Edit2,
   Star
 } from 'lucide-react';
+import { 
+  AreaChart, 
+  Area, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip as RechartsTooltip, 
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  ComposedChart,
+  Line,
+  Legend
+} from 'recharts';
 import { db, doc, updateDoc, setDoc, deleteDoc, onSnapshot, writeBatch, collection, serverTimestamp, getDocs, query, where, orderBy, limit, getFirestoreDateKey } from '../firebase';
 import firebaseConfig from '../firebase-applet-config.json';
 import { Player } from '../types';
 import Markdown from 'react-markdown';
 import { Logo } from '../src/components/Logo';
 import { motion, AnimatePresence } from 'motion/react';
+import { analyzeBillingCosts } from '../services/geminiService';
 
 import { useBirthdays } from '../src/hooks/useBirthdays';
 import { BirthdayAdminCard } from '../src/components/BirthdayAdminCard';
 import { HelpTooltip } from '../src/components/HelpTooltip';
 
 import { getLevelSuggestions, LevelSuggestion } from '../utils/levelAuditUtils';
+
+const MemoryMonitorCard = () => {
+    const [mem, setMem] = useState<any>(null);
+    useEffect(() => {
+        const fetchMem = async () => {
+            try {
+                const r = await fetch('/api/memory-usage');
+                setMem(await r.json());
+            } catch (e) {
+                console.error("Erro ao buscar memória:", e);
+            }
+        };
+        fetchMem();
+        const interval = setInterval(fetchMem, 3600000);
+        return () => clearInterval(interval);
+    }, []);
+    if (!mem) return (
+        <section className="bg-brand-light backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-sm space-y-4">
+            <h3 className="text-xl font-black uppercase tracking-tight text-white flex items-center gap-2">
+                 <Cpu className="w-5 h-5 text-brand-primary" /> Consumo de Memória (Server)
+            </h3>
+            <p className="text-white/30 font-bold text-center">Carregando...</p>
+        </section>
+    );
+    return (
+        <section className="bg-brand-light backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-sm space-y-4">
+            <h3 className="text-xl font-black uppercase tracking-tight text-white flex items-center gap-2">
+                 <Cpu className="w-5 h-5 text-brand-primary" /> Consumo de Memória (Server)
+            </h3>
+            <div className="grid grid-cols-3 gap-2">
+                <div className="bg-brand-primary/5 p-3 rounded-xl border border-white/5 text-center">
+                    <p className="text-[9px] font-black text-white/40 uppercase">Heap</p>
+                    <p className="text-lg font-black font-mono text-white">{mem.heapUsed}MB</p>
+                </div>
+                <div className="bg-brand-primary/5 p-3 rounded-xl border border-white/5 text-center">
+                    <p className="text-[9px] font-black text-white/40 uppercase">RSS</p>
+                    <p className="text-lg font-black font-mono text-white">{mem.rss}MB</p>
+                </div>
+                <div className="bg-brand-primary/5 p-3 rounded-xl border border-white/5 text-center">
+                    <p className="text-[9px] font-black text-white/40 uppercase">Total</p>
+                    <p className="text-lg font-black font-mono text-white">{mem.heapTotal}MB</p>
+                </div>
+            </div>
+            <p className="text-[8px] text-white/30 font-bold uppercase text-center">Atualizado a cada 1 hora</p>
+        </section>
+    );
+};
 
 interface AdminViewProps {
   resetDailyStats: () => void;
@@ -69,6 +136,7 @@ interface AdminViewProps {
   onRejectRequest: (reqId: string) => void;
   handleScanAnomalies: () => void;
   fixDatabaseAnomalies: () => void;
+  recalculateAllElo: () => void;
   deleteTournament: (id: string) => void;
   showConfirmModal: (title: string, message: string, onConfirm: () => void) => void;
   setEditingPlayer: (player: Player | null) => void;
@@ -76,7 +144,7 @@ interface AdminViewProps {
   savePlayer: (player: Player) => Promise<void>;
 }
 
-type AdminTab = 'dashboard' | 'members' | 'maintenance' | 'tournaments' | 'system' | 'notifications';
+type AdminTab = 'dashboard' | 'members' | 'maintenance' | 'sentinel' | 'tournaments' | 'system' | 'notifications' | 'audit';
 
 export const AdminView: React.FC<AdminViewProps> = ({
   resetDailyStats,
@@ -95,6 +163,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
   pendingRequests,
   onApproveRequest,
   onRejectRequest,
+  recalculateAllElo,
   handleScanAnomalies,
   fixDatabaseAnomalies,
   deleteTournament,
@@ -118,16 +187,141 @@ export const AdminView: React.FC<AdminViewProps> = ({
     isScanningAnomalies,
     anomalyReport,
     user,
-    currentPlayer
+    currentPlayer,
+    setSelectedRankingPlayerId,
+    setViewMode
   } = useStore();
 
   const { todayBirthdays, sendBirthdayPush } = useBirthdays();
 
   const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
+  const [billingAnalysis, setBillingAnalysis] = useState<string | null>(null);
+  const [isMonitoringDisabled, setIsMonitoringDisabled] = useState(false);
+  const [activeServiceAccount, setActiveServiceAccount] = useState<string | null>(null);
+  const [isAnalyzingBilling, setIsAnalyzingBilling] = useState(false);
+  const [weeklyReports, setWeeklyReports] = useState<any[]>([]);
+  const [billingHistory, setBillingHistory] = useState<any[]>([]);
+  const [dailyUsageHistory, setDailyUsageHistory] = useState<any[]>([]);
+  const [isLoadingReports, setIsLoadingReports] = useState(false);
+  const [syncDate, setSyncDate] = useState(getFirestoreDateKey());
+  const [syncValue, setSyncValue] = useState('');
+  const [isSyncingBilling, setIsSyncingBilling] = useState(false);
+  const [isFetchingGCP, setIsFetchingGCP] = useState(false);
+  const [lastSyncBreakdown, setLastSyncBreakdown] = useState<any>(null);
   const [memberSearch, setMemberSearch] = useState('');
   const [levelSuggestions, setLevelSuggestions] = useState<LevelSuggestion[]>([]);
   const [allNotifications, setAllNotifications] = useState<any[]>([]);
   const [loadingNotifications, setLoadingNotifications] = useState(true);
+  const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [loadingLogs, setLoadingLogs] = useState(false);
+  const [sentinelReports, setSentinelReports] = useState<any[]>([]);
+  const [isRunningSentinel, setIsRunningSentinel] = useState(false);
+  const [loadingSentinel, setLoadingSentinel] = useState(false);
+
+  useEffect(() => {
+    if (activeTab !== 'sentinel') return;
+    setLoadingSentinel(true);
+    const q = query(
+      collection(db, 'sentinelReports'),
+      orderBy('timestamp', 'desc'),
+      limit(20)
+    );
+    
+    const unsub = onSnapshot(q, (snap) => {
+      const reports = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setSentinelReports(reports);
+      setLoadingSentinel(false);
+    }, (err) => {
+      console.error("error fetching sentinel reports", err);
+      setLoadingSentinel(false);
+    });
+    
+    return () => unsub();
+  }, [activeTab]);
+
+  const runSentinelScan = async () => {
+    setIsRunningSentinel(true);
+    try {
+      // 1. Fetch relevant datasets client-side (where rule authorization is fully granted)
+      const [playersSnap, matchesSnap, loginLogsSnap, auditLogsSnap, metadataSnap] = await Promise.all([
+        getDocs(collection(db, 'players')),
+        getDocs(query(collection(db, 'matches'), orderBy('timestamp', 'desc'), limit(20))),
+        getDocs(query(collection(db, 'loginLogs'), orderBy('timestamp', 'desc'), limit(50))),
+        getDocs(query(collection(db, 'auditLogs'), orderBy('timestamp', 'desc'), limit(30))),
+        getDocs(query(collection(db, 'metadata'), limit(1)))
+      ]);
+
+      const players = playersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const matches = matchesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const loginLogs = loginLogsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const auditLogs = auditLogsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      
+      let metadata = {};
+      const configDoc = metadataSnap.docs.find(d => d.id === 'system_config');
+      if (configDoc) {
+        metadata = configDoc.data();
+      }
+
+      // 2. Relay datasets to our serverless Gemini proxy
+      const resp = await fetch('/api/sentinel/deep-scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          players,
+          matches,
+          loginLogs,
+          auditLogs,
+          metadata
+        })
+      });
+
+      if (!resp.ok) {
+        const errDetails = await resp.json().catch(() => ({}));
+        throw new Error(errDetails.error || 'Falha ao acionar Sentinela');
+      }
+
+      const resData = await resp.json();
+
+      // 3. Persist the generated Sentinel Report back into Firestore from client-side
+      const reportId = `report_${Date.now()}`;
+      await setDoc(doc(db, 'sentinelReports', reportId), {
+        id: reportId,
+        status: resData.status,
+        report: resData.report,
+        anomaliesFound: (resData.report.match(/anomalia|erro|problema/gi) || []).length,
+        timestamp: new Date().toISOString(),
+        createdAt: new Date().getTime()
+      });
+
+      showNotification('Varredura do Sentinela concluída com sucesso!', 'success');
+    } catch (e: any) {
+      console.error('Sentinel Error:', e);
+      showNotification(`Erro no Sentinela: ${e.message}`, 'error');
+    } finally {
+      setIsRunningSentinel(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab !== 'audit') return;
+    setLoadingLogs(true);
+    const q = query(
+      collection(db, 'auditLogs'),
+      orderBy('timestamp', 'desc'),
+      limit(100)
+    );
+    
+    const unsub = onSnapshot(q, (snap) => {
+      const logs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setAuditLogs(logs);
+      setLoadingLogs(false);
+    }, (err) => {
+      console.error("error fetching audit logs", err);
+      setLoadingLogs(false);
+    });
+    
+    return () => unsub();
+  }, [activeTab]);
 
   useEffect(() => {
     if (activeTab !== 'notifications') return;
@@ -175,11 +369,314 @@ export const AdminView: React.FC<AdminViewProps> = ({
 
   const getImpactIcon = (level?: number) => {
     switch (level) {
-      case 3: return <Trophy className="w-3.5 h-3.5 text-brand-primary" />;
-      case 2: return <Activity className="w-3.5 h-3.5 text-brand-primary/60" />;
-      default: return <UsersIcon className="w-3.5 h-3.5 text-white/20" />;
+      case 3: return <Zap className="w-3 h-3 text-brand-primary" fill="currentColor" />;
+      case 2: return <Star className="w-3 h-3 text-brand-primary" fill="currentColor" />;
+      default: return <Shield className="w-3 h-3 text-white/20" />;
     }
   };
+
+  const syncGCPDataForDate = async (targetDateStr: string): Promise<boolean> => {
+    try {
+      const resp = await fetch(`/api/billing/real-time?date=${targetDateStr}`);
+      
+      const contentType = resp.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const text = await resp.text();
+        if (text.includes("Starting Server...")) {
+          throw new Error("O servidor está acordando. Aguarde 5 segundos e tente novamente.");
+        }
+        throw new Error(`O servidor retornou um formato inesperado. Erro HTTP: ${resp.status}`);
+      }
+
+      const data = await resp.json();
+      
+      if (data.estimatedCostBRL === null && !data.metricsAvailable) {
+        showNotification('Métricas indisponíveis no Google Monitoring no momento. Tente novamente em 15 min.', 'info');
+        return false;
+      }
+      
+      if (data.success === false && data.isGcpError) {
+        if (data.serviceAccount) setActiveServiceAccount(data.serviceAccount);
+        else setActiveServiceAccount('ais-sandbox@ais-us-east1-3182cc021eb343ff9.iam.gserviceaccount.com');
+        setIsMonitoringDisabled(true);
+        if (data.errorType === 'API_DISABLED') {
+          showNotification('Acesso Negado. Veja as instruções no painel abaixo.', 'error');
+        } else {
+          showNotification(`Acesso Negado: O App não tem autorização IAM. Veja abaixo.`, 'error');
+        }
+        return false;
+      }
+
+      if (!resp.ok) return false;
+      
+      const val = data.estimatedCostBRL;
+      const breakdown = data.breakdown;
+      const today = getFirestoreDateKey();
+      
+      if (targetDateStr === today) {
+        const usageRef = doc(db, 'metadata', 'usage');
+        const updatePayload = { 
+          officialValue: val,
+          breakdown: breakdown || null,
+          lastGcpSync: new Date().toISOString()
+        };
+        await updateDoc(usageRef, updatePayload).catch(() => setDoc(usageRef, updatePayload, { merge: true }));
+        setUsageStats({ 
+          ...usageStats, 
+          officialValue: val,
+          lastGcpSync: updatePayload.lastGcpSync
+        });
+        setLastSyncBreakdown(breakdown);
+      } else {
+        const historyRef = doc(db, 'usage_history', targetDateStr);
+        const historyDoc = {
+          officialValue: val,
+          breakdown: breakdown || null,
+          updatedAt: serverTimestamp()
+        };
+        await updateDoc(historyRef, historyDoc).catch(() => setDoc(historyRef, { 
+          ...historyDoc,
+          lastUpdate: targetDateStr
+        }, { merge: true }));
+      }
+      return true;
+    } catch (error: any) {
+      console.error(`[Admin] Erro no fetch para ${targetDateStr}:`, error);
+      throw error;
+    }
+  };
+
+  const fetchGCPData = async () => {
+    setIsFetchingGCP(true);
+    setIsMonitoringDisabled(false);
+    setActiveServiceAccount(null);
+    try {
+      await syncGCPDataForDate(syncDate);
+      showNotification(`Sincronizado via Google monitoring!`, 'success');
+      
+      const dailySnap = await getDocs(query(collection(db, 'usage_history'), limit(60)));
+      const dailyData = dailySnap.docs
+        .map(doc => ({ id: doc.id, ...(doc.data() as any) }))
+        .sort((a, b) => (a.lastUpdate || '').localeCompare(b.lastUpdate || ''));
+      setDailyUsageHistory(dailyData);
+    } catch (error: any) {
+      showNotification(`Erro de conexão: ${error.message || 'Falha ao buscar dados'}.`, 'error');
+    } finally {
+      setIsFetchingGCP(false);
+    }
+  };
+
+  const syncHistoricalGCPData = async () => {
+    setIsSyncingBilling(true); // Reusing the boolean flag
+    setIsMonitoringDisabled(false);
+    setActiveServiceAccount(null);
+    try {
+      const today = new Date();
+      // Sync last 7 days
+      for (let i = 0; i <= 7; i++) {
+        const targetDate = new Date(today);
+        targetDate.setDate(targetDate.getDate() - i);
+        const dateStr = targetDate.toISOString().split('T')[0];
+        
+        const success = await syncGCPDataForDate(dateStr);
+        if (!success) break; 
+      }
+      
+      showNotification('Histórico dos últimos 7 dias sincronizado com sucesso!', 'success');
+      
+      const dailySnap = await getDocs(query(collection(db, 'usage_history'), limit(60)));
+      const dailyData = dailySnap.docs
+        .map(doc => ({ id: doc.id, ...(doc.data() as any) }))
+        .sort((a, b) => (a.lastUpdate || '').localeCompare(b.lastUpdate || ''));
+      setDailyUsageHistory(dailyData);
+    } catch (error: any) {
+      showNotification(`Falha ao sincronizar histórico: ${error.message}`, 'error');
+    } finally {
+      setIsSyncingBilling(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'dashboard' && userRole === 'ADMIN') {
+      const lastSyncStr = usageStats.lastGcpSync;
+      const now = new Date();
+      const todayStr = now.toISOString().split('T')[0];
+      
+      // Auto-sync today if never synced today or if last sync was more than 4 hours ago
+      const isNeverSyncedToday = !lastSyncStr || !lastSyncStr.startsWith(todayStr);
+      const lastSyncTime = lastSyncStr ? new Date(lastSyncStr).getTime() : 0;
+      const hoursSinceSync = (now.getTime() - lastSyncTime) / (1000 * 60 * 60);
+      
+      // Auto-sync today se não existe - DESABILITADO para economizar custos de Cloud Run
+      // O usuário pode sincronizar manualmente pelo botão se quiser ver.
+      /*
+      if ((isNeverSyncedToday || hoursSinceSync > 4) && !isFetchingGCP && !isSyncingBilling) {
+        fetchGCPData();
+      }
+
+      // NOVIDADE: Sincronização automática do HISTÓRICO (Últimos 7 dias) 
+      // Acontece apenas 1 vez por dia ao abrir o Dashboard - DESABILITADO para economia
+      const lastHistoricalSync = localStorage.getItem('last_historical_sync');
+      if (lastHistoricalSync !== todayStr && !isSyncingBilling && !isFetchingGCP) {
+        syncHistoricalGCPData().then(() => {
+          localStorage.setItem('last_historical_sync', todayStr);
+        });
+      }
+      */
+    }
+  }, [activeTab, userRole, usageStats.lastGcpSync]);
+
+  useEffect(() => {
+    const fetchReports = async () => {
+      if (activeTab === 'dashboard') {
+        setIsLoadingReports(true);
+        try {
+          const reportsSnap = await getDocs(query(collection(db, 'reports'), where('type', '==', 'WEEKLY_BILLING')));
+          const data = reportsSnap.docs
+            .map(doc => ({ id: doc.id, ...(doc.data() as any) }))
+            .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+          setWeeklyReports(data);
+
+          const historySnap = await getDocs(query(collection(db, 'billing_history')));
+          const historyData = historySnap.docs
+            .map(doc => ({ id: doc.id, ...(doc.data() as any) }))
+            .sort((a, b) => (b.month || '').localeCompare(a.month || ''));
+          setBillingHistory(historyData);
+
+          const dailySnap = await getDocs(query(collection(db, 'usage_history'), limit(60)));
+          const dailyData = dailySnap.docs
+            .map(doc => ({ id: doc.id, ...(doc.data() as any) }))
+            .sort((a, b) => (a.lastUpdate || '').localeCompare(b.lastUpdate || ''));
+          setDailyUsageHistory(dailyData);
+        } catch (error) {
+          console.error("Erro ao carregar relatórios/histórico:", error);
+        } finally {
+          setIsLoadingReports(false);
+        }
+      }
+    };
+    fetchReports();
+  }, [activeTab]);
+
+  const chartData = useMemo(() => {
+    // Adicionar o uso de hoje ao histórico para o gráfico ficar completo
+    const todayKey = getFirestoreDateKey();
+    const todayData = {
+      lastUpdate: todayKey,
+      reads: usageStats.reads || 0,
+      writes: usageStats.writes || 0,
+      aiCalls: usageStats.aiCalls || 0,
+      accesses: usageStats.accesses || 0,
+      officialValue: usageStats.officialValue
+    };
+    
+    // Filtrar dados do mês atual
+    const currentMonth = todayKey.slice(0, 7);
+    const monthlyHistory = dailyUsageHistory.filter(d => d.lastUpdate.startsWith(currentMonth) && d.lastUpdate !== todayKey);
+    
+    // Agora usamos APENAS dados reais registrados. Se não houver registro para um dia, ele não aparece no gráfico.
+    let combinedData = [...monthlyHistory, todayData].sort((a,b) => a.lastUpdate.localeCompare(b.lastUpdate));
+    
+    let accumulated = 0;
+    return combinedData.map(day => {
+      let dailyTotal = 0;
+      let breakdown = { cloudRun: '0.00', firestore: '0.00', gemini: '0.00' };
+      
+      // CÁLCULO FINAL: Prioridade para Valor Oficial, mas se oficial for 0 e tivermos acessos, usamos a estimativa
+      // Isso evita o gráfico "zerado" quando o Google Monitoring está com delay mas o app está sendo usado.
+      const accessesCount = day.accesses || 0;
+      const cRun = accessesCount > 0 ? (0.04 + (accessesCount * 0.01)) : 0; 
+      const fStore = ((day.reads || 0) / 10000) * 0.12 + ((day.writes || 0) / 5000) * 0.18;
+      const gApi = (day.aiCalls || 0) * 0.08;
+      const estimatedDayTotal = cRun + fStore + gApi;
+
+      if (day.officialValue !== undefined && day.officialValue !== null && day.officialValue > 0) {
+        dailyTotal = day.officialValue;
+        breakdown = {
+          cloudRun: dailyTotal.toFixed(3),
+          firestore: '0.00',
+          gemini: '0.00'
+        };
+      } else {
+        dailyTotal = estimatedDayTotal;
+        breakdown = {
+          cloudRun: cRun.toFixed(3),
+          firestore: fStore.toFixed(3),
+          gemini: gApi.toFixed(3)
+        };
+      }
+
+      accumulated += dailyTotal;
+      
+      return {
+        date: day.lastUpdate.split('-').slice(2).join('/'), 
+        'Valor do Dia': Number(dailyTotal.toFixed(dailyTotal < 1 ? 3 : 2)),
+        'Valor Acumulado': Number(accumulated.toFixed(accumulated < 1 ? 3 : 2)),
+        breakdown
+      };
+    });
+  }, [dailyUsageHistory, usageStats]);
+
+  const billingSummary = useMemo(() => {
+    // --- DADOS REAIS DO CONSOLE (FORNECIDOS PELO USUÁRIO PARA ABRIL/2026) ---
+    // Período: 1-21 de Abril
+    const officialActualApril = 42.15;
+    const officialForecastApril = 41.78;
+    const officialCloudRun = 29.13;
+    const officialGemini = 12.38;
+    const officialFirestore = 0.64;
+
+    if (chartData.length === 0) {
+      return {
+        totalActualBRL: officialActualApril,
+        totalForecastBRL: officialForecastApril,
+        totalCloudRun: officialCloudRun,
+        totalFirestore: officialFirestore,
+        totalGemini: officialGemini,
+        periodLabel: '1-21 Abr',
+        currentMonthName: 'Abril'
+      };
+    }
+    
+    const lastEntry = chartData[chartData.length - 1];
+    const estimatedSum = lastEntry['Valor Acumulado'];
+    
+    // Se o acumulado estimado for menor que o valor oficial de 21 dias, usamos o oficial
+    // Isso garante que o resumo nunca recue em relação ao dado verificado pelo usuário
+    const totalActualBRL = Math.max(officialActualApril, estimatedSum);
+    
+    const now = new Date();
+    const daysElapsed = now.getDate();
+    const totalDaysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    
+    // Calcula a previsão baseada no valor real oficial até dia 21 + projeção dos dias restantes
+    const totalForecastBRL = totalActualBRL > officialActualApril 
+      ? (totalActualBRL / daysElapsed) * totalDaysInMonth
+      : officialForecastApril;
+    
+    let totalCloudRun = officialCloudRun;
+    let totalFirestore = officialFirestore;
+    let totalGemini = officialGemini;
+    
+    // Soma apenas a diferença das estimativas recentes após o dia 21, se houver
+    if (estimatedSum > officialActualApril) {
+      // Nota: Aqui poderíamos refinar a distribuição por serviço da diferença
+    }
+
+    const monthNames = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+    const currentMonthName = monthNames[now.getMonth()];
+    const periodLabel = daysElapsed <= 21 ? '1-21 Abr (Verificado)' : `1-${daysElapsed} ${currentMonthName}`;
+
+    return {
+      totalActualBRL,
+      totalForecastBRL,
+      totalCloudRun,
+      totalFirestore,
+      totalGemini,
+      periodLabel,
+      currentMonthName
+    };
+  }, [chartData]);
 
   const toggleAdmin = async (player: Player) => {
     if (player.email?.trim().toLowerCase() === 'rodneyes@gmail.com') {
@@ -218,10 +715,12 @@ export const AdminView: React.FC<AdminViewProps> = ({
   const tabs: { id: AdminTab; label: string; icon: any }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'members', label: 'Sócios & Acesso', icon: UsersIcon },
+    { id: 'sentinel', label: 'Agente Sentinela', icon: Bot },
     { id: 'maintenance', label: 'Manutenção', icon: Database },
     { id: 'notifications', label: 'Notificações', icon: MessageSquare },
     { id: 'tournaments', label: 'Torneios', icon: Trophy },
     { id: 'system', label: 'Sistema', icon: Settings },
+    { id: 'audit', label: 'Auditoria', icon: ShieldCheck },
   ];
 
   return (
@@ -282,6 +781,9 @@ export const AdminView: React.FC<AdminViewProps> = ({
             {activeTab === 'dashboard' && (
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 <div className="lg:col-span-2 space-y-8">
+                  {/* Monitor de Memória */}
+                  <MemoryMonitorCard />
+
                   {/* Aniversariantes do Dia */}
                   {todayBirthdays.length > 0 && (
                     <section className="bg-brand-primary/5 backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-sm space-y-6">
@@ -376,6 +878,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                     </div>
                   </section>
 
+
                   {/* Consumo de Recursos */}
                   <section className="bg-brand-light backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-sm space-y-6">
                     <div className="flex items-center gap-4">
@@ -422,48 +925,55 @@ export const AdminView: React.FC<AdminViewProps> = ({
                         </p>
                       </div>
                     </div>
-                  </section>
-                </div>
 
-                <div className="space-y-8">
-                  {/* Configurações Rápidas */}
-                  <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary text-white space-y-6">
-                    <h3 className="text-lg font-black uppercase tracking-tight text-white">Configurações</h3>
+
+
+
+
+
+
+
+
+                  </section>
+
                     
-                    <div className="space-y-4">
-                      <div className="space-y-2">
-                        <p className="text-[10px] font-black text-white/40 uppercase tracking-widest">Cota Diária IA</p>
-                        <div className="grid grid-cols-4 gap-2">
-                          {[50, 100, 200, 500].map(q => (
-                            <button
-                              key={q}
-                              onClick={() => setSystemMetadata({ dailyAICallsQuota: q })}
-                              className={`py-2 rounded-xl text-[10px] font-black transition-all ${
-                                (systemMetadata.dailyAICallsQuota || 100) === q
-                                  ? 'bg-brand-primary text-brand-secondary'
-                                  : 'bg-white/5 text-white/40 hover:bg-white/10'
-                              }`}
-                            >
-                              {q}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
+                    
+<section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary text-white space-y-6">
+  <h3 className="text-lg font-black uppercase tracking-tight text-white">Configurações</h3>
+  <div className="space-y-4">
+    <div className="space-y-2">
+      <p className="text-[10px] font-black text-white/40 uppercase tracking-widest">Cota Diária IA</p>
+      <div className="grid grid-cols-4 gap-2">
+        {[50, 100, 200, 500].map(q => (
+          <button
+            key={q}
+            onClick={() => setSystemMetadata({ dailyAICallsQuota: q })}
+            className={`py-2 rounded-xl text-[10px] font-black transition-all ${
+              (systemMetadata.dailyAICallsQuota || 100) === q
+                ? 'bg-brand-primary text-brand-secondary'
+                : 'bg-white/5 text-white/40 hover:bg-white/10'
+            }`}
+          >
+            {q}
+          </button>
+        ))}
+      </div>
+    </div>
+    <div className="space-y-2">
+      <p className="text-[10px] font-black text-white/40 uppercase tracking-widest">Cota Total Leituras</p>
+      <div className="flex items-center gap-3 bg-white/5 p-3 rounded-xl border border-white/5">
+        <input
+          type="number"
+          defaultValue={systemMetadata.dailyReadQuota || 50000}
+          onBlur={(e) => updateQuotaSettings(parseInt(e.target.value))}
+          className="flex-1 bg-transparent border-none text-sm font-black text-white focus:outline-none"
+        />
+        <span className="text-[10px] text-white/20 font-black uppercase">Leituras</span>
+      </div>
+    </div>
+  </div>
+</section>
 
-                      <div className="space-y-2">
-                        <p className="text-[10px] font-black text-white/40 uppercase tracking-widest">Cota Total Leituras</p>
-                        <div className="flex items-center gap-3 bg-white/5 p-3 rounded-xl border border-white/5">
-                          <input 
-                            type="number" 
-                            defaultValue={systemMetadata.dailyReadQuota || 50000}
-                            onBlur={(e) => updateQuotaSettings(parseInt(e.target.value))}
-                            className="flex-1 bg-transparent border-none text-sm font-black text-white focus:outline-none"
-                          />
-                          <span className="text-[10px] text-white/20 font-black uppercase">Leituras</span>
-                        </div>
-                      </div>
-                    </div>
-                  </section>
                 </div>
               </div>
             )}
@@ -675,6 +1185,13 @@ export const AdminView: React.FC<AdminViewProps> = ({
                               <td className="px-2 py-3 rounded-r-xl text-right">
                                 <div className="flex items-center justify-end gap-1">
                                   <button 
+                                    onClick={() => { setSelectedRankingPlayerId(player.id); setViewMode('dashboard'); }}
+                                    className="p-1.5 rounded-lg text-white/20 hover:text-brand-primary hover:bg-brand-primary/10 transition-all"
+                                    title="Ver Análise de Performance"
+                                  >
+                                    <Trophy className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button 
                                     onClick={() => { setEditingPlayer(player); setIsFormOpen(true); }}
                                     className="p-1.5 rounded-lg text-white/20 hover:text-brand-primary hover:bg-brand-primary/10 transition-all"
                                     title="Editar Sócio"
@@ -703,6 +1220,118 @@ export const AdminView: React.FC<AdminViewProps> = ({
                   </table>
                 </div>
               </section>
+            )}
+
+            {activeTab === 'sentinel' && (
+              <div className="space-y-8">
+                <section className="bg-brand-light backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-sm space-y-6">
+                  <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-brand-primary/10 rounded-2xl flex items-center justify-center border border-brand-primary/40 animate-pulse">
+                        <Bot className="w-6 h-6 text-brand-primary" />
+                      </div>
+                      <div>
+                        <h3 className="text-2xl font-black uppercase tracking-tight text-white flex items-center gap-2">
+                          Agente Sentinela IA
+                          <span className="bg-brand-primary text-black text-[10px] px-2 py-0.5 rounded-full font-black">BETA</span>
+                        </h3>
+                        <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Monitoramento, Integridade e Estabilidade de Acesso</p>
+                      </div>
+                    </div>
+                    
+                    <button 
+                      onClick={runSentinelScan}
+                      disabled={isRunningSentinel}
+                      className={`flex items-center gap-2 px-8 py-4 rounded-2xl font-black text-sm uppercase tracking-widest transition-all shadow-lg ${
+                        isRunningSentinel 
+                          ? 'bg-white/10 text-white/30 cursor-not-allowed' 
+                          : 'bg-brand-primary text-brand-secondary hover:scale-105 shadow-brand-primary/20'
+                      }`}
+                    >
+                      {isRunningSentinel ? (
+                        <>
+                          <RefreshCw className="w-5 h-5 animate-spin" />
+                          Varrendo Sistema...
+                        </>
+                      ) : (
+                        <>
+                          <Zap className="w-5 h-5" />
+                          Executar Varredura Profunda
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  <div className="bg-brand-primary/5 p-6 rounded-3xl border border-brand-primary/20">
+                    <div className="flex gap-4">
+                      <AlertTriangle className="w-5 h-5 text-brand-primary shrink-0 mt-1" />
+                      <div>
+                        <p className="text-xs font-bold text-white/70 leading-relaxed">
+                          O Sentinela analisa em tempo real os logs de login, inconsistências de ELO, audit logs e saúde da infraestrutura para garantir que nenhum sócio tenha problemas técnicos ao usar o app.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <div className="grid grid-cols-1 gap-6">
+                  {loadingSentinel ? (
+                    <div className="flex flex-col items-center py-20 animate-pulse">
+                      <Bot className="w-12 h-12 text-white/10 mb-4" />
+                      <p className="text-[10px] font-black text-white/20 uppercase tracking-[0.3em]">Consultando relatórios históricos...</p>
+                    </div>
+                  ) : sentinelReports.length === 0 ? (
+                    <div className="bg-white/5 border border-white/5 rounded-3xl p-20 text-center space-y-4">
+                      <Shield className="w-16 h-16 text-white/10 mx-auto" />
+                      <h4 className="text-xl font-black text-white/40 uppercase">Nenhum relatório gerado</h4>
+                      <p className="text-[10px] font-bold text-white/20 uppercase tracking-widest">Execute sua primeira varredura para iniciar o monitoramento ativo</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-6">
+                      <h4 className="text-lg font-black text-white uppercase tracking-tight flex items-center gap-2">
+                        <History className="w-5 h-5 text-brand-primary" />
+                        Histórico de Relatórios
+                      </h4>
+                      {sentinelReports.map((report) => (
+                        <div key={report.id} className="bg-brand-light/50 backdrop-blur-xl rounded-[2.5rem] border border-white/5 overflow-hidden">
+                          <div className={`p-6 border-b border-white/5 flex items-center justify-between ${
+                            report.status === 'CRITICAL' ? 'bg-rose-500/10' : report.status === 'WARNING' ? 'bg-amber-500/10' : 'bg-brand-primary/10'
+                          }`}>
+                            <div className="flex items-center gap-4">
+                              <div className={`w-10 h-10 rounded-xl flex items-center justify-center border ${
+                                report.status === 'CRITICAL' 
+                                  ? 'bg-rose-500/20 border-rose-500/40 text-rose-500' 
+                                  : report.status === 'WARNING' 
+                                    ? 'bg-amber-500/20 border-amber-500/40 text-amber-500' 
+                                    : 'bg-brand-primary/20 border-brand-primary/40 text-brand-primary'
+                              }`}>
+                                {report.status === 'CRITICAL' ? <AlertTriangle className="w-5 h-5" /> : <ShieldCheck className="w-5 h-5" />}
+                              </div>
+                              <div>
+                                <h5 className="font-black text-white uppercase tracking-tight">Status: {report.status || 'CONCLUÍDO'}</h5>
+                                <p className="text-[9px] font-bold text-white/40 uppercase tracking-widest">{new Date(report.timestamp).toLocaleString('pt-BR')}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <div className="text-right hidden md:block">
+                                <p className="text-[8px] font-black text-white/40 uppercase tracking-[0.2em]">Anomalias</p>
+                                <p className="text-lg font-black text-white leading-none">{report.anomaliesFound || 0}</p>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="p-8 prose prose-invert prose-sm max-w-none">
+                            <div className="markdown-body text-white/80 leading-relaxed">
+                              <Markdown>
+                                {report.report}
+                              </Markdown>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
             )}
 
             {activeTab === 'maintenance' && (
@@ -817,6 +1446,12 @@ export const AdminView: React.FC<AdminViewProps> = ({
                         icon: Database 
                       },
                       { 
+                        label: "Recalcular ELO", 
+                        desc: "Recalcula todos os pontos (+20/-20) desde o início.", 
+                        action: recalculateAllElo, 
+                        icon: TrendingUp 
+                      },
+                      { 
                         label: "Histórico ELO", 
                         desc: "Inicializa pontos de evolução para todos.", 
                         action: initializeEloHistory, 
@@ -900,66 +1535,61 @@ export const AdminView: React.FC<AdminViewProps> = ({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 bg-white/5 rounded-3xl border border-white/5 border-l-4 border-l-brand-primary">
-                    <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 bg-brand-primary/10 rounded-2xl flex items-center justify-center border border-brand-primary/20">
-                        <Trophy className={`w-5 h-5 ${systemMetadata.matchNotificationsGlobalEnabled !== false ? 'text-brand-primary animate-pulse' : 'text-white/20'}`} />
+                <div className="space-y-4">
+                  <div className="p-6 bg-white/5 rounded-3xl border border-white/5 space-y-4">
+                    <h4 className="text-sm font-black text-white uppercase tracking-tight">Gerenciamento de Mensagens</h4>
+                    {[
+                      { key: 'matchNotificationsGlobalEnabled', label: 'Notificações de Partidas' },
+                      { key: 'birthdayNotificationsEnabled', label: 'Mensagens de Aniversários' },
+                      { key: 'intentionNotificationsEnabled', label: 'Lista de Intenções' },
+                    ].map(({ key, label }) => (
+                      <div key={key} className="flex items-center justify-between p-4 bg-black rounded-2xl border border-white/5">
+                        <span className="text-xs font-bold text-white uppercase">{label}</span>
+                        <button
+                          onClick={() => {
+                            const newState = systemMetadata[key] !== false;
+                            updateSystemMetadata({ [key]: !newState });
+                            showNotification(`${label} ${!newState ? 'ativadas' : 'desativadas'}!`, !newState ? 'success' : 'info');
+                          }}
+                          className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                            systemMetadata[key] !== false
+                              ? 'bg-rose-500/10 text-rose-500 border border-rose-500/30'
+                              : 'bg-brand-primary text-black'
+                          }`}
+                        >
+                          {systemMetadata[key] !== false ? 'Desativar' : 'Ativar'}
+                        </button>
                       </div>
-                      <div>
-                        <h4 className="text-[12px] font-black text-white uppercase tracking-tight">Alertas de Partidas</h4>
-                        <p className="text-[9px] font-bold uppercase tracking-widest">
-                          {systemMetadata.matchNotificationsGlobalEnabled !== false 
-                            ? <span className="text-emerald-400">Ativado para o grupo</span> 
-                            : <span className="text-rose-400">Desativado para o grupo</span>}
-                        </p>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => {
-                        const newState = systemMetadata.matchNotificationsGlobalEnabled === false;
-                        updateSystemMetadata({ matchNotificationsGlobalEnabled: newState });
-                        showNotification(newState ? 'Alertas de partidas ativados!' : 'Alertas de partidas desativados.', newState ? 'success' : 'info');
-                      }}
-                      className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                        systemMetadata.matchNotificationsGlobalEnabled !== false
-                          ? 'bg-rose-500/10 text-rose-500 border border-rose-500/30'
-                          : 'bg-brand-primary text-black'
-                      }`}
-                    >
-                      {systemMetadata.matchNotificationsGlobalEnabled !== false ? 'Desativar' : 'Ativar'}
-                    </button>
+                    ))}
                   </div>
+                </div>
 
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 bg-white/5 rounded-3xl border border-white/5 border-l-4 border-l-brand-primary">
-                    <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 bg-brand-primary/10 rounded-2xl flex items-center justify-center border border-brand-primary/20">
-                        <BellRing className={`w-5 h-5 ${systemMetadata.pushNotificationsGlobalEnabled !== false ? 'text-brand-primary animate-bounce' : 'text-white/20'}`} />
-                      </div>
-                      <div>
-                        <h4 className="text-[12px] font-black text-white uppercase tracking-tight">Push Notifications (Global)</h4>
-                        <p className="text-[9px] font-bold uppercase tracking-widest">
-                          {systemMetadata.pushNotificationsGlobalEnabled !== false 
-                            ? <span className="text-emerald-400">Master Switch: ON</span> 
-                            : <span className="text-rose-400">Master Switch: OFF</span>}
-                        </p>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => {
-                        const newState = systemMetadata.pushNotificationsGlobalEnabled === false;
-                        updateSystemMetadata({ pushNotificationsGlobalEnabled: newState });
-                        showNotification(newState ? 'Notificações Push Master ativadas!' : 'TODAS as notificações Push desativadas globalmente.', newState ? 'success' : 'info');
-                      }}
-                      className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                        systemMetadata.pushNotificationsGlobalEnabled !== false
-                          ? 'bg-rose-500/10 text-rose-500 border border-rose-500/30'
-                          : 'bg-brand-primary text-black'
-                      }`}
-                    >
-                      {systemMetadata.pushNotificationsGlobalEnabled !== false ? 'DESATIVAR TUDO' : 'ATIVAR TUDO'}
-                    </button>
-                  </div>
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="text-xl font-black text-white uppercase tracking-tight">Notificações do Sistema</h3>
+                  <button
+                    onClick={() => {
+                      showConfirmModal(
+                        'Limpar Todas as Notificações',
+                        'Tem certeza que deseja apagar todas as notificações recebidas?',
+                        async () => {
+                          try {
+                            const batch = writeBatch(db);
+                            allNotifications.forEach(notif => {
+                              batch.delete(doc(db, 'notifications', notif.id));
+                            });
+                            await batch.commit();
+                            showNotification('Todas as notificações foram limpas.', 'success');
+                          } catch (e) {
+                            console.error(e);
+                            showNotification('Erro ao limpar notificações.', 'error');
+                          }
+                        }
+                      );
+                    }}
+                    className="px-4 py-2 bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 rounded-xl font-black uppercase tracking-widest text-[10px] transition-all border border-rose-500/30"
+                  >
+                    Limpar Mensagens
+                  </button>
                 </div>
 
                 <div className="space-y-4">
@@ -1118,6 +1748,46 @@ export const AdminView: React.FC<AdminViewProps> = ({
 
             {activeTab === 'system' && (
               <div className="space-y-8">
+                {/* Configurações de Algoritmo */}
+                <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary space-y-8">
+                  <div className="flex items-center gap-4 text-white">
+                    <div className="w-10 h-10 bg-white/5 rounded-xl flex items-center justify-center border border-brand-primary/40">
+                      <Zap className="w-5 h-5 text-brand-primary" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-black uppercase tracking-tight text-white">Algoritmo de Ranking</h3>
+                      <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Defina como a força dos jogadores é calculada</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="flex items-center justify-between p-6 bg-white/5 border border-white/5 rounded-2xl">
+                      <div>
+                        <h4 className="font-black text-white uppercase text-[10px] tracking-widest">Cálculo de Eficiência Técnica</h4>
+                        <p className="text-white/30 text-[9px] font-medium">Algoritmo avançado para balanceamento de times</p>
+                      </div>
+                      <button 
+                        onClick={() => {
+                          const currentState = systemMetadata.useTrueSkill !== false;
+                          updateSystemMetadata({ useTrueSkill: !currentState });
+                          showNotification(`Cálculo de Eficiência ${!currentState ? 'Habilitado' : 'Desabilitado'}.`, !currentState ? 'success' : 'info');
+                        }}
+                        className={`min-w-[80px] px-4 py-2 rounded-xl font-black uppercase tracking-widest text-[9px] transition-all flex justify-center items-center gap-2 ${
+                          systemMetadata.useTrueSkill !== false
+                            ? 'bg-brand-primary text-brand-secondary shadow-[0_0_15px_rgba(255,215,0,0.3)]' 
+                            : 'bg-white/5 text-white/40 border border-brand-primary/40 hover:bg-white/10'
+                        }`}
+                      >
+                        {systemMetadata.useTrueSkill !== false ? (
+                          <><Check className="w-3.5 h-3.5" /> ON</>
+                        ) : (
+                          <><X className="w-3.5 h-3.5" /> OFF</>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                </section>
+
                 {/* Configurações de Visibilidade */}
                 <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary space-y-8">
                   <div className="flex items-center gap-4 text-white">
@@ -1267,6 +1937,75 @@ export const AdminView: React.FC<AdminViewProps> = ({
                     Ações nesta área são irreversíveis. Tenha cautela absoluta.
                   </p>
                 </section>
+              </div>
+            )}
+
+            {activeTab === 'audit' && (
+              <div className="space-y-6">
+                <div className="flex items-center gap-4 mb-4 text-white">
+                  <div className="w-12 h-12 bg-brand-primary/10 rounded-2xl flex items-center justify-center border border-brand-primary/40">
+                    <History className="w-6 h-6 text-brand-primary" />
+                  </div>
+                  <div>
+                    <h3 className="text-2xl font-black uppercase tracking-tight text-white">Log de Auditoria</h3>
+                    <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Histórico de ações administrativas no sistema</p>
+                  </div>
+                </div>
+
+                <div className="bg-brand-light rounded-[2.5rem] border border-white/5 overflow-hidden shadow-2xl">
+                  {loadingLogs ? (
+                    <div className="p-20 flex flex-col items-center justify-center space-y-4">
+                      <RefreshCw className="w-8 h-8 text-brand-primary animate-spin" />
+                      <p className="text-xs font-black uppercase tracking-widest text-white/40">Carregando logs...</p>
+                    </div>
+                  ) : auditLogs.length === 0 ? (
+                    <div className="p-20 text-center space-y-4">
+                      <ShieldCheck className="w-12 h-12 text-white/10 mx-auto" />
+                      <p className="text-sm font-bold text-white/40 uppercase tracking-widest">Nenhum log encontrado</p>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left">
+                        <thead>
+                          <tr className="border-b border-white/5 bg-white/5">
+                            <th className="px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] text-white/40">Data/Hora</th>
+                            <th className="px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] text-white/40">Ação</th>
+                            <th className="px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] text-white/40">Sócio</th>
+                            <th className="px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] text-white/40">Executado por</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                          {auditLogs.map((log) => (
+                            <tr key={log.id} className="hover:bg-white/5 transition-colors">
+                              <td className="px-6 py-4">
+                                <p className="text-xs font-mono text-white/60">
+                                  {new Date(log.timestamp).toLocaleString('pt-BR')}
+                                </p>
+                              </td>
+                              <td className="px-6 py-4">
+                                <span className={`px-2 py-1 rounded-md text-[9px] font-black uppercase tracking-widest ${
+                                  log.action.includes('DELETE') ? 'bg-rose-500/10 text-rose-500' :
+                                  log.action.includes('CREATE') ? 'bg-emerald-500/10 text-emerald-500' :
+                                  log.action.includes('DM') ? 'bg-amber-500/10 text-amber-500' :
+                                  'bg-brand-primary/10 text-brand-primary'
+                                }`}>
+                                  {log.action}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4">
+                                <p className="text-xs font-black text-white uppercase">{log.playerName}</p>
+                                <p className="text-[10px] font-mono text-white/20">{log.playerId}</p>
+                              </td>
+                              <td className="px-6 py-4">
+                                <p className="text-xs font-bold text-white/60">{log.performedByEmail}</p>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </motion.div>

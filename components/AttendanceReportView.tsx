@@ -21,7 +21,7 @@ import { motion, AnimatePresence } from 'motion/react';
 
 export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void }> = ({ setViewMode }) => {
   const { players: allPlayers, userRole, showConfirmModal, showNotification } = useStore();
-  const players = useMemo(() => allPlayers.filter(p => p.status !== 'inactive'), [allPlayers]);
+  const players = useMemo(() => allPlayers.filter(p => (p.status === 'active' || !p.status || p.status === '') && !p.isDM), [allPlayers]);
   const [history, setHistory] = useState<Record<string, Player[]>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [filterMonth, setFilterMonth] = useState(getFirestoreDateKey().slice(0, 7));

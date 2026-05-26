@@ -1,24 +1,51 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, deleteDoc, writeBatch } from 'firebase/firestore';
-import { db } from '../../firebase';
+import { db, auth } from '../../firebase';
 import { AppNotification } from '../../types';
 import { useStore } from '../../store';
 
 export const useNotifications = () => {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const currentPlayer = useStore(state => state.currentPlayer);
+  const prevNotificationsRef = useRef<AppNotification[]>([]);
 
   useEffect(() => {
-    if (!currentPlayer) {
+    if (!currentPlayer || !auth.currentUser?.uid) {
       setNotifications([]);
       return;
     }
+    console.log('useNotifications: setting up listener for playerUid:', auth.currentUser.uid);
     const q = query(
       collection(db, 'notifications'),
-      where('playerId', '==', currentPlayer.id)
+      where('playerUid', '==', auth.currentUser.uid)
     );
     const unsub = onSnapshot(q, async (snap) => {
       const notifs = snap.docs.map(d => ({ id: d.id, ...d.data() } as AppNotification));
+      
+      // Detect new notifications
+      const prevNotifs = prevNotificationsRef.current;
+      const newNotifs = notifs.filter(n => !prevNotifs.find(p => p.id === n.id));
+
+      if (newNotifs.length > 0) {
+        console.log('New notifications detected, playing sound:', newNotifs.length);
+        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const oscillator = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
+        oscillator.type = 'square';
+        oscillator.frequency.setValueAtTime(880, audioCtx.currentTime);
+        oscillator.frequency.exponentialRampToValueAtTime(1760, audioCtx.currentTime + 0.1);
+        oscillator.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.2);
+        gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+        oscillator.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+        oscillator.start();
+        oscillator.stop(audioCtx.currentTime + 0.5);
+      }
+
+      prevNotificationsRef.current = notifs;
+      console.log('Notifications (', currentPlayer?.id, '):', notifs);
+      
       // Sort in memory instead of using orderBy to avoid requiring a composite index
       notifs.sort((a, b) => b.createdAt - a.createdAt);
 

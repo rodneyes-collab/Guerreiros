@@ -14,7 +14,11 @@ import {
   CreditCard,
   DollarSign,
   MessageSquare,
-  Copy
+  Copy,
+  History,
+  ExternalLink,
+  TrendingUp,
+  Shield
 } from 'lucide-react';
 
 import { HelpTooltip } from '../src/components/HelpTooltip';
@@ -39,15 +43,44 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
   updateMonthlyFee
 }) => {
   const { payments, expenses, userRole, systemMetadata, players: allPlayers } = useStore();
-  const players = React.useMemo(() => allPlayers.filter(p => p.status !== 'inactive'), [allPlayers]);
-  const [activeTab, setActiveTab] = useState<'RECEIPTS' | 'EXPENSES' | 'COMPLIANCE'>('RECEIPTS');
-  const [filterMonth, setFilterMonth] = useState(new Date().toISOString().slice(0, 7));
+  const players = React.useMemo(() => allPlayers.filter(p => (p.status === 'active' || !p.status || p.status === '') && !p.isDM), [allPlayers]);
+  const [activeTab, setActiveTab] = useState<'RECEIPTS' | 'EXPENSES' | 'COMPLIANCE' | 'STATEMENT'>('RECEIPTS');
+  const [filterMonth, setFilterMonth] = useState('');
   const [filterDate, setFilterDate] = useState('');
   const [filterPlayer, setFilterPlayer] = useState('');
   const [filterStatus, setFilterStatus] = useState<PaymentStatus | ''>('');
   const [isEditingFee, setIsEditingFee] = useState(false);
   const [tempFee, setTempFee] = useState(systemMetadata.monthlyFee || 0);
   const [toastMessage, setToastMessage] = useState('');
+
+  const copyList = (statusType: 'PAID' | 'UNPAID', label: string) => {
+    if (!filterMonth) {
+      setToastMessage('Selecione um mês!');
+      setTimeout(() => setToastMessage(''), 3000);
+      return;
+    }
+
+    const filtered = players.filter(player => {
+      const payment = payments.find(p => p.playerId === player.id && p.month === filterMonth);
+      const status = getCalculatedStatus(payment, player.id, filterMonth);
+      if (statusType === 'PAID') return status === PaymentStatus.PAID;
+      return status !== PaymentStatus.PAID;
+    }).sort((a, b) => a.name.localeCompare(b.name));
+
+    let text = `Lista de Sócios - ${formatMonth(filterMonth)} (${label})\n\n`;
+    filtered.forEach((player, index) => {
+      text += `${index + 1}. ${player.name}\n`;
+    });
+
+    navigator.clipboard.writeText(text).then(() => {
+      setToastMessage(`Lista de ${label} copiada!`);
+      setTimeout(() => setToastMessage(''), 3000);
+    }).catch(err => {
+      console.error('Erro ao copiar: ', err);
+      setToastMessage('Erro ao copiar');
+      setTimeout(() => setToastMessage(''), 3000);
+    });
+  };
 
   const generateWhatsAppReport = () => {
     if (!filterMonth) return;
@@ -70,7 +103,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
 
     sortedPlayers.forEach((player, index) => {
       const payment = payments.find(p => p.playerId === player.id && p.month === filterMonth);
-      const status = getCalculatedStatus(payment, filterMonth);
+      const status = getCalculatedStatus(payment, player.id, filterMonth);
       
       let icon = '';
       if (status === PaymentStatus.PAID) icon = '✅';
@@ -78,11 +111,6 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
       reportText += `${index + 1}.\t${player.name}${icon}\n`;
     });
 
-    reportText += `\n*LISTA DE ESPERA:*\n\n`;
-    reportText += `01. \n`;
-    reportText += `02. \n`;
-    reportText += `03. \n`;
-    reportText += `04. \n\n\n`;
     reportText += `*MANDAR COMPROVANTE DO PAGAMENTO NO MEU PRIVADO, POR GENTILEZA*💥`;
 
     navigator.clipboard.writeText(reportText).then(() => {
@@ -115,11 +143,17 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
   };
 
   const uniquePlayers = useMemo(() => {
-    const players = new Set(payments.map(p => p.playerName));
-    return Array.from(players).sort();
-  }, [payments]);
+    const playersInPayments = new Set(payments.map(p => p.playerId));
+    const names = allPlayers
+      .filter(p => playersInPayments.has(p.id) && !p.isDM)
+      .map(p => p.name);
+    return Array.from(new Set(names)).sort();
+  }, [payments, allPlayers]);
 
-  const getCalculatedStatus = (payment: Payment | undefined, monthStr: string) => {
+  const getCalculatedStatus = (payment: Payment | undefined, playerId: string, monthStr: string) => {
+    const player = allPlayers.find(p => p.id === playerId);
+    if (player?.isExempt) return PaymentStatus.PAID;
+    
     if (payment && payment.status === PaymentStatus.PAID) {
       return PaymentStatus.PAID;
     }
@@ -140,10 +174,13 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
 
   const filteredPayments = useMemo(() => {
     return payments.filter(p => {
+      const player = allPlayers.find(ap => ap.id === p.playerId);
+      if (!player || player.isDM) return false;
+      
       const matchMonth = !filterMonth || p.month === filterMonth;
       const matchDate = !filterDate || p.paymentDate === filterDate;
       const matchPlayer = !filterPlayer || p.playerName === filterPlayer;
-      const calculatedStatus = getCalculatedStatus(p, p.month);
+      const calculatedStatus = getCalculatedStatus(p, p.playerId, p.month);
       const matchStatus = !filterStatus || calculatedStatus === filterStatus;
       return matchMonth && matchDate && matchPlayer && matchStatus;
     }).sort((a,b) => (a.playerName || '').localeCompare(b.playerName || ''));
@@ -159,7 +196,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
 
   const summary = useMemo(() => {
     const receipts = filteredPayments.reduce((acc, p) => {
-      const calculatedStatus = getCalculatedStatus(p, p.month);
+      const calculatedStatus = getCalculatedStatus(p, p.playerId, p.month);
       if (calculatedStatus === PaymentStatus.PAID) acc.paid += p.amount;
       else if (calculatedStatus === PaymentStatus.PENDING) acc.pending += p.amount;
       else if (calculatedStatus === PaymentStatus.OVERDUE) acc.overdue += p.amount;
@@ -179,6 +216,91 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
       budget: monthlyBudget
     };
   }, [filteredPayments, filteredExpenses, players.length, systemMetadata.monthlyFee, filterMonth]);
+
+  const combinedTransactions = useMemo(() => {
+    const paidReceipts = filteredPayments.filter(p => getCalculatedStatus(p, p.playerId, p.month) === PaymentStatus.PAID).map(p => ({
+      id: p.id,
+      date: p.paymentDate || p.dueDate,
+      description: `Mensalidade: ${p.playerName} (${formatMonth(p.month)})`,
+      amount: p.amount,
+      type: 'INCOME' as const,
+      category: 'Mensalidade'
+    }));
+
+    const expenseItems = filteredExpenses.map(e => ({
+      id: e.id,
+      date: e.date,
+      description: e.description,
+      amount: e.amount,
+      type: 'EXPENSE' as const,
+      category: e.category
+    }));
+
+    // Sort oldest to newest to calculate running balance correctly
+    const sorted = [...paidReceipts, ...expenseItems].sort((a, b) => a.date.localeCompare(b.date));
+    
+    let currentBalance = 0;
+    const withBalance = sorted.map(t => {
+      if (t.type === 'INCOME') {
+        currentBalance += t.amount;
+      } else {
+        currentBalance -= t.amount;
+      }
+      return { ...t, balance: currentBalance };
+    });
+
+    // Return oldest to newest for display (ascending order)
+    return withBalance;
+  }, [filteredPayments, filteredExpenses, filterMonth]);
+
+  const generateStatementReport = () => {
+    if (combinedTransactions.length === 0) {
+      setToastMessage('Nenhum lançamento no extrato!');
+      setTimeout(() => setToastMessage(''), 3000);
+      return;
+    }
+
+    const monthLabel = filterMonth ? formatMonth(filterMonth) : 'Geral';
+    const todayStr = new Date().toLocaleDateString('pt-BR');
+    
+    let reportText = `======================================\n`;
+    reportText += `       EXTRATO DE CONTA CORRENTE       \n`;
+    reportText += `          GUERREIROS VC - CLUBE       \n`;
+    reportText += `======================================\n`;
+    reportText += `Data Emissão: ${todayStr}\n`;
+    reportText += `Período: ${monthLabel}\n`;
+    reportText += `--------------------------------------\n`;
+    reportText += `RESUMO DO PERÍODO:\n`;
+    reportText += `Receitas:      R$ ${summary.paid.toFixed(2).padStart(10)}\n`;
+    reportText += `Despesas:      R$ ${summary.expenses.toFixed(2).padStart(10)}\n`;
+    reportText += `Saldo Período: R$ ${summary.balance.toFixed(2).padStart(10)}\n`;
+    reportText += `--------------------------------------\n\n`;
+    reportText += `DATA       DESCRIÇÃO                VALOR          SALDO\n`;
+    reportText += `---------- ----------------------- ------------ ------------------\n`;
+
+    combinedTransactions.forEach(t => {
+      const date = new Date(t.date + 'T00:00:00').toLocaleDateString('pt-BR');
+      const desc = t.description.substring(0, 23).padEnd(23);
+      const amount = (t.type === 'INCOME' ? '+' : '-') + ' R$ ' + t.amount.toFixed(2);
+      const balance = 'SALDO R$ ' + t.balance.toFixed(2);
+      reportText += `${date} ${desc} ${amount.padStart(12)} ${balance.padStart(18)}\n`;
+    });
+
+    reportText += `\n--------------------------------------\n`;
+    reportText += `SALDO ATUAL:   R$ ${summary.balance.toFixed(2).padStart(10)}\n`;
+    reportText += `======================================\n`;
+    reportText += `           FIM DO EXTRATO             \n`;
+    reportText += `======================================`;
+
+    navigator.clipboard.writeText(reportText).then(() => {
+      setToastMessage('Extrato bancário copiado!');
+      setTimeout(() => setToastMessage(''), 3000);
+    }).catch(err => {
+      console.error('Erro ao copiar extrato: ', err);
+      setToastMessage('Erro ao copiar extrato');
+      setTimeout(() => setToastMessage(''), 3000);
+    });
+  };
 
   useEffect(() => {
     const migrateData = async () => {
@@ -351,39 +473,32 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
           Despesas do Clube
         </button>
         <button
-          onClick={() => setActiveTab('COMPLIANCE')}
+          onClick={() => setActiveTab('STATEMENT')}
           className={`px-4 py-2 sm:px-8 sm:py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${
-            activeTab === 'COMPLIANCE' 
+            activeTab === 'STATEMENT' 
               ? 'bg-brand-primary text-brand-secondary shadow-xl shadow-brand-primary/20' 
               : 'text-white/40 hover:text-white hover:bg-white/5'
           }`}
         >
-          Adimplência
+          Extrato
         </button>
       </div>
 
       {/* Financial Summary Dashboard */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <div className="bg-black backdrop-blur-xl p-4 sm:p-6 rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-sm">
-          <p className="text-[9px] sm:text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">Total Recebido</p>
-          <p className="text-xl sm:text-2xl font-black text-emerald-500 font-mono">R$ {summary.paid.toFixed(2)}</p>
-        </div>
-        <div className="bg-black backdrop-blur-xl p-4 sm:p-6 rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-sm">
-          <p className="text-[9px] sm:text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">Total Despesas</p>
-          <p className="text-xl sm:text-2xl font-black text-rose-500 font-mono">R$ {summary.expenses.toFixed(2)}</p>
-        </div>
-        <div className="bg-black backdrop-blur-xl p-4 sm:p-6 rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-sm col-span-2 sm:col-span-1">
           <p className="text-[9px] sm:text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">Saldo Atual</p>
           <p className={`text-xl sm:text-2xl font-black font-mono ${summary.balance >= 0 ? 'text-brand-primary' : 'text-rose-500'}`}>
             R$ {summary.balance.toFixed(2)}
           </p>
         </div>
+
         {filterMonth && (
-          <div className="bg-white/5 backdrop-blur-xl p-4 sm:p-6 rounded-[2rem] border border-brand-primary/40 shadow-sm col-span-2 sm:col-span-1">
-            <p className="text-[9px] sm:text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">Orçamento Mensal ({formatMonth(filterMonth)})</p>
+          <div className="bg-white/5 backdrop-blur-xl p-4 sm:p-6 rounded-[2rem] border border-brand-primary/40 shadow-sm col-span-2 lg:col-span-1">
+            <p className="text-[9px] sm:text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">Orçamento ({formatMonth(filterMonth)})</p>
             <div className="flex justify-between items-end">
-              <p className="text-xl sm:text-2xl font-black text-brand-primary font-mono">R$ {summary.budget.toFixed(2)}</p>
-              <p className="text-[9px] sm:text-[10px] font-bold text-white/40 mb-1">Pend: R$ {(summary.budget - summary.paid).toFixed(2)}</p>
+              <p className="text-lg sm:text-xl font-black text-brand-primary font-mono">R$ {summary.budget.toFixed(2)}</p>
+              <p className="text-[9px] font-bold text-white/40 mb-1">Pend: R$ {(summary.budget - summary.paid).toFixed(2)}</p>
             </div>
           </div>
         )}
@@ -463,6 +578,15 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
           </>
         )}
 
+        {activeTab === 'STATEMENT' && (
+          <button
+            onClick={generateStatementReport}
+            className="col-span-2 md:col-span-1 flex items-center justify-center gap-2 px-6 py-3 bg-brand-primary text-brand-secondary rounded-xl font-black text-[10px] uppercase tracking-widest transition-all shadow-lg shadow-brand-primary/20 h-[38px] sm:h-[46px]"
+          >
+            <Copy className="w-4 h-4" /> Exportar Extrato
+          </button>
+        )}
+
         {(filterMonth || filterPlayer || filterStatus || filterDate) && (
           <button
             onClick={() => { setFilterMonth(''); setFilterPlayer(''); setFilterStatus(''); setFilterDate(''); }}
@@ -492,7 +616,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
               </thead>
               <tbody className="divide-y divide-white/5">
                 {filteredPayments.map(payment => {
-                  const status = getCalculatedStatus(payment, payment.month);
+                  const status = getCalculatedStatus(payment, payment.playerId, payment.month);
                   return (
                   <tr key={payment.id} className="hover:bg-white/5 transition-colors group">
                     <td className="px-8 py-5">
@@ -548,7 +672,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
           {/* Mobile Card View - Receipts */}
           <div className="md:hidden space-y-3">
             {filteredPayments.map(payment => {
-              const status = getCalculatedStatus(payment, payment.month);
+              const status = getCalculatedStatus(payment, payment.playerId, payment.month);
               return (
               <div key={payment.id} className="bg-black backdrop-blur-xl p-4 rounded-3xl border border-brand-primary/40 shadow-sm space-y-3">
                 <div className="flex justify-between items-start">
@@ -702,7 +826,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
             )}
           </div>
         </>
-      ) : (
+      ) : activeTab === 'COMPLIANCE' ? (
         <>
           {/* Compliance View */}
           <div className="bg-black backdrop-blur-xl rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-sm overflow-hidden">
@@ -724,16 +848,32 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                         className="w-full bg-white/5 border border-brand-primary/40 rounded-2xl pl-11 pr-4 py-3 text-sm font-bold text-white placeholder:text-white/20 outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all backdrop-blur-sm"
                       />
                     </div>
-                    {filterMonth && (
-                      <button
-                        onClick={generateWhatsAppReport}
-                        className="flex items-center justify-center gap-2 px-4 py-3 bg-[#25D366]/10 text-[#25D366] hover:bg-[#25D366]/20 border border-[#25D366]/20 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all whitespace-nowrap"
-                        title="Copiar relatório para WhatsApp"
-                      >
-                        <MessageSquare className="w-4 h-4" />
-                        <span className="hidden sm:inline">Copiar</span>
-                      </button>
-                    )}
+                      <div className="flex gap-2 w-full sm:w-auto">
+                        <button
+                          onClick={generateWhatsAppReport}
+                          className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-3 bg-[#25D366]/10 text-[#25D366] hover:bg-[#25D366]/20 border border-[#25D366]/20 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all whitespace-nowrap"
+                          title="Copiar relatório completo para WhatsApp"
+                        >
+                          <MessageSquare className="w-4 h-4" />
+                          <span className="hidden sm:inline">Relatório</span>
+                        </button>
+                        <button
+                          onClick={() => copyList('PAID', 'Pagos')}
+                          className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-3 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 border border-emerald-500/20 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all whitespace-nowrap"
+                          title="Copiar lista de pagos"
+                        >
+                          <CheckCircle2 className="w-4 h-4" />
+                          <span className="hidden sm:inline">Pagos</span>
+                        </button>
+                        <button
+                          onClick={() => copyList('UNPAID', 'Pendentes')}
+                          className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-3 bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 border border-rose-500/20 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all whitespace-nowrap"
+                          title="Copiar lista de pendentes"
+                        >
+                          <X className="w-4 h-4" />
+                          <span className="hidden sm:inline">Pendentes</span>
+                        </button>
+                      </div>
                   </div>
                   {filterMonth && (
                     <div className="grid grid-cols-2 sm:flex gap-2 sm:gap-4">
@@ -742,7 +882,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                         <p className="text-base sm:text-lg font-black text-emerald-500">
                           {players.filter(player => {
                             const p = payments.find(p => p.playerId === player.id && p.month === filterMonth);
-                            return getCalculatedStatus(p, filterMonth) === PaymentStatus.PAID;
+                            return getCalculatedStatus(p, player.id, filterMonth) === PaymentStatus.PAID;
                           }).length}
                         </p>
                       </div>
@@ -751,7 +891,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                         <p className="text-base sm:text-lg font-black text-amber-500">
                           {players.filter(player => {
                             const p = payments.find(p => p.playerId === player.id && p.month === filterMonth);
-                            return getCalculatedStatus(p, filterMonth) === PaymentStatus.PENDING;
+                            return getCalculatedStatus(p, player.id, filterMonth) === PaymentStatus.PENDING;
                           }).length}
                         </p>
                       </div>
@@ -760,7 +900,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                         <p className="text-base sm:text-lg font-black text-rose-500">
                           {players.filter(player => {
                             const p = payments.find(p => p.playerId === player.id && p.month === filterMonth);
-                            return getCalculatedStatus(p, filterMonth) === PaymentStatus.OVERDUE;
+                            return getCalculatedStatus(p, player.id, filterMonth) === PaymentStatus.OVERDUE;
                           }).length}
                         </p>
                       </div>
@@ -793,7 +933,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                     .sort((a, b) => a.name.localeCompare(b.name))
                     .map(player => {
                       const payment = payments.find(p => p.playerId === player.id && p.month === filterMonth);
-                      const status = getCalculatedStatus(payment, filterMonth);
+                      const status = getCalculatedStatus(payment, player.id, filterMonth);
                       
                       return (
                         <tr key={player.id} className="hover:bg-white/5 transition-colors group">
@@ -853,7 +993,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                 .sort((a, b) => a.name.localeCompare(b.name))
                 .map(player => {
                   const payment = payments.find(p => p.playerId === player.id && p.month === filterMonth);
-                  const status = getCalculatedStatus(payment, filterMonth);
+                  const status = getCalculatedStatus(payment, player.id, filterMonth);
                   
                   return (
                     <div key={player.id} className="p-4 flex items-center justify-between gap-4">
@@ -907,6 +1047,137 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
             </div>
           </div>
         </>
+      ) : (
+        <div className="space-y-6">
+          {/* Bank Statement Header Summary */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-black/40 backdrop-blur-xl p-6 rounded-[2rem] border border-white/5 border-l-[6px] border-l-emerald-500 shadow-sm">
+              <p className="text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">TOTAL CRÉDITOS (+)</p>
+              <p className="text-2xl font-black text-emerald-500 font-mono">R$ {summary.paid.toFixed(2)}</p>
+            </div>
+            <div className="bg-black/40 backdrop-blur-xl p-6 rounded-[2rem] border border-white/5 border-l-[6px] border-l-rose-500 shadow-sm">
+              <p className="text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">TOTAL DÉBITOS (-)</p>
+              <p className="text-2xl font-black text-rose-500 font-mono">R$ {summary.expenses.toFixed(2)}</p>
+            </div>
+            <div className="bg-black/40 backdrop-blur-xl p-6 rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-sm">
+              <p className="text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">SALDO DO PERÍODO</p>
+              <p className={`text-2xl font-black font-mono ${summary.balance >= 0 ? 'text-brand-primary' : 'text-rose-500'}`}>
+                R$ {summary.balance.toFixed(2)}
+              </p>
+            </div>
+          </div>
+
+          <div className="bg-black backdrop-blur-xl rounded-[2rem] border border-white/5 shadow-2xl overflow-hidden">
+            <div className="p-8 border-b border-white/5 bg-white/5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+              <div>
+                <h3 className="text-xl font-black text-white uppercase tracking-tight flex items-center gap-3">
+                  <CreditCard className="w-6 h-6 text-brand-primary" />
+                  Extrato Bancário
+                </h3>
+                <p className="text-xs font-bold text-white/40 uppercase tracking-widest mt-1">Guerreiros VC • Clube de Vôlei</p>
+              </div>
+              <div className="text-right">
+                <p className="text-[10px] font-black text-brand-primary uppercase tracking-widest">Período Selecionado</p>
+                <p className="text-sm font-black text-white uppercase">{filterMonth ? formatMonth(filterMonth) : 'Extrato Completo'}</p>
+              </div>
+            </div>
+            
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead className="bg-white/5 border-b border-white/10">
+                  <tr>
+                    <th className="px-8 py-4 text-[10px] font-black text-white/60 uppercase tracking-widest">Data</th>
+                    <th className="px-8 py-4 text-[10px] font-black text-white/60 uppercase tracking-widest">Lançamento / Histórico</th>
+                    <th className="px-8 py-4 text-[10px] font-black text-white/60 uppercase tracking-widest text-center">Tipo</th>
+                    <th className="px-8 py-4 text-[10px] font-black text-white/60 uppercase tracking-widest text-right">Valor (R$)</th>
+                    <th className="px-8 py-4 text-[10px] font-black text-white/60 uppercase tracking-widest text-right">Saldo (R$)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {combinedTransactions.map(t => (
+                    <tr key={t.id} className="hover:bg-brand-primary/5 transition-colors group border-l-4 border-l-transparent hover:border-l-brand-primary">
+                      <td className="px-8 py-5 text-[11px] font-bold text-white/40 uppercase whitespace-nowrap font-mono">
+                        {new Date(t.date + 'T00:00:00').toLocaleDateString('pt-BR')}
+                      </td>
+                      <td className="px-8 py-5">
+                        <div className="flex flex-col">
+                          <p className="text-xs font-black text-white uppercase tracking-tight group-hover:text-brand-primary transition-colors">{t.description}</p>
+                          <p className="text-[9px] font-bold text-white/20 uppercase tracking-widest">{t.category}</p>
+                        </div>
+                      </td>
+                      <td className="px-8 py-5 text-center">
+                        <span className={`inline-flex px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest border ${
+                          t.type === 'INCOME' 
+                            ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' 
+                            : 'bg-rose-500/10 text-rose-500 border-rose-500/20'
+                        }`}>
+                          {t.type === 'INCOME' ? 'C' : 'D'}
+                        </span>
+                      </td>
+                      <td className={`px-8 py-5 text-right font-mono text-sm font-black whitespace-nowrap ${
+                        t.type === 'INCOME' ? 'text-emerald-500' : 'text-rose-500'
+                      }`}>
+                        {t.type === 'INCOME' ? '+' : '-'} R$ {t.amount.toFixed(2)}
+                      </td>
+                      <td className={`px-8 py-5 text-right font-mono text-sm font-black whitespace-nowrap ${
+                        t.balance >= 0 ? 'text-white' : 'text-rose-500'
+                      }`}>
+                        <span className="text-[8px] text-white/20 mr-1.5 uppercase font-sans">Saldo</span>
+                        R$ {t.balance.toFixed(2)}
+                      </td>
+                    </tr>
+                  ))}
+                  {combinedTransactions.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="px-8 py-20 text-center">
+                        <div className="bg-white/5 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 border border-white/10">
+                          <History className="w-8 h-8 text-white/10" />
+                        </div>
+                        <p className="text-xs font-black text-white/20 uppercase tracking-widest">Sem movimentações para este período</p>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+                {combinedTransactions.length > 0 && (
+                  <tfoot className="bg-white/5">
+                    <tr>
+                      <td colSpan={4} className="px-8 py-6 text-right">
+                        <p className="text-[10px] font-black text-white/40 uppercase tracking-widest">Saldo Final em {new Date().toLocaleDateString('pt-BR')}</p>
+                      </td>
+                      <td className="px-8 py-6 text-right">
+                        <div className="bg-brand-primary/10 border border-brand-primary/40 px-4 py-2 rounded-xl inline-block">
+                          <p className={`font-mono text-lg font-black ${summary.balance >= 0 ? 'text-brand-primary' : 'text-rose-500'}`}>
+                            R$ {summary.balance.toFixed(2)}
+                          </p>
+                        </div>
+                      </td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+            
+            <div className="p-8 bg-black/40 border-t border-white/5">
+              <div className="flex flex-col sm:flex-row justify-between items-center gap-6">
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 rounded-full bg-brand-primary/10 border border-brand-primary/20 flex items-center justify-center">
+                    <DollarSign className="w-5 h-5 text-brand-primary" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-black text-white/60 uppercase tracking-widest">Documento gerado pelo sistema</p>
+                    <p className="text-[9px] font-bold text-white/20 uppercase">Acompanhamento Financeiro Guerreiros VC</p>
+                  </div>
+                </div>
+                <button
+                  onClick={generateStatementReport}
+                  className="w-full sm:w-auto flex items-center justify-center gap-3 px-8 py-4 bg-brand-primary text-brand-secondary rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-xl shadow-brand-primary/20 hover:scale-105 active:scale-95"
+                >
+                  <Copy className="w-5 h-5" /> Copiar Extrato Texto
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Toast Message */}

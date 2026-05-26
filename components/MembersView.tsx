@@ -14,8 +14,16 @@ import {
   Shield,
   UserCheck,
   UserX,
-  Target
+  Target,
+  Search,
+  TrendingDown,
+  TrendingUp,
+  Minus
 } from 'lucide-react';
+import { EvasionIcon } from './EvasionIcon';
+import { calculateEvasionLevel } from '../utils/evasion';
+import { calculateTrueSkillUpdate } from '../src/utils/trueSkill';
+import { getFirestoreDateKey } from '../firebase';
 
 interface MembersViewProps {
   clearAllPlayers: () => void;
@@ -36,7 +44,124 @@ export const MembersView: React.FC<MembersViewProps> = ({
   repairDatabase,
   savePlayer
 }) => {
-  const { players, userRole, isSyncing, showConfirmModal } = useStore();
+  const { players, userRole, isSyncing, showConfirmModal, matches } = useStore();
+  
+  const traditionalEloRankings = React.useMemo(() => {
+    if (!matches || matches.length === 0 || !players) return {};
+
+    const availableDates = Array.from(new Set(matches.map(m => m.date))).sort((a, b) => b.localeCompare(a));
+    if (availableDates.length === 0) return {};
+
+    const today = getFirestoreDateKey();
+    let currentRefDate = today;
+    let prevRefDate: string | null = null;
+
+    const latestSessionInHistory = availableDates[0];
+    if (latestSessionInHistory === today) {
+      prevRefDate = availableDates[1] || null;
+    } else {
+      prevRefDate = latestSessionInHistory;
+    }
+
+    if (!prevRefDate) return {};
+
+    const getEloAtDate = (player: any, date: string, isNow: boolean = false) => {
+      if (isNow) return player.elo || 1200;
+      
+      const entry = player.eloHistory?.find((h: any) => h.date === date);
+      if (entry) return entry.elo;
+      
+      const historyBefore = (player.eloHistory || [])
+        .filter((h: any) => h.date < date)
+        .sort((a: any, b: any) => b.date.localeCompare(a.date));
+      return historyBefore.length > 0 ? historyBefore[0].elo : 1200;
+    };
+
+    const currentRankings = [...players]
+      .map(p => ({ id: p.id, elo: getEloAtDate(p, currentRefDate, true) }))
+      .sort((a, b) => b.elo - a.elo);
+
+    const prevRankings = [...players]
+      .map(p => ({ id: p.id, elo: getEloAtDate(p, prevRefDate!) }))
+      .sort((a, b) => b.elo - a.elo);
+
+    const result: Record<string, { rank: number; diff: number; type: 'up' | 'down' | 'neutral' }> = {};
+
+    currentRankings.forEach((p, currentIdx) => {
+      const prevIdx = prevRankings.findIndex(prevP => prevP.id === p.id);
+      let diff = 0;
+      let type: 'up' | 'down' | 'neutral' = 'neutral';
+
+      if (prevIdx !== -1) {
+        diff = prevIdx - currentIdx; 
+        type = diff > 0 ? 'up' : diff < 0 ? 'down' : 'neutral';
+      }
+      
+      result[p.id] = {
+        rank: currentIdx + 1,
+        diff: Math.abs(diff),
+        type
+      };
+    });
+
+    return result;
+  }, [matches, players]);
+
+  const trueSkillRankings = React.useMemo(() => {
+    if (!matches || matches.length === 0 || !players) return {};
+
+    const tsMap = new Map<string, { mu: number, sigma: number }>();
+    let prevTsMap = new Map<string, { mu: number, sigma: number }>();
+
+    const sortedMatches = [...matches].sort((a, b) => a.timestamp - b.timestamp);
+    
+    const availableDates = Array.from(new Set(sortedMatches.map(m => m.date))).sort((a, b) => b.localeCompare(a));
+    const currentRefDate = availableDates[0];
+
+    sortedMatches.forEach(m => {
+      if (!m.teamA || !m.teamB || !m.winner) return;
+      
+      const teamAWithTS = m.teamA.map(pid => ({ id: pid, trueSkill: tsMap.get(pid) }));
+      const teamBWithTS = m.teamB.map(pid => ({ id: pid, trueSkill: tsMap.get(pid) }));
+
+      const updates = calculateTrueSkillUpdate(teamAWithTS as any, teamBWithTS as any, m.winner);
+      updates.forEach(u => tsMap.set(u.playerId, u.newTrueSkill));
+
+      if (m.date !== currentRefDate) {
+        prevTsMap = new Map(tsMap);
+      }
+    });
+
+    const getScore = (ts?: { mu: number, sigma: number }) => ts ? ts.mu - 3 * ts.sigma : 0;
+
+    const currentList = players.map(p => ({
+      id: p.id,
+      score: getScore(tsMap.get(p.id))
+    })).sort((a, b) => b.score - a.score);
+
+    const prevList = players.map(p => ({
+      id: p.id,
+      score: getScore(prevTsMap.get(p.id) || tsMap.get(p.id))
+    })).sort((a, b) => b.score - a.score);
+
+    const result: Record<string, { score: number, rank: number, diff: number, type: 'up' | 'down' | 'neutral' }> = {};
+    
+    currentList.forEach((p, idx) => {
+      const prevIdx = prevList.findIndex(pr => pr.id === p.id);
+      const diff = prevIdx !== -1 ? (prevIdx - idx) : 0;
+      
+      result[p.id] = {
+        score: p.score,
+        rank: idx + 1,
+        diff: Math.abs(diff),
+        type: diff > 0 ? 'up' : diff < 0 ? 'down' : 'neutral'
+      };
+    });
+
+    return result;
+  }, [matches, players]);
+
+  const [searchTerm, setSearchTerm] = React.useState('');
   const [startY, setStartY] = React.useState(0);
   const [pullDistance, setPullDistance] = React.useState(0);
   const [isPulling, setIsPulling] = React.useState(false);
@@ -52,6 +177,24 @@ export const MembersView: React.FC<MembersViewProps> = ({
     }));
   };
 
+  const isBirthdayMonth = (birthDate?: string) => {
+    if (!birthDate) return false;
+    const parts = birthDate.split('-');
+    if (parts.length < 2) return false;
+    const birthMonth = parts[1];
+    const currentMonth = (new Date().getMonth() + 1).toString().padStart(2, '0');
+    return birthMonth === currentMonth;
+  };
+
+  const formatBirthday = (birthDate?: string) => {
+    if (!birthDate) return '-';
+    const parts = birthDate.split('-');
+    if (parts.length < 3) return birthDate;
+    return `${parts[2]}/${parts[1]}`;
+  };
+
+  const { setViewMode } = useStore();
+
   const getImpactIcon = (level?: number) => {
     switch (level) {
       case 3: return <Zap className="w-3 h-3 text-brand-primary" fill="currentColor" />;
@@ -61,16 +204,16 @@ export const MembersView: React.FC<MembersViewProps> = ({
   };
 
   const activePlayers = React.useMemo(() => {
-    return players.filter(p => p.status === 'active' || !p.status || p.status === '');
-  }, [players]);
+    return players.filter(p => (p.status === 'active' || !p.status || p.status === '') && !p.isDM && p.name.toLowerCase().includes(searchTerm.toLowerCase()));
+  }, [players, searchTerm]);
 
   const waitlistPlayers = React.useMemo(() => {
-    return players.filter(p => p.status === 'waitlist').sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-  }, [players]);
+    return players.filter(p => p.status === 'waitlist' && !p.isDM && p.name.toLowerCase().includes(searchTerm.toLowerCase())).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  }, [players, searchTerm]);
 
   const inactivePlayers = React.useMemo(() => {
-    return players.filter(p => p.status === 'inactive');
-  }, [players]);
+    return players.filter(p => (p.status === 'inactive' || !!p.isDM) && p.name.toLowerCase().includes(searchTerm.toLowerCase()));
+  }, [players, searchTerm]);
 
   const sortedList = (list: Player[]) => {
     return [...list].sort((a, b) => {
@@ -104,12 +247,24 @@ export const MembersView: React.FC<MembersViewProps> = ({
                   </div>
                 </th>
                 {userRole === 'ADMIN' && <th className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest">Email</th>}
+                <th className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">Nascimento</th>
+                <th className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">Performance</th>
                 <th className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">Gênero</th>
                 <th className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">Nível</th>
+                {userRole === 'ADMIN' && <th className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">Habilidades</th>}
                 <th className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">Posição</th>
                 <th onClick={() => handleSort('elo')} className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center cursor-pointer hover:opacity-80 transition-colors">
-                  <div className="flex items-center justify-center gap-2">
-                    ELO {sortConfig.key === 'elo' && <span>{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>}
+                  <div className="flex flex-col items-center">
+                    <div className="flex items-center gap-1">
+                      ELO {sortConfig.key === 'elo' && <span>{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>}
+                    </div>
+                    <span className="text-[7px] text-white/40">(Posição / Pts)</span>
+                  </div>
+                </th>
+                <th className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">
+                  <div className="flex flex-col items-center">
+                    <span>Eficiência</span>
+                    <span className="text-[7px] text-white/40">(Posição / Pts)</span>
                   </div>
                 </th>
                 <th className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">Status</th>
@@ -123,28 +278,89 @@ export const MembersView: React.FC<MembersViewProps> = ({
                     <div className="flex items-center gap-2">
                       <div className="flex items-center gap-1.5 min-w-0">
                         {userRole === 'ADMIN' && <div className="shrink-0">{getImpactIcon(player.impactLevel)}</div>}
-                        <p className={`font-black text-xs truncate ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
+                        <div className={`font-black text-xs truncate ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
                           {player.name || "Sócio sem nome"}
-                        </p>
-                      </div>
-                      {player.birthDate && (
-                        <div className="relative group/birth shrink-0">
-                          <Cake className="w-4 h-4 text-brand-primary animate-pulse" />
+                          {player.isDM && <span className="ml-2 px-1.5 py-0.5 rounded-full text-[8px] font-black bg-rose-500 text-white">DM</span>}
+                          <span className="ml-2">
+                             <EvasionIcon 
+                                level={player.evasionLevel || calculateEvasionLevel(player)} 
+                                customLabel={`${(player.evasionLevel || calculateEvasionLevel(player)).charAt(0).toUpperCase() + (player.evasionLevel || calculateEvasionLevel(player)).slice(1)} - ${player.wins || 0}V ${player.losses || 0}D`} 
+                             />
+                          </span>
                         </div>
-                      )}
+                      </div>
                     </div>
                   </td>
                   {userRole === 'ADMIN' && <td className="px-3 py-2 text-[9px] font-bold text-white/50">{player.email || '-'}</td>}
+                  <td className="px-3 py-2 text-center text-[10px]">
+                    <div className="flex items-center justify-center gap-1">
+                      <span className="text-white/60">{formatBirthday(player.birthDate)}</span>
+                      {isBirthdayMonth(player.birthDate) && (
+                        <Cake className="w-3.5 h-3.5 text-brand-primary animate-[pulse_1s_infinite]" />
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-3 py-2 text-center">
+                    <div className="flex flex-col items-center">
+                      <div className="flex items-center gap-1.5">
+                        <span className="px-1.5 py-0.5 rounded bg-brand-primary text-black text-[8px] font-black">{player.wins || 0}V</span>
+                        <span className="px-1.5 py-0.5 rounded bg-white text-black text-[8px] font-black">{player.losses || 0}D</span>
+                      </div>
+                    </div>
+                  </td>
                   <td className="px-3 py-2 text-center text-[10px] text-white/60">{translateGender(player.gender)}</td>
                   <td className="px-3 py-2 text-center flex flex-col items-center gap-0.5">
                     <span className={`text-[9px] font-black uppercase tracking-tight ${getPlayerTier(player).color}`}>
                       {getPlayerTier(player).label}
                     </span>
                   </td>
+                  {userRole === 'ADMIN' && (
+                    <td className="px-3 py-2 text-center">
+                      <div className="flex justify-center gap-1">
+                        <span className="text-[8px] font-black px-1 rounded bg-white/5 text-white/40" title="Levantamento">L:{player.skills?.setting || 1}</span>
+                        <span className="text-[8px] font-black px-1 rounded bg-white/5 text-white/40" title="Ataque">A:{player.skills?.attacking || 1}</span>
+                        <span className="text-[8px] font-black px-1 rounded bg-white/5 text-white/40" title="Defesa">D:{player.skills?.defense || 1}</span>
+                        <span className="text-[8px] font-black px-1 rounded bg-white/5 text-white/40" title="Saque">S:{player.skills?.serving || 1}</span>
+                      </div>
+                    </td>
+                  )}
                   <td className="px-3 py-2 text-center">
                     {player.isOfficialSetter ? <span className="px-2 py-0.5 rounded-full text-[8px] font-black uppercase bg-brand-primary/20 text-brand-primary border border-brand-primary/40">Levantador</span> : '-'}
                   </td>
-                  <td className="px-3 py-2 text-center font-black text-white text-xs">{Math.round(player.elo)}</td>
+                  <td className="px-3 py-2 text-center">
+                    {(() => {
+                      const tr = traditionalEloRankings[player.id];
+                      if (!tr) return <span className="font-black text-white text-xs">{Math.round(player.elo)}</span>;
+                      return (
+                        <div className="flex flex-col items-center gap-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-black text-white">#{tr.rank}</span>
+                            {tr.type === 'up' && <div className="flex items-center gap-0.5"><TrendingUp className="w-3 h-3 text-emerald-500" /><span className="text-[8px] font-black text-emerald-500">{tr.diff}</span></div>}
+                            {tr.type === 'down' && <div className="flex items-center gap-0.5"><TrendingDown className="w-3 h-3 text-rose-500" /><span className="text-[8px] font-black text-rose-500">{tr.diff}</span></div>}
+                            {tr.type === 'neutral' && <Minus className="w-3 h-3 text-white/40" />}
+                          </div>
+                          <span className="text-[8px] font-black text-white/40">{Math.round(player.elo)} pts</span>
+                        </div>
+                      );
+                    })()}
+                  </td>
+                  <td className="px-3 py-2 text-center">
+                    {(() => {
+                      const ts = trueSkillRankings[player.id];
+                      if (!ts) return <span className="text-white/20">-</span>;
+                      return (
+                        <div className="flex flex-col items-center gap-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-black text-white">#{ts.rank}</span>
+                            {ts.type === 'up' && <div className="flex items-center gap-0.5"><TrendingUp className="w-3 h-3 text-emerald-500" /><span className="text-[8px] font-black text-emerald-500">{ts.diff}</span></div>}
+                            {ts.type === 'down' && <div className="flex items-center gap-0.5"><TrendingDown className="w-3 h-3 text-rose-500" /><span className="text-[8px] font-black text-rose-500">{ts.diff}</span></div>}
+                            {ts.type === 'neutral' && <Minus className="w-3 h-3 text-white/40" />}
+                          </div>
+                          <span className="text-[8px] font-black text-white/40">{Math.round(ts.score)} pts</span>
+                        </div>
+                      );
+                    })()}
+                  </td>
                   <td className="px-3 py-2 text-center">
                     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[8px] font-black uppercase border ${
                       player.status === 'waitlist' ? 'bg-amber-500/10 text-amber-500 border-amber-500/20' :
@@ -155,19 +371,28 @@ export const MembersView: React.FC<MembersViewProps> = ({
                     </span>
                   </td>
                   <td className="px-3 py-2 text-right flex items-center justify-end gap-2">
-                    {userRole === 'ADMIN' && (
-                       <button 
-                        onClick={() => {
-                          const newStatus = player.status === 'active' ? 'inactive' : 'active';
-                          savePlayer({ ...player, status: newStatus });
-                        }}
-                        className={`p-2 rounded-xl transition-all ${player.status === 'inactive' ? 'text-emerald-500 hover:bg-emerald-500/10' : 'text-amber-500 hover:bg-amber-500/10'}`}
-                      >
-                        {player.status === 'inactive' ? <UserCheck className="w-4 h-4" /> : <UserX className="w-4 h-4" />}
-                      </button>
-                    )}
-                    <button onClick={() => { setEditingPlayer(player); setIsFormOpen(true); }} className="p-2 text-white/40 hover:text-brand-primary"><Edit2 className="w-4 h-4" /></button>
-                    <button onClick={() => deletePlayer(player.id)} className="p-2 text-white/40 hover:text-rose-500"><Trash2 className="w-4 h-4" /></button>
+                    <button 
+                      onClick={() => setViewMode('dashboard')}
+                      className="p-2 text-white/40 hover:text-brand-primary transition-all"
+                      title="Ver no Ranking"
+                    >
+                      <Target className="w-4 h-4" />
+                    </button>
+                    {userRole === 'ADMIN' ? (
+                      <>
+                        <button 
+                          onClick={() => {
+                            const newStatus = player.status === 'active' ? 'inactive' : 'active';
+                            savePlayer({ ...player, status: newStatus });
+                          }}
+                          className={`p-2 rounded-xl transition-all ${player.status === 'inactive' ? 'text-emerald-500 hover:bg-emerald-500/10' : 'text-amber-500 hover:bg-amber-500/10'}`}
+                        >
+                          {player.status === 'inactive' ? <UserCheck className="w-4 h-4" /> : <UserX className="w-4 h-4" />}
+                        </button>
+                        <button onClick={() => { setEditingPlayer(player); setIsFormOpen(true); }} className="p-2 text-white/40 hover:text-brand-primary"><Edit2 className="w-4 h-4" /></button>
+                        <button onClick={() => deletePlayer(player.id)} className="p-2 text-white/40 hover:text-rose-500"><Trash2 className="w-4 h-4" /></button>
+                      </>
+                    ) : '-'}
                   </td>
                 </tr>
               ))}
@@ -198,7 +423,13 @@ export const MembersView: React.FC<MembersViewProps> = ({
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <h4 className={`text-xl font-black uppercase tracking-tight truncate ${player.status === 'inactive' ? 'text-white/40' : 'text-white'}`}>
-                      {player.name}
+                      {player.name} {player.isDM && <span className="ml-2 px-2 py-1 rounded-full text-xs font-black bg-rose-500 text-white">DM</span>}
+                      <span className="ml-2">
+                        <EvasionIcon 
+                          level={player.evasionLevel || calculateEvasionLevel(player)} 
+                          customLabel={`${(player.evasionLevel || calculateEvasionLevel(player)).charAt(0).toUpperCase() + (player.evasionLevel || calculateEvasionLevel(player)).slice(1)} - ${player.wins || 0}V ${player.losses || 0}D`} 
+                        />
+                      </span>
                     </h4>
                   </div>
                   <div className="flex flex-wrap items-center gap-1.5 mt-2">
@@ -208,15 +439,72 @@ export const MembersView: React.FC<MembersViewProps> = ({
                     }`}>
                       {player.status === 'waitlist' ? 'Fila de Espera' : translateGender(player.gender)}
                     </span>
+                    <span className="px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest bg-white/5 text-white/60 border border-white/10 flex items-center gap-1">
+                      <Cake className={`w-4 h-4 ${isBirthdayMonth(player.birthDate) ? 'text-brand-primary animate-pulse' : 'text-white/40'}`} />
+                      {formatBirthday(player.birthDate)}
+                    </span>
                     <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest bg-white/5 ${getPlayerTier(player).color} border border-white/10`}>
                       {getPlayerTier(player).label}
                     </span>
+                    <div className="flex items-center gap-1 ml-auto">
+                      <span className="px-1.5 py-0.5 rounded bg-brand-primary text-black text-[8px] font-black">{player.wins || 0}V</span>
+                      <span className="px-1.5 py-0.5 rounded bg-white text-black text-[8px] font-black">{player.losses || 0}D</span>
+                      <button 
+                        onClick={() => setViewMode('dashboard')}
+                        className="ml-2 p-1.5 bg-brand-primary/10 text-brand-primary rounded-lg"
+                      >
+                        <Target className="w-3 h-3" />
+                      </button>
+                    </div>
                   </div>
+                  {userRole === 'ADMIN' && (
+                    <div className="flex gap-2 mt-3">
+                      <div className="flex-1 bg-white/5 p-2 rounded-xl border border-white/5">
+                        <p className="text-[7px] font-black text-white/40 uppercase mb-1">Habilidades</p>
+                        <div className="flex justify-between gap-1">
+                          <div className="flex flex-col items-center">
+                            <span className="text-[8px] font-black text-brand-primary uppercase">Lev</span>
+                            <span className="text-[10px] font-black text-white">{player.skills?.setting || 1}</span>
+                          </div>
+                          <div className="flex flex-col items-center">
+                            <span className="text-[8px] font-black text-brand-primary uppercase">Atq</span>
+                            <span className="text-[10px] font-black text-white">{player.skills?.attacking || 1}</span>
+                          </div>
+                          <div className="flex flex-col items-center">
+                            <span className="text-[8px] font-black text-brand-primary uppercase">Def</span>
+                            <span className="text-[10px] font-black text-white">{player.skills?.defense || 1}</span>
+                          </div>
+                          <div className="flex flex-col items-center">
+                            <span className="text-[8px] font-black text-brand-primary uppercase">Saq</span>
+                            <span className="text-[10px] font-black text-white">{player.skills?.serving || 1}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="text-right shrink-0">
-                <p className="text-2xl font-black text-brand-primary tracking-tighter leading-none">{Math.round(player.elo)}</p>
-                <p className="text-[8px] font-black text-white/40 uppercase tracking-widest mt-1">ELO</p>
+                {(() => {
+                  const tr = traditionalEloRankings[player.id];
+                  if (!tr) return (
+                    <>
+                      <p className="text-2xl font-black text-brand-primary tracking-tighter leading-none">{Math.round(player.elo)}</p>
+                      <p className="text-[8px] font-black text-white/40 uppercase tracking-widest mt-1">ELO</p>
+                    </>
+                  );
+                  return (
+                    <div className="flex flex-col items-end gap-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-sm font-black text-white">#{tr.rank}</span>
+                        {tr.type === 'up' && <div className="flex items-center gap-0.5"><TrendingUp className="w-3 h-3 text-emerald-500" /></div>}
+                        {tr.type === 'down' && <div className="flex items-center gap-0.5"><TrendingDown className="w-3 h-3 text-rose-500" /></div>}
+                        {tr.type === 'neutral' && <Minus className="w-3 h-3 text-white/40" />}
+                      </div>
+                      <span className="text-[10px] font-black text-brand-primary">{Math.round(player.elo)} pts</span>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
             {userRole === 'ADMIN' && (
@@ -287,20 +575,32 @@ export const MembersView: React.FC<MembersViewProps> = ({
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
         <div>
           <h2 className="text-2xl font-black text-white uppercase tracking-tighter">Gestão de Sócios</h2>
-          <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest mt-1">Total de {activePlayers.length} sócios ativos</p>
+          <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest mt-1">
+            {activePlayers.length} sócios ativos {userRole !== 'ADMIN' && '(Visualização de Sócio)'}
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+          <div className="relative flex-1 md:w-64">
+            <Search className="absolute left-3 top-3.5 w-4 h-4 text-white/40" />
+            <input
+              type="text"
+              placeholder="Buscar sócio..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full bg-brand-secondary/30 text-white placeholder:text-white/40 border border-white/10 rounded-xl py-3 pl-10 pr-4 text-xs font-bold focus:outline-none focus:border-brand-primary transition-all"
+            />
+          </div>
           {userRole === 'ADMIN' && repairDatabase && (
             <button 
               onClick={repairDatabase} 
-              className="flex-1 md:flex-none bg-white/5 text-white px-4 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-white/10 transition-all border border-brand-primary/40 shadow-sm"
+              className="md:flex-none bg-white/5 text-white px-4 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-white/10 transition-all border border-brand-primary/40 shadow-sm"
             >
               <RotateCcw className="w-4 h-4" />
               Reparar
             </button>
           )}
           {userRole === 'ADMIN' && (
-            <button onClick={() => { setEditingPlayer(null); setIsFormOpen(true); }} className="flex-1 md:flex-none bg-brand-primary text-brand-secondary px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 hover:scale-105 shadow-xl shadow-brand-primary/20 transition-all"><UserPlus className="w-4 h-4" />Novo Sócio</button>
+            <button onClick={() => { setEditingPlayer(null); setIsFormOpen(true); }} className="md:flex-none bg-brand-primary text-brand-secondary px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 hover:scale-105 shadow-xl shadow-brand-primary/20 transition-all"><UserPlus className="w-4 h-4" />Novo Sócio</button>
           )}
         </div>
       </div>
@@ -312,6 +612,10 @@ export const MembersView: React.FC<MembersViewProps> = ({
         {userRole === 'ADMIN' && waitlistPlayers.length > 0 && (
           renderTable(waitlistPlayers, "Fila de Espera (Visão Admin)", `${waitlistPlayers.length} aguardando`, "bg-amber-500")
         )}
+
+        {userRole === 'ADMIN' && inactivePlayers.length > 0 && (
+          renderTable(inactivePlayers, "Sócios Inativos (Visão Admin)", `${inactivePlayers.length} no departamento médico ou desligados`, "bg-white/40")
+        )}
       </div>
 
       {/* Mobile Card View */}
@@ -320,6 +624,10 @@ export const MembersView: React.FC<MembersViewProps> = ({
         
         {userRole === 'ADMIN' && waitlistPlayers.length > 0 && (
           renderCards(waitlistPlayers, "Fila de Espera (Visão Admin)", `${waitlistPlayers.length} aguardando`, "bg-amber-500")
+        )}
+
+        {userRole === 'ADMIN' && inactivePlayers.length > 0 && (
+          renderCards(inactivePlayers, "Sócios Inativos (Visão Admin)", `${inactivePlayers.length} inativos`, "bg-white/40")
         )}
       </div>
     </div>

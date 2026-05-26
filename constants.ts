@@ -19,3 +19,10 @@ export const INITIAL_PLAYERS: Player[] = [
   { id: '15', name: 'Joao', gender: Gender.MALE, isOfficialSetter: false, matchesPlayed: 3, wins: 2, losses: 1, elo: 1470, dailyMatches: 0, dailyWins: 0, dailyLosses: 0, dailyEloGain: 0 },
   { id: '16', name: 'Karina', gender: Gender.FEMALE, isOfficialSetter: false, matchesPlayed: 16, wins: 8, losses: 8, elo: 1320, dailyMatches: 0, dailyWins: 0, dailyLosses: 0, dailyEloGain: 0 }
 ];
+
+export const SKILL_WEIGHTS = {
+  setting: 0.3,
+  attacking: 0.3,
+  defense: 0.2,
+  serving: 0.2
+};

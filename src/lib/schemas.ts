@@ -28,6 +28,14 @@ export const playerSchema = z.object({
     elo: z.number()
   })).optional(),
   impactLevel: z.number().int().min(1).max(3).optional().default(1),
+  skills: z.object({
+    setting: z.number().int().min(1).max(3),
+    attacking: z.number().int().min(1).max(3),
+    defense: z.number().int().min(1).max(3),
+    serving: z.number().int().min(1).max(3)
+  }).optional(),
+  isExempt: z.boolean().optional(),
+  isDM: z.boolean().optional(),
   uid: z.string().optional(),
   fcmToken: z.string().optional(),
   hasSeenWelcome: z.boolean().optional(),

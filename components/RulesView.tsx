@@ -26,6 +26,48 @@ export const RulesView: React.FC = () => {
       <div className="grid gap-8">
         <section className="bg-black backdrop-blur-xl p-10 rounded-[3rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-sm space-y-8 relative overflow-hidden">
           <div className="absolute top-0 right-0 p-8 opacity-5">
+            <Trophy className="w-40 h-40 text-white" />
+          </div>
+          
+          <div className="flex items-center gap-4 text-brand-primary">
+            <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center border border-brand-primary/40">
+              <Trophy className="w-6 h-6" />
+            </div>
+            <h3 className="text-2xl font-black uppercase tracking-tight text-white">O Coração do App: O Sistema ELO</h3>
+          </div>
+
+          <div className="grid gap-8">
+            {[
+              { 
+                title: "O que é o Ponto ELO?", 
+                desc: "Inspirado no sistema de Xadrez e Rankings Profissionais (como o da ATP ou Valorant), o ELO é uma pontuação numérica que representa sua 'Força de Jogo'. É a métrica base do aplicativo: antes de qualquer sorteio, o sistema precisa saber o nível de cada jogador para garantir que ninguém fique em um time 'café com leite' ou injustamente forte. Todos começam com 1200 pontos." 
+              },
+              { 
+                title: "Como ele sobe ou desce?", 
+                desc: "O sistema calcula a probabilidade de vitória com base no equilíbrio dos dois times. Vitórias padrão somam cerca de 25 pontos, e derrotas retiram cerca de 20. Além disso, existe o BÔNUS DE PLACAR: vitórias dominantes (ex: 15x05) rendem bônus extras de ELO, enquanto derrotas apertadas (ex: 15x14) minimizam a perda de pontos." 
+              },
+              { 
+                title: "ELO Global vs. Eficiência Técnica", 
+                desc: "O ELO GLOBAL é sua carreira de longo prazo. A EFICIÊNCIA TÉCNICA é a métrica 'real' usada no sorteio: ela soma sua Consistência Técnica + Habilidades Práticas (Ataque, Defesa, etc.) + Bônus de Impacto. Isso garante que o sorteio seja puramente baseado na qualidade técnica atual." 
+              },
+              { 
+                title: "Formação do Ranking", 
+                desc: "O ranking de sócios é atualizado após cada partida. Ele combina sua pontuação ELO, sua porcentagem de vitórias (Win Rate) e seu desempenho no dia (MVP). Estar no topo significa ser o jogador mais consistente e decisivo do clube." 
+              }
+            ].map((item, i) => (
+              <div key={i} className="flex gap-6 group">
+                <span className="text-4xl font-black text-white/20 group-hover:text-brand-primary/50 transition-colors italic">{String(i+1).padStart(2, '0')}</span>
+                <div className="space-y-1">
+                  <h4 className="font-black text-white uppercase text-sm tracking-widest">{item.title}</h4>
+                  <p className="text-white/60 leading-relaxed font-medium">{item.desc}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="bg-black backdrop-blur-xl p-10 rounded-[3rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-sm space-y-8 relative overflow-hidden">
+          <div className="absolute top-0 right-0 p-8 opacity-5">
             <Scale className="w-40 h-40 text-white" />
           </div>
           
@@ -39,10 +81,10 @@ export const RulesView: React.FC = () => {
           <div className="grid gap-8">
             {[
               { title: "Abertura da Lista", desc: "A lista de presença é aberta pelo administrador quando chegarem pelo menos 12 jogadores ou às 20:00 em ponto." },
-              { title: "Fila de Espera", desc: "Quem chegar depois do início do primeiro jogo entra no fim da fila. O sistema sempre prioriza quem ainda não jogou no dia." }
+              { title: "Fila de Espera", desc: "Quem chegar depois do início do primeiro jogo entra no fim da fila. O sistema sempre prioriza quem ainda não jogou no dia para entrar na próxima partida." }
             ].map((item, i) => (
               <div key={i} className="flex gap-6 group">
-                <span className="text-4xl font-black text-white/20 group-hover:text-brand-primary/50 transition-colors italic">{String(i+1).padStart(2, '0')}</span>
+                <span className="text-4xl font-black text-white/20 group-hover:text-brand-primary/50 transition-colors italic">{String(i+5).padStart(2, '0')}</span>
                 <div className="space-y-1">
                   <h4 className="font-black text-white uppercase text-sm tracking-widest">{item.title}</h4>
                   <p className="text-white/60 leading-relaxed font-medium">{item.desc}</p>
@@ -62,39 +104,16 @@ export const RulesView: React.FC = () => {
 
           <div className="grid gap-8">
             {[
-              { title: "1. Fila de Prioridade (Quem Joga)", desc: "O sistema seleciona 12 jogadores para cada partida seguindo esta ordem: 1º Maior tempo consecutivo no banco; 2º Menor número de partidas jogadas no dia; 3º Não ter jogado a última partida; 4º Ordem de chegada no ginásio." },
-              { title: "2. Regra dos Levantadores", desc: "Cada jogo tem apenas 2 levantadores (um para cada time). Se houver mais levantadores na fila, eles esperam no banco para dar lugar a outros jogadores. Se faltar gente para completar os 12, os levantadores extras jogam em outras posições." },
-              { title: "3. Distribuição de Equipes", desc: "Os jogadores são escolhidos por gênero e nível técnico (ELO). Primeiro, o sistema organiza os homens: o de maior ELO vai para o Time A, o segundo para o Time B, e assim por diante, alternando entre as equipes. Depois, o mesmo é feito com as mulheres, garantindo que os times fiquem equilibrados." },
-              { title: "4. Refinamento de Equilíbrio (Trocas)", desc: "Após a distribuição inicial, o sistema realiza trocas (swaps) entre jogadores do mesmo gênero. A troca só é efetivada se a diferença total de ELO entre os times diminuir, buscando o máximo equilíbrio técnico." },
-              { title: "5. Posicionamento Estratégico", desc: "O Levantador oficial é fixado na Posição 3 (meio de rede). Os demais jogadores são distribuídos nas posições 4, 2, 5, 6 e 1, ordenados por ELO, garantindo uma distribuição técnica equilibrada entre rede e defesa." }
+              { title: "1. Fila de Prioridade (Quem Joga)", desc: "O sistema seleciona 12 jogadores seguidores estes critérios: 1º Prioridade absoluta para quem NÃO participou do jogo anterior; 2º Jogadores com menor número de partidas no dia; 3º Ordem na fila de espera." },
+              { title: "2. Regra dos Levantadores", desc: "Cada jogo deve ter 2 levantadores oficiais (um por time). Se houver apenas um levantador disponível nos 12 selecionados, o sistema o fixa em um time e equilibra o outro com o jogador de maior 'Poder Técnico' disponível." },
+              { title: "3. Distribuição Snake (ABBA)", desc: "Os jogadores são ordenados pelo Elo e distribuídos no padrão A-BB-AA: O mais forte de todos vai para o Time A, o 2º e 3º para o Time B, o 4º e 5º para o Time A, e assim por diante. Isso garante que a 'elite' do dia seja dividida entre os dois lados." },
+              { title: "4. Separação e Equilíbrio de Gênero", desc: "Antes do sorteio, o sistema separa homens e mulheres em grupos distintos. Ele distribui primeiro os homens usando o padrão Snake e depois as mulheres, garantindo que se houver 4 mulheres, cada time tenha exatamente 2, mantendo a paridade absoluta." },
+              { title: "5. Otimização Multi-Camadas", desc: "Após a distribuição inicial, o sistema simula milhares de trocas para minimizar diferenças em: 1º Elo Total; 2º Destaques (Top 4); 3º Base (os 4 menos experientes); 4º Simetria Técnica entre as equipes." },
+              { title: "6. Eficiência Técnica e Habilidades", desc: "O balanceamento usa a 'Eficiência Técnica', que dá um peso muito maior às suas habilidades práticas (Ataque, Saque, etc.) e consistência (TrueSkill), garantindo que o sorteio seja justo e puramente técnico." },
+              { title: "7. Registro de Placar e Bônus", desc: "As partidas são disputadas até 15 pontos. Vitórias dominantes (ex: 15x05) rendem bônus extras de ELO, enquanto derrotas por 14 pontos minimizam a perda de pontos, reconhecendo o alto nível de competitividade." }
             ].map((item, i) => (
               <div key={i} className="flex gap-6 group">
-                <span className="text-4xl font-black text-white/20 group-hover:text-brand-primary/50 transition-colors italic">{String(i+3).padStart(2, '0')}</span>
-                <div className="space-y-1">
-                  <h4 className="font-black text-white uppercase text-sm tracking-widest">{item.title}</h4>
-                  <p className="text-white/60 leading-relaxed font-medium">{item.desc}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section className="bg-black backdrop-blur-xl p-10 rounded-[3rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-sm space-y-8 relative overflow-hidden">
-          <div className="flex items-center gap-4 text-brand-primary">
-            <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center border border-brand-primary/40">
-              <Trophy className="w-6 h-6" />
-            </div>
-            <h3 className="text-2xl font-black uppercase tracking-tight text-white">Sistema de Pontuação e ELO</h3>
-          </div>
-
-          <div className="grid gap-8">
-            {[
-              { title: "Cálculo de Pontos (ELO)", desc: "Você ganha ou perde pontos dependendo da força dos times. Ganhar de um time forte dá mais pontos. Perder para um time mais fraco tira mais pontos." },
-              { title: "Duração dos Jogos", desc: "Os sets são disputados até 15 pontos e não têm tempo limite para acabar. O sistema marca a duração de cada jogo para identificar o jogador mais eficiente (aquele que vence suas partidas em menos tempo)." },
-              { title: "Bônus de Vitórias", desc: "A cada vitória consecutiva no dia, você recebe um bônus progressivo: +2 pontos na 2ª vitória, +4 na 3ª, +6 na 4ª e +8 da 5ª em diante. O bônus é resetado em caso de derrota ou ao fim da sessão." }
-            ].map((item, i) => (
-              <div key={i} className="flex gap-6 group">
-                <span className="text-4xl font-black text-white/20 group-hover:text-brand-primary/50 transition-colors italic">{String(i+8).padStart(2, '0')}</span>
+                <span className="text-4xl font-black text-white/20 group-hover:text-brand-primary/50 transition-colors italic">{String(i+7).padStart(2, '0')}</span>
                 <div className="space-y-1">
                   <h4 className="font-black text-white uppercase text-sm tracking-widest">{item.title}</h4>
                   <p className="text-white/60 leading-relaxed font-medium">{item.desc}</p>
@@ -109,25 +128,25 @@ export const RulesView: React.FC = () => {
             <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center border border-brand-primary/40">
               <Target className="w-6 h-6" />
             </div>
-            <h3 className="text-2xl font-black uppercase tracking-tight text-white">Níveis de Sócio (Tiers)</h3>
+            <h3 className="text-2xl font-black uppercase tracking-tight text-white">Patentes e Tiers (Seu Nível no Clube)</h3>
           </div>
 
           <div className="grid gap-4">
-            <p className="text-white/40 text-xs font-black uppercase tracking-widest mb-4">Seu nível é definido pelo ELO, volume de jogo e aproveitamento:</p>
+            <p className="text-white/40 text-xs font-black uppercase tracking-widest mb-4">Sua 'Patente' reflete sua evolução técnica e competitiva:</p>
             <div className="grid sm:grid-cols-2 gap-4">
               {[
-                { label: "Novato", color: "text-white/40", criteria: "Menos de 5 partidas jogadas" },
-                { label: "Bronze", color: "text-orange-500", criteria: "ELO abaixo de 1150" },
-                { label: "Prata", color: "text-slate-300", criteria: "ELO entre 1150 e 1250" },
-                { label: "Ouro", color: "text-yellow-500", criteria: "ELO entre 1250 e 1400" },
-                { label: "Elite", color: "text-brand-primary", criteria: "ELO entre 1400 e 1600" },
-                { label: "Lenda", color: "text-purple-400", criteria: "ELO entre 1600 e 1800" },
-                { label: "Mestre Supremo", color: "text-red-500", criteria: "ELO acima de 1800" }
+                { label: "Novato", color: "text-white/40", criteria: "Aqueles que ainda estão se integrando ao grupo." },
+                { label: "Bronze", color: "text-orange-500", criteria: "Jogadores em fase de evolução e aprendizado técnico." },
+                { label: "Prata", color: "text-slate-300", criteria: "O coração do clube: jogadores consistentes com bons fundamentos." },
+                { label: "Ouro", color: "text-yellow-500", criteria: "Jogadores com alto impacto técnico e tático nas partidas." },
+                { label: "Elite", color: "text-brand-primary", criteria: "O topo da cadeia: jogadores que definem o ritmo do jogo." },
+                { label: "Lenda", color: "text-purple-400", criteria: "Reservado para quem mantém ELO altíssimo por longos períodos." },
+                { label: "Mestre Supremo", color: "text-red-500", criteria: "O nível máximo de habilidade e liderança em quadra." }
               ].map((tier, i) => (
                 <div key={i} className="bg-white/5 p-4 rounded-2xl border border-white/5 flex items-center justify-between group hover:border-brand-primary/20 transition-all">
                   <div className="space-y-1">
                     <h4 className={`text-sm font-black uppercase tracking-tight ${tier.color}`}>{tier.label}</h4>
-                    <p className="text-[10px] font-bold text-white/40 uppercase">{tier.criteria}</p>
+                    <p className="text-[10px] font-bold text-white/40 uppercase leading-tight">{tier.criteria}</p>
                   </div>
                   <Target className={`w-5 h-5 opacity-20 group-hover:opacity-100 transition-opacity ${tier.color}`} />
                 </div>

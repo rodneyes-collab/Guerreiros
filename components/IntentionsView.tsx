@@ -3,6 +3,8 @@ import confetti from 'canvas-confetti';
 import { useIntentions } from '../src/hooks/useIntentions';
 import { useStore } from '../store';
 import { CalendarCheck, Copy, BellRing, Settings, UserCheck, UserX, Clock, ArrowRight, RotateCcw, Zap, Star, Shield, Trash2 } from 'lucide-react';
+import { EvasionIcon } from './EvasionIcon';
+import { calculateEvasionLevel } from '../utils/evasion';
 import { Player } from '../types';
 import { getFirestoreDateKey, getBrazilDay } from '../firebase';
 
@@ -84,14 +86,14 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
   }
 
   const goingPlayers = players
-    .filter(p => intentions.responses[p.id] === 'GOING' && p.status === 'active')
+    .filter(p => intentions.responses[p.id] === 'GOING' && p.status === 'active' && !p.isDM)
     .sort((a, b) => {
       const timeA = intentions.confirmationTimestamps?.[a.id] || 0;
       const timeB = intentions.confirmationTimestamps?.[b.id] || 0;
       return timeA - timeB;
     });
-  const notGoingPlayers = players.filter(p => intentions.responses[p.id] === 'NOT_GOING' && p.status === 'active');
-  const undecidedPlayers = players.filter(p => !intentions.responses[p.id] && p.status === 'active');
+  const notGoingPlayers = players.filter(p => intentions.responses[p.id] === 'NOT_GOING' && p.status === 'active' && !p.isDM);
+  const undecidedPlayers = players.filter(p => !intentions.responses[p.id] && p.status === 'active' && !p.isDM);
 
   const waitlistPlayers = players
     .filter(p => p.status === 'waitlist')
@@ -336,6 +338,12 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
                           </div>
                         )}
                         <span className="text-white text-sm font-bold">{p.name}</span>
+                        <span className="ml-2">
+                        <EvasionIcon 
+                          level={p.evasionLevel || calculateEvasionLevel(p as Player)} 
+                          customLabel={`${(p.evasionLevel || calculateEvasionLevel(p as Player)).charAt(0).toUpperCase() + (p.evasionLevel || calculateEvasionLevel(p as Player)).slice(1)} - ${p.wins || 0}V ${p.losses || 0}D`} 
+                        />
+                        </span>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -398,6 +406,12 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
                       </div>
                     )}
                     <span className="text-white text-sm font-bold">{p.name}</span>
+                    <span className="ml-2">
+                      <EvasionIcon 
+                        level={p.evasionLevel || calculateEvasionLevel(p as Player)} 
+                        customLabel={`${(p.evasionLevel || calculateEvasionLevel(p as Player)).charAt(0).toUpperCase() + (p.evasionLevel || calculateEvasionLevel(p as Player)).slice(1)} - ${p.wins || 0}V ${p.losses || 0}D`} 
+                      />
+                    </span>
                   </div>
                   {userRole === 'ADMIN' && (
                     <div className="flex items-center gap-2">
@@ -441,14 +455,17 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
             ) : (
               notGoingPlayers.map(p => (
                 <div key={p.id} className="flex items-center justify-between bg-red-500/5 p-3 rounded-xl border border-red-500/40">
-                  <div className="flex items-center gap-3 opacity-50">
-                    {userRole === 'ADMIN' && (
-                      <div className="shrink-0" title={`Nível: ${p.impactLevel === 3 ? 'Elite' : p.impactLevel === 2 ? 'Médio' : 'Base'}`}>
-                        {getImpactIcon(p.impactLevel)}
-                      </div>
-                    )}
-                    <span className="text-white text-sm font-medium line-through">{p.name}</span>
-                  </div>
+                    <div className="flex items-center gap-3 opacity-50">
+                      {userRole === 'ADMIN' && (
+                        <div className="shrink-0" title={`Nível: ${p.impactLevel === 3 ? 'Elite' : p.impactLevel === 2 ? 'Médio' : 'Base'}`}>
+                          {getImpactIcon(p.impactLevel)}
+                        </div>
+                      )}
+                      <span className="text-white text-sm font-medium line-through">{p.name}</span>
+                      <span className="ml-2">
+                        <EvasionIcon level={p.evasionLevel || calculateEvasionLevel(p as Player)} />
+                      </span>
+                    </div>
                   {userRole === 'ADMIN' && (
                     <div className="flex items-center gap-2">
                       <button

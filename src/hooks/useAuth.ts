@@ -1,5 +1,5 @@
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { 
   auth, 
   onAuthStateChanged, 
@@ -7,6 +7,7 @@ import {
   getRedirectResult,
   isSignInWithEmailLink, 
   signInWithEmailLink, 
+  signOut,
   db, 
   doc, 
   onSnapshot, 
@@ -15,26 +16,48 @@ import {
   OperationType,
   handleFirestoreError,
   setCurrentPlayerId,
-  trackAccess
+  trackAccess,
+  addDoc,
+  collection,
+  serverTimestamp
 } from '../../firebase';
 import { useStore } from '../../store';
 import { cleanObject } from '../../utils/helpers';
 import { Player } from '../../types';
 
+const logLoginAttempt = async (email: string | null, status: 'SUCCESS' | 'FAILURE', error?: string) => {
+  try {
+    await addDoc(collection(db, 'loginLogs'), {
+      email,
+      status,
+      error: error || null,
+      device: navigator.userAgent,
+      timestamp: new Date().toISOString(),
+      createdAt: serverTimestamp()
+    });
+  } catch (e) {
+    console.error('Sentinel: Failed to log login attempt', e);
+  }
+};
+
 export const useAuth = () => {
-  const { 
-    user,
-    userRole,
-    currentPlayer,
-    setUser, 
-    setUserRole, 
-    setCurrentPlayer, 
-    players, 
-    showNotification 
-  } = useStore();
+  const user = useStore(state => state.user);
+  const userRole = useStore(state => state.userRole);
+  const currentPlayer = useStore(state => state.currentPlayer);
+  const setUser = useStore(state => state.setUser);
+  const setUserRole = useStore(state => state.setUserRole);
+  const setCurrentPlayer = useStore(state => state.setCurrentPlayer);
+  const players = useStore(state => state.players);
+  const showNotification = useStore(state => state.showNotification);
 
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [isRoleLoading, setIsRoleLoading] = useState(true);
+
+  // Use a ref for players to always have the latest list in the onSnapshot closure without triggering re-runs
+  const playersRef = useRef<Player[]>(players);
+  useEffect(() => {
+    playersRef.current = players;
+  }, [players]);
 
   useEffect(() => {
     console.log('useAuth: Setting up onAuthStateChanged and Redirect Result');
@@ -44,15 +67,27 @@ export const useAuth = () => {
       .then((result) => {
         if (result?.user) {
           console.log('useAuth: Redirect login success', result.user.uid);
+          logLoginAttempt(result.user.email, 'SUCCESS');
           showNotification('Login realizado com sucesso!', 'success');
         }
       })
       .catch((error) => {
         console.error('useAuth: Error processing redirect result:', error);
-        if (error.code === 'auth/unauthorized-domain') {
-          showNotification('Erro: Domínio não autorizado no Firebase Console.', 'error');
-        } else {
-          showNotification('Erro ao completar login com Google.', 'error');
+        
+        // Storage isolated/blocked environments (like PWAs or iframes) might throw errors on startup check
+        const shouldIgnoreError = 
+          error.code === 'auth/web-storage-unsupported' || 
+          error.code === 'auth/operation-not-supported-in-this-environment' ||
+          error.message?.includes('missing initial state') ||
+          error.message?.includes('storage-partitioned');
+          
+        if (!shouldIgnoreError) {
+          logLoginAttempt(null, 'FAILURE', error.message);
+          if (error.code === 'auth/unauthorized-domain') {
+            showNotification('Erro: Domínio não autorizado no Firebase Console.', 'error');
+          } else {
+            showNotification('Erro ao completar login com Google.', 'error');
+          }
         }
       });
 
@@ -65,12 +100,14 @@ export const useAuth = () => {
       if (email) {
         signInWithEmailLink(auth, email, window.location.href)
           .then(() => {
+            logLoginAttempt(email, 'SUCCESS');
             window.localStorage.removeItem('emailForSignIn');
             showNotification('Login realizado com sucesso!', 'success');
             window.history.replaceState({}, document.title, window.location.pathname);
           })
           .catch((error) => {
             console.error('Erro ao fazer login com link:', error);
+            logLoginAttempt(email, 'FAILURE', error.message);
             showNotification('Link de login inválido ou expirado.', 'error');
           });
       }
@@ -104,30 +141,48 @@ export const useAuth = () => {
 
     const userRef = doc(db, 'users', user.uid);
     setIsRoleLoading(true);
+    const simpleEmail = window.localStorage.getItem('simpleLoginEmail')?.trim().toLowerCase();
     const unsubscribeUserDoc = onSnapshot(userRef, (docSnap) => {
       try {
+        const effectiveEmail = user.email?.trim().toLowerCase() || simpleEmail;
         if (docSnap.exists()) {
           const data = docSnap.data();
           let newRole: 'ADMIN' | 'MEMBER' = 'MEMBER';
-          if (user.email?.toLowerCase() === 'rodneyes@gmail.com') {
+          
+          // Priority 1: Official Owner
+          const isOwner = effectiveEmail === 'rodneyes@gmail.com';
+          
+          // Priority 2: Firestore Role
+          const roleFromDoc = data.role;
+          
+          // Priority 3: Player Profile (checked using ref to avoid loop)
+          const playerProfile = effectiveEmail ? playersRef.current.find(p => p.email?.trim().toLowerCase() === effectiveEmail) : null;
+          const isAdminFromProfile = playerProfile?.isAdmin === true;
+
+          if (isOwner || roleFromDoc === 'ADMIN' || isAdminFromProfile) {
             newRole = 'ADMIN';
-          } else {
-            newRole = data.role || 'MEMBER';
           }
           
+          console.log(`useAuth: Role check - isOwner: ${isOwner}, docRole: ${roleFromDoc}, profileAdmin: ${isAdminFromProfile} -> Result: ${newRole}`);
+
           if (userRole !== newRole) {
             setUserRole(newRole);
           }
         } else {
-          const defaultRole = user.email?.toLowerCase() === "rodneyes@gmail.com" ? 'ADMIN' : 'MEMBER';
+          // New User
+          const isOwner = effectiveEmail === 'rodneyes@gmail.com';
+          const playerProfile = effectiveEmail ? playersRef.current.find(p => p.email?.trim().toLowerCase() === effectiveEmail) : null;
+          const isAdminFromProfile = playerProfile?.isAdmin === true;
+          
+          const defaultRole = (isOwner || isAdminFromProfile) ? 'ADMIN' : 'MEMBER';
+          
           console.info('useAuth: User doc not found, creating default role:', defaultRole);
           setDoc(userRef, cleanObject({
             uid: user.uid,
-            email: user.email,
+            email: user.email || simpleEmail,
             role: defaultRole
           }), { merge: true }).catch(err => {
             console.error('useAuth: Error creating user doc:', err);
-            // Non-fatal, we already set the role locally
           });
           
           if (userRole !== defaultRole) {
@@ -153,7 +208,7 @@ export const useAuth = () => {
       console.log('useAuth: Cleaning up user doc listener');
       unsubscribeUserDoc();
     };
-  }, [user?.uid, user?.email]); // Only depend on user identity
+  }, [user?.uid, user?.email]); // Removed players to prevent infinite sync loop
 
   // Link user to player profile
   useEffect(() => {
@@ -203,23 +258,47 @@ export const useAuth = () => {
           const playerRef = doc(db, 'players', player.id);
           setDoc(playerRef, { uid: user.uid }, { merge: true }).catch(console.error);
         }
+      } else {
+        console.warn('useAuth: No player found for current user email:', user.email);
       }
     } else {
       setCurrentPlayer(null);
     }
   }, [user, players, setCurrentPlayer, showNotification]);
 
+  // Enforce access control for non-members once players are loaded (to support redirect login flow)
+  useEffect(() => {
+    if (user && players.length > 0) {
+      const urlParams = new URLSearchParams(window.location.search);
+      const invitePlayerId = urlParams.get('invite_player_id');
+      if (invitePlayerId) return; // Permit linking profile
+
+      const trimmedEmail = user.email?.trim().toLowerCase();
+      const isAdminEmail = trimmedEmail === 'rodneyes@gmail.com';
+      const player = players.find(p => p.email?.trim().toLowerCase() === trimmedEmail || p.uid === user.uid);
+      
+      if (!player && !isAdminEmail && user.email) {
+        console.warn('useAuth: Non-member/admin access denied. Signing out... email:', user.email);
+        signOut(auth).then(() => {
+          showNotification('Acesso negado: Este e-mail não está cadastrado como sócio ou administrador.', 'error');
+        }).catch(console.error);
+      }
+    }
+  }, [user, players, showNotification]);
+
   // Admin sync based on player profile
   useEffect(() => {
     if (user && players.length > 0) {
-      const isAdminEmail = user.email?.toLowerCase() === 'rodneyes@gmail.com';
-      const playerProfile = players.find(p => p.email?.trim().toLowerCase() === user.email?.trim().toLowerCase());
+      const simpleEmail = window.localStorage.getItem('simpleLoginEmail')?.trim().toLowerCase();
+      const effectiveEmail = user.email?.trim().toLowerCase() || simpleEmail;
+      const isAdminEmail = effectiveEmail === 'rodneyes@gmail.com';
+      const playerProfile = effectiveEmail ? players.find(p => p.email?.trim().toLowerCase() === effectiveEmail) : null;
       const shouldBeAdmin = isAdminEmail || playerProfile?.isAdmin;
 
       if (shouldBeAdmin && userRole !== 'ADMIN') {
         setUserRole('ADMIN');
         const userRef = doc(db, 'users', user.uid);
-        setDoc(userRef, cleanObject({ role: 'ADMIN', email: user.email }), { merge: true })
+        setDoc(userRef, cleanObject({ role: 'ADMIN', email: user.email || simpleEmail }), { merge: true })
           .catch(err => handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`));
       }
     }

@@ -19,30 +19,28 @@ export default defineConfig(({ mode }) => {
         tailwindcss(),
         VitePWA({
           registerType: 'autoUpdate',
-          includeAssets: ['logo.svg'],
+          includeAssets: ['logo.png'],
           manifest: {
-            name: 'Guerreiros Volleyball Club',
-            short_name: 'Guerreiros VC',
+            name: 'Guerreiros Volei',
+            short_name: 'Guerreiros Volei',
             description: 'Sistema de gestão de clubes de vôlei e geração de times equilibrados.',
-            theme_color: '#000000',
+            theme_color: '#064e3b',
             icons: [
               {
-                src: 'logo.svg',
+                src: 'logo.png',
                 sizes: '192x192',
-                type: 'image/svg+xml',
-                purpose: 'any'
+                type: 'image/png'
               },
               {
-                src: 'logo.svg',
+                src: 'logo.png',
                 sizes: '512x512',
-                type: 'image/svg+xml',
-                purpose: 'any'
+                type: 'image/png'
               },
               {
-                src: 'logo.svg',
+                src: 'logo.png',
                 sizes: '512x512',
-                type: 'image/svg+xml',
-                purpose: 'maskable'
+                type: 'image/png',
+                purpose: 'any maskable'
               }
             ]
           },
@@ -51,6 +49,10 @@ export default defineConfig(({ mode }) => {
           }
         })
       ],
+      build: {
+        outDir: 'dist',
+        emptyOutDir: true,
+      },
       define: {
         'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY || ''),
         'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY || '')

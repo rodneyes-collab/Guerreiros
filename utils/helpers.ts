@@ -1,5 +1,5 @@
 
-import { Player } from '../types';
+import { Player, Gender } from '../types';
 import { getFirestoreDateKey } from '../firebase';
 
 export const getTodayKey = () => {
@@ -64,6 +64,30 @@ export const translateGender = (gender: string) => {
   }
 };
 
+export const formatBrazilianDate = (dateString: string | number) => {
+  try {
+    let dateObj: Date;
+    if (typeof dateString === 'string') {
+      if (dateString.includes('T')) {
+        dateObj = new Date(dateString);
+      } else {
+        const [year, month, day] = dateString.split('-');
+        return `${day}/${month}`;
+      }
+    } else {
+      dateObj = new Date(dateString);
+    }
+
+    return new Intl.DateTimeFormat('pt-BR', { 
+      timeZone: 'America/Sao_Paulo', 
+      day: '2-digit', 
+      month: '2-digit' 
+    }).format(dateObj);
+  } catch {
+    return 'Data';
+  }
+};
+
 export const safeLocalStorage = {
   getItem: (key: string) => {
     try {
@@ -87,4 +111,30 @@ export const safeLocalStorage = {
       console.warn('LocalStorage remove failed:', e);
     }
   }
+};
+
+export const getSafePlayer = (playerId: string, players: Player[]): Player => {
+  const player = players.find(p => p.id === playerId);
+  if (player) return player;
+  
+  // Return a "Ghost Player" to prevent UI crashes on orphaned IDs
+  return {
+    id: playerId,
+    name: 'Sócio Removido',
+    isAdmin: false,
+    elo: 1200,
+    email: undefined,
+    uid: undefined,
+    gender: Gender.MALE,
+    isOfficialSetter: false,
+    matchesPlayed: 0,
+    dailyMatches: 0,
+    dailyWins: 0,
+    dailyLosses: 0,
+    dailyEloGain: 0,
+    wins: 0,
+    losses: 0,
+    arrivalOrder: 999,
+    status: 'inactive'
+  } as Player;
 };

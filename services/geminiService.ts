@@ -7,6 +7,19 @@ const CACHE_KEY = 'spikegen_ai_cache_v2';
 const MAX_CACHE_ITEMS = 20; // Reduzido para maior segurança
 const MAX_CACHE_SIZE_BYTES = 1.0 * 1024 * 1024; // 1MB (limite conservador)
 
+const isQuotaOrBillingError = (error: any): boolean => {
+  const msg = (error?.message || "").toLowerCase();
+  return (
+    msg.includes("429") ||
+    msg.includes("403") ||
+    msg.includes("spending cap") ||
+    msg.includes("quota") ||
+    msg.includes("billing") ||
+    msg.includes("resource_exhausted") ||
+    msg.includes("exceeded")
+  );
+};
+
 /**
  * Limpa chaves antigas do localStorage de versões anteriores do app
  * que não são mais necessárias devido à migração para Firebase.
@@ -157,41 +170,40 @@ const pcmToWavUrl = (pcmBase64: string, sampleRate: number = 24000): string => {
 };
 
 /**
- * Helper to call the Gemini Cloud Function proxy.
+ * Helper to get a fresh instance of the Gemini AI client.
  */
-const callGeminiProxy = async (payload: any): Promise<any> => {
-  try {
-    const response = await fetch('/api/gemini', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
+const getAI = (isTTS = false) => {
+  const key = isTTS 
+    ? (process.env.API_KEY || process.env.GEMINI_API_KEY) 
+    : process.env.GEMINI_API_KEY;
     
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({ error: 'Unknown error' }));
-      throw new Error(err.error || `HTTP error! status: ${response.status}`);
-    }
-    
-    return await response.json();
-  } catch (error) {
-    console.error("[Gemini Proxy] Error:", error);
-    throw error;
-  }
+  return new GoogleGenAI({ apiKey: key || "" });
 };
 
 /**
- * Analyzes a match between two teams.
+ * Analyzes a match between two teams, including balance metrics and swap explanation.
  */
-export const analyzeMatch = async (teamA: Team, teamB: Team): Promise<string> => {
+export const analyzeMatch = async (result: GenerationResult, attendance: Player[]): Promise<string> => {
+  const { teamA, teamB, swaps } = result;
   const teamAIds = [teamA.setter?.id, ...teamA.players.map(p => p.id)].sort().join(',');
   const teamBIds = [teamB.setter?.id, ...teamB.players.map(p => p.id)].sort().join(',');
-  const cacheKey = `analysis_v2_${teamAIds}_vs_${teamBIds}`;
+  const cacheKey = `analysis_v3_${teamAIds}_vs_${teamBIds}`;
 
   if (analysisCache[cacheKey]) return analysisCache[cacheKey];
 
-  const formatPlayer = (p: Player) => `${p.name} (ELO:${p.elo}, Vit:${p.wins})`;
+  const ai = getAI();
+  
+  const formatPlayer = (p: Player) => `${p.name} (ELO:${p.elo}, Impacto:${p.impactLevel || 1})`;
   const playersA = [teamA.setter, ...teamA.players].filter((p): p is Player => p !== null).map(formatPlayer).join(', ');
   const playersB = [teamB.setter, ...teamB.players].filter((p): p is Player => p !== null).map(formatPlayer).join(', ');
+  
+  const swapInfo = swaps && swaps.length > 0 
+    ? swaps.map(s => {
+        const pA = attendance.find(p => p.id === s.playerA)?.name || 'Desconhecido';
+        const pB = attendance.find(p => p.id === s.playerB)?.name || 'Desconhecido';
+        return `${pA} <-> ${pB}`;
+      }).join(', ')
+    : "Nenhuma troca de refinamento necessária.";
 
   const prompt = `Analise Técnica de Partida (Guerreiros Volleyball):
     
@@ -200,21 +212,33 @@ export const analyzeMatch = async (teamA: Team, teamB: Team): Promise<string> =>
     
     TIME B (Média ELO: ${Math.round(teamB.totalElo / (teamB.players.length + (teamB.setter ? 1 : 0)))}):
     Jogadores: ${playersB}
+
+    AJUSTES DE BALANCEAMENTO FEITOS:
+    ${swapInfo}
     
     TAREFA:
-    1. Analise o equilíbrio das equipes com base no ELO e histórico de vitórias.
-    2. Determine a probabilidade de vitória para cada time (%).
-    3. Justifique a vantagem técnica (ex: força do levantador, consistência do grupo).
+    1. Analise o equilíbrio das equipes (ELO e Nível de Impacto).
+    2. Explique como as trocas feitas ajudaram a equilibrar os times (foram necessárias para otimizar ELO ou Nível de Impacto?).
+    3. Determine a probabilidade de vitória para cada time (%).
     
-    ESTILO: Analítico, direto e profissional. Max 80 palavras.`;
+    ESTILO: Analítico, direto e profissional. Max 100 palavras.`;
 
   try {
-    const data = await callGeminiProxy({ prompt, tool: 'analysis' });
-    const result = data.text || "Análise indisponível.";
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: prompt,
+      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+    });
+    const result = response.text || "Análise indisponível.";
     analysisCache[cacheKey] = result;
     saveCache(analysisCache);
     return result;
   } catch (error: any) {
+    if (isQuotaOrBillingError(error)) {
+      console.warn("AI Analysis Quota/Billing/Permission Reached (429/403/RESOURCE_EXHAUSTED). Falling back.");
+      return "Análise temporariamente indisponível. O sistema realizou o balanceamento baseado em ELO e Níveis de Impacto técnico individual (Saque/Ataque/Defesa).";
+    }
+    console.error("Erro na análise técnica:", error);
     return "Falha na análise técnica.";
   }
 };
@@ -246,6 +270,8 @@ export const verifyRules = async (
 
   if (analysisCache[cacheKey]) return analysisCache[cacheKey];
 
+  const ai = getAI();
+  
   // Mapear nomes para os IDs da última partida para facilitar a leitura da IA
   const getNamesFromIds = (ids: string[]) => {
     return ids.map(id => attendanceList.find(p => p.id === id)?.name || id).join(', ');
@@ -288,8 +314,12 @@ export const verifyRules = async (
     ESTILO: Respostas equilibradas, técnicas e diretas. Use emojis. Max 200 palavras.`;
 
   try {
-    const data = await callGeminiProxy({ prompt, tool: 'audit' });
-    const auditResult = data.text || "Auditoria concluída.";
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: prompt,
+      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+    });
+    const auditResult = response.text || "Auditoria concluída. Escalação segue os critérios de rodízio e equilíbrio do clube.";
     analysisCache[cacheKey] = auditResult;
     saveCache(analysisCache);
     return auditResult;
@@ -307,30 +337,46 @@ export const generateDailySummaryNarration = async (stats: {
   dailyKing?: string;
   matchesCount?: number;
   rankingChanges?: string[];
+  date?: string;
+  avgMatchTime?: number;
 }): Promise<string> => {
-  const cacheKey = `summary_v4_${stats.mvp}_${stats.bestSetter}_${stats.dailyKing}_${stats.matchesCount}_${stats.rankingChanges?.join(',')}`;
+  const cacheKey = `summary_v6_${stats.mvp}_${stats.bestSetter}_${stats.dailyKing}_${stats.matchesCount}_${stats.rankingChanges?.join(',')}_${stats.date}_${stats.avgMatchTime}`;
   if (analysisCache[cacheKey]) return analysisCache[cacheKey];
 
+  const ai = getAI();
   const rankingInfo = stats.rankingChanges && stats.rankingChanges.length > 0
     ? `\n- Mudanças no Ranking Geral: ${stats.rankingChanges.join(', ')}`
     : '';
 
-  const prompt = `Você é um locutor esportivo brasileiro carismático e empolgado.
-    Resumo do Dia (Guerreiros Volleyball):
+  const prompt = `Você é um narrador esportivo brasileiro carismático e enérgico do Guerreiros Volleyball.
+    Resumo do Dia:
+    - Data: ${stats.date || new Date().toLocaleDateString('pt-BR')}
     - Partidas: ${stats.matchesCount || 0}
-    - MVP: ${stats.mvp || 'N/A'}
-    - Melhor Levantador: ${stats.bestSetter || 'N/A'}
-    - Rei do Dia (Maior Ganho ELO): ${stats.dailyKing || 'N/A'}${rankingInfo}
+    - Tempo médio das partidas: ${stats.avgMatchTime || 'não disponível'} minutos
+    - MVP (Maior Pontuador/Destaque): ${stats.mvp || 'N/A'}
+    - Melhor Levantador(a): ${stats.bestSetter || 'N/A'}
+    - Rei/Rainha do Dia (Maior Ganho ELO): ${stats.dailyKing || 'N/A'}${rankingInfo}
     
-    TAREFA: Gere um roteiro de locução curto (max 4 frases) que soe NATURAL e FLUIDO, como se estivesse comentando ao vivo. 
-    Mencione as vitórias e derrotas de quem subiu no ranking se as informações estiverem presentes.
-    Use pontuação (vírgulas e pontos) para criar pausas naturais. Use gírias leves de vôlei se apropriado. 
-    NÃO faça listas. NÃO dê opções. Apenas o texto da narração falada.
-    Use "Equipe" em vez de "Time" para evitar erros de pronúncia.`;
+    TAREFA: Gere um roteiro de locução curto (max 4 frases) que soe NATURAL e FLUIDO, como se estivesse comentando ao vivo.
+    MUITO IMPORTANTE: A PRIMEIRA FRASE DEVE SER EXATAMENTE: "Resumo da partida do dia ${stats.date || new Date().toLocaleDateString('pt-BR')}:".
+    
+    INSTRUÇÕES GERAIS:
+    1. Gênero: Analise o NOME e identifique o gênero para adaptar:
+       - Levantador/Levantadora.
+       - Rei/Rainha do Dia.
+       Se não tiver certeza, use as formas neutras como "Levantador(a)" ou "Rei/Rainha".
+    2. Nomes e Placares: Mencione os jogadores e suas conquistas. Se houver placares elásticos (ex: 15x0 ou 15x5), chame de "atropelo" ou "domínio absoluto". Se for 15x14, destaque como "jogo de nervos" ou "vitória na raça".
+    3. Estilo: Use pontuação para pausas naturais. Use gírias de vôlei como "ace", "bola de cheque", "mão de pau". NÃO faça listas.
+    4. Termos: Use "Equipe" em vez de "Time".
+    5. Fechamento: Finalize dizendo "Guerreiros Volleyball: onde o racha é de outro nível!".`;
 
   try {
-    const data = await callGeminiProxy({ prompt, tool: 'summary' });
-    const result = data.text || "Racha épico hoje!";
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: prompt,
+      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+    });
+    const result = response.text || "Racha épico hoje! Parabéns a todos os guerreiros!";
     analysisCache[cacheKey] = result;
     saveCache(analysisCache);
     return result;
@@ -349,6 +395,7 @@ export const generateTeamAnnouncementAudio = async (teamA: Team, teamB: Team): P
   const cacheKey = `teams_audio_v1_${teamANames}_vs_${teamBNames}`;
   if (analysisCache[cacheKey]) return analysisCache[cacheKey];
 
+  const ai = getAI(true);
   const prompt = `Você é um locutor esportivo brasileiro carismático e empolgado.
     
     TAREFA: Narre a escalação das duas equipes abaixo de forma NATURAL, FLUIDA e RÁPIDA. 
@@ -363,11 +410,28 @@ export const generateTeamAnnouncementAudio = async (teamA: Team, teamB: Team): P
     - Use "Equipe" em vez de "Time".`;
 
   try {
-    const data = await callGeminiProxy({ prompt, isTTS: true, tool: 'teams_audio' });
-    const base64Audio = data.audio;
+    const response = await ai.models.generateContent({
+      model: "gemini-3.1-flash-tts-preview",
+      contents: [{ parts: [{ text: prompt }] }],
+      config: {
+        responseModalities: [Modality.AUDIO],
+        speechConfig: {
+          voiceConfig: { 
+            prebuiltVoiceConfig: { voiceName: 'Zephyr' } 
+          },
+        },
+      },
+    });
+    
+    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
     const result = base64Audio ? pcmToWavUrl(base64Audio) : null;
+    
     return result;
   } catch (error: any) {
+    if (isQuotaOrBillingError(error)) {
+      console.warn("AI Audio Quota or Permission Reached (429/403/RESOURCE_EXHAUSTED). Falling back.");
+      return null;
+    }
     console.error("Error generating team announcement audio:", error);
     return null;
   }
@@ -382,34 +446,81 @@ export const generateDailySummaryAudio = async (stats: {
   dailyKing?: string;
   matchesCount?: number;
   rankingChanges?: string[]; // Adicionado campo para mudanças no ranking
+  date?: string;
+  avgMatchTime?: number;
 }): Promise<string | null> => {
-  const cacheKey = `summary_audio_v4_${stats.mvp}_${stats.bestSetter}_${stats.dailyKing}_${stats.matchesCount}_${stats.rankingChanges?.join(',')}`;
+  const cacheKey = `summary_audio_v8_${stats.mvp}_${stats.bestSetter}_${stats.dailyKing}_${stats.matchesCount}_${stats.rankingChanges?.join(',')}_${stats.date}_${stats.avgMatchTime}`;
   if (analysisCache[cacheKey]) return analysisCache[cacheKey];
 
+  const ai = getAI(true);
   const rankingInfo = stats.rankingChanges && stats.rankingChanges.length > 0
     ? `\n- Mudanças no Ranking Geral: ${stats.rankingChanges.join(', ')}`
     : '';
 
-  const prompt = `Você é um locutor esportivo brasileiro carismático e empolgado.
-    Resumo do Dia (Guerreiros Volleyball):
+  const prompt = `Você é um narrador esportivo brasileiro carismático e enérgico do Guerreiros Volleyball.
+    Resumo do Dia:
+    - Data da partida: ${stats.date || new Date().toLocaleDateString('pt-BR')}
     - Partidas: ${stats.matchesCount || 0}
-    - MVP: ${stats.mvp || 'N/A'}
-    - Melhor Levantador: ${stats.bestSetter || 'N/A'}
-    - Rei do Dia (Maior Ganho ELO): ${stats.dailyKing || 'N/A'}${rankingInfo}
+    - Tempo médio das partidas: ${stats.avgMatchTime || 'não disponível'} minutos
+    - MVP (Maior Pontuador/Destaque): ${stats.mvp || 'N/A'}
+    - Melhor Levantador(a): ${stats.bestSetter || 'N/A'}
+    - Rei/Rainha do Dia (Maior Ganho ELO): ${stats.dailyKing || 'N/A'}${rankingInfo}
     
-    TAREFA: Narre os resultados acima de forma NATURAL e FLUIDA.
-    MUITO IMPORTANTE: Você DEVE citar o NOME de todos os jogadores mencionados (MVP, Melhor Levantador e Rei do Dia) de forma clara.
-    Use entonação de rádio esportivo. Não faça listas. 
-    Se houver mudanças no ranking, cite-as com empolgação, mencionando também as vitórias e derrotas que o jogador teve no dia para subir de posição.
-    Fale de forma direta e enérgica.
-    Use "Equipe" em vez de "Time".`;
+    TAREFA: Narre os resultados acima de forma NATURAL, FLUIDA e ENÉRGICA para o Guerreiros Volleyball.
+    MUITO IMPORTANTE: A PRIMEIRA FRASE DEVE SER EXATAMENTE: "Resumo da partida do dia ${stats.date || new Date().toLocaleDateString('pt-BR')} do Guerreiros Volleyball:".
+    
+    INSTRUÇÕES GERAIS:
+    1. Gênero: Analise o NOME e identifique o gênero para adaptar:
+       - Levantador/Levantadora.
+       - Rei/Rainha do Dia (se mulher, Rainha do Dia; se homem, Rei do Dia).
+       Se não tiver certeza, use as formas neutras como "Levantador(a)" ou "Rei/Rainha".
+    2. Nomes e Emoção: Você DEVE citar o NOME de todos os jogadores mencionados (MVP, Melhor Levantador e Rei/Rainha do Dia). Analise o placar: vitórias dominantes indicam entrosamento perfeito; vitórias apertadas mostram resiliência. Use termos como "ponto a ponto" ou "atropelou sem dó".
+    3. Estilo: Use entonação de rádio esportivo vibrante. Não faça listas.
+    4. Rankings: Se houver mudanças no ranking, mencione as vitórias e derrotas. NÃO use a palavra "hoje" ao citar mudanças de ranking.
+    5. Termos: MVP deve ser mantido como "MVP".
+    6. Fechamento: Finalize dizendo de forma triunfal: "Guerreiros Volleyball: onde o racha é de outro nível!".
+    7. Fale de forma direta e enérgica. Use "Equipe" em vez de "Time".`;
 
   try {
-    const data = await callGeminiProxy({ prompt, isTTS: true, tool: 'summary_audio' });
-    const base64Audio = data.audio;
+    // Retry logic for transient errors
+    let response;
+    let retries = 2;
+    while (retries >= 0) {
+      try {
+        response = await ai.models.generateContent({
+          model: "gemini-3.1-flash-tts-preview",
+          contents: [{ parts: [{ text: prompt }] }],
+          config: {
+            responseModalities: [Modality.AUDIO],
+            speechConfig: {
+              voiceConfig: { 
+                prebuiltVoiceConfig: { voiceName: 'Zephyr' } 
+              },
+            },
+          },
+        });
+        break;
+      } catch (error: any) {
+        if (retries > 0 && (error.message?.includes('500') || error.message?.includes('429'))) {
+          retries--;
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          continue;
+        }
+        throw error;
+      }
+    }
+    
+    if (!response) throw new Error("AI TTS failed after retries");
+
+    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
     const result = base64Audio ? pcmToWavUrl(base64Audio) : null;
+    
     return result;
   } catch (error: any) {
+    if (isQuotaOrBillingError(error) || error?.message?.includes('500')) {
+      console.warn("AI Summary Audio transient error or Quota/Permission Reached (429/403/RESOURCE_EXHAUSTED). Falling back.");
+      return null;
+    }
     console.error("Error generating summary audio:", error);
     return null;
   }
@@ -423,14 +534,32 @@ export const getNarrationAudio = async (text: string): Promise<string | null> =>
   const cacheKey = `tts_${btoa(unescape(encodeURIComponent(text.substring(0, 100))))}`;
   if (analysisCache[cacheKey]) return analysisCache[cacheKey];
 
+  const ai = getAI(true);
   try {
     // Prefixo mais simples que o modelo entende como instrução de estilo sem ler literalmente
     const styledText = `Com empolgação de locutor esportivo: ${text}`;
-    const data = await callGeminiProxy({ prompt: styledText, isTTS: true, tool: 'narration' });
-    const base64Audio = data.audio;
+    
+    const response = await ai.models.generateContent({
+      model: "gemini-3.1-flash-tts-preview",
+      contents: [{ parts: [{ text: styledText }] }],
+      config: {
+        responseModalities: [Modality.AUDIO],
+        speechConfig: {
+          voiceConfig: { 
+            // 'Zephyr' é naturalmente mais rápido e enérgico
+            prebuiltVoiceConfig: { voiceName: 'Zephyr' } 
+          },
+        },
+      },
+    });
+    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
     const result = base64Audio ? pcmToWavUrl(base64Audio) : null;
+    
     return result;
   } catch (error: any) {
+    if (isQuotaOrBillingError(error)) {
+      console.warn("AI TTS Quota Reached (429/RESOURCE_EXHAUSTED).");
+    }
     return null;
   }
 };
@@ -530,8 +659,14 @@ export const speakNarration = async (text: string, forceAIVoice = false): Promis
  * Scans the database data to identify anomalies using AI.
  */
 export const detectAnomalies = async (data: { players: Player[], matches: any[], metadata: any }): Promise<string> => {
+  const ai = getAI();
+  
+  const currentSystemDate = new Date().toISOString();
   const prompt = `Você é um Agente de IA Especialista em Integridade de Dados para o Guerreiros Volleyball Club. 
     Sua missão é varrer os dados do banco de dados e identificar ANOMALIAS, INCONSISTÊNCIAS ou possíveis ERROS que possam causar crashes ou injustiças no sistema.
+
+    DATA ATUAL DO SISTEMA: ${currentSystemDate}
+    (Nota: Se as datas das partidas estiverem próximas a esta data, elas estão CORRETAS. Não considere 2026 como futuro se o sistema disser que estamos em 2026).
 
     DADOS PARA ANÁLISE:
     - Jogadores: ${JSON.stringify(data.players.map(p => ({ id: p.id, name: p.name, elo: p.elo, matches: p.matchesPlayed, wins: p.wins, losses: p.losses })))}
@@ -556,9 +691,18 @@ export const detectAnomalies = async (data: { players: Player[], matches: any[],
     Mantenha o tom profissional e técnico. Max 300 palavras.`;
 
   try {
-    const res = await callGeminiProxy({ prompt, tool: 'anomalies' });
-    return res.text || "Sem anomalias detectadas.";
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: prompt,
+      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+    });
+    return response.text || "Não foi possível realizar a varredura de anomalias no momento.";
   } catch (error: any) {
+    if (isQuotaOrBillingError(error)) {
+      console.warn("AI Anomaly Detection Quota Reached (429/RESOURCE_EXHAUSTED).");
+      return "Limite de requisições da IA atingido. Tente novamente mais tarde.";
+    }
+    console.error("Erro na detecção de anomalias:", error);
     return "Falha técnica ao processar a varredura de anomalias.";
   }
 };
@@ -572,6 +716,8 @@ export const analyzeBillingCosts = async (billingData: {
   services: { name: string, cost: number, savings?: number }[];
   usage: any;
 }): Promise<string> => {
+  const ai = getAI();
+  
   const prompt = `Você é um Consultor Sênior de FinOps e Especialista em Google Cloud. 
     Analise o faturamento atual do aplicativo Guerreiros Volleyball e sugira estratégias de otimização de custos.
 
@@ -597,11 +743,19 @@ export const analyzeBillingCosts = async (billingData: {
     ESTILO: Tom executivo, consultivo, direto e útil. Use Markdown e emojis. Max 250 palavras.`;
 
   try {
-    const res = await callGeminiProxy({ prompt, tool: 'billing' });
-    return res.text || "Consulta de custos concluída.";
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: prompt,
+      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+    });
+    return response.text || "O consultor de custos está ocupado no momento. Tente novamente mais tarde.";
   } catch (error: any) {
+    if (isQuotaOrBillingError(error)) {
+      console.warn("AI Billing Analysis Quota Reached (429/RESOURCE_EXHAUSTED).");
+      return "Não foi possível conectar com o Consultor de IA (Limite de cota atingido).";
+    }
     console.error("Erro na análise de custos:", error);
-    return "Consulta indisponível.";
+    return "Não foi possível conectar com o Consultor de IA. Verifique sua conexão ou cota de IA.";
   }
 };
 
@@ -609,6 +763,7 @@ export const analyzeBillingCosts = async (billingData: {
  * Generates a creative birthday message for a player.
  */
 export const generateBirthdayMessage = async (playerName: string): Promise<string> => {
+  const ai = getAI();
   const prompt = `Gere uma mensagem de aniversário curta, criativa e animada para um sócio de um clube de vôlei. 
     O nome do sócio é "${playerName}". 
     A mensagem deve ser em português, usar emojis de vôlei e festa, e ter um tom de união e celebração. 
@@ -616,10 +771,20 @@ export const generateBirthdayMessage = async (playerName: string): Promise<strin
     Não use aspas na resposta. Max 50 palavras.`;
 
   try {
-    const res = await callGeminiProxy({ prompt, tool: 'birthday' });
-    return res.text || `Parabéns, ${playerName}! 🏐🎉`;
-  } catch (error) {
-    return `Parabéns, ${playerName}! 🏐🎉`;
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: prompt,
+      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+    });
+
+    return response.text || `Parabéns, ${playerName}! Que seu dia seja repleto de aces e vitórias dentro e fora de quadra! 🏐🎉`;
+  } catch (error: any) {
+    if (isQuotaOrBillingError(error)) {
+      console.warn("AI Birthday Message Quota Reached (429/RESOURCE_EXHAUSTED).");
+    } else {
+      console.error("Error generating birthday message:", error);
+    }
+    return `Parabéns, ${playerName}! Que seu dia seja repleto de aces e vitórias dentro e fora de quadra! 🏐🎉`;
   }
 };
 

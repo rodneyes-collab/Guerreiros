@@ -1,340 +1,313 @@
-import React from 'react';
-import { useStore } from '../store';
+import React, { useMemo } from 'react';
+import { getFirestoreDateKey } from '../firebase';
+// No active local types from types.ts needed here now
 import { 
-  Trophy, 
-  Target, 
-  Zap, 
   Users,
-  Sparkles,
-  ArrowRight,
-  RotateCcw,
+  Activity,
+  BarChart3,
+  Swords,
   Clock,
-  PlayCircle
+  Timer
 } from 'lucide-react';
-import { formatTime } from '../utils/helpers';
-import { Player } from '../types';
+import { 
+  ResponsiveContainer, 
+  XAxis, 
+  YAxis, 
+  Tooltip, 
+  CartesianGrid,
+  BarChart,
+  Bar,
+  Cell
+} from 'recharts';
 
 interface DashboardViewProps {
-  generateDailySummary: () => void;
-  isGeneratingSummary: boolean;
-  refreshPlayers: () => Promise<void>;
-  userRole?: string;
+  players: any[];
+  matches: any[];
+  attendance: any[];
+  rankingPeriod: 'session' | 'career';
+  selectedDailyDate: string;
 }
 
-export const DashboardView: React.FC<DashboardViewProps> = ({
-  generateDailySummary,
-  refreshPlayers,
-  userRole
+export const GlobalStats: React.FC<DashboardViewProps> = ({
+  players: allPlayers,
+  matches,
+  attendance,
+  rankingPeriod,
+  selectedDailyDate
 }) => {
-  const { players: allPlayers, matches, isNarratingSummary, isSyncing, generationResult, attendance, elapsedTime } = useStore();
-  const players = React.useMemo(() => allPlayers.filter(p => p.status !== 'inactive'), [allPlayers]);
-  const [startY, setStartY] = React.useState(0);
-  const [pullDistance, setPullDistance] = React.useState(0);
-  const [isPulling, setIsPulling] = React.useState(false);
+  const players = useMemo(() => 
+    allPlayers.filter(p => (p.status === 'active' || !p.status || p.status === '') && !p.isDM),
+    [allPlayers]
+  );
 
-  const handleTouchStart = (e: React.TouchEvent) => {
-    if (window.scrollY === 0) {
-      setStartY(e.touches[0].pageY);
-      setIsPulling(true);
-    }
-  };
+  const todaysMatches = useMemo(() => {
+    return matches;
+  }, [matches]);
 
-  const handleTouchMove = (e: React.TouchEvent) => {
-    if (!isPulling) return;
-    const currentY = e.touches[0].pageY;
-    const distance = currentY - startY;
-    if (distance > 0) {
-      setPullDistance(Math.min(distance * 0.5, 80));
-      if (distance > 10) {
-        if (e.cancelable) e.preventDefault();
+  const playersInSession = useMemo(() => {
+    return players.filter(player => {
+      return todaysMatches.some(m => (m.teamA || []).includes(player.id) || (m.teamB || []).includes(player.id));
+    });
+  }, [players, todaysMatches]);
+
+  const activePlayers = useMemo(() => {
+    const playerIds = new Set<string>();
+    todaysMatches.forEach(m => {
+      (m.teamA || []).forEach((id: string) => playerIds.add(id));
+      (m.teamB || []).forEach((id: string) => playerIds.add(id));
+    });
+    return Array.from(playerIds);
+  }, [todaysMatches]);
+
+  const activePlayersCount = activePlayers.length;
+  const totalMatches = todaysMatches.length;
+
+  const globalWinRate = useMemo(() => {
+    // Should this be daily? The request says "os resultados... estao com valores acumulados".
+    // I will keep the winRate as career if it's supposed to be historical, 
+    // but the user wants "valores do dia". Let me use daily win rate.
+    
+    // Actually, I will follow the user's request for "valores do dia".
+    
+    const totalMatchesPlayed = playersInSession.reduce((s, p) => {
+        // Need to calculate matches played by this player in TODAY's matches
+        return s + todaysMatches.reduce((mCount, m) => mCount + ((m.teamA || []).includes(p.id) || (m.teamB || []).includes(p.id) ? 1 : 0), 0);
+    }, 0);
+    
+    const totalWins = playersInSession.reduce((s, p) => {
+        return s + todaysMatches.reduce((wCount, m) => wCount + (
+            ((m.teamA || []).includes(p.id) || (m.teamB || []).includes(p.id)) && ((m.winner === 'A' && (m.teamA || []).includes(p.id)) || (m.winner === 'B' && (m.teamB || []).includes(p.id))) ? 1 : 0
+        ), 0);
+    }, 0);
+
+    return totalMatchesPlayed > 0 ? ((totalWins / totalMatchesPlayed) * 100).toFixed(1) : '0';
+  }, [playersInSession, todaysMatches]);
+
+  const totalSessionTime = useMemo(() => {
+    if (todaysMatches.length === 0) return '0 min';
+    
+    // Calculate session span: min(startTime) to max(endTime)
+    const sorted = [...todaysMatches].sort((a, b) => {
+      const aTime = a.startTime || a.timestamp;
+      const bTime = b.startTime || b.timestamp;
+      return (aTime || 0) - (bTime || 0);
+    });
+    
+    const first = sorted[0];
+    const last = sorted[sorted.length - 1];
+    
+    const DEFAULT_DUR_MS = 720 * 1000;
+    
+    const startTime = first.startTime || (first.timestamp - (first.duration ? first.duration * 1000 : DEFAULT_DUR_MS));
+    const endTime = last.endTime || (last.startTime ? last.startTime + (last.duration ? last.duration * 1000 : DEFAULT_DUR_MS) : last.timestamp);
+    
+    return `${Math.round((endTime - startTime) / (1000 * 60))} min`;
+  }, [todaysMatches]);
+
+  const avgMatchDuration = useMemo(() => {
+    if (todaysMatches.length === 0) return '0 min';
+    const totalSeconds = todaysMatches.reduce((s, m) => s + (m.duration || 720), 0);
+    return `${Math.round((totalSeconds / todaysMatches.length) / 60)} min`;
+  }, [todaysMatches]);
+
+  const playerRestStats = useMemo(() => {
+    if (todaysMatches.length === 0 || players.length === 0) return '0 min';
+
+    // Group matches by date to calculate per-session rest
+    const matchesByDate: Record<string, any[]> = {};
+    todaysMatches.forEach(m => {
+      if (!matchesByDate[m.date]) matchesByDate[m.date] = [];
+      matchesByDate[m.date].push(m);
+    });
+
+    const sessions = Object.values(matchesByDate);
+    let totalAvgRest = 0;
+    let sessionsCount = 0;
+
+    sessions.forEach(sessionMatches => {
+      const sorted = [...sessionMatches].sort((a, b) => (a.startTime || a.timestamp) - (b.startTime || b.timestamp));
+      const first = sorted[0];
+      const last = sorted[sorted.length - 1];
+      const DEFAULT_DUR_MS = 12 * 60 * 1000; // 12 min default
+      const startTime = first.startTime || (first.timestamp - (first.duration ? first.duration * 1000 : DEFAULT_DUR_MS));
+      const endTime = last.endTime || (last.startTime ? last.startTime + (last.duration ? last.duration * 1000 : DEFAULT_DUR_MS) : last.timestamp);
+      const totalSessionMinutes = (endTime - startTime) / (1000 * 60);
+
+      const playersInThisSession = players.filter(player => {
+        return sessionMatches.some(m => (m.teamA || []).includes(player.id) || (m.teamB || []).includes(player.id));
+      });
+
+      if (playersInThisSession.length > 0) {
+        let sessionTotalRest = 0;
+        playersInThisSession.forEach(player => {
+          const playerTimePlayed = sessionMatches.reduce((acc, m) => {
+            const playedInThisMatch = (m.teamA || []).includes(player.id) || (m.teamB || []).includes(player.id);
+            return acc + (playedInThisMatch ? (m.duration || 720) / 60 : 0);
+          }, 0);
+          sessionTotalRest += Math.max(0, totalSessionMinutes - playerTimePlayed);
+        });
+        totalAvgRest += sessionTotalRest / playersInThisSession.length;
+        sessionsCount++;
       }
-    }
-  };
+    });
 
-  const handleTouchEnd = async () => {
-    if (!isPulling) return;
-    if (pullDistance > 60) {
-      if (navigator.vibrate) navigator.vibrate(10);
-      await refreshPlayers();
-    }
-    setPullDistance(0);
-    setIsPulling(false);
-  };
+    if (sessionsCount === 0) return '0 min';
+    return `${Math.round(totalAvgRest / sessionsCount)} min`;
+  }, [todaysMatches, players]);
 
-  const mvp = [...players].sort((a, b) => b.wins - a.wins)[0];
-  const bestSetter = [...players].filter(p => p.isOfficialSetter).sort((a, b) => b.wins - a.wins)[0];
-  const topElo = [...players].sort((a, b) => b.elo - a.elo)[0];
-  const activePlayers = players.filter(p => p.matchesPlayed > 0).length;
+  const totalSumMatchDurations = useMemo(() => {
+    if (todaysMatches.length === 0) return 0;
+    return todaysMatches.reduce((s, m) => s + (m.duration || 720), 0) / 60; // in minutes
+  }, [todaysMatches]);
 
-  const formatHour = (timestamp?: number) => {
-    if (!timestamp) return '--:--';
-    return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  };
-
-  const getEloChanges = () => {
-    if (!generationResult) return { aWin: 0, aLoss: 0, bWin: 0, bLoss: 0 };
-    const teamA = [generationResult.teamA.setter, ...generationResult.teamA.players].filter(Boolean) as Player[];
-    const teamB = [generationResult.teamB.setter, ...generationResult.teamB.players].filter(Boolean) as Player[];
+  const participationPercentage = useMemo(() => {
+    if (activePlayersCount === 0 || todaysMatches.length === 0 || totalSumMatchDurations === 0) return '0%';
     
-    const avgEloA = teamA.reduce((sum, p) => sum + p.elo, 0) / (teamA.length || 1);
-    const avgEloB = teamB.reduce((sum, p) => sum + p.elo, 0) / (teamB.length || 1);
+    // Calculation: average time in court / sum of match durations
+    const totalPlayerMinutes = players.reduce((acc, p) => acc + (todaysMatches.reduce((mCount, m) => {
+      const played = (m.teamA || []).includes(p.id) || (m.teamB || []).includes(p.id);
+      return mCount + (played ? (m.duration || 720) / 60 : 0);
+    }, 0)), 0);
     
-    const expectedA = 1 / (1 + Math.pow(10, (avgEloB - avgEloA) / 400));
-    const expectedB = 1 - expectedA;
+    const avgPlayingTime = totalPlayerMinutes / activePlayersCount;
+    // The user said: "tempo total que o jogador esteve em quadra dividido pelo tempo total de jogos no dia"
+    const participation = (avgPlayingTime / totalSumMatchDurations) * 100;
     
-    const K = 32;
-    return {
-      aWin: Math.round(K * (1 - expectedA)),
-      aLoss: Math.round(K * (0 - expectedA)),
-      bWin: Math.round(K * (1 - expectedB)),
-      bLoss: Math.round(K * (0 - expectedB))
+    return `${Math.min(100, Math.round(participation))}%`;
+  }, [todaysMatches, activePlayersCount, players, totalSumMatchDurations]);
+
+  const totalPlayingTimePerPlayer = useMemo(() => {
+    if (activePlayersCount === 0 || todaysMatches.length === 0) return '0 min';
+    
+    const totalPlayerMinutes = todaysMatches.reduce((acc, m) => {
+      const pCount = (m.teamA?.length || 0) + (m.teamB?.length || 0);
+      return acc + (((m.duration || 720) / 60) * pCount);
+    }, 0);
+    
+    const avgTotal = totalPlayerMinutes / activePlayersCount;
+    return `${Math.round(avgTotal)} min`;
+  }, [todaysMatches, activePlayersCount]);
+
+  const totalSessionTimeVal = useMemo(() => {
+    return avgMatchDuration;
+  }, [avgMatchDuration]);
+
+  const playerRestStatsVal = useMemo(() => {
+    return playerRestStats;
+  }, [playerRestStats]);
+
+  const totalPlayingTimeVal = useMemo(() => {
+    return totalPlayingTimePerPlayer;
+  }, [totalPlayingTimePerPlayer]);
+
+  // 1. Matches per Day (Activity Trend)
+  const activityData = useMemo(() => {
+    const dates: Record<string, number> = {};
+    matches.sort((a,b) => a.date.localeCompare(b.date)).slice(-30).forEach(m => {
+      const d = m.date;
+      dates[d] = (dates[d] || 0) + 1;
+    });
+    return Object.entries(dates)
+      .map(([date, count]) => ({ date, count }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+  }, [matches]);
+
+  // 2. ELO Distribution (Histogram) with names
+  const eloDistribution = useMemo(() => {
+    const categories: Record<string, { count: number, names: string[] }> = {
+      '800-1150': { count: 0, names: [] },
+      '1150-1250': { count: 0, names: [] },
+      '1250-1350': { count: 0, names: [] },
+      '1350-1500': { count: 0, names: [] },
+      '1500-1700': { count: 0, names: [] },
+      '1700+': { count: 0, names: [] }
     };
-  };
 
-  const eloChanges = getEloChanges();
+    players.forEach(p => {
+      const elo = p.elo || 1200;
+      let key = '1700+';
+      if (elo < 1150) key = '800-1150';
+      else if (elo < 1250) key = '1150-1250';
+      else if (elo < 1350) key = '1250-1350';
+      else if (elo < 1500) key = '1350-1500';
+      else if (elo < 1700) key = '1500-1700';
+      
+      categories[key].count++;
+      categories[key].names.push(p.name);
+    });
+
+    return Object.entries(categories).map(([range, data]) => ({ 
+      range, 
+      count: data.count, 
+      names: data.names.join(', ') 
+    }));
+  }, [players]);
+
+  // Custom Tooltip component for ELO
+  const CustomEloTooltip = ({ active, payload }: any) => {
+    if (active && payload && payload.length) {
+      return (
+        <div className="bg-black/90 border border-brand-primary/40 p-4 rounded-xl shadow-2xl max-w-[250px]">
+          <p className="text-[10px] font-black text-brand-primary uppercase mb-2 tracking-widest">{payload[0].payload.range}</p>
+          <p className="text-[10px] font-bold text-white/80 leading-relaxed">
+            {payload[0].payload.names || 'Ninguém nesta faixa'}
+          </p>
+          <p className="text-[9px] font-black text-white/40 mt-2 uppercase">{payload[0].value} Atletas</p>
+        </div>
+      );
+    }
+    return null;
+  };
 
   return (
-    <div 
-      className="relative space-y-10 animate-in fade-in duration-700"
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
-    >
-      {/* Pull to Refresh Indicator */}
-      <div 
-        className="absolute top-0 left-0 right-0 flex justify-center pointer-events-none z-50"
-        style={{ 
-          transform: `translateY(${pullDistance - 40}px)`,
-          opacity: pullDistance / 60,
-          transition: isPulling ? 'none' : 'transform 0.3s ease, opacity 0.3s ease'
-        }}
-      >
-        <div className="bg-brand-secondary/30 backdrop-blur-xl p-2 rounded-full shadow-lg border border-brand-primary/40">
-          <RotateCcw className={`w-6 h-6 text-brand-primary ${isSyncing ? 'animate-spin' : ''}`} />
-        </div>
+    <div className="space-y-8 animate-in fade-in duration-700">
+      {/* Quick Stats Grid */}
+      <div className="grid grid-cols-2 lg:grid-cols-6 gap-4 sm:gap-6">
+        {[
+          { label: 'Atletas Ativos', val: activePlayersCount, icon: Users },
+          { label: 'Partidas', val: totalMatches, icon: Swords },
+          { label: 'Tempo Médio das Partidas', val: totalSessionTimeVal, icon: Clock },
+          { label: 'Tempo Médio Fora da Quadra', val: playerRestStatsVal, icon: Timer },
+          { label: 'Aproveitamento', val: participationPercentage, icon: Timer },
+          { label: 'Tempo Médio em Quadra', val: totalPlayingTimeVal, icon: Activity },
+        ].map((stat, i) => (
+          <div key={i} className="bg-brand-secondary/30 backdrop-blur-xl border border-white/5 p-5 sm:p-8 rounded-[2rem] hover:border-brand-primary/30 transition-all group overflow-hidden">
+            <div className="flex justify-between items-start mb-4">
+              <p className="text-[9px] font-black text-white/40 uppercase tracking-[0.2em]">{stat.label}</p>
+              <stat.icon className="w-5 h-5 text-brand-primary/40 group-hover:text-brand-primary transition-colors" />
+            </div>
+            <h3 className="text-2xl sm:text-4xl font-black text-white tracking-widest leading-none drop-shadow-md">
+              {stat.val}
+            </h3>
+          </div>
+        ))}
       </div>
 
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
-        <div className="space-y-2">
-          <h2 className="text-5xl font-black text-white uppercase tracking-tighter leading-none">Painel de Elite</h2>
-          <p className="text-sm font-bold text-white/40 uppercase tracking-[0.3em]">Visão geral da temporada atual</p>
-        </div>
-        {userRole === 'ADMIN' && (
-          <button 
-            onClick={generateDailySummary}
-            disabled={isNarratingSummary}
-            className="w-full md:w-auto bg-brand-primary text-brand-secondary px-10 py-5 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 hover:scale-105 shadow-2xl shadow-brand-primary/20 transition-all disabled:opacity-50 group"
-          >
-            <Sparkles className={`w-5 h-5 group-hover:rotate-12 transition-transform ${isNarratingSummary ? 'animate-spin' : ''}`} />
-            {isNarratingSummary ? 'Gerando Resumo...' : 'Resumo IA do Dia'}
-          </button>
-        )}
-      </div>
-
-      {/* Partida em Andamento (Visível para Sócios no Dashboard) */}
-      {generationResult && (
-        <div className="bg-brand-light rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary p-6 sm:p-10 shadow-2xl relative overflow-hidden group animate-in slide-in-from-top-4 duration-700">
-          <div className="absolute inset-0 bg-gradient-to-br from-brand-primary/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-1000" />
-          
-          <div className="flex items-center justify-between mb-8 relative z-10">
-            <div className="flex items-center gap-4">
-              <div className="p-3 bg-brand-secondary rounded-2xl border border-brand-primary/40">
-                <Trophy className="w-6 h-6 text-brand-primary" />
-              </div>
-              <div>
-                <h3 className="text-xs font-black text-white uppercase tracking-[0.3em]">Partida em Andamento</h3>
-                <p className="text-[10px] font-black text-white uppercase tracking-[0.2em] mt-1">Acompanhe em tempo real</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3 bg-brand-secondary/50 px-6 py-3 rounded-2xl border border-brand-primary/10">
-              <Clock className="w-4 h-4 text-brand-primary animate-pulse" />
-              <span className="text-sm font-black text-white font-mono tracking-widest">{formatTime(elapsedTime)}</span>
-            </div>
+      {/* Main Stats Layout */}
+      <div className="grid grid-cols-1 gap-8">
+        {/* ELO Distribution */}
+        <div className="bg-brand-secondary/30 backdrop-blur-xl border border-white/5 p-8 rounded-[3rem] shadow-2xl relative overflow-hidden group">
+          <div className="flex items-center gap-3 mb-8">
+            <BarChart3 className="w-5 h-5 text-brand-primary" />
+            <h4 className="text-sm font-black text-white uppercase tracking-widest">Distribuição de Ouro (ELO)</h4>
           </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 relative z-10">
-            {/* Time A */}
-            <div className="bg-brand-primary/5 p-6 rounded-3xl border border-brand-primary/40">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-brand-primary shadow-[0_0_10px_rgba(245,196,41,0.6)] animate-pulse" />
-                  <span className="text-xs font-black text-brand-primary uppercase tracking-widest">Time A</span>
-                </div>
-                <span className="text-[10px] font-black text-brand-primary uppercase tracking-widest italic">ELO: {generationResult.teamA.totalElo}</span>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {[generationResult.teamA.setter, ...generationResult.teamA.players].filter(Boolean).map((p, idx) => (
-                  <span key={p?.id || idx} className="text-[11px] font-black text-brand-primary uppercase tracking-tight bg-brand-primary/10 px-3 py-1.5 rounded-lg border border-brand-primary/40">
-                    {p?.name}
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            {/* Time B */}
-            <div className="bg-white/5 p-6 rounded-3xl border border-white/40">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-white shadow-[0_0_10px_rgba(255,255,255,0.6)] animate-pulse" />
-                  <span className="text-xs font-black text-white uppercase tracking-widest">Time B</span>
-                </div>
-                <span className="text-[10px] font-black text-white/80 uppercase tracking-widest italic">ELO: {generationResult.teamB.totalElo}</span>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {[generationResult.teamB.setter, ...generationResult.teamB.players].filter(Boolean).map((p, idx) => (
-                  <span key={p?.id || idx} className="text-[11px] font-black text-white/90 uppercase tracking-tight bg-white/10 px-3 py-1.5 rounded-lg border border-white/40">
-                    {p?.name}
-                  </span>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-8 pt-8 border-t border-white/5 flex flex-col sm:flex-row items-center gap-4 sm:gap-8 text-[10px] font-black uppercase tracking-widest relative z-10">
-            <div className="flex items-center gap-4 w-full sm:w-auto">
-              <span className="text-green-400 bg-green-400/10 px-4 py-2 rounded-xl border border-green-400/40 whitespace-nowrap">Vitória: +{eloChanges.aWin} ELO</span>
-              <span className="text-red-400 bg-red-400/10 px-4 py-2 rounded-xl border border-red-400/40 whitespace-nowrap">Derrota: {eloChanges.aLoss} ELO</span>
-            </div>
-            <div className="flex items-center gap-2 text-white/60 bg-white/5 px-4 py-2 rounded-xl border border-white/40 w-full sm:w-auto justify-center">
-              <Users className="w-4 h-4" />
-              <span>{attendance.length} Sócios Presentes</span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="bg-brand-secondary/30 backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-xl relative overflow-hidden group hover:border-brand-primary/30 transition-all">
-          <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 group-hover:scale-110 transition-all duration-500">
-            <Trophy className="w-20 h-20 text-brand-primary" />
-          </div>
-          <p className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em] mb-4">MVP da Temporada</p>
-          <h3 className="text-2xl font-black text-white uppercase tracking-tight">{mvp?.name || '-'}</h3>
-          <div className="flex items-center gap-2 mt-2">
-            <span className="text-brand-primary font-black text-lg">{mvp?.wins || 0}</span>
-            <span className="text-[10px] font-black text-white/40 uppercase tracking-widest">Vitórias</span>
-          </div>
-        </div>
-
-        <div className="bg-brand-secondary/30 backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-xl relative overflow-hidden group hover:border-brand-primary/30 transition-all">
-          <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 group-hover:scale-110 transition-all duration-500">
-            <Target className="w-20 h-20 text-brand-primary" />
-          </div>
-          <p className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em] mb-4">Melhor Levantador</p>
-          <h3 className="text-2xl font-black text-white uppercase tracking-tight">{bestSetter?.name || '-'}</h3>
-          <div className="flex items-center gap-2 mt-2">
-            <span className="text-brand-primary font-black text-lg">{bestSetter?.wins || 0}</span>
-            <span className="text-[10px] font-black text-white/40 uppercase tracking-widest">Vitórias</span>
-          </div>
-        </div>
-
-        <div className="bg-brand-secondary/30 backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-xl relative overflow-hidden group hover:border-brand-primary/30 transition-all">
-          <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 group-hover:scale-110 transition-all duration-500">
-            <Zap className="w-20 h-20 text-brand-primary" />
-          </div>
-          <p className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em] mb-4">Líder do Ranking</p>
-          <h3 className="text-2xl font-black text-white uppercase tracking-tight">{topElo?.name || '-'}</h3>
-          <div className="flex items-center gap-2 mt-2">
-            <span className="text-brand-primary font-black text-lg">{Math.round(topElo?.elo || 0)}</span>
-            <span className="text-[10px] font-black text-white/40 uppercase tracking-widest">ELO</span>
-          </div>
-        </div>
-
-        <div className="bg-brand-secondary/30 backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-xl relative overflow-hidden group hover:border-brand-primary/30 transition-all">
-          <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 group-hover:scale-110 transition-all duration-500">
-            <Users className="w-20 h-20 text-brand-primary" />
-          </div>
-          <p className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em] mb-4">Sócios Ativos</p>
-          <h3 className="text-2xl font-black text-white uppercase tracking-tight">{activePlayers}</h3>
-          <div className="flex items-center gap-2 mt-2">
-            <span className="text-brand-primary font-black text-lg">{(players?.length || 0)}</span>
-            <span className="text-[10px] font-black text-white/40 uppercase tracking-widest">Cadastrados</span>
-          </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
-        <div className="lg:col-span-2 space-y-6">
-          <div className="flex justify-between items-center">
-            <h3 className="text-2xl font-black text-white uppercase tracking-tighter">Top 5 Guerreiros</h3>
-            <button className="text-[10px] font-black text-brand-secondary bg-brand-primary px-6 py-3 rounded-xl uppercase tracking-widest flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-brand-primary/20">
-              Ranking <ArrowRight className="w-4 h-4" />
-            </button>
-          </div>
-          <div className="bg-brand-secondary/30 backdrop-blur-xl rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-2xl overflow-hidden">
-            {[...players].sort((a, b) => b.elo - a.elo).slice(0, 5).map((player, idx) => (
-              <div key={player.id} className="flex items-center justify-between p-8 border-b border-brand-primary/10 last:border-0 hover:bg-brand-primary/5 transition-all group">
-                <div className="flex items-center gap-8">
-                  <span className="text-4xl font-black text-white/5 w-12 italic group-hover:text-brand-primary/20 transition-colors">#{idx + 1}</span>
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-full bg-brand-secondary flex items-center justify-center text-brand-primary font-black text-lg border-2 border-brand-primary/40">
-                      {player.name.charAt(0)}
-                    </div>
-                    <div>
-                      <p className="font-black text-white text-lg uppercase tracking-tight">{player.name}</p>
-                      <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest mt-1">{player.wins}V - {player.losses}D • {player.matchesPlayed} Partidas</p>
-                    </div>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <p className="text-3xl font-black text-brand-primary tracking-tighter leading-none">{Math.round(player.elo)}</p>
-                  <p className="text-[10px] font-black text-white/40 uppercase tracking-widest mt-1">ELO</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="space-y-6">
-          <h3 className="text-2xl font-black text-white uppercase tracking-tighter">Histórico Recente</h3>
-          <div className="space-y-4">
-            {matches.slice(0, 4).map(match => (
-              <div key={match.id} className="bg-brand-secondary/30 backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-xl space-y-6 hover:border-brand-primary/40 transition-all group">
-                <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-[0.2em] text-white/40">
-                  <div className="flex items-center gap-2">
-                    <span className="text-white">{new Date(match.timestamp).toLocaleDateString('pt-BR')}</span>
-                    {match.startTime && (
-                      <span className="opacity-40">• {formatHour(match.startTime)}</span>
-                    )}
-                  </div>
-                  <span className="px-2 py-1 bg-white/5 rounded-lg text-brand-primary border border-brand-primary/40">
-                    {match.mode === 'QUICK' ? 'Rápida' : match.mode === 'SCORE' ? 'Pontuada' : 'Sequencial'}
-                  </span>
-                </div>
-                
-                <div className="flex items-center justify-between gap-6">
-                  <div className="flex-1 text-center space-y-2">
-                    <div className={`py-4 rounded-2xl transition-all ${match.winner === 'A' ? 'bg-brand-primary/10 border border-brand-primary/40 scale-110 shadow-lg shadow-brand-primary/5' : 'bg-white/5 border border-transparent opacity-40'}`}>
-                      {match.mode !== 'QUICK' ? (
-                        <p className={`text-3xl font-black ${match.winner === 'A' ? 'text-brand-primary' : 'text-white'}`}>{match.scoreA}</p>
-                      ) : (
-                        <div className="h-9 flex items-center justify-center">
-                          {match.winner === 'A' && <Trophy className="w-6 h-6 text-brand-primary animate-bounce" />}
-                        </div>
-                      )}
-                    </div>
-                    <p className="text-[10px] font-black text-white/40 uppercase tracking-widest">Time A</p>
-                  </div>
-                  
-                  <div className="flex flex-col items-center gap-1">
-                    <span className="text-white/10 font-black italic text-sm">VS</span>
-                  </div>
-                  
-                  <div className="flex-1 text-center space-y-2">
-                    <div className={`py-4 rounded-2xl transition-all ${match.winner === 'B' ? 'bg-brand-primary/10 border border-brand-primary/40 scale-110 shadow-lg shadow-brand-primary/5' : 'bg-white/5 border border-transparent opacity-40'}`}>
-                      {match.mode !== 'QUICK' ? (
-                        <p className={`text-3xl font-black ${match.winner === 'B' ? 'text-brand-primary' : 'text-white'}`}>{match.scoreB}</p>
-                      ) : (
-                        <div className="h-9 flex items-center justify-center">
-                          {match.winner === 'B' && <Trophy className="w-6 h-6 text-brand-primary animate-bounce" />}
-                        </div>
-                      )}
-                    </div>
-                    <p className="text-[10px] font-black text-white/40 uppercase tracking-widest">Time B</p>
-                  </div>
-                </div>
-              </div>
-            ))}
+          <div className="h-[300px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={eloDistribution}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                <XAxis dataKey="range" stroke="rgba(255,255,255,0.2)" fontSize={10} />
+                <YAxis stroke="rgba(255,255,255,0.2)" fontSize={10} />
+                <Tooltip 
+                  content={<CustomEloTooltip />}
+                  cursor={{ fill: 'rgba(255,255,255,0.03)' }}
+                />
+                <Bar dataKey="count" fill="#F5C429" radius={[8, 8, 0, 0]}>
+                  {eloDistribution.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={index > 3 ? '#F5C429' : 'rgba(245,196,41,0.4)'} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
           </div>
         </div>
       </div>

@@ -79,7 +79,9 @@ export const useNarration = () => {
             bestSetter: rankingData.dailyBestSetter?.name,
             dailyKing: rankingData.dailyKing?.name,
             matchesCount: rankingData.dailyMatchesCount,
-            rankingChanges: rankingData.rankingChanges // Passando as mudanças de ranking
+            rankingChanges: rankingData.rankingChanges,
+            date: rankingData.date, // Pass the date
+            avgMatchTime: rankingData.avgMatchTime
           });
           if (audioData) setNarrationAudio(audioData);
           return { type: 'audio', content: audioData };
@@ -131,11 +133,15 @@ export const useNarration = () => {
           };
         } catch (playError) {
           console.error("Audio play() failed:", playError);
-          await speakNarration("Racha épico hoje! Parabéns a todos!", false);
+          const fallback = type === 'teams' ? "As equipes estão prontas para o racha!" : "Racha épico hoje! Parabéns a todos!";
+          await speakNarration(fallback, false);
         }
       } else {
-        // Fallback
-        const fallback = "Racha épico hoje! Parabéns a todos!";
+        // Fallback for quota or other generation failure
+        useStore.getState().showNotification("Voz premium indisponível (limite atingido). Usando narração básica.", "info");
+        const fallback = type === 'teams' 
+          ? `As equipes estão prontas! Equipe A com ${generationResult?.teamA.players.length} jogadores e Equipe B com ${generationResult?.teamB.players.length} jogadores. Bom jogo!`
+          : "Resumo do dia pronto! Parabéns aos guerreiros pelo desempenho e evolução no ranking!";
         await speakNarration(fallback, false);
       }
     } catch (error) {

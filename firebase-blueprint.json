@@ -43,7 +43,16 @@
         "role": { "type": "string" },
         "position": { "type": "string" },
         "level": { "type": "string" },
-        "impactLevel": { "type": "integer", "enum": [1, 2, 3], "description": "1: Base, 2: Medium, 3: Elite" }
+        "impactLevel": { "type": "integer", "enum": [1, 2, 3], "description": "1: Base, 2: Medium, 3: Elite" },
+        "skills": {
+          "type": "object",
+          "properties": {
+            "setting": { "type": "integer", "enum": [1, 2, 3] },
+            "attacking": { "type": "integer", "enum": [1, 2, 3] },
+            "defense": { "type": "integer", "enum": [1, 2, 3] },
+            "serving": { "type": "integer", "enum": [1, 2, 3] }
+          }
+        }
       },
       "required": ["id", "name", "gender", "elo"]
     },
@@ -187,9 +196,64 @@
         },
         "createdAt": { "type": "string", "format": "date-time" }
       }
+    },
+    "AuditLog": {
+      "title": "Audit Log",
+      "description": "Records of system actions like socio updates",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "action": { "type": "string" },
+        "playerId": { "type": "string" },
+        "playerName": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "performedBy": { "type": "string" },
+        "performedByEmail": { "type": "string" },
+        "details": { "type": "string" }
+      },
+      "required": ["id", "action", "playerId", "timestamp", "performedBy"]
+    },
+    "LoginLog": {
+      "title": "Login Log",
+      "description": "Records of login attempts and their status",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string" },
+        "status": { "type": "string", "enum": ["SUCCESS", "FAILURE"] },
+        "error": { "type": "string" },
+        "device": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "status", "timestamp"]
+    },
+    "SentinelReport": {
+      "title": "Sentinel Report",
+      "description": "AI-generated system health report",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "status": { "type": "string", "enum": ["HEALTHY", "WARNING", "CRITICAL"] },
+        "report": { "type": "string" },
+        "anomaliesFound": { "type": "integer" },
+        "autoFixesApplied": { "type": "integer" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      }
     }
   },
   "firestore": {
+    "/sentinelReports/{id}": {
+      "schema": "SentinelReport",
+      "description": "History of AI sentinel scans"
+    },
+    "/loginLogs/{id}": {
+      "schema": "LoginLog",
+      "description": "Authentication logs"
+    },
+    "/auditLogs/{logId}": {
+      "schema": "AuditLog",
+      "description": "History of administrative actions"
+    },
     "/metadata/intentions": {
       "schema": "Intentions",
       "description": "Weekly intentions and automation settings"

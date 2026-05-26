@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { Player, Payment, Match, GenerationResult, SystemMetadata, UsageStats, Expense, Tournament } from './types';
 import { User } from './firebase';
 
-export type ViewMode = 'presence' | 'history' | 'generation' | 'members' | 'dashboard' | 'rules' | 'payments' | 'admin' | 'tournament' | 'attendance_report' | 'intentions';
+export type ViewMode = 'presence' | 'history' | 'generation' | 'members' | 'dashboard' | 'ranking' | 'rules' | 'payments' | 'admin' | 'tournament' | 'attendance_report' | 'intentions' | 'my_payments';
 
 interface AppState {
   // Data
@@ -60,6 +60,7 @@ interface AppState {
   isScanningAnomalies: boolean;
   anomalyReport: string | null;
   theme: 'light' | 'dark';
+  selectedRankingPlayerId: string | null;
   
   // Management State
   isFormOpen: boolean;
@@ -80,6 +81,7 @@ interface AppState {
   // Actions
   setPlayers: (players: Player[] | ((prev: Player[]) => Player[])) => void;
   setPayments: (payments: Payment[] | ((prev: Payment[]) => Payment[])) => void;
+  setExpenses: (expenses: Expense[] | ((prev: Expense[]) => Expense[])) => void;
   setPreConfirmations: (players: Player[] | ((prev: Player[]) => Player[])) => void;
   setMatches: (matches: Match[] | ((prev: Match[]) => Match[])) => void;
   setAttendance: (attendance: Player[] | ((prev: Player[]) => Player[])) => void;
@@ -88,6 +90,7 @@ interface AppState {
   setRivalry: (rivalry: Record<string, number>) => void;
   setSystemMetadata: (metadata: Partial<SystemMetadata>) => void;
   setViewMode: (mode: ViewMode) => void;
+  setSelectedRankingPlayerId: (id: string | null) => void;
   setIsInitialLoading: (loading: boolean) => void;
   setIsSyncing: (syncing: boolean) => void;
   setDbStatus: (status: 'idle' | 'reading' | 'writing') => void;
@@ -158,7 +161,8 @@ export const useStore = create<AppState>((set) => ({
     geofenceRadius: 150,
     monthlyFee: 0,
     isTournamentEnabled: true,
-    showEliteQueue: true
+    showEliteQueue: true,
+    useTrueSkill: true
   },
   
   viewMode: (typeof window !== 'undefined' && localStorage.getItem('spikegen_viewMode') as ViewMode) || 'presence',
@@ -196,6 +200,7 @@ export const useStore = create<AppState>((set) => ({
   isScanningAnomalies: false,
   anomalyReport: null,
   theme: (typeof window !== 'undefined' && localStorage.getItem('spikegen_theme') as 'light' | 'dark') || 'dark',
+  selectedRankingPlayerId: null,
   
   isFormOpen: false,
   editingPlayer: null,
@@ -241,6 +246,7 @@ export const useStore = create<AppState>((set) => ({
     }
     set({ viewMode });
   },
+  setSelectedRankingPlayerId: (selectedRankingPlayerId) => set({ selectedRankingPlayerId }),
   setIsInitialLoading: (isInitialLoading) => set({ isInitialLoading }),
   setIsSyncing: (isSyncing) => set({ isSyncing }),
   setDbStatus: (dbStatus) => set({ dbStatus }),

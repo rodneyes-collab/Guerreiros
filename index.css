@@ -65,6 +65,18 @@
   --color-brand-danger: #ef4444; /* Red 500 */
   
   --font-sans: "Montserrat", ui-sans-serif, system-ui, sans-serif;
+
+  --animate-bounce-subtle: bounce-subtle 2s infinite;
+  --animate-pulse-subtle: pulse-subtle 3s infinite;
+
+  @keyframes bounce-subtle {
+    0%, 100% { transform: translateY(-5%); animation-timing-function: cubic-bezier(0.8,0,1,1); }
+    50% { transform: none; animation-timing-function: cubic-bezier(0,0,0.2,1); }
+  }
+  @keyframes pulse-subtle {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+  }
 }
 
 @layer components {

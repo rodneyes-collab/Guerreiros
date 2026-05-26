@@ -18,6 +18,7 @@ import {
   BarChart3
 } from 'lucide-react';
 
+import { getPriorityQueue, calculateEffectiveElo } from '../utils/teamLogic';
 import { HelpTooltip } from '../src/components/HelpTooltip';
 
 interface AttendanceViewProps {
@@ -51,6 +52,15 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
   setViewMode
 }) => {
   const { attendance: allAttendance, preConfirmations: allPreConfirmations, isSyncing } = useStore();
+
+  const attendance = React.useMemo(() => allAttendance.filter(p => (!p.status || p.status === 'active') && !p.isDM), [allAttendance]);
+
+  const { topPlayers, remainingPlayers } = React.useMemo(() => {
+    return getPriorityQueue(attendance, 12, 2);
+  }, [attendance]);
+
+  const prioritizedAttendance = React.useMemo(() => [...topPlayers, ...remainingPlayers], [topPlayers, remainingPlayers]);
+
   const getImpactIcon = (level?: number) => {
     switch (level) {
       case 3: return <Zap className="w-4 h-4 text-brand-primary" fill="currentColor" />;
@@ -59,8 +69,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
     }
   };
 
-  const attendance = React.useMemo(() => allAttendance.filter(p => !p.status || p.status === 'active'), [allAttendance]);
-  const preConfirmations = React.useMemo(() => allPreConfirmations.filter(p => !p.status || p.status === 'active'), [allPreConfirmations]);
+  const preConfirmations = React.useMemo(() => allPreConfirmations.filter(p => (!p.status || p.status === 'active') && !p.isDM), [allPreConfirmations]);
   const [startY, setStartY] = React.useState(0);
   const [pullDistance, setPullDistance] = React.useState(0);
   const [isPulling, setIsPulling] = React.useState(false);
@@ -177,8 +186,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                     <p className="text-white/40 text-lg font-black uppercase tracking-widest italic">Aguardando convocações...</p>
                   </div>
                 ) : (
-                  [...attendance]
-                    .sort((a, b) => (a.arrivalOrder || 0) - (b.arrivalOrder || 0))
+                  prioritizedAttendance
                     .map((player, idx) => {
                       const fullPlayer = availablePlayers.find(p => p.id === player.id);
                       const displayName = player.name || fullPlayer?.name || "Sócio sem nome";
@@ -186,11 +194,17 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                       const generationResult = useStore.getState().generationResult;
                       const isCurrentlyBenched = generationResult?.remainingPlayers?.some(rp => rp.id === player.id);
                       const displayBenchedCount = (player.consecutiveBenched || 0) + (isCurrentlyBenched ? 1 : 0);
+                      const isTop12 = idx < 12;
                       
                       return (
-                        <div key={player.id || `attendance-${idx}`} className={`flex items-center justify-between p-4 rounded-2xl border transition-all group shadow-sm hover:shadow-xl hover:-translate-y-0.5 bg-brand-light border-brand-primary/40 hover:border-brand-primary/50`}>
+                        <div key={player.id || `attendance-${idx}`} className={`flex items-center justify-between p-4 rounded-2xl border transition-all group shadow-sm hover:shadow-xl hover:-translate-y-0.5 bg-brand-light ${isTop12 ? 'border-brand-primary/60 bg-brand-primary/5' : 'border-brand-primary/20'} hover:border-brand-primary/50`}>
                           <div className="flex items-center gap-4">
-                            <span className="text-xl font-black text-brand-primary/40 w-8 italic group-hover:text-brand-primary transition-colors">#{player.arrivalOrder}</span>
+                            <div className="flex flex-col items-center justify-center w-8">
+                              <span className={`text-xl font-black italic transition-colors ${isTop12 ? 'text-brand-primary' : 'text-brand-primary/40'}`}>
+                                #{idx + 1}
+                              </span>
+                              <span className="text-[8px] font-black text-white/30 uppercase tracking-tighter">Fila</span>
+                            </div>
                             <div>
                               <p className={`text-lg font-black flex items-center gap-2 leading-none uppercase tracking-tight ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
                                 {userRole === 'ADMIN' && (
@@ -199,17 +213,30 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                                   </span>
                                 )}
                                 {displayName}
+                                <span className="text-[10px] sm:text-xs font-black opacity-30 ml-2 italic tracking-tighter">
+                                  {Math.round(calculateEffectiveElo(fullPlayer || player))}
+                                </span>
                                 {player.timestamp && (
                                   <span className="text-[10px] text-white/30 font-medium lowercase tracking-normal">
                                     {new Date(player.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                                   </span>
                                 )}
                                 {player.isOfficialSetter && <span className="text-[8px] font-black uppercase bg-brand-primary/10 text-brand-primary px-2 py-0.5 rounded-full border border-brand-primary/40">Levantador</span>}
+                                {player.playedLastMatch && (
+                                  <span className="text-[8px] font-black uppercase bg-white/10 text-white/40 px-2 py-0.5 rounded-full border border-white/10" title="Participou da última partida - Prioridade reduzida para a próxima">
+                                    Jogou Última
+                                  </span>
+                                )}
                                 {displayBenchedCount > 0 && (
                                   <span className="text-[8px] font-black uppercase bg-brand-primary/10 text-brand-primary px-2 py-0.5 rounded-full border border-brand-primary/40 animate-pulse">
                                     {displayBenchedCount} fora
                                   </span>
                                 )}
+                              </p>
+                              <p className="text-[9px] font-black text-white/20 uppercase tracking-widest mt-1 italic">
+                                Chegada: #{player.arrivalOrder} <span className="mx-2 text-white/10">|</span> 
+                                Partidas: {player.dailyMatches || 0} <span className="mx-2 text-white/10">|</span> 
+                                {isTop12 ? <span className="text-brand-primary/80 font-black tracking-[0.2em]">PROVÁVEL ESCALADO</span> : <span className="text-white/40">LISTA DE ESPERA</span>}
                               </p>
                             </div>
                           </div>

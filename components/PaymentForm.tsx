@@ -11,6 +11,7 @@ interface PaymentFormProps {
   paymentFormData: any;
   setPaymentFormData: (data: any) => void;
   players: any[];
+  isSyncing?: boolean;
 }
 
 export const PaymentForm: React.FC<PaymentFormProps> = ({
@@ -20,7 +21,8 @@ export const PaymentForm: React.FC<PaymentFormProps> = ({
   editingPayment,
   paymentFormData,
   setPaymentFormData,
-  players
+  players,
+  isSyncing = false
 }) => {
   if (!isOpen) return null;
 
@@ -148,9 +150,10 @@ export const PaymentForm: React.FC<PaymentFormProps> = ({
             </button>
             <button
               type="submit"
-              className="flex-[2] px-8 py-4 bg-brand-primary text-brand-secondary rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-brand-primary/90 shadow-xl shadow-brand-primary/10 transition-all"
+              disabled={isSyncing}
+              className={`flex-[2] px-8 py-4 bg-brand-primary text-brand-secondary rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-brand-primary/90 shadow-xl shadow-brand-primary/10 transition-all ${isSyncing ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
-              {editingPayment ? 'Salvar Alterações' : 'Registrar Pagamento'}
+              {isSyncing ? 'Processando...' : (editingPayment ? 'Salvar Alterações' : 'Registrar Pagamento')}
             </button>
           </div>
         </form>

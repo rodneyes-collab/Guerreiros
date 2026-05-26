@@ -4,6 +4,14 @@ export enum Gender {
   FEMALE = 'FEMALE'
 }
 
+export interface AuditLog {
+  field: string;
+  oldValue: any;
+  newValue: any;
+  timestamp: number;
+  changedBy: string;
+}
+
 export interface Player {
   id: string;
   name: string;
@@ -15,17 +23,29 @@ export interface Player {
   dailyWins: number; // Vitórias no dia atual
   dailyLosses: number; // Derrotas no dia atual
   dailyEloGain: number; // ELO ganho no dia atual
+  pointsFor?: number; // Pontos marcados acumulados
+  pointsAgainst?: number; // Pontos sofridos acumulados
   wins: number;
   losses: number;
   elo: number;
-  eloHistory?: { date: string; elo: number }[];
+  eloHistory?: { 
+    date: string; 
+    elo: number; 
+    matchId?: string; 
+    change?: number; 
+    timestamp?: number;
+    result?: 'V' | 'D';
+  }[];
   arrivalOrder?: number;
   isAdmin?: boolean;
   joinedAt?: string;
   playedLastMatch?: boolean;
   timestamp?: number; // Timestamp de chegada na presença
+  leftAt?: number; // Timestamp de saída/remoção da presença
   consecutiveBenched?: number; // Número de partidas consecutivas no banco
   birthDate?: string; // ISO date string
+  isDM?: boolean; // Novo campo
+  evasionLevel?: 'low' | 'medium' | 'high' | 'critical'; // Campo de risco de evasão
   uid?: string; // Firebase Auth UID
   dailyResults?: ('V' | 'D')[]; // Sequência de vitórias/derrotas no dia
   status?: string;
@@ -42,6 +62,18 @@ export interface Player {
   matchNotificationsEnabled?: boolean; // Se o sócio deseja receber notificações de resultados de partidas
   hasSeenWelcome?: boolean; // Se o sócio já viu a mensagem de boas-vindas
   impactLevel?: 1 | 2 | 3; // 1: Base, 2: Medium/Technique, 3: Elite/Power
+  skills?: {
+    setting: 1 | 2 | 3;
+    attacking: 1 | 2 | 3; // Nível de habilidade de ataque
+    defense: 1 | 2 | 3; // Nível de habilidade de defesa
+    serving: 1 | 2 | 3; // Nível de habilidade de saque
+  };
+  isExempt?: boolean; // Novo campo para sócios isentos
+  auditLog?: AuditLog[]; // Auditoria de dados
+  trueSkill?: {
+    mu: number;
+    sigma: number;
+  };
 }
 
 export interface AppNotification {
@@ -96,13 +128,13 @@ export interface SystemMetadata {
   showWaitlist?: boolean;
   showPerformance?: boolean;
   enableAutoBirthdays?: boolean;
+  useTrueSkill?: boolean;
   courtLocation?: { lat: number; lng: number };
   geofenceRadius?: number;
   monthlyFee?: number;
   isTournamentEnabled?: boolean;
   showEliteQueue?: boolean;
   matchNotificationsGlobalEnabled?: boolean;
-  pushNotificationsGlobalEnabled?: boolean;
 }
 
 export enum PaymentStatus {
@@ -136,6 +168,7 @@ export interface Team {
   setter: Player | null;
   players: Player[];
   totalElo: number;
+  totalEfficiency?: number;
 }
 
 export interface GenerationResult {
@@ -144,6 +177,11 @@ export interface GenerationResult {
   remainingPlayers: Player[];
   swaps?: { playerA: string; playerB: string }[];
   timestamp?: number;
+  combinationsCount?: number;
+  trueskill?: {
+    teamA: Team;
+    teamB: Team;
+  };
 }
 
 export interface TournamentTeam {

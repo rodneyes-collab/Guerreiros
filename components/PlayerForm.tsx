@@ -173,19 +173,58 @@ export const PlayerForm: React.FC<PlayerFormProps> = ({
                   className="w-full px-6 py-4 bg-white/5 border border-brand-primary/40 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none [color-scheme:dark]"
                 />
               </div>
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-white/40 uppercase tracking-widest ml-1">Nível de Impacto (Equilíbrio)</label>
-                <select
-                  name="impactLevel"
-                  value={formData.impactLevel || 1}
-                  onChange={e => setFormData({ ...formData, impactLevel: parseInt(e.target.value) })}
-                  className="w-full px-6 py-4 bg-white/5 border border-brand-primary/40 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none appearance-none"
-                >
-                  <option value={1} className="bg-brand-secondary text-white">1 - Base / Suporte</option>
-                  <option value={2} className="bg-brand-secondary text-white">2 - Médio / Técnico</option>
-                  <option value={3} className="bg-brand-secondary text-white">3 - Elite / Power (Atacantes)</option>
-                </select>
-                <p className="text-[8px] font-bold text-white/30 uppercase tracking-tight ml-1">Usado apenas para balanceamento oculto</p>
+              <div className="space-y-4 col-span-full">
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] font-black text-white/40 uppercase tracking-widest ml-1">Avaliação por Fundamento (1-3)</label>
+                  <p className="text-[8px] font-bold text-white/20 uppercase tracking-tight">Fraco | Médio | Forte</p>
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {[
+                    { key: 'setting', label: 'Levantamento' },
+                    { key: 'attacking', label: 'Ataque/Potência' },
+                    { key: 'defense', label: 'Defesa/Passe' },
+                    { key: 'serving', label: 'Saque' }
+                  ].map((skill) => (
+                    <div key={skill.key} className="bg-white/5 p-4 rounded-2xl border border-brand-primary/20 flex flex-col gap-3">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-black text-white/60 uppercase tracking-tight">{skill.label}</span>
+                        <span className="text-xs font-black text-brand-primary">{formData.skills?.[skill.key as keyof typeof formData.skills] || 1}</span>
+                      </div>
+                      <div className="flex gap-2">
+                        {[1, 2, 3].map((val) => (
+                          <button
+                            key={val}
+                            type="button"
+                            onClick={() => {
+                              const newSkills = { ...(formData.skills || { setting: 1, attacking: 1, defense: 1, serving: 1 }) };
+                              newSkills[skill.key as keyof typeof newSkills] = val as 1 | 2 | 3;
+                              
+                              // Calculate impactLevel as average
+                              const avg = (newSkills.setting + newSkills.attacking + newSkills.defense + newSkills.serving) / 4;
+                              let newImpactLevel: 1|2|3 = 1;
+                              if (avg >= 2.5) newImpactLevel = 3;
+                              else if (avg >= 1.7) newImpactLevel = 2; // Adjusted threshold
+                              
+                              setFormData({ 
+                                ...formData, 
+                                skills: newSkills,
+                                impactLevel: newImpactLevel 
+                              });
+                            }}
+                            className={`flex-1 py-2 rounded-xl font-black text-[10px] uppercase transition-all border ${
+                              formData.skills?.[skill.key as keyof typeof formData.skills] === val
+                                ? 'bg-brand-primary text-brand-secondary border-brand-primary'
+                                : 'bg-white/5 text-white/40 border-white/10 hover:border-brand-primary/40'
+                            }`}
+                          >
+                            {val}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           )}
@@ -223,6 +262,20 @@ export const PlayerForm: React.FC<PlayerFormProps> = ({
               <div className="flex items-center gap-4 p-6 bg-white/5 rounded-3xl border border-brand-primary/40">
                 <input
                   type="checkbox"
+                  id="isDM"
+                  name="isDM"
+                  checked={formData.isDM || false}
+                  onChange={e => setFormData({ ...formData, isDM: e.target.checked })}
+                  className="w-6 h-6 rounded-lg border-white/20 bg-white/5 text-brand-primary focus:ring-brand-primary"
+                />
+                <label htmlFor="isDM" className="text-sm font-black text-white uppercase tracking-tight cursor-pointer">
+                  DM (Departamento Médico)
+                </label>
+              </div>
+
+              <div className="flex items-center gap-4 p-6 bg-white/5 rounded-3xl border border-brand-primary/40">
+                <input
+                  type="checkbox"
                   id="isAdmin"
                   name="isAdmin"
                   checked={formData.isAdmin}
@@ -231,6 +284,20 @@ export const PlayerForm: React.FC<PlayerFormProps> = ({
                 />
                 <label htmlFor="isAdmin" className="text-sm font-black text-white uppercase tracking-tight cursor-pointer">
                   Admin
+                </label>
+              </div>
+
+              <div className="flex items-center gap-4 p-6 bg-white/5 rounded-3xl border border-brand-primary/40">
+                <input
+                  type="checkbox"
+                  id="isExempt"
+                  name="isExempt"
+                  checked={formData.isExempt || false}
+                  onChange={e => setFormData({ ...formData, isExempt: e.target.checked })}
+                  className="w-6 h-6 rounded-lg border-white/20 bg-white/5 text-brand-primary focus:ring-brand-primary"
+                />
+                <label htmlFor="isExempt" className="text-sm font-black text-white uppercase tracking-tight cursor-pointer">
+                  Isento
                 </label>
               </div>
             </div>

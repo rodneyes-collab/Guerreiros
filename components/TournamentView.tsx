@@ -40,8 +40,8 @@ interface TournamentViewProps {
 
 export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecord, onResetMatch, onEnd, onAddPlayer, onSubstitute }) => {
   const { activeTournament, attendance: allAttendance, userRole, players: allPlayers } = useStore();
-  const players = useMemo(() => allPlayers.filter(p => p.status !== 'inactive'), [allPlayers]);
-  const attendance = useMemo(() => allAttendance.filter(p => p.status !== 'inactive'), [allAttendance]);
+  const players = useMemo(() => allPlayers.filter(p => p.status !== 'inactive' && !p.isDM), [allPlayers]);
+  const attendance = useMemo(() => allAttendance.filter(p => p.status !== 'inactive' && !p.isDM), [allAttendance]);
   const [isStarting, setIsStarting] = useState(false);
   const [config, setConfig] = useState({
     numTeams: 3,

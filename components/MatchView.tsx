@@ -34,14 +34,14 @@ import {
 
 import { PlayerStatusCard } from '../src/components/PlayerStatusCard';
 import { HelpTooltip } from '../src/components/HelpTooltip';
-import { getPriorityQueue } from '../utils/teamLogic';
+import { getPriorityQueue, calculateEffectiveElo } from '../utils/teamLogic';
 import { Player, SystemMetadata } from '../types';
 
 interface MatchViewProps {
   onGenerate: (onlyCurrentPlayers?: boolean) => void;
   onDiscard: () => void;
   onFinishDay: () => void;
-  onFinishMatch: (winner: 'A' | 'B') => void;
+  onFinishMatch: (winner: 'A' | 'B', scoreA?: number, scoreB?: number) => void;
   onVerifyRules: () => void;
   onAnalyzeMatch: () => void;
   recalculateDailyStats: () => void;
@@ -96,7 +96,8 @@ export const MatchView: React.FC<MatchViewProps> = ({
     ruleVerification,
     elapsedTime,
     swapSelection,
-    setSwapSelection
+    setSwapSelection,
+    isSyncing
   } = useStore();
   const attendance = React.useMemo(() => allAttendance.filter(p => p.status !== 'inactive'), [allAttendance]);
   const { currentPlayer } = useStore();
@@ -202,6 +203,28 @@ export const MatchView: React.FC<MatchViewProps> = ({
     };
   };
 
+  const [confirmingWinner, setConfirmingWinner] = useState<'A' | 'B' | null>(null);
+  const [losingScoreInput, setLosingScoreInput] = useState<string>('');
+
+  const handleWinnerClick = (winner: 'A' | 'B') => {
+    setConfirmingWinner(winner);
+    setLosingScoreInput('');
+  };
+
+  const handleConfirmFinalScore = () => {
+    if (!confirmingWinner) return;
+    
+    const loserScore = parseInt(losingScoreInput) || 0;
+    
+    if (confirmingWinner === 'A') {
+      onFinishMatch('A', 15, loserScore);
+    } else {
+      onFinishMatch('B', loserScore, 15);
+    }
+    
+    setConfirmingWinner(null);
+  };
+
   const eloChanges = getEloChanges();
 
   return (
@@ -226,6 +249,18 @@ export const MatchView: React.FC<MatchViewProps> = ({
             systemMetadata={systemMetadata}
             activeTournament={useStore.getState().activeTournament}
           />
+        </div>
+      )}
+
+      {/* Botões de Ação Administrativa */}
+      {userRole === 'ADMIN' && (
+        <div className="bg-black/40 backdrop-blur-md p-4 sm:p-6 rounded-[2rem] sm:rounded-[3rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-inner mb-6">
+          <button 
+            onClick={onFinishDay} 
+            className="w-full flex items-center justify-center gap-2 text-[10px] font-black uppercase px-6 py-4 rounded-2xl border border-red-500/30 bg-black text-red-500 hover:bg-red-500/10 transition-all shadow-lg"
+          >
+            <X className="w-4 h-4" /> Finalizar Dia
+          </button>
         </div>
       )}
 
@@ -275,13 +310,24 @@ export const MatchView: React.FC<MatchViewProps> = ({
 
           <div className="flex flex-col gap-6 w-full max-w-sm">
             {userRole === 'ADMIN' ? (
-              <button 
-                onClick={() => onGenerate()} 
-                disabled={attendance.length < 12}
-                className="w-full bg-brand-primary hover:bg-brand-primary/90 disabled:bg-brand-secondary disabled:text-white/40 text-brand-secondary font-black py-6 rounded-3xl shadow-2xl shadow-brand-primary/20 transition-all flex items-center justify-center gap-4 uppercase tracking-[0.2em] text-sm hover:scale-105 active:scale-95 border border-brand-primary/40 disabled:border-brand-primary/40"
-              >
-                Escalar Elite <ArrowRight className="w-5 h-5" />
-              </button>
+              <>
+                <div className="bg-brand-secondary/40 border border-brand-primary/20 p-4 rounded-2xl flex items-center justify-between">
+                  <div>
+                    <h4 className="text-xs font-black text-white uppercase tracking-widest">Algoritmo de Balanceamento</h4>
+                    <p className="text-[10px] text-brand-primary/70 tracking-wider uppercase font-black">Sistema de Eficiência Técnica</p>
+                  </div>
+                  <div className="bg-brand-primary/10 p-2 rounded-xl">
+                    <Scale className="w-5 h-5 text-brand-primary" />
+                  </div>
+                </div>
+                <button 
+                  onClick={() => onGenerate()} 
+                  disabled={attendance.length < 12}
+                  className="w-full bg-brand-primary hover:bg-brand-primary/90 disabled:bg-brand-secondary disabled:text-white/40 text-brand-secondary font-black py-6 rounded-3xl shadow-2xl shadow-brand-primary/20 transition-all flex items-center justify-center gap-4 uppercase tracking-[0.2em] text-sm hover:scale-105 active:scale-95 border border-brand-primary/40 disabled:border-brand-primary/40"
+                >
+                  Escalar Elite <ArrowRight className="w-5 h-5" />
+                </button>
+              </>
             ) : (
               <div className="bg-brand-secondary/50 p-6 rounded-3xl border border-brand-primary/10">
                 <p className="text-xs font-black text-brand-primary uppercase tracking-[0.2em] animate-pulse">Aguardando comando do organizador...</p>
@@ -318,6 +364,9 @@ export const MatchView: React.FC<MatchViewProps> = ({
                         (p.consecutiveBenched || 0) >= 2 ? 'text-red-500' : 'text-white'
                       }`}>
                         {p.name}
+                        <span className="text-[9px] opacity-40 font-black">
+                          {Math.round(calculateEffectiveElo(p))}
+                        </span>
                         {p.timestamp && (
                           <span className="text-[8px] text-white/30 font-medium lowercase tracking-normal">
                             {new Date(p.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
@@ -374,6 +423,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
             {/* Botões de Ação */}
             {userRole === 'ADMIN' && (
               <div className="bg-black/40 backdrop-blur-md p-4 sm:p-6 rounded-[2rem] sm:rounded-[3rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-inner">
+
                 <button
                   onClick={() => setShowActions(!showActions)}
                   className="w-full flex items-center justify-between text-white font-black uppercase tracking-widest text-xs sm:text-sm hover:text-brand-primary transition-colors"
@@ -448,14 +498,16 @@ export const MatchView: React.FC<MatchViewProps> = ({
 
                     <button 
                       onClick={() => onGenerate(true)} 
-                      className="text-[10px] font-black uppercase bg-black text-white border border-brand-primary/40 px-8 py-4 rounded-2xl shadow-2xl hover:bg-white/5 transition-all"
+                      disabled={isSyncing}
+                      className={`text-[10px] font-black uppercase border border-brand-primary/40 px-8 py-4 rounded-2xl shadow-2xl transition-all ${isSyncing ? 'bg-brand-primary/10 text-white/40 border-white/5' : 'bg-black text-white hover:bg-white/5'}`}
                     >
-                      Nova Escalação
+                      {isSyncing ? 'Preparando...' : 'Nova Escalação'}
                     </button>
 
                     <button 
                       onClick={onDiscard} 
-                      className="flex items-center gap-3 text-[10px] font-black uppercase px-6 py-4 rounded-2xl border border-red-500/30 bg-black text-red-500 hover:bg-red-500/10 transition-all shadow-lg"
+                      disabled={isSyncing}
+                      className={`flex items-center gap-3 text-[10px] font-black uppercase px-6 py-4 rounded-2xl border transition-all shadow-lg ${isSyncing ? 'bg-black/50 border-white/5 text-white/20' : 'border-red-500/30 bg-black text-red-500 hover:bg-red-500/10'}`}
                     >
                       <Trash2 className="w-4 h-4" />
                       Descartar
@@ -539,7 +591,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
                     <div className="flex gap-8">
                       <div className="flex flex-col">
                         <span className="text-[9px] font-black text-white/40 uppercase tracking-[0.2em] mb-2">Algoritmo</span>
-                        <span className="text-xs font-black text-brand-primary uppercase tracking-widest">ELO Dynamic v3</span>
+                        <span className="text-xs font-black text-brand-primary uppercase tracking-widest">EFICIÊNCIA v3</span>
                       </div>
                       <div className="flex flex-col">
                         <span className="text-[9px] font-black text-white/40 uppercase tracking-[0.2em] mb-2">Critério</span>
@@ -558,6 +610,14 @@ export const MatchView: React.FC<MatchViewProps> = ({
 
           {/* Resumo dos Times Otimizado */}
           <div className="bg-black backdrop-blur-md rounded-2xl sm:rounded-[2.5rem] p-4 sm:p-8 mb-8 border border-white/5 border-l-[6px] border-l-brand-primary flex flex-col gap-8 animate-in fade-in duration-700 shadow-2xl">
+            {/* Header Times */}
+            <div className="flex items-center justify-between mb-2">
+               <h3 className="text-[10px] sm:text-xs font-black text-white uppercase tracking-[0.3em]">
+                 Escalação por <span className="text-brand-primary">Eficiência Técnica</span>
+                 <span className="text-white/40 text-[9px] font-medium ml-2">({generationResult?.combinationsCount || 0} simulações)</span>
+               </h3>
+            </div>
+
             {/* Time A */}
             <div className="flex flex-col gap-4 w-full">
               <div className="flex items-center justify-between">
@@ -565,7 +625,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
                   <div className="w-2.5 h-2.5 rounded-full bg-brand-primary shadow-[0_0_10px_rgba(245,196,41,0.6)] animate-pulse" />
                   <span className="text-xs sm:text-sm font-black text-brand-primary uppercase tracking-widest">Time A</span>
                 </div>
-                <span className="text-[10px] sm:text-xs font-black text-brand-primary uppercase tracking-widest italic bg-brand-primary/10 px-3 py-1 rounded-full border border-brand-primary/40">ELO: {generationResult.teamA.totalElo}</span>
+                <span className="text-[10px] sm:text-xs font-black text-brand-primary uppercase tracking-widest italic bg-brand-primary/10 px-3 py-1 rounded-full border border-brand-primary/40">EFIC: {generationResult?.teamA?.totalEfficiency || generationResult?.teamA?.totalElo || 0}</span>
               </div>
               <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-x-6 gap-y-4 py-2">
                 {[generationResult.teamA.setter, ...generationResult.teamA.players].filter(Boolean).map((p, idx) => (
@@ -589,6 +649,9 @@ export const MatchView: React.FC<MatchViewProps> = ({
                       }`}
                     >
                       {p?.name}
+                      <span className="text-[9px] sm:text-[11px] font-black opacity-40 ml-1.5 sm:ml-2 tracking-widest">
+                        {Math.round(calculateEffectiveElo(p))}
+                      </span>
                       <span className="absolute -bottom-0.5 left-0 w-0 h-0.5 bg-brand-primary transition-all duration-500 group-hover/player:w-full" />
                     </motion.span>
                     {p?.isOfficialSetter && <Sparkles className="w-3.5 h-3.5 sm:w-5 sm:h-5 text-brand-primary animate-pulse shrink-0" />}
@@ -606,7 +669,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
                   <div className="w-2.5 h-2.5 rounded-full bg-white shadow-[0_0_10px_rgba(255,255,255,0.6)] animate-pulse" />
                   <span className="text-xs sm:text-sm font-black text-white uppercase tracking-widest">Time B</span>
                 </div>
-                <span className="text-[10px] sm:text-xs font-black text-white/80 uppercase tracking-widest italic bg-white/5 px-3 py-1 rounded-full border border-brand-primary/40">ELO: {generationResult.teamB.totalElo}</span>
+                <span className="text-[10px] sm:text-xs font-black text-white/80 uppercase tracking-widest italic bg-white/5 px-3 py-1 rounded-full border border-brand-primary/40">EFIC: {generationResult?.teamB?.totalEfficiency || generationResult?.teamB?.totalElo || 0}</span>
               </div>
               <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-x-6 gap-y-4 py-2">
                 {[generationResult.teamB.setter, ...generationResult.teamB.players].filter(Boolean).map((p, idx) => (
@@ -630,6 +693,9 @@ export const MatchView: React.FC<MatchViewProps> = ({
                       }`}
                     >
                       {p?.name}
+                      <span className="text-[9px] sm:text-[11px] font-black opacity-40 ml-1.5 sm:ml-2 tracking-widest">
+                        {Math.round(calculateEffectiveElo(p))}
+                      </span>
                       <span className="absolute -bottom-0.5 left-0 w-0 h-0.5 bg-white transition-all duration-500 group-hover/player:w-full" />
                     </motion.span>
                     {p?.isOfficialSetter && <Sparkles className="w-3.5 h-3.5 sm:w-5 sm:h-5 text-white animate-pulse shrink-0" />}
@@ -667,24 +733,98 @@ export const MatchView: React.FC<MatchViewProps> = ({
                 </div>
               </div>
 
-              <div className="flex flex-col items-center justify-center gap-6 sm:gap-8 relative z-10">
+              <div className="flex flex-col items-center justify-center gap-6 sm:gap-8 relative z-10 w-full">
                 {userRole === 'ADMIN' && (
-                  <div className="flex flex-row items-center justify-center gap-3 sm:gap-8 w-full">
-                    <button 
-                      onClick={() => onFinishMatch('A')}
-                      className="w-1/2 bg-brand-primary hover:bg-brand-primary/90 text-black px-2 py-4 sm:px-8 sm:py-6 rounded-2xl sm:rounded-3xl font-black text-[10px] sm:text-sm uppercase tracking-widest shadow-xl shadow-brand-primary/20 transition-all hover:scale-105 active:scale-95 flex flex-col sm:flex-row items-center justify-center gap-1.5 sm:gap-3"
-                    >
-                      <span>Vitória A</span> <Trophy className="w-4 h-4 sm:w-5 sm:h-5" />
-                    </button>
+                  <div className="flex flex-col items-center justify-center gap-6 w-full">
+                    {!confirmingWinner ? (
+                      <div className="flex flex-row items-center justify-center gap-3 sm:gap-8 w-full">
+                        <button 
+                          onClick={() => handleWinnerClick('A')}
+                          className="w-1/2 bg-brand-primary hover:bg-brand-primary/90 text-black px-2 py-4 sm:px-8 sm:py-6 rounded-2xl sm:rounded-3xl font-black text-[10px] sm:text-sm uppercase tracking-widest shadow-xl shadow-brand-primary/20 transition-all hover:scale-105 active:scale-95 flex flex-col sm:flex-row items-center justify-center gap-1.5 sm:gap-3"
+                        >
+                          <span>Vitória A</span> <Trophy className="w-4 h-4 sm:w-5 sm:h-5" />
+                        </button>
 
-                    <div className="hidden sm:block w-px h-16 bg-white/10" />
+                        <div className="hidden sm:block w-px h-16 bg-white/10" />
 
-                    <button 
-                      onClick={() => onFinishMatch('B')}
-                      className="w-1/2 bg-white hover:bg-gray-200 text-black px-2 py-4 sm:px-8 sm:py-6 rounded-2xl sm:rounded-3xl font-black text-[10px] sm:text-sm uppercase tracking-widest shadow-xl shadow-white/20 transition-all hover:scale-105 active:scale-95 flex flex-col sm:flex-row items-center justify-center gap-1.5 sm:gap-3"
-                    >
-                      <span>Vitória B</span> <Trophy className="w-4 h-4 sm:w-5 sm:h-5" />
-                    </button>
+                        <button 
+                          onClick={() => handleWinnerClick('B')}
+                          className="w-1/2 bg-white hover:bg-gray-200 text-black px-2 py-4 sm:px-8 sm:py-6 rounded-2xl sm:rounded-3xl font-black text-[10px] sm:text-sm uppercase tracking-widest shadow-xl shadow-white/20 transition-all hover:scale-105 active:scale-95 flex flex-col sm:flex-row items-center justify-center gap-1.5 sm:gap-3"
+                        >
+                          <span>Vitória B</span> <Trophy className="w-4 h-4 sm:w-5 sm:h-5" />
+                        </button>
+                      </div>
+                    ) : (
+                      <motion.div 
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="w-full bg-brand-secondary/90 backdrop-blur-md p-4 sm:p-8 rounded-[2rem] border border-brand-primary/40 flex flex-col items-center gap-4 sm:gap-8 shadow-2xl relative overflow-hidden"
+                      >
+                        {/* Decorative background element */}
+                        <div className="absolute top-0 right-0 w-32 h-32 bg-brand-primary/5 rounded-full -mr-16 -mt-16 blur-3xl pointer-events-none" />
+                        
+                        <div className="text-center relative z-10 px-2">
+                          <div className="inline-flex items-center gap-2 mb-2 sm:mb-3">
+                            <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-brand-primary animate-pulse" />
+                            <p className="text-[9px] sm:text-xs font-black text-brand-primary uppercase tracking-[0.2em] sm:tracking-[0.3em]">
+                              Resultado Final: Time {confirmingWinner}
+                            </p>
+                          </div>
+                          <h4 className="text-base sm:text-xl font-black text-white uppercase tracking-tight leading-tight">
+                            Placar do perdedor?
+                          </h4>
+                          <p className="text-white/40 text-[9px] sm:text-[10px] uppercase font-bold tracking-widest mt-1 sm:mt-2">
+                            Time {confirmingWinner} venceu (15)
+                          </p>
+                        </div>
+                        
+                        <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-6 w-full max-w-xs sm:max-w-none relative z-10">
+                          <div className="w-full sm:flex-1 flex flex-col items-center gap-2">
+                            <label className="text-[9px] font-black text-white/40 uppercase tracking-widest sm:hidden">Pontos do Adversário</label>
+                            <input 
+                              type="number" 
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              value={losingScoreInput}
+                              onChange={(e) => setLosingScoreInput(e.target.value)}
+                              onKeyDown={(e) => e.key === 'Enter' && handleConfirmFinalScore()}
+                              placeholder="0"
+                              className="w-full sm:w-32 bg-black/50 border-2 border-brand-primary/40 rounded-2xl px-4 py-3 sm:px-6 sm:py-4 text-center text-3xl font-black text-white focus:border-brand-primary focus:ring-4 focus:ring-brand-primary/10 transition-all outline-none"
+                              autoFocus
+                            />
+                          </div>
+
+                          <div className="flex flex-col gap-2 sm:gap-3 w-full sm:flex-initial">
+                            <button 
+                              onClick={handleConfirmFinalScore}
+                              disabled={isSyncing}
+                              className={`w-full sm:w-auto font-black uppercase tracking-widest px-8 py-4 sm:px-10 rounded-2xl transition-all shadow-lg flex items-center justify-center gap-3 group text-xs sm:text-sm ${
+                                isSyncing 
+                                  ? 'bg-brand-primary/50 text-black/40 cursor-not-allowed' 
+                                  : 'bg-brand-primary text-black hover:scale-105 active:scale-95 shadow-brand-primary/20'
+                              }`}
+                            >
+                              <span>{isSyncing ? 'Sincronizando...' : 'Confirmar Vitória'}</span>
+                              {isSyncing ? (
+                                <RefreshCw className="w-4 h-4 animate-spin" />
+                              ) : (
+                                <Trophy className="w-4 h-4 group-hover:rotate-12 transition-transform" />
+                              )}
+                            </button>
+                            
+                            <button 
+                              onClick={() => !isSyncing && setConfirmingWinner(null)}
+                              disabled={isSyncing}
+                              className={`w-full sm:w-auto font-black uppercase tracking-widest text-[9px] py-1.5 transition-colors ${
+                                isSyncing ? 'text-white/10' : 'text-white/40 hover:text-white'
+                              }`}
+                            >
+                              Cancelar
+                            </button>
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
                   </div>
                 )}
                 
@@ -907,7 +1047,11 @@ export const MatchView: React.FC<MatchViewProps> = ({
                           const won = (isTeamA && match.winner === 'A') || (isTeamB && match.winner === 'B');
                           
                           return (
-                            <td key={match.id || `match-cell-${mIdx}`} className="py-4 px-2 text-center border-y border-brand-primary/40 group-hover:bg-brand-secondary transition-colors">
+                            <td 
+                              key={match.id || `match-cell-${mIdx}`} 
+                              className="py-4 px-2 text-center border-y border-brand-primary/40 group-hover:bg-brand-secondary transition-colors"
+                              title={match.scoreA > 0 || match.scoreB > 0 ? `Placar: ${match.scoreA} x ${match.scoreB}` : 'Placar não registrado'}
+                            >
                               {played ? (
                                 <div className={`inline-flex items-center justify-center w-10 h-10 rounded-xl font-black text-xs shadow-lg transition-all group-hover:scale-110 border ${won ? 'bg-brand-primary border-brand-primary/30 text-black' : 'bg-white border-white/30 text-black'}`}>
                                   {won ? 'V' : 'D'}

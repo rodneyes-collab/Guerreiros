@@ -14,45 +14,27 @@ import {
   signOut,
   User 
 } from 'firebase/auth';
-import { 
-  getFirestore, 
-  initializeFirestore,
-  persistentLocalCache,
-  persistentMultipleTabManager,
-  collection, 
-  doc, 
-  updateDoc, 
-  onSnapshot, 
-  setDoc, 
-  deleteDoc, 
-  getDoc, 
-  getDocFromServer, 
-  getDocs, 
-  writeBatch, 
-  increment, 
-  query, 
-  where, 
-  orderBy, 
-  arrayUnion, 
-  addDoc, 
-  serverTimestamp, 
-  collectionGroup, 
-  limit 
-} from 'firebase/firestore';
+import { getFirestore, collection, doc, updateDoc, onSnapshot, setDoc, deleteDoc, getDoc, getDocFromServer, getDocs, writeBatch, increment, query, where, orderBy, arrayUnion, addDoc, serverTimestamp, collectionGroup, limit } from 'firebase/firestore';
 import { getMessaging, getToken, onMessage } from 'firebase/messaging';
 import firebaseConfig from './firebase-applet-config.json';
 
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
-// Initialize Firestore with modern persistent cache (multi-tab support)
-export const db = initializeFirestore(app, {
-  localCache: persistentLocalCache({
-    tabManager: persistentMultipleTabManager()
-  })
-}, (firebaseConfig as any).firestoreDatabaseId);
+export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
 
 // Initialize Firebase Cloud Messaging and get a reference to the service
 export const messaging = typeof window !== 'undefined' && 'Notification' in window ? getMessaging(app) : null;
+
+/* 
+// Enable offline persistence - Temporarily disabled to investigate "Unexpected state (ID: ca9)" in Firestore SDK 11.10.0
+enableIndexedDbPersistence(db).catch((err) => {
+  if (err.code == 'failed-precondition') {
+    console.warn('Multiple tabs open, persistence can only be enabled in one tab at a a time.');
+  } else if (err.code == 'unimplemented') {
+    console.warn('The current browser does not support all of the features required to enable persistence');
+  }
+});
+*/
 
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
