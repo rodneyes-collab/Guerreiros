@@ -221,7 +221,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
 
               <div className="flex items-center gap-8">
                 <div className="text-center">
-                  <p className="text-[10px] font-black text-brand-primary uppercase tracking-widest mb-1">Time A</p>
+                  <p className="text-[10px] font-black text-brand-primary uppercase tracking-widest mb-1">Equipe A</p>
                   <div className="flex flex-col items-center gap-2">
                     {selectedMatch.scoreA > 0 || selectedMatch.scoreB > 0 ? (
                       <p className="text-5xl font-black tracking-tighter">{selectedMatch.scoreA}</p>
@@ -233,7 +233,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
                 </div>
                 <div className="text-2xl font-black text-white/20">VS</div>
                 <div className="text-center">
-                  <p className="text-[10px] font-black text-rose-400 uppercase tracking-widest mb-1">Time B</p>
+                  <p className="text-[10px] font-black text-rose-400 uppercase tracking-widest mb-1">Equipe B</p>
                   <div className="flex flex-col items-center gap-2">
                     {selectedMatch.scoreA > 0 || selectedMatch.scoreB > 0 ? (
                       <p className="text-5xl font-black tracking-tighter">{selectedMatch.scoreB}</p>
@@ -248,14 +248,14 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
           </div>
 
           <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-8">
-            {/* Time A */}
+            {/* Equipe A */}
             <div className={`rounded-[2rem] border p-6 ${selectedMatch.winner === 'A' ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-white/5 border-brand-primary/40'}`}>
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-3">
                   <div className="p-2 bg-white/5 rounded-xl border border-brand-primary/40">
                     <Users className="w-5 h-5 text-brand-primary" />
                   </div>
-                  <h3 className="text-sm font-black text-white uppercase tracking-widest">Time A</h3>
+                  <h3 className="text-sm font-black text-white uppercase tracking-widest">Equipe A</h3>
                 </div>
                 {selectedMatch.winner === 'A' && (
                   <div className="bg-emerald-500 text-white text-[8px] font-black px-3 py-1 rounded-full uppercase tracking-widest flex items-center gap-1">
@@ -285,14 +285,14 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
               </div>
             </div>
 
-            {/* Time B */}
+            {/* Equipe B */}
             <div className={`rounded-[2rem] border p-6 ${selectedMatch.winner === 'B' ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-white/5 border-brand-primary/40'}`}>
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-3">
                   <div className="p-2 bg-white/5 rounded-xl border border-brand-primary/40">
                     <Users className="w-5 h-5 text-rose-500" />
                   </div>
-                  <h3 className="text-sm font-black text-white uppercase tracking-widest">Time B</h3>
+                  <h3 className="text-sm font-black text-white uppercase tracking-widest">Equipe B</h3>
                 </div>
                 {selectedMatch.winner === 'B' && (
                   <div className="bg-emerald-500 text-white text-[8px] font-black px-3 py-1 rounded-full uppercase tracking-widest flex items-center gap-1">
@@ -565,13 +565,13 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
                   <div className="flex items-center gap-4">
                     <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl transition-all ${match.winner === 'A' ? 'bg-brand-primary/10 border-2 border-brand-primary/30 shadow-sm scale-105' : 'border border-transparent'}`}>
                       {match.winner === 'A' && <Trophy className="w-5 h-5 text-brand-primary fill-brand-primary" />}
-                      <span className={`text-sm font-black uppercase tracking-tighter ${match.winner === 'A' ? 'text-brand-primary' : 'text-white/60'}`}>Time A</span>
+                      <span className={`text-sm font-black uppercase tracking-tighter ${match.winner === 'A' ? 'text-brand-primary' : 'text-white/60'}`}>Equipe A</span>
                       {renderScore(match, 'A')}
                     </div>
                     <div className="text-xs font-black text-white/20 italic">VS</div>
                     <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl transition-all ${match.winner === 'B' ? 'bg-brand-primary/10 border-2 border-brand-primary/30 shadow-sm scale-105' : 'border border-transparent'}`}>
                       {renderScore(match, 'B')}
-                      <span className={`text-sm font-black uppercase tracking-tighter ${match.winner === 'B' ? 'text-brand-primary' : 'text-white/60'}`}>Time B</span>
+                      <span className={`text-sm font-black uppercase tracking-tighter ${match.winner === 'B' ? 'text-brand-primary' : 'text-white/60'}`}>Equipe B</span>
                       {match.winner === 'B' && <Trophy className="w-5 h-5 text-brand-primary fill-brand-primary" />}
                     </div>
                   </div>

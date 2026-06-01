@@ -4,6 +4,7 @@ import { useStore } from '../store';
 import { TeamCard } from './TeamCard';
 import { formatTime } from '../utils/helpers';
 import { getFirestoreDateKey } from '../firebase';
+import { useNarration } from '../src/hooks/useNarration';
 import { 
   Swords, 
   Trophy,
@@ -34,7 +35,7 @@ import {
 
 import { PlayerStatusCard } from '../src/components/PlayerStatusCard';
 import { HelpTooltip } from '../src/components/HelpTooltip';
-import { getPriorityQueue, calculateEffectiveElo } from '../utils/teamLogic';
+import { getPriorityQueue, calculateEffectiveElo, suggestPosition, calculateTeamPositions } from '../utils/teamLogic';
 import { Player, SystemMetadata } from '../types';
 
 interface MatchViewProps {
@@ -76,6 +77,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
   systemMetadata,
   updateSystemMetadata
 }) => {
+  const { announceWinner } = useNarration();
   const { 
     generationResult, 
     attendance: allAttendance, 
@@ -220,14 +222,47 @@ export const MatchView: React.FC<MatchViewProps> = ({
     
     if (confirmingWinner === 'A') {
       onFinishMatch('A', 15, loserScore);
+      announceWinner('A', 15, loserScore);
     } else {
       onFinishMatch('B', loserScore, 15);
+      announceWinner('B', loserScore, 15);
     }
     
     setConfirmingWinner(null);
   };
 
   const eloChanges = getEloChanges();
+  
+  // State para hover sincronizado entre lista e mapa
+  const [hoveredPlayerId, setHoveredPlayerId] = useState<string | null>(null);
+
+  // Calcula mapeamento tático sincronizado
+  const suggestedPositionsA = generationResult ? calculateTeamPositions(generationResult.teamA, generationResult.teamB) : {};
+  const suggestedPositionsB = generationResult ? calculateTeamPositions(generationResult.teamB, generationResult.teamA) : {};
+
+  // Helpers para o Rival Técnico
+  const getRivalPosition = (pos: string) => {
+    const map: Record<string, string> = { 
+      '4': '2', '2': '4', // Ponteiro vs Oposto na rede
+      '3': '3',           // Central vs Central
+      '5': '1', '1': '5', // Fundo vs Fundo lateral
+      '6': '6'            // Meio fundo vs Meio fundo
+    };
+    return map[pos] || pos;
+  };
+
+  const getRivalId = (playerId: string | null, isA: boolean) => {
+    if (!playerId || !generationResult) return null;
+    const currentPositions = isA ? suggestedPositionsA : suggestedPositionsB;
+    const opponentPositions = isA ? suggestedPositionsB : suggestedPositionsA;
+    const myPos = currentPositions[playerId];
+    if (!myPos) return null;
+    
+    const rivalPos = getRivalPosition(myPos);
+    return Object.entries(opponentPositions).find(([_, pPos]) => pPos === rivalPos)?.[0] || null;
+  };
+
+  const rivalId = hoveredPlayerId ? getRivalId(hoveredPlayerId, suggestedPositionsA[hoveredPlayerId] !== undefined) : null;
 
   return (
     <div className="space-y-8 animate-in zoom-in-95 duration-500">
@@ -608,40 +643,63 @@ export const MatchView: React.FC<MatchViewProps> = ({
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <div className="w-2.5 h-2.5 rounded-full bg-brand-primary shadow-[0_0_10px_rgba(245,196,41,0.6)] animate-pulse" />
-                  <span className="text-xs sm:text-sm font-black text-brand-primary uppercase tracking-widest">Time A</span>
+                  <span className="text-xs sm:text-sm font-black text-brand-primary uppercase tracking-widest">Equipe A</span>
                 </div>
                 <span className="text-[10px] sm:text-xs font-black text-brand-primary uppercase tracking-widest italic bg-brand-primary/10 px-3 py-1 rounded-full border border-brand-primary/40">EFIC: {generationResult?.teamA?.totalEfficiency || generationResult?.teamA?.totalElo || 0}</span>
               </div>
+              
               <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-x-6 gap-y-4 py-2">
-                {[generationResult.teamA.setter, ...generationResult.teamA.players].filter(Boolean).map((p, idx) => (
-                  <div 
-                    key={p?.id || idx} 
-                    className={`flex items-center gap-2 group/player transition-all duration-300`}
-                  >
-                    <motion.span 
-                      initial={{ scale: 0.8, opacity: 0 }}
-                      animate={{ scale: 1, opacity: 1 }}
-                      transition={{ 
-                        type: "spring",
-                        stiffness: 300,
-                        damping: 15,
-                        delay: idx * 0.05
-                      }}
-                      className={`text-base sm:text-xl font-black uppercase tracking-tight relative ${
-                        p?.isOfficialSetter 
-                          ? 'text-brand-primary drop-shadow-[0_0_8px_rgba(245,196,41,0.5)]' 
-                          : 'text-brand-primary drop-shadow-[0_0_5px_rgba(245,196,41,0.3)]'
-                      }`}
+                {[generationResult.teamA.setter, ...generationResult.teamA.players].filter(Boolean).map((p, idx) => {
+                  const isHovered = hoveredPlayerId === p?.id;
+                  const isRival = rivalId === p?.id;
+                  
+                  return (
+                    <div 
+                      key={p?.id || idx} 
+                      onMouseEnter={() => setHoveredPlayerId(p?.id || null)}
+                      onMouseLeave={() => setHoveredPlayerId(null)}
+                      onTouchStart={() => setHoveredPlayerId(p?.id || null)}
+                      onTouchEnd={() => setHoveredPlayerId(null)}
+                      className={`flex items-center gap-2 group/player transition-all duration-300 ${isHovered || isRival ? 'scale-105' : ''}`}
                     >
-                      {p?.name}
-                      <span className="text-[9px] sm:text-[11px] font-black opacity-40 ml-1.5 sm:ml-2 tracking-widest">
-                        {Math.round(calculateEffectiveElo(p))}
-                      </span>
-                      <span className="absolute -bottom-0.5 left-0 w-0 h-0.5 bg-brand-primary transition-all duration-500 group-hover/player:w-full" />
-                    </motion.span>
-                    {p?.isOfficialSetter && <Sparkles className="w-3.5 h-3.5 sm:w-5 sm:h-5 text-brand-primary animate-pulse shrink-0" />}
-                  </div>
-                ))}
+                      <motion.span 
+                        initial={{ scale: 0.8, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        transition={{ 
+                          type: "spring",
+                          stiffness: 300,
+                          damping: 15,
+                          delay: idx * 0.05
+                        }}
+                        className={`text-base sm:text-lg font-black uppercase tracking-tight relative transition-colors ${
+                          isHovered 
+                            ? 'text-white' 
+                            : isRival 
+                              ? 'text-brand-primary drop-shadow-[0_0_15px_rgba(245,196,41,0.8)]'
+                              : (p?.isOfficialSetter 
+                                ? 'text-brand-primary drop-shadow-[0_0_8px_rgba(245,196,41,0.5)]' 
+                                : 'text-brand-primary drop-shadow-[0_0_5px_rgba(245,196,41,0.3)]')
+                        }`}
+                      >
+                        {p?.name}
+                        <span className={`text-[11px] sm:text-[14px] font-black px-2.5 py-1 rounded border ml-2 transition-all ${
+                          isHovered 
+                            ? 'bg-brand-primary text-black border-brand-primary scale-110 shadow-lg' 
+                            : isRival
+                              ? 'bg-brand-primary border-brand-primary text-black'
+                              : 'bg-brand-primary/20 text-brand-primary border-brand-primary/30'
+                        }`}>
+                          P{suggestedPositionsA[p?.id || '']}
+                        </span>
+                        <span className="text-[9px] sm:text-[11px] font-black opacity-40 ml-1.5 sm:ml-2 tracking-widest">
+                          {Math.round(calculateEffectiveElo(p))}
+                        </span>
+                        <span className={`absolute -bottom-0.5 left-0 h-0.5 bg-brand-primary transition-all duration-500 ${isHovered || isRival ? 'w-full' : 'w-0 group-hover/player:w-full'}`} />
+                      </motion.span>
+                      {p?.isOfficialSetter && <Sparkles className={`w-3.5 h-3.5 sm:w-5 sm:h-5 text-brand-primary shrink-0 transition-all ${isHovered ? 'animate-spin' : 'animate-pulse'}`} />}
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
@@ -652,40 +710,63 @@ export const MatchView: React.FC<MatchViewProps> = ({
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <div className="w-2.5 h-2.5 rounded-full bg-white shadow-[0_0_10px_rgba(255,255,255,0.6)] animate-pulse" />
-                  <span className="text-xs sm:text-sm font-black text-white uppercase tracking-widest">Time B</span>
+                  <span className="text-xs sm:text-sm font-black text-white uppercase tracking-widest">Equipe B</span>
                 </div>
                 <span className="text-[10px] sm:text-xs font-black text-white/80 uppercase tracking-widest italic bg-white/5 px-3 py-1 rounded-full border border-brand-primary/40">EFIC: {generationResult?.teamB?.totalEfficiency || generationResult?.teamB?.totalElo || 0}</span>
               </div>
+
               <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-x-6 gap-y-4 py-2">
-                {[generationResult.teamB.setter, ...generationResult.teamB.players].filter(Boolean).map((p, idx) => (
-                  <div 
-                    key={p?.id || idx} 
-                    className={`flex items-center gap-2 group/player transition-all duration-300`}
-                  >
-                    <motion.span 
-                      initial={{ scale: 0.8, opacity: 0 }}
-                      animate={{ scale: 1, opacity: 1 }}
-                      transition={{ 
-                        type: "spring",
-                        stiffness: 300,
-                        damping: 15,
-                        delay: idx * 0.05
-                      }}
-                      className={`text-base sm:text-xl font-black uppercase tracking-tight relative ${
-                        p?.isOfficialSetter 
-                          ? 'text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.5)]' 
-                          : 'text-white/70 drop-shadow-[0_0_5px_rgba(255,255,255,0.3)]'
-                      }`}
+                {[generationResult.teamB.setter, ...generationResult.teamB.players].filter(Boolean).map((p, idx) => {
+                  const isHovered = hoveredPlayerId === p?.id;
+                  const isRival = rivalId === p?.id;
+
+                  return (
+                    <div 
+                      key={p?.id || idx} 
+                      onMouseEnter={() => setHoveredPlayerId(p?.id || null)}
+                      onMouseLeave={() => setHoveredPlayerId(null)}
+                      onTouchStart={() => setHoveredPlayerId(p?.id || null)}
+                      onTouchEnd={() => setHoveredPlayerId(null)}
+                      className={`flex items-center gap-2 group/player transition-all duration-300 ${isHovered || isRival ? 'scale-105' : ''}`}
                     >
-                      {p?.name}
-                      <span className="text-[9px] sm:text-[11px] font-black opacity-40 ml-1.5 sm:ml-2 tracking-widest">
-                        {Math.round(calculateEffectiveElo(p))}
-                      </span>
-                      <span className="absolute -bottom-0.5 left-0 w-0 h-0.5 bg-white transition-all duration-500 group-hover/player:w-full" />
-                    </motion.span>
-                    {p?.isOfficialSetter && <Sparkles className="w-3.5 h-3.5 sm:w-5 sm:h-5 text-white animate-pulse shrink-0" />}
-                  </div>
-                ))}
+                      <motion.span 
+                        initial={{ scale: 0.8, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        transition={{ 
+                          type: "spring",
+                          stiffness: 300,
+                          damping: 15,
+                          delay: idx * 0.05
+                        }}
+                        className={`text-base sm:text-lg font-black uppercase tracking-tight relative transition-colors ${
+                          isHovered 
+                            ? 'text-brand-primary' 
+                            : isRival
+                              ? 'text-white drop-shadow-[0_0_15px_rgba(255,255,255,0.8)]'
+                              : (p?.isOfficialSetter 
+                                ? 'text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.5)]' 
+                                : 'text-white/70 drop-shadow-[0_0_5px_rgba(255,255,255,0.3)]')
+                        }`}
+                      >
+                        {p?.name}
+                        <span className={`text-[11px] sm:text-[14px] font-black px-2.5 py-1 rounded border ml-2 transition-all ${
+                          isHovered 
+                            ? 'bg-white text-black border-white scale-110 shadow-lg' 
+                            : isRival
+                              ? 'bg-white border-white text-black'
+                              : 'bg-white/10 text-white border-white/20'
+                        }`}>
+                          P{suggestedPositionsB[p?.id || '']}
+                        </span>
+                        <span className="text-[9px] sm:text-[11px] font-black opacity-40 ml-1.5 sm:ml-2 tracking-widest">
+                          {Math.round(calculateEffectiveElo(p))}
+                        </span>
+                        <span className={`absolute -bottom-0.5 left-0 h-0.5 bg-white transition-all duration-500 ${isHovered || isRival ? 'w-full' : 'w-0 group-hover/player:w-full'}`} />
+                      </motion.span>
+                      {p?.isOfficialSetter && <Sparkles className={`w-3.5 h-3.5 sm:w-5 sm:h-5 text-white shrink-0 transition-all ${isHovered ? 'animate-spin' : 'animate-pulse'}`} />}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -754,14 +835,14 @@ export const MatchView: React.FC<MatchViewProps> = ({
                           <div className="inline-flex items-center gap-2 mb-2 sm:mb-3">
                             <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-brand-primary animate-pulse" />
                             <p className="text-[9px] sm:text-xs font-black text-brand-primary uppercase tracking-[0.2em] sm:tracking-[0.3em]">
-                              Resultado Final: Time {confirmingWinner}
+                              Resultado Final: Equipe {confirmingWinner}
                             </p>
                           </div>
                           <h4 className="text-base sm:text-xl font-black text-white uppercase tracking-tight leading-tight">
                             Placar do perdedor?
                           </h4>
                           <p className="text-white/40 text-[9px] sm:text-[10px] uppercase font-bold tracking-widest mt-1 sm:mt-2">
-                            Time {confirmingWinner} venceu (15)
+                            Equipe {confirmingWinner} venceu (15)
                           </p>
                         </div>
                         
@@ -947,6 +1028,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
               <TeamCard 
                 title="Time A" 
                 team={generationResult.teamA} 
+                opponent={generationResult.teamB}
                 color="green" 
                 attendance={attendance}
                 userRole={userRole}
@@ -954,10 +1036,14 @@ export const MatchView: React.FC<MatchViewProps> = ({
                 onRemove={(pid) => onRemovePlayer('A', pid)}
                 onPromote={(pid) => onPromoteToSetter('A', pid)}
                 activeSwapId={swapSelection?.playerId}
+                hoveredPlayerId={hoveredPlayerId}
+                setHoveredPlayerId={setHoveredPlayerId}
+                rivalId={rivalId}
               />
               <TeamCard 
                 title="Time B" 
                 team={generationResult.teamB} 
+                opponent={generationResult.teamA}
                 color="blue" 
                 attendance={attendance}
                 userRole={userRole}
@@ -965,6 +1051,9 @@ export const MatchView: React.FC<MatchViewProps> = ({
                 onRemove={(pid) => onRemovePlayer('B', pid)}
                 onPromote={(pid) => onPromoteToSetter('B', pid)}
                 activeSwapId={swapSelection?.playerId}
+                hoveredPlayerId={hoveredPlayerId}
+                setHoveredPlayerId={setHoveredPlayerId}
+                rivalId={rivalId}
               />
             </div>
           )}

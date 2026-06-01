@@ -96,20 +96,8 @@ export const useFirestoreSync = () => {
           if (doc.id === 'system') setSystemMetadata(doc.data() || {});
         });
 
-        // 2. Populate players if empty
+        // 2. Load players
         let playersSnapshot = await getDocs(collection(db, 'players'));
-        if (playersSnapshot.empty) {
-          console.info('Firestore Sync: Players collection is empty, populating with INITIAL_PLAYERS');
-          const batch = writeBatch(db);
-          INITIAL_PLAYERS.forEach(player => {
-            const playerRef = doc(db, 'players', player.id);
-            batch.set(playerRef, player);
-          });
-          await batch.commit();
-          console.info('Firestore Sync: INITIAL_PLAYERS populated successfully');
-          // Re-fetch since we just populated them
-          playersSnapshot = await getDocs(collection(db, 'players'));
-        }
 
         // Set the players in Store so login validations and other unauthenticated views can use it
         const list: Player[] = [];

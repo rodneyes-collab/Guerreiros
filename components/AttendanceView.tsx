@@ -1,7 +1,7 @@
 import React from 'react';
 import { useStore } from '../store';
 import { Player, Gender } from '../types';
-import { translateGender } from '../utils/helpers';
+import { translateGender, capitalizeName } from '../utils/helpers';
 import { 
   ClipboardCheck, 
   Trash2, 
@@ -210,13 +210,13 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                               <span className="text-[8px] font-black text-white/30 uppercase tracking-tighter">Chegada</span>
                             </div>
                             <div>
-                              <p className={`text-lg font-black flex items-center gap-2 leading-none uppercase tracking-tight ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
+                              <p className={`text-base font-bold flex items-center gap-2 leading-none tracking-tight ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
                                 {userRole === 'ADMIN' && (
                                   <span className="shrink-0" title={`Nível: ${fullPlayer?.impactLevel === 3 ? 'Elite' : fullPlayer?.impactLevel === 2 ? 'Médio' : 'Base'}`}>
                                     {getImpactIcon(fullPlayer?.impactLevel)}
                                   </span>
                                 )}
-                                {displayName}
+                                {capitalizeName(displayName)}
                                 <span className="text-[10px] sm:text-xs font-black opacity-30 ml-2 italic tracking-tighter">
                                   {Math.round(calculateEffectiveElo(fullPlayer || player))}
                                 </span>
@@ -306,13 +306,13 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                         className={`flex items-center justify-between p-4 rounded-2xl border hover:shadow-2xl transition-all text-left group hover:-translate-y-0.5 bg-brand-light border-brand-primary/40 hover:border-brand-primary/50 ${isSyncing ? 'opacity-50 cursor-not-allowed' : ''}`}
                       >
                         <div className="space-y-1">
-                          <p className={`text-lg font-black flex items-center gap-2 leading-none uppercase tracking-tight ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
+                          <p className={`text-base font-bold flex items-center gap-2 leading-none tracking-tight ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
                             {userRole === 'ADMIN' && (
                               <span className="shrink-0" title={`Nível: ${player.impactLevel === 3 ? 'Elite' : player.impactLevel === 2 ? 'Médio' : 'Base'}`}>
                                 {getImpactIcon(player.impactLevel)}
                               </span>
                             )}
-                            {player.name || "Sócio sem nome"}
+                            {capitalizeName(player.name || "Sócio sem nome")}
                             {player.isOfficialSetter && <span className="text-[8px] font-black uppercase bg-brand-primary/10 text-brand-primary px-2 py-0.5 rounded-full border border-brand-primary/40">Levantador</span>}
                           </p>
                         </div>

@@ -1,7 +1,7 @@
 import React from 'react';
 import { useStore } from '../store';
 import { Player, Gender } from '../types';
-import { translateGender } from '../utils/helpers';
+import { translateGender, capitalizeName } from '../utils/helpers';
 import { getPlayerTier } from '../utils/tierUtils';
 import { 
   Trash2, 
@@ -18,7 +18,8 @@ import {
   Search,
   TrendingDown,
   TrendingUp,
-  Minus
+  Minus,
+  Trophy
 } from 'lucide-react';
 import { EvasionIcon } from './EvasionIcon';
 import { calculateEvasionLevel } from '../utils/evasion';
@@ -248,7 +249,12 @@ export const MembersView: React.FC<MembersViewProps> = ({
                 </th>
                 {userRole === 'ADMIN' && <th className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest">Email</th>}
                 <th className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">Nascimento</th>
-                <th className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">Performance</th>
+                <th className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">
+                  <div className="flex flex-col items-center gap-1">
+                    <Trophy className="w-3.5 h-3.5" />
+                    <span>Performance</span>
+                  </div>
+                </th>
                 <th className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">Gênero</th>
                 <th className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">Nível</th>
                 {userRole === 'ADMIN' && <th className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">Habilidades</th>}
@@ -278,13 +284,13 @@ export const MembersView: React.FC<MembersViewProps> = ({
                     <div className="flex items-center gap-2">
                       <div className="flex items-center gap-1.5 min-w-0">
                         {userRole === 'ADMIN' && <div className="shrink-0">{getImpactIcon(player.impactLevel)}</div>}
-                        <div className={`font-black text-xs truncate ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
-                          {player.name || "Sócio sem nome"}
+                        <div className={`font-bold text-xs truncate ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
+                          {capitalizeName(player.name) || "Sócio sem nome"}
                           {player.isDM && <span className="ml-2 px-1.5 py-0.5 rounded-full text-[8px] font-black bg-rose-500 text-white">DM</span>}
                           <span className="ml-2">
                              <EvasionIcon 
                                 level={player.evasionLevel || calculateEvasionLevel(player)} 
-                                customLabel={`${(player.evasionLevel || calculateEvasionLevel(player)).charAt(0).toUpperCase() + (player.evasionLevel || calculateEvasionLevel(player)).slice(1)} - ${player.wins || 0}V ${player.losses || 0}D`} 
+                                customTooltip={`${(player.evasionLevel || calculateEvasionLevel(player)).charAt(0).toUpperCase() + (player.evasionLevel || calculateEvasionLevel(player)).slice(1)} - ${player.wins || 0}V ${player.losses || 0}D`} 
                              />
                           </span>
                         </div>
@@ -303,8 +309,14 @@ export const MembersView: React.FC<MembersViewProps> = ({
                   <td className="px-3 py-2 text-center">
                     <div className="flex flex-col items-center">
                       <div className="flex items-center gap-1.5">
-                        <span className="px-1.5 py-0.5 rounded bg-brand-primary text-black text-[8px] font-black">{player.wins || 0}V</span>
-                        <span className="px-1.5 py-0.5 rounded bg-white text-black text-[8px] font-black">{player.losses || 0}D</span>
+                        <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-brand-primary text-black text-[8px] font-black" title="Vitórias">
+                          <TrendingUp className="w-3 h-3" />
+                          {player.wins || 0}
+                        </span>
+                        <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-white text-black text-[8px] font-black" title="Derrotas">
+                          <TrendingDown className="w-3 h-3" />
+                          {player.losses || 0}
+                        </span>
                       </div>
                     </div>
                   </td>
@@ -422,12 +434,12 @@ export const MembersView: React.FC<MembersViewProps> = ({
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <h4 className={`text-xl font-black uppercase tracking-tight truncate ${player.status === 'inactive' ? 'text-white/40' : 'text-white'}`}>
-                      {player.name} {player.isDM && <span className="ml-2 px-2 py-1 rounded-full text-xs font-black bg-rose-500 text-white">DM</span>}
+                    <h4 className={`text-base font-bold tracking-tight truncate ${player.status === 'inactive' ? 'text-white/40' : 'text-white'}`}>
+                      {capitalizeName(player.name)} {player.isDM && <span className="ml-2 px-1.5 py-0.5 rounded-full text-[10px] font-black bg-rose-500 text-white font-sans">DM</span>}
                       <span className="ml-2">
                         <EvasionIcon 
                           level={player.evasionLevel || calculateEvasionLevel(player)} 
-                          customLabel={`${(player.evasionLevel || calculateEvasionLevel(player)).charAt(0).toUpperCase() + (player.evasionLevel || calculateEvasionLevel(player)).slice(1)} - ${player.wins || 0}V ${player.losses || 0}D`} 
+                          customTooltip={`${(player.evasionLevel || calculateEvasionLevel(player)).charAt(0).toUpperCase() + (player.evasionLevel || calculateEvasionLevel(player)).slice(1)} - ${player.wins || 0}V ${player.losses || 0}D`} 
                         />
                       </span>
                     </h4>

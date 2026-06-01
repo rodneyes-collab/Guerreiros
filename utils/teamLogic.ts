@@ -88,6 +88,144 @@ export const calculatePracticalSkillsSum = (player: Player | null): number => {
 };
 
 /**
+ * Calcula a posição tática ideal (1-6) para todos os jogadores do time simultaneamente.
+ * Garante unicidade e respeita regras de simetria (Homens opostos, Fortes opostos).
+ */
+export const calculateTeamPositions = (team: Team, opponent: Team | null = null): Record<string, string> => {
+  const allPlayers = [team.setter, ...team.players].filter((p): p is Player => p !== null);
+  
+  // Mapeamento final (ID -> Pos)
+  const mapping: Record<string, string> = {};
+  
+  if (allPlayers.length !== 6) {
+    // Fallback unificado e garantido: se não tiver 6 jogadores, usa a ordem da lista
+    allPlayers.forEach((p, idx) => { 
+      mapping[p.id] = (idx + 1).toString(); 
+    });
+    return mapping;
+  }
+
+  // Ordena por eficiência técnica decrescente
+  const sorted = [...allPlayers].sort((a, b) => calculateEffectiveElo(b) - calculateEffectiveElo(a));
+  
+  const positions: (Player | null)[] = new Array(7).fill(null); // use 1-6 indices
+
+  // 1. Levantador Oficial no 3 (ou o melhor 'passador' técnico)
+  const mainSetter = allPlayers.find(p => p.isOfficialSetter) || sorted.find(p => (p.skills?.setting || 0) >= 3) || sorted[2];
+  positions[3] = mainSetter;
+  
+  let remaining = allPlayers.filter(p => p.id !== mainSetter.id);
+
+  // 2. Definir o Oposto do Levantador (Posição 6)
+  const topAttacker = remaining.sort((a, b) => (b.skills?.attacking || 0) - (a.skills?.attacking || 0))[0];
+  positions[6] = topAttacker;
+  remaining = remaining.filter(p => p.id !== topAttacker.id);
+
+  // 3. Casal de Pontas / Fortes (4 e 1)
+  const nextAttacker = remaining.sort((a, b) => (b.skills?.attacking || 0) - (a.skills?.attacking || 0))[0];
+  positions[4] = nextAttacker;
+  remaining = remaining.filter(p => p.id !== nextAttacker.id);
+
+  // Oposto do 4 é o 1
+  const oppositeOf4 = remaining.sort((a, b) => (b.skills?.defense || 0) - (a.skills?.defense || 0))[0];
+  positions[1] = oppositeOf4;
+  remaining = remaining.filter(p => p.id !== oppositeOf4.id);
+
+  // 4. Posições 2 (Saída) e 5 (Fundo Esquerda)
+  const topDefender = remaining.sort((a, b) => (b.skills?.defense || 0) - (a.skills?.defense || 0))[0];
+  positions[5] = topDefender;
+  remaining = remaining.filter(p => p.id !== topDefender.id);
+  
+  // O último player fica no 2
+  positions[2] = remaining[0];
+
+  // Ajuste Final para Homens Opostos (Regra do Usuário)
+  const teamMen = allPlayers.filter(p => p.gender === Gender.MALE);
+  if (teamMen.length === 2 && positions.length === 7) {
+    const m1 = teamMen[0];
+    const m2 = teamMen[1];
+    
+    let pos1Idx = positions.findIndex(p => p?.id === m1.id);
+    let pos2Idx = positions.findIndex(p => p?.id === m2.id);
+    
+    if (pos1Idx > 0 && pos2Idx > 0) {
+      const isOpposite = (a: number, b: number) => 
+        (a === 1 && b === 4) || (a === 4 && b === 1) ||
+        (a === 2 && b === 5) || (a === 5 && b === 2) ||
+        (a === 3 && b === 6) || (a === 6 && b === 3);
+
+      if (!isOpposite(pos1Idx, pos2Idx)) {
+        const targetPos = pos1Idx === 1 ? 4 : (pos1Idx === 4 ? 1 : (pos1Idx === 2 ? 5 : (pos1Idx === 5 ? 2 : (pos1Idx === 3 ? 6 : 3))));
+        const currentAtTarget = positions[targetPos];
+        
+        positions[pos2Idx] = currentAtTarget;
+        positions[targetPos] = m2;
+      }
+    }
+  }
+
+  // Preenche o mapping garantindo unicidade final
+  for (let i = 1; i <= 6; i++) {
+    if (positions[i]) {
+      mapping[positions[i]!.id] = i.toString();
+    }
+  }
+
+  // Backup final para jogadores que possam ter ficado de fora (segurança contra bugs de lógica)
+  allPlayers.forEach(p => {
+    if (!mapping[p.id]) {
+      const usedPos = new Set(Object.values(mapping));
+      for (let i = 1; i <= 6; i++) {
+        if (!usedPos.has(i.toString())) {
+          mapping[p.id] = i.toString();
+          usedPos.add(i.toString());
+          break;
+        }
+      }
+    }
+  });
+
+  return mapping;
+};
+
+/**
+ * Sugere a posição tática ideal baseada nas competências técnicas (Retorna o número da posição 1-6)
+ */
+export const suggestPosition = (player: Player | null): string => {
+  if (!player) return '';
+  
+  const s = player.skills || { setting: 1, attacking: 1, defense: 1, serving: 1 };
+  
+  // 1. Levantador (Posição 3 - Hub de distribuição)
+  if (player.isOfficialSetter || (s.setting >= 3 && s.setting >= s.attacking && s.setting >= s.defense)) {
+    return '3';
+  }
+  
+  // 2. Central (Posição 6 - Foco em bloqueio e ataque rápido)
+  if (player.impactLevel === 3 && s.attacking >= 2) {
+    return '6';
+  }
+
+  // 3. Ponta (Posição 4 - Atacante de entrada equilibrado)
+  if (s.attacking >= 2 && s.defense >= 2) {
+    return '4';
+  }
+
+  // 4. Oposto (Posição 2 - Saída de rede agressiva)
+  if (s.attacking >= 2) {
+    return '2';
+  }
+
+  // 5. Líbero / Fundo (Posição 5 - Defesa profunda)
+  if (s.defense >= 3 && s.attacking <= 2) {
+    return '5';
+  }
+
+  // 6. Default: Fundo / Apoio (Posição 1 - Defesa/Saque)
+  return '1';
+};
+
+/**
  * Calculates the total sum of practical skills (Ataque, Defesa, Levantamento) for a team.
  */
 export const getTeamPracticalSkillsSum = (setter: Player | null, players: Player[]): number => {

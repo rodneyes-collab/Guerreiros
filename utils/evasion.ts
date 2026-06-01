@@ -1,20 +1,25 @@
 import { Player } from '../types';
 
-export const calculateEvasionLevel = (player: Player): 'low' | 'medium' | 'high' | 'critical' => {
-  // Regra: 75% Presença/Participação, 25% Resultados
-  const hasParticipated = player.dailyMatches > 0;
-  const participationScore = hasParticipated ? 100 : 0;
+export const calculateEvasionLevel = (player: Player, attendancePercent?: number): 'low' | 'medium' | 'high' | 'critical' => {
+  // Se informada a porcentagem de assiduidade real, utilize ela diretamente (mais preciso)
+  if (attendancePercent !== undefined && !isNaN(attendancePercent)) {
+    if (attendancePercent >= 75) return 'low';
+    if (attendancePercent >= 50) return 'medium';
+    if (attendancePercent >= 25) return 'high';
+    return 'critical';
+  }
+
+  // Fallback baseado nos dados históricos globais do jogador para evitar falsos positivos de risco crítico
+  const totalMatches = player.matchesPlayed || 0;
   
-  const totalMatches = player.dailyWins + player.dailyLosses;
-  const winRate = totalMatches > 0 
-    ? (player.dailyWins / totalMatches) * 100 
-    : 50; // Neutro se não jogou ou empatado
-
-  const score = (0.75 * participationScore) + (0.25 * winRate);
-  const riskScore = 100 - score;
-
-  if (riskScore < 25) return 'low';
-  if (riskScore < 50) return 'medium';
-  if (riskScore < 75) return 'high';
-  return 'critical';
+  if (totalMatches >= 15) {
+    return 'low';
+  } else if (totalMatches >= 8) {
+    return 'medium';
+  } else if (totalMatches >= 3) {
+    return 'high';
+  } else {
+    // Jogadores novos ou inativos começam com maior propensão até criar recorrência
+    return 'critical';
+  }
 };

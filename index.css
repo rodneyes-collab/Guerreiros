@@ -1,7 +1,31 @@
 @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700;900&display=swap');
 @import "tailwindcss";
 
-/* Cache bust: 2026-04-07 16:51 */
+@font-face {
+  font-family: 'Formula 1';
+  src: url('/fonts/Formula1-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Formula 1';
+  src: url('/fonts/Formula1-Wide.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Formula 1';
+  src: url('/fonts/Formula1-Black.ttf') format('truetype');
+  font-weight: 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Cache bust: 2026-04-07 16:53 */
 
 @layer base {
   :root {
@@ -40,6 +64,8 @@
   }
 
   html {
+    @apply antialiased transition-colors duration-300;
+    font-family: 'Montserrat', ui-sans-serif, system-ui, sans-serif;
     -webkit-tap-highlight-color: transparent;
     scroll-behavior: smooth;
   }
@@ -47,12 +73,12 @@
   body {
     background-color: var(--bg-app);
     color: var(--text-app);
-    @apply antialiased transition-colors duration-300;
     font-size: 16px; /* Base size for mobile */
   }
 
   h1, h2, h3, h4 {
     @apply font-black tracking-tighter text-brand-primary uppercase;
+    font-family: 'Formula 1', Montserrat, sans-serif;
   }
 }
 
@@ -64,7 +90,8 @@
   --color-brand-nav: var(--nav-bg);
   --color-brand-danger: #ef4444; /* Red 500 */
   
-  --font-sans: "Montserrat", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Montserrat', ui-sans-serif, system-ui, sans-serif;
+  --font-f1: 'Formula 1', Montserrat, sans-serif;
 
   --animate-bounce-subtle: bounce-subtle 2s infinite;
   --animate-pulse-subtle: pulse-subtle 3s infinite;
@@ -82,14 +109,17 @@
 @layer components {
   .btn-primary {
     @apply flex items-center justify-center gap-2 px-6 py-3 bg-brand-primary text-brand-secondary font-black rounded-2xl shadow-lg shadow-brand-primary/20 hover:opacity-90 active:scale-95 transition-all disabled:opacity-50 disabled:pointer-events-none uppercase tracking-widest text-xs;
+    font-family: 'Formula 1', Montserrat, sans-serif;
   }
   
   .btn-secondary {
     @apply flex items-center justify-center gap-2 px-6 py-3 bg-brand-secondary/50 backdrop-blur-md text-white border border-brand-primary/40 font-black rounded-2xl shadow-lg hover:bg-brand-secondary/80 active:scale-95 transition-all disabled:opacity-50 disabled:pointer-events-none uppercase tracking-widest text-xs;
+    font-family: 'Formula 1', Montserrat, sans-serif;
   }
 
   .btn-outline {
     @apply flex items-center justify-center gap-2 px-6 py-3 border-2 border-brand-primary/40 text-white dark:text-white font-black rounded-2xl hover:bg-white/5 active:scale-95 transition-all uppercase tracking-widest text-xs;
+    font-family: 'Formula 1', Montserrat, sans-serif;
   }
 
   .card {
@@ -107,6 +137,7 @@
 
   .label {
     @apply block text-[10px] font-black text-brand-primary uppercase tracking-[0.2em] mb-2.5 ml-2;
+    font-family: 'Formula 1', Montserrat, sans-serif;
   }
 }
 

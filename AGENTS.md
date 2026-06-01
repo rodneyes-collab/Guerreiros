@@ -22,8 +22,9 @@ Este documento detalha as diretrizes visuais do aplicativo para garantir consist
 - **Inputs e Formulários:** Fundo preto ou cinza muito escuro, bordas brancas/amarelas com baixa opacidade.
 
 ## Tipografia
-- **Estilo:** Negrito/Black (`font-black`), Caixa Alta (`uppercase`), Espaçamento entre letras (`tracking-tight` ou `tracking-widest` para labels).
-- **Hierarquia:** Títulos grandes e impactantes.
+- **Estilo:** Fonte Customizada **Formula 1** (fallback para Montserrat), Negrito/Black (`font-black`), Caixa Alta (`uppercase`), Espaçamento entre letras (`tracking-tight` ou `tracking-widest` para labels).
+- **Hierarquia:** Títulos grandes e impactantes estilo automobilismo.
+- **Implementação:** Os arquivos da fonte devem ser carregados em `/public/fonts/` (arquivos: `Formula1-Regular.ttf`, `Formula1-Wide.ttf`, `Formula1-Black.ttf`).
 
 ## Lógica de Geração e Balanceamento de Times
 

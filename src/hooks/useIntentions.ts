@@ -402,11 +402,18 @@ export const useIntentions = () => {
           
           // Save to in-app notifications
           const appNotifRef = doc(collection(db, 'notifications'));
+          const tDate = currentIntentions.targetDate;
+          let dateStr = 'xx/xx';
+          if (tDate) {
+            const [y, m, d] = tDate.split('-').map(Number);
+            dateStr = `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}`;
+          }
+          
           batch.set(appNotifRef, {
             playerId: player.id,
             playerUid: player.uid || null,
             title: 'Aviso de Presença',
-            message: customMessage || `E aí Guerreiro(a), vai jogar nesta Quinta? [Clique aqui para confirmar](${appLink}) ou no grupo de WhatsApp.`,
+            message: customMessage || `Bora pra lista mais esperada da semana !!!\n\nGuerreiro(a) vamos jogar quinta-feira dia ${dateStr} ? Não perca vai ser massa...\n\n[Clique aqui para confirmar](${appLink}) ou no grupo de WhatsApp.`,
             createdAt: Date.now(),
             read: false,
             type: 'reminder'
@@ -419,7 +426,7 @@ export const useIntentions = () => {
               token: player.fcmToken,
               notification: {
                 title: 'Aviso de Presença',
-                body: customMessage || `E aí Guerreiro(a), vai jogar nesta Quinta? Confirme no app: ${appLink}`,
+                body: customMessage || `Bora pra lista mais esperada da semana !!! Guerreiro(a) vamos jogar quinta-feira dia ${dateStr} ? Não perca vai ser massa... Confirme no app: ${appLink}`,
                 sound: 'default'
               },
               data: {
@@ -465,8 +472,15 @@ export const useIntentions = () => {
         return timeA - timeB;
       });
 
-    let text = `Boraaa pra lista mais esperada da semana! 🏐🔥\n`;
-    text += `Vamos jogar vôlei com aquela turma massa?\n\n`;
+    const tDate = intentions.targetDate;
+    let dateStr = 'xx/xx';
+    if (tDate) {
+      const [y, m, d] = tDate.split('-').map(Number);
+      dateStr = `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}`;
+    }
+
+    let text = `Bora pra lista mais esperada da semana !!!\n\n`;
+    text += `Guerreiro(a) vamos jogar quinta-feira dia ${dateStr} ? Não perca vai ser massa...\n\n`;
     text += `*Guerreiros confirmados*\n\n`;
     
     if (goingPlayers.length === 0) {
@@ -486,7 +500,13 @@ export const useIntentions = () => {
 
   const copyReminder = () => {
     const appLink = `${getAppUrl()}?tab=intentions`;
-    const text = `E aí Guerreiro(a), vai jogar nesta Quinta?\nConfirme a sua presença direto no app: ${appLink} ou no grupo de WhatsApp.`;
+    const tDate = intentions.targetDate;
+    let dateStr = 'xx/xx';
+    if (tDate) {
+      const [y, m, d] = tDate.split('-').map(Number);
+      dateStr = `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}`;
+    }
+    const text = `Bora pra lista mais esperada da semana !!!\n\nGuerreiro(a) vamos jogar quinta-feira dia ${dateStr} ? Não perca vai ser massa...\n\nConfirme a sua presença direto no app: ${appLink} ou no grupo de WhatsApp.`;
     navigator.clipboard.writeText(text);
     return true;
   };

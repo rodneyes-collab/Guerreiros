@@ -2,6 +2,23 @@
 import { Player, Gender } from '../types';
 import { getFirestoreDateKey } from '../firebase';
 
+export const capitalizeName = (name: string): string => {
+  if (!name) return '';
+  return name
+    .toLowerCase()
+    .split(' ')
+    .map(word => {
+      const lower = word.trim().toLowerCase();
+      if (!lower) return '';
+      if (['de', 'da', 'do', 'dos', 'das', 'e'].includes(lower)) {
+        return lower;
+      }
+      return word.charAt(0).toUpperCase() + word.slice(1);
+    })
+    .filter(Boolean)
+    .join(' ');
+};
+
 export const getTodayKey = () => {
   return `spikegen_attendance_${getFirestoreDateKey()}`;
 };

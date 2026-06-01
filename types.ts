@@ -16,6 +16,7 @@ export interface Player {
   id: string;
   name: string;
   email?: string;
+  phone?: string;
   gender: Gender;
   isOfficialSetter: boolean;
   matchesPlayed: number; // Total histórico
@@ -45,6 +46,7 @@ export interface Player {
   consecutiveBenched?: number; // Número de partidas consecutivas no banco
   birthDate?: string; // ISO date string
   isDM?: boolean; // Novo campo
+  deviceId?: string; // ID do dispositivo Bluetooth
   evasionLevel?: 'low' | 'medium' | 'high' | 'critical'; // Campo de risco de evasão
   uid?: string; // Firebase Auth UID
   dailyResults?: ('V' | 'D')[]; // Sequência de vitórias/derrotas no dia
@@ -115,6 +117,7 @@ export interface Match {
 }
 
 export interface SystemMetadata {
+  bleProximityThreshold?: number;
   lastResetDate: string | null;
   lastResetTimestamp?: number;
   dailyMatchCount: number;

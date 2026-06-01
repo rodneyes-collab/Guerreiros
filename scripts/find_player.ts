@@ -4,11 +4,10 @@ import { db } from '../firebase';
 async function findPlayer() {
   const playersCol = collection(db, 'players');
   const snapshot = await getDocs(playersCol);
+  console.log(`=== PLAYERS IN DATABASE (Total: ${snapshot.size}) ===`);
   snapshot.forEach((doc) => {
     const data = doc.data();
-    if (data.name && data.name.toLowerCase().includes('karina')) {
-      console.log(`ID: ${doc.id}, Name: ${data.name}`);
-    }
+    console.log(`- ${data.name} (ID: ${doc.id}, Email: ${data.email || 'N/A'}, Gender: ${data.gender})`);
   });
 }
 

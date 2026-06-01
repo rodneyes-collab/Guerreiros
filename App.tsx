@@ -58,7 +58,6 @@ import { ExpenseForm } from './components/ExpenseForm';
 import { PlayerStatusCard } from './src/components/PlayerStatusCard';
 import { LoginView } from './src/components/LoginView';
 import { AccessRequestView } from './src/components/AccessRequestView';
-import { CourtDiagram } from './src/components/CourtDiagram';
 import { Logo } from './src/components/Logo';
 import { clearOldStorage } from './services/geminiService';
 import { calculateEffectiveElo } from './utils/teamLogic';
@@ -79,12 +78,28 @@ const App: React.FC = () => {
   useAdminAutomations();
   useDatabaseMaintenance();
   const { handleAnnounce } = useNarration();
+  
+  // Checkout logic
+  const isNearCourt = useStore(state => state.isNearCourt);
+  const attendance = useStore(state => state.attendance);
+  const setAttendance = useStore(state => state.setAttendance);
+  const showConfirmModal = useStore(state => state.showConfirmModal);
+  const prevIsNearCourt = React.useRef(isNearCourt);
+
+  useEffect(() => {
+    if (prevIsNearCourt.current === true && isNearCourt === false && currentPlayer) {
+      // Left the court! Trigger checkout confirmation.
+      showConfirmModal("Check-out", "Você saiu do raio de sinal da quadra. Confirmar saída?", () => {
+        setAttendance(prev => prev.filter(p => p.uid !== currentPlayer.uid));
+      });
+    }
+    prevIsNearCourt.current = isNearCourt;
+  }, [isNearCourt, currentPlayer, showConfirmModal, setAttendance]);
 
   // --- Store State ---
   const viewMode = useStore(state => state.viewMode);
   const setViewMode = useStore(state => state.setViewMode);
   const players = useStore(state => state.players);
-  const attendance = useStore(state => state.attendance);
   const matches = useStore(state => state.matches);
   const payments = useStore(state => state.payments);
   const preConfirmations = useStore(state => state.preConfirmations);
@@ -96,6 +111,7 @@ const App: React.FC = () => {
   const isLoggingOut = useStore(state => state.isLoggingOut);
   const isSyncing = useStore(state => state.isSyncing);
   const dbStatus = useStore(state => state.dbStatus);
+  const isNarrating = useStore(state => state.isNarrating);
   const theme = useStore(state => state.theme);
   const toggleTheme = useStore(state => state.toggleTheme);
   const notification = useStore(state => state.notification);
@@ -109,7 +125,6 @@ const App: React.FC = () => {
   const systemMetadata = useStore(state => state.systemMetadata);
   const setGenerationResult = useStore(state => state.setGenerationResult);
   const showNotification = useStore(state => state.showNotification);
-  const showConfirmModal = useStore(state => state.showConfirmModal);
   const setEditingPayment = useStore(state => state.setEditingPayment);
   const setIsPaymentFormOpen = useStore(state => state.setIsPaymentFormOpen);
   const editingPayment = useStore(state => state.editingPayment);
@@ -120,6 +135,7 @@ const App: React.FC = () => {
   const editingPlayer = useStore(state => state.editingPlayer);
   const setEditingPlayer = useStore(state => state.setEditingPlayer);
   const forceSync = useStore(state => state.triggerSync);
+  const isNarratingSummary = useStore(state => state.isNarratingSummary);
 
   const { todayBirthdays } = useBirthdays();
   const { showWelcome, setShowWelcome } = useWelcomeCelebration();
@@ -146,6 +162,18 @@ const App: React.FC = () => {
     }
   }, [theme]);
 
+  // Safety reset for narration
+  useEffect(() => {
+    let timeout: any;
+    if (isNarratingSummary || isNarrating) {
+      timeout = setTimeout(() => {
+        useStore.getState().setIsNarratingSummary(false);
+        useStore.getState().setIsNarrating(false);
+      }, 60000); // 1 minute safety reset
+    }
+    return () => clearTimeout(timeout);
+  }, [isNarratingSummary, isNarrating]);
+
   const {
     magicLinkEmail,
     setMagicLinkEmail,
@@ -155,7 +183,6 @@ const App: React.FC = () => {
     requestName,
     setRequestName,
     isRequestSubmitted,
-    isNarratingSummary,
     createDataSnapshot,
     handleLogout,
     handleGoogleLogin,
@@ -271,6 +298,8 @@ const App: React.FC = () => {
     joinedAt: getFirestoreDateKey(),
     birthDate: '',
     email: '',
+    phone: '',
+    deviceId: '',
     status: 'active',
     impactLevel: 1,
     skills: {
@@ -296,6 +325,8 @@ const App: React.FC = () => {
         joinedAt: editingPlayer.joinedAt || getFirestoreDateKey(),
         birthDate: editingPlayer.birthDate || '',
         email: editingPlayer.email || '',
+        phone: editingPlayer.phone || '',
+        deviceId: editingPlayer.deviceId || '',
         status: editingPlayer.status || 'active',
         impactLevel: editingPlayer.impactLevel || 1,
         skills: editingPlayer.skills || {
@@ -318,6 +349,8 @@ const App: React.FC = () => {
         joinedAt: getFirestoreDateKey(),
         birthDate: '',
         email: '',
+        phone: '',
+        deviceId: '',
         status: 'active',
         impactLevel: 1,
         skills: {
@@ -904,16 +937,7 @@ const App: React.FC = () => {
                   updateSystemMetadata={updateSystemMetadata}
                 />
                 
-                {generationResult && (
-                  <div className="animate-in fade-in slide-in-from-bottom-8 duration-700 bg-black rounded-[3rem] border border-brand-primary/40 p-8 sm:p-12 shadow-2xl">
-                    <div className="flex items-center gap-4 mb-8">
-                      <div className="h-px flex-grow bg-white/10"></div>
-                      <h2 className="text-sm font-black text-white/40 uppercase tracking-[0.3em]">Posicionamento Tático</h2>
-                      <div className="h-px flex-grow bg-white/10"></div>
-                    </div>
-                    <CourtDiagram teamA={generationResult.teamA} teamB={generationResult.teamB} />
-                  </div>
-                )}
+                {/* Posições sugeridas removidas conforme solicitação de retirar as quadras */}
               </div>
             </Suspense>
           )}
@@ -1056,7 +1080,7 @@ const App: React.FC = () => {
             <div className="w-3 h-3 rounded-full bg-brand-primary animate-ping"></div>
             <div className="flex flex-col">
                <p className="text-[10px] font-black text-brand-primary uppercase tracking-[0.2em] leading-tight">Guerreiros Intelligence</p>
-               <p className="text-[9px] font-bold text-white/60 uppercase tracking-widest mt-0.5">Sincronizando Resultados...</ p>
+               <p className="text-[9px] font-bold text-white/60 uppercase tracking-widest mt-0.5">Sincronizando Resultados...</p>
             </div>
           </div>
         )}

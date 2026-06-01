@@ -2,11 +2,13 @@ import React from 'react';
 import confetti from 'canvas-confetti';
 import { useIntentions } from '../src/hooks/useIntentions';
 import { useStore } from '../store';
-import { CalendarCheck, Copy, BellRing, Settings, UserCheck, UserX, Clock, ArrowRight, RotateCcw, Zap, Star, Shield, Trash2 } from 'lucide-react';
+import { CalendarCheck, Copy, BellRing, Settings, UserCheck, UserX, Clock, ArrowRight, RotateCcw, Zap, Star, Shield, Trash2, CheckCircle2, AlertTriangle, Flame, AlertCircle } from 'lucide-react';
 import { EvasionIcon } from './EvasionIcon';
 import { calculateEvasionLevel } from '../utils/evasion';
 import { Player } from '../types';
 import { getFirestoreDateKey, getBrazilDay } from '../firebase';
+import { capitalizeName } from '../utils/helpers';
+import { fetchAttendanceHistory, calculateAttendanceStats } from '../src/services/attendanceService';
 
 import { HelpTooltip } from '../src/components/HelpTooltip';
 
@@ -20,6 +22,271 @@ interface IntentionsViewProps {
 export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, currentPlayer, onMoveToAttendance, showNotification }) => {
   const { intentions, isLoaded, setIntent, resetIntent, clearIntentions, toggleAutomation, sendReminders, copyToWhatsApp, copyReminder } = useIntentions();
   const { players, attendance, showConfirmModal } = useStore();
+
+  // --- WhatsApp & Evolution API Integration State ---
+  const [waConfig, setWaConfig] = React.useState({
+    apiUrl: '',
+    apiKey: '',
+    instanceName: '',
+    groupJid: '',
+    updateIntervalMinutes: 120,
+    botActive: false,
+    webhookUrl: ''
+  });
+  const [isWaLoading, setIsWaLoading] = React.useState(true);
+  const [isWaSaving, setIsWaSaving] = React.useState(false);
+  const [isPnSending, setIsPnSending] = React.useState(false);
+  const [isGroupSending, setIsGroupSending] = React.useState(false);
+  const [showConfig, setShowConfig] = React.useState(false);
+  const [waSteps, setWaSteps] = React.useState<{ id: string; name: string; status: string; details: string; }[] | null>(null);
+  const [waTaskType, setWaTaskType] = React.useState<'group' | 'direct' | null>(null);
+
+  // Bot health check and QR code generator
+  const [realStatus, setRealStatus] = React.useState<string>('CARREGANDO');
+  const [qrCode, setQrCode] = React.useState<string | null>(null);
+  const [loadingQr, setLoadingQr] = React.useState<boolean>(false);
+  const [isSimulated, setIsSimulated] = React.useState<boolean>(false);
+  const [qrIsSimulated, setQrIsSimulated] = React.useState<boolean>(false);
+  const [qrMessage, setQrMessage] = React.useState<string | null>(null);
+  const [fetchedGroups, setFetchedGroups] = React.useState<{ id: string; subject: string; }[] | null>(null);
+  const [loadingGroups, setLoadingGroups] = React.useState<boolean>(false);
+
+  const checkRealStatus = React.useCallback(async () => {
+    setRealStatus('CARREGANDO');
+    try {
+      const res = await fetch('/api/whatsapp/status');
+      const data = await res.json();
+      setRealStatus(data.status || 'OFFLINE');
+      setIsSimulated(!!data.isSimulated);
+      // Synchronize internal config state to prevent stale isSimulated value from rolling back settings on next save
+      setWaConfig(prev => ({
+        ...prev,
+        isSimulated: !!data.isSimulated,
+        simulatedState: data.isSimulated ? (data.status === 'ONLINE' ? 'open' : 'close') : 'close'
+      }));
+      if (data.status === 'ONLINE') {
+        setQrCode(null); // Clear old QR Code if online
+      }
+    } catch (e) {
+      setRealStatus('OFFLINE');
+      setIsSimulated(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (userRole === 'ADMIN') {
+      fetch('/api/whatsapp/config')
+        .then(async res => {
+          if (!res.ok) {
+            const errBody = await res.json().catch(() => ({}));
+            throw new Error(`Failed to load WhatsApp config: ${res.status} ${res.statusText} ${JSON.stringify(errBody)}`);
+          }
+          return res.json();
+        })
+        .then(data => {
+          setWaConfig(prev => ({
+            ...prev,
+            ...data,
+            webhookUrl: data.webhookUrl || (window.location.origin + '/api/whatsapp/webhook')
+          }));
+          setIsWaLoading(false);
+          checkRealStatus();
+        })
+        .catch(err => {
+          console.error("Failed to load WhatsApp config", err);
+          setIsWaLoading(false);
+          setRealStatus('OFFLINE');
+        });
+    }
+  }, [userRole, checkRealStatus]);
+
+  const handleFetchGroups = async () => {
+    setLoadingGroups(true);
+    setFetchedGroups(null);
+    try {
+      const res = await fetch('/api/whatsapp/groups');
+      const data = await res.json();
+      if (data.success) {
+        setFetchedGroups(data.groups || []);
+        showNotification(`${data.groups?.length || 0} grupos carregados com sucesso! Selecione o grupo correto na lista.`, 'success');
+      } else {
+        showNotification(`Erro ao carregar grupos: ${data.error || 'Verifique se a API e instância estão saudáveis.'}`, 'error');
+      }
+    } catch (err: any) {
+      showNotification(`Erro de conexão: ${err.message}`, 'error');
+    } finally {
+      setLoadingGroups(false);
+    }
+  };
+
+  const handleGenerateQr = async () => {
+    setLoadingQr(true);
+    try {
+      const res = await fetch('/api/whatsapp/qrcode');
+      if (!res.ok) {
+        let msg = 'Falha ao obter QR code da Evolution API';
+        try {
+          const errData = await res.json();
+          if (errData.details) {
+            msg = `Erro na API: ${errData.details}`;
+          } else if (errData.error) {
+            msg = errData.error;
+          }
+        } catch (e) {}
+        throw new Error(msg);
+      }
+      const data = await res.json();
+      if (data.alreadyConnected) {
+        showNotification(data.message || 'WhatsApp já está conectado e pronto!', 'success');
+        setRealStatus('ONLINE');
+        setQrCode(null);
+        setQrIsSimulated(false);
+        setQrMessage(null);
+        return;
+      }
+
+      // Extração inteligente e extremamente robusta do QR Code
+      let qr = '';
+      if (typeof data === 'string') {
+        qr = data;
+      } else if (data) {
+        // 1. Se base64 estivar direto no retorno
+        if (typeof data.base64 === 'string') {
+          qr = data.base64;
+        } 
+        // 2. Se base64 estiver aninhado em data.qrcode
+        else if (data.qrcode && typeof data.qrcode.base64 === 'string') {
+          qr = data.qrcode.base64;
+        }
+        // 3. Se qrcode for uma string direta
+        else if (typeof data.qrcode === 'string') {
+          qr = data.qrcode;
+        }
+        // 4. Se a string de conexão estiver em data.qrcode.code
+        else if (data.qrcode && typeof data.qrcode.code === 'string') {
+          const codeStr = data.qrcode.code;
+          if (codeStr.startsWith('data:image') || codeStr.startsWith('http://') || codeStr.startsWith('https://')) {
+            qr = codeStr;
+          } else {
+            qr = `https://api.qrserver.com/v1/create-qr-code/?size=350x350&margin=10&data=${encodeURIComponent(codeStr)}`;
+          }
+        }
+        // 5. Se estiver no campo data.code diretamente
+        else if (typeof data.code === 'string') {
+          if (data.code.startsWith('data:image') || data.code.startsWith('http://') || data.code.startsWith('https://')) {
+            qr = data.code;
+          } else if (data.code.length > 500 && !data.code.includes('@')) {
+            qr = data.code;
+          } else {
+            qr = `https://api.qrserver.com/v1/create-qr-code/?size=350x350&margin=10&data=${encodeURIComponent(data.code)}`;
+          }
+        }
+      }
+
+      if (qr) {
+        if (!qr.startsWith('data:image') && !qr.startsWith('http://') && !qr.startsWith('https://')) {
+          if (qr.includes('base64,')) {
+            qr = qr;
+          } else {
+            qr = `data:image/png;base64,${qr}`;
+          }
+        }
+        setQrCode(qr);
+        setQrIsSimulated(!!data.isSimulated || !!data.fallbackSimulated);
+        setQrMessage(data.message || null);
+        
+        if (data.isSimulated || data.fallbackSimulated) {
+          showNotification('QR Code de Simulação Gerado. Verifique os avisos na tela!', 'info');
+        } else {
+          showNotification('QR Code gerado com sucesso! Escaneie com seu celular no WhatsApp.', 'success');
+        }
+      } else {
+        showNotification('Não foi possível obter o QR code. Verifique a URL de API e se a instância está ativa.', 'error');
+      }
+    } catch (err: any) {
+      showNotification(`Erro: ${err.message}`, 'error');
+    } finally {
+      setLoadingQr(false);
+    }
+  };
+
+  const handleSaveWaConfig = async () => {
+    setIsWaSaving(true);
+    try {
+      const res = await fetch('/api/whatsapp/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(waConfig)
+      });
+      const data = await res.json();
+      if (data.success) {
+        showNotification('Configurações salvas e webhook atualizado com sucesso na Evolution API!', 'success');
+      } else {
+        showNotification('Falha ao salvar configurações do WhatsApp', 'error');
+      }
+    } catch (err: any) {
+      showNotification(`Erro ao salvar: ${err.message}`, 'error');
+    } finally {
+      setIsWaSaving(false);
+    }
+  };
+
+  const handleSendWaPrompts = async () => {
+    setIsPnSending(true);
+    setWaTaskType('direct');
+    setWaSteps([
+      { id: "load_config", name: "Carregar Configurações", status: "pending", details: "Buscando whatsapp_config no banco..." },
+      { id: "validate_creds", name: "Validar Credenciais WhatsApp", status: "pending", details: "Aguardando etapa anterior..." },
+      { id: "fetch_data", name: "Baixar Sócios do Clube", status: "pending", details: "Aguardando etapa anterior..." },
+      { id: "filter_eligible", name: "Selecionar Ausentes", status: "pending", details: "Aguardando etapa anterior..." },
+      { id: "dispatch_all", name: "Disparar Lembretes Individuais", status: "pending", details: "Aguardando etapa anterior..." },
+    ]);
+    try {
+      const res = await fetch('/api/whatsapp/send-all', { method: 'POST' });
+      const data = await res.json();
+      if (data.steps) {
+        setWaSteps(data.steps);
+      }
+      if (data.success) {
+        showNotification(`Lembretes enviados com sucesso para ${data.count} sócios via WhatsApp!`, 'success');
+      } else {
+        showNotification(`Erro ao disparar lembretes: ${data.error || 'Falha na execução'}`, 'error');
+      }
+    } catch (err: any) {
+      showNotification(`Erro: ${err.message}`, 'error');
+    } finally {
+      setIsPnSending(false);
+    }
+  };
+
+  const handleSendWaGroup = async () => {
+    setIsGroupSending(true);
+    setWaTaskType('group');
+    setWaSteps([
+      { id: "load_config", name: "Carregar Configurações", status: "pending", details: "Buscando whatsapp_config no banco..." },
+      { id: "validate_creds", name: "Validar Credenciais WhatsApp", status: "pending", details: "Aguardando etapa anterior..." },
+      { id: "fetch_data", name: "Baixar Intenções & Jogadores", status: "pending", details: "Aguardando etapa anterior..." },
+      { id: "format_message", name: "Gerar Texto da Lista", status: "pending", details: "Aguardando etapa anterior..." },
+      { id: "send_message", name: "Disparar p/ Grupo WhatsApp", status: "pending", details: "Aguardando etapa anterior..." },
+      { id: "save_tracking", name: "Persistir Data de Envio", status: "pending", details: "Aguardando etapa anterior..." },
+    ]);
+    try {
+      const res = await fetch('/api/whatsapp/send-group', { method: 'POST' });
+      const data = await res.json();
+      if (data.steps) {
+        setWaSteps(data.steps);
+      }
+      if (data.success) {
+        showNotification('Lista de intenção atualizada enviada para o grupo do WhatsApp!', 'success');
+      } else {
+        showNotification(`Erro ao enviar lista: ${data.error || 'Falha no envio'}`, 'error');
+      }
+    } catch (err: any) {
+      showNotification(`Erro: ${err.message}`, 'error');
+    } finally {
+      setIsGroupSending(false);
+    }
+  };
 
   // Create confetti instance
   const fireConfetti = React.useMemo(() => confetti.create(undefined, { useWorker: false, resize: true }), []);
@@ -74,6 +341,93 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
     }
   };
 
+  const [attendancePercent, setAttendancePercent] = React.useState<Record<string, number>>({});
+  
+  React.useEffect(() => {
+    let active = true;
+    const loadStats = async () => {
+      try {
+        const history = await fetchAttendanceHistory();
+        if (!active) return;
+        const stats = calculateAttendanceStats(history, players);
+        const mapping: Record<string, number> = {};
+        stats.forEach(s => {
+          mapping[s.playerId] = s.percentage;
+        });
+        setAttendancePercent(mapping);
+      } catch (err) {
+        console.error("Erro ao carregar estatísticas de assiduidade na lista de intenção", err);
+      }
+    };
+    if (players.length > 0) {
+      loadStats();
+    }
+    return () => {
+      active = false;
+    };
+  }, [players]);
+
+  const getPlayerAttendance = (playerId: string) => {
+    const pct = attendancePercent[playerId];
+    if (pct === undefined || isNaN(pct)) {
+      const p = players.find(x => x.id === playerId);
+      if (p) {
+        const mp = p.matchesPlayed || 0;
+        if (mp > 10) return 90;
+        if (mp > 5) return 75;
+        if (mp > 0) return 50;
+      }
+      return 0;
+    }
+    return Math.round(pct);
+  };
+
+  const getEvasionBadge = (player: Player) => {
+    const pct = getPlayerAttendance(player.id);
+    const level = calculateEvasionLevel(player, pct);
+    
+    const config = {
+      low: { icon: Shield, color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20 hover:bg-emerald-500/20', label: 'Risco de Sair: Baixo', tooltip: 'Membro ativo com excelente assiduidade' },
+      medium: { icon: AlertTriangle, color: 'text-amber-400 bg-amber-500/10 border-amber-500/20 hover:bg-amber-500/20', label: 'Risco de Sair: Moderado', tooltip: 'Presença regular, risco moderado de evasão' },
+      high: { icon: Flame, color: 'text-orange-400 bg-orange-500/10 border-orange-500/20 hover:bg-orange-500/20', label: 'Risco de Sair: Alto', tooltip: 'Atenção: frequência reduzindo ou instável' },
+      critical: { icon: AlertCircle, color: 'text-rose-400 bg-rose-500/10 border-rose-500/20 hover:bg-rose-500/20', label: 'Risco de Sair: Crítico', tooltip: 'Urgente: risco de abandono ou saída iminente do clube' },
+    };
+
+    const { icon: Icon, color, label, tooltip } = config[level];
+
+    return (
+      <span 
+        className={`inline-flex items-center justify-center p-1.5 rounded-full border ${color} cursor-help transition-all relative select-none`}
+        title={`${label} — ${tooltip}`}
+      >
+        <Icon className="w-3.5 h-3.5 shrink-0" />
+      </span>
+    );
+  };
+
+  const getAttendanceBadge = (playerId: string) => {
+    const pct = getPlayerAttendance(playerId);
+    let colorClass = "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20";
+    let desc = "Assiduidade Excelente";
+    if (pct < 50) {
+      colorClass = "bg-rose-500/10 text-rose-400 border-rose-500/20 hover:bg-rose-500/20";
+      desc = "Assiduidade Baixa";
+    } else if (pct < 75) {
+      colorClass = "bg-amber-500/10 text-amber-400 border-amber-500/20 hover:bg-amber-500/20";
+      desc = "Assiduidade Regular";
+    }
+
+    return (
+      <span 
+        className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border ${colorClass} text-[10px] font-bold cursor-help transition-all relative select-none`}
+        title={`${desc}: ${pct}% de presença no clube`}
+      >
+        <CalendarCheck className="w-3.5 h-3.5 shrink-0 text-brand-primary" />
+        <span className="font-mono text-[9px] font-black">{pct}%</span>
+      </span>
+    );
+  };
+
   const [searchTerm, setSearchTerm] = React.useState('');
 
   if (!isLoaded) {
@@ -126,13 +480,13 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-8 duration-700">
       
       {/* Header - Accent Border */}
-      <div className="bg-black rounded-[3rem] border border-white/5 border-l-[8px] border-l-brand-primary p-8 sm:p-12 relative overflow-hidden">
+      <div className="bg-black rounded-[2rem] sm:rounded-[3rem] border border-white/5 border-l-[8px] border-l-brand-primary p-6 sm:p-12 relative overflow-hidden">
         <div className="absolute top-0 right-0 w-64 h-64 bg-brand-primary/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
-        <div className="relative z-10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
-          <div>
-            <div className="flex items-center gap-3 mb-4">
-              <CalendarCheck className="w-8 h-8 text-brand-primary" />
-              <h2 className="text-3xl font-black text-white uppercase tracking-tighter flex items-center">
+        <div className="relative z-10 flex flex-col items-stretch sm:items-center sm:flex-row justify-between gap-8">
+          <div className="text-left">
+            <div className="flex items-center gap-3 mb-3">
+              <CalendarCheck className="w-8 h-8 sm:w-10 sm:h-10 text-brand-primary" />
+              <h2 className="text-2xl sm:text-4xl font-black text-white uppercase tracking-tighter flex items-center gap-2">
                 Lista de Quinta
                 <HelpTooltip 
                   title="Lista de Presença" 
@@ -140,8 +494,8 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
                 />
               </h2>
             </div>
-            <p className="text-white font-medium">
-              Confirme sua presença para o jogo na Próxima Quinta dia <span className="text-brand-primary font-bold">
+            <p className="text-white/70 text-sm sm:text-lg font-medium max-w-md">
+              Prepare o uniforme! Confirme sua presença para o jogo na Próxima Quinta dia <span className="text-brand-primary font-bold">
                 {formattedDate}
               </span>.
             </p>
@@ -149,31 +503,31 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
           
           {/* Player Actions */}
           {currentPlayer && (
-            <div className="flex items-center gap-4 bg-brand-secondary/50 p-4 rounded-3xl border border-brand-primary/40 w-full sm:w-auto justify-center">
+            <div className="flex flex-col xs:flex-row items-stretch gap-4 bg-brand-secondary/30 p-5 rounded-[2rem] border border-brand-primary/20 w-full sm:w-auto">
               <button
                 onClick={handleConfirm}
-                className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 sm:px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-[10px] sm:text-xs transition-all ${
+                className={`flex-1 xs:flex-none flex items-center justify-center gap-3 px-8 py-5 rounded-2xl font-black uppercase tracking-[0.1em] text-xs sm:text-sm transition-all shadow-xl active:scale-95 ${
                   isGoing 
-                    ? 'bg-white text-black shadow-[0_0_20px_rgba(255,255,255,0.5)] scale-105 ring-2 ring-white ring-offset-2 ring-offset-black' 
+                    ? 'bg-white text-black ring-4 ring-white/20 scale-105' 
                     : isNotGoing 
-                      ? 'bg-white/10 text-white/50 border border-brand-primary/40 opacity-50' 
-                      : 'bg-white text-black hover:scale-105 shadow-lg'
+                      ? 'bg-white/5 text-white/40 border border-white/10 opacity-60' 
+                      : 'bg-white text-black hover:bg-white/90 shadow-lg'
                 }`}
               >
-                <UserCheck className="w-4 h-4" />
+                <UserCheck className="w-5 h-5" />
                 Vou Jogar
               </button>
               <button
                 onClick={handleDecline}
-                className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 sm:px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-[10px] sm:text-xs transition-all ${
+                className={`flex-1 xs:flex-none flex items-center justify-center gap-3 px-8 py-5 rounded-2xl font-black uppercase tracking-[0.1em] text-xs sm:text-sm transition-all shadow-xl active:scale-95 ${
                   isNotGoing 
-                    ? 'bg-brand-primary text-black shadow-[0_0_20px_rgba(245,196,41,0.5)] scale-105 ring-2 ring-brand-primary ring-offset-2 ring-offset-black' 
+                    ? 'bg-brand-primary text-black ring-4 ring-brand-primary/20 scale-105' 
                     : isGoing 
-                      ? 'bg-brand-primary text-black opacity-50 hover:opacity-100 border border-transparent' 
-                      : 'bg-brand-primary text-black hover:scale-105 shadow-lg'
+                      ? 'bg-brand-primary/10 text-brand-primary/60 border border-brand-primary/20 opacity-60' 
+                      : 'bg-brand-primary text-black hover:bg-brand-primary/90 shadow-lg'
                 }`}
               >
-                <UserX className="w-4 h-4" />
+                <UserX className="w-5 h-5" />
                 Não Vou
               </button>
             </div>
@@ -202,7 +556,7 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
                     placeholder="Buscar sócio para confirmar manualmente..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="w-full bg-brand-secondary/50 border border-brand-primary/40 rounded-xl px-4 py-3 text-white text-sm focus:border-brand-primary/50 outline-none transition-all"
+                    className="w-full bg-brand-secondary/50 border border-brand-primary/40 rounded-2xl px-6 py-4 text-white text-base focus:border-brand-primary focus:ring-2 focus:ring-brand-primary/20 outline-none transition-all placeholder:text-white/20"
                   />
                   {searchTerm && (
                     <button 
@@ -306,6 +660,512 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
               </button>
             </div>
           </div>
+
+          {/* WhatsApp / Evolution API Management Panel */}
+          <div className="mt-8 pt-6 border-t border-white/5 space-y-6">
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => setShowConfig(!showConfig)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setShowConfig(!showConfig);
+                }
+              }}
+              className="w-full py-4 px-6 bg-brand-primary/5 hover:bg-brand-primary/10 border border-brand-primary/30 rounded-2xl flex items-center justify-between text-left transition-all relative overflow-hidden cursor-pointer select-none"
+            >
+              <div className="absolute top-0 right-0 p-2 flex items-center gap-2">
+                <button
+                  type="button"
+                  title="Atualizar Conexão"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    checkRealStatus();
+                  }}
+                  className="p-1 text-white/40 hover:text-white hover:bg-white/10 rounded-lg transition-all"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                </button>
+                <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[8px] font-black tracking-tighter border ${
+                  realStatus === 'ONLINE' ? 'bg-green-500/20 text-green-400 border-green-500/30' :
+                  realStatus === 'CONECTANDO' ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' :
+                  realStatus === 'DESCONECTADO' ? 'bg-amber-500/20 text-amber-400 border-amber-500/30' :
+                  realStatus === 'CARREGANDO' ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30 animate-pulse' :
+                  'bg-red-500/20 text-red-500 border-red-500/30'
+                }`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${realStatus === 'ONLINE' ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></span>
+                  BOT {realStatus}
+                </span>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-green-500/10 text-green-400 rounded-xl">
+                  <CalendarCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-black text-white uppercase tracking-wider">Guerreiros WhatsApp Bot</h4>
+                  <p className="text-[10px] text-white/40">Automação inteligente integrada ao <span className="text-brand-primary font-bold">Evolution API</span>.</p>
+                </div>
+              </div>
+              <span className="text-[10px] font-black uppercase text-brand-primary bg-brand-primary/10 px-3 py-1.5 rounded-full border border-brand-primary/20">
+                {showConfig ? 'Fechar Painel' : 'Configurar Agente'}
+              </span>
+            </div>
+
+            {showConfig && (
+              <div className="bg-brand-secondary/30 rounded-2xl p-6 border border-white/5 space-y-6 animate-in fade-in slide-in-from-top-4 duration-300">
+                {isWaLoading ? (
+                  <div className="flex items-center justify-center py-6">
+                    <div className="w-6 h-6 border-2 border-brand-primary border-t-transparent rounded-full animate-spin"></div>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    <div className="bg-brand-primary/5 p-4 rounded-xl border border-brand-primary/20">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Shield className="w-3 h-3 text-brand-primary" />
+                        <span className="text-[10px] font-black text-brand-primary uppercase tracking-widest">Hospedagem Google Cloud Active</span>
+                      </div>
+                      <p className="text-[10px] text-white/50 leading-relaxed">
+                        Este serviço utiliza instâncias do <span className="text-white font-bold">Google Cloud Run</span> para processar as mensagens do WhatsApp em tempo real. Certifique-se de que sua instância da Evolution API esteja acessível via internet.
+                      </p>
+                    </div>
+
+                     {/* Real-time integration check with QR Code option */}
+                    {realStatus === 'ONLINE' ? (
+                      <div className="bg-green-500/5 border border-green-500/20 rounded-xl p-4 flex items-center gap-3">
+                        <CheckCircle2 className="w-5 h-5 text-green-400 shrink-0" />
+                        <div>
+                          <h5 className="text-xs font-black text-green-400 uppercase tracking-wide">Interface Conectada</h5>
+                          <p className="text-[10px] text-white/50 leading-relaxed">A comunicação com a Evolution API está em perfeitas condições. Respostas via WhatsApp serão computadas instantaneamente.</p>
+                        </div>
+                      </div>
+                    ) : realStatus === 'DESCONECTADO' || realStatus === 'OFFLINE' ? (
+                      <div className="space-y-4">
+                        <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-5 flex flex-col md:flex-row items-center justify-between gap-4">
+                          <div className="space-y-1 text-center md:text-left">
+                            <div className="flex items-center gap-1.5 justify-center md:justify-start">
+                              <AlertTriangle className="w-4 h-4 text-amber-500 animate-bounce" />
+                              <h5 className="text-xs font-black uppercase text-amber-500">Aparelho Desconectado</h5>
+                            </div>
+                            <p className="text-[10px] text-white/50">O bot de automação está configurado, mas precisará ser pareado ao WhatsApp do clube para funcionar.</p>
+                          </div>
+                          <div className="flex gap-2 w-full md:w-auto shrink-0">
+                            <button
+                              type="button"
+                              onClick={checkRealStatus}
+                              className="flex-1 md:flex-initial py-2.5 px-4 bg-white/5 border border-white/10 text-white rounded-lg text-[10px] font-black uppercase tracking-wider hover:bg-white/10 active:scale-95 transition-all text-center"
+                            >
+                              Verificar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleGenerateQr}
+                              disabled={loadingQr}
+                              className="flex-1 md:flex-initial py-2.5 px-5 bg-brand-primary text-black rounded-lg text-[10px] font-black uppercase tracking-wider hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 text-center"
+                            >
+                              {loadingQr ? 'Carregando...' : 'Gerar QR Code'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : realStatus === 'INCOMPLETA' ? (
+                      <div className="bg-slate-500/5 border border-white/5 rounded-xl p-4 flex items-center gap-3">
+                        <AlertCircle className="w-5 h-5 text-slate-400 shrink-0" />
+                        <div>
+                          <h5 className="text-xs font-black text-slate-400 uppercase tracking-wide">Configuração Incompleta</h5>
+                          <p className="text-[10px] text-white/40 leading-relaxed">Insira a URL correspondente, o token da chave API e o nome da instância abaixo para ativar o pareamento.</p>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {/* Painel do Modo Simulado Inteligente */}
+                    <div className="bg-brand-primary/5 border border-brand-primary/10 rounded-xl p-5 relative overflow-hidden">
+                      <div className="absolute top-0 right-0 bg-brand-primary text-black font-black uppercase text-[8px] px-2.5 py-1 rounded-bl-lg tracking-widest">
+                        TEST SUITE
+                      </div>
+                      <h5 className="text-xs font-black text-brand-primary uppercase tracking-wider flex items-center gap-1.5">
+                        ⚡ MODO DE SIMULAÇÃO GUERREIROS
+                      </h5>
+                      <p className="text-[10px] text-white/60 mt-1 leading-relaxed">
+                        Se a sua URL da Evolution API estiver incorreta, apontando para o próprio site (404) ou se você apenas deseja ver o robô funcionando em tempo real, ative o Modo Simulado. O aplicativo irá simular os disparos de mensagens diretas de prontidão e responderá (SIM/NÃO) como se fossem os sócios interagindo em tempo real!
+                      </p>
+                      <div className="mt-4 flex flex-wrap items-center justify-between gap-4 border-t border-white/5 pt-3">
+                        <span className="text-[9px] font-mono">
+                          Status:{' '}
+                          {isSimulated ? (
+                            <span className="text-brand-primary font-black animate-pulse">ATIVO (SIMULADOR)</span>
+                          ) : (
+                            <span className="text-white/40">INATIVO</span>
+                          )}
+                        </span>
+                        {isSimulated ? (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                const sRes = await fetch('/api/whatsapp/toggle-simulation', {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ active: false })
+                                });
+                                const sData = await sRes.json();
+                                if (sData.success) {
+                                  showNotification('Modo Simulado Desativado com Sucesso!', 'success');
+                                  setIsSimulated(false);
+                                  setWaConfig(prev => ({ ...prev, isSimulated: false, simulatedState: 'close' }));
+                                  checkRealStatus();
+                                } else {
+                                  showNotification('Falha ao desativar simulação.', 'error');
+                                }
+                              } catch (err: any) {
+                                showNotification('Erro: ' + err.message, 'error');
+                              }
+                            }}
+                            className="py-2.5 px-5 rounded-lg text-[9px] font-black uppercase bg-black hover:bg-white/5 text-brand-primary border border-brand-primary/40 hover:scale-[1.02] active:scale-95 transition-all"
+                          >
+                            Desativar Simulação
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                const sRes = await fetch('/api/whatsapp/simulate-scan', { method: 'POST' });
+                                const sData = await sRes.json();
+                                if (sData.success) {
+                                  showNotification('Modo Simulado Ativado com Sucesso! Bot virtual está ONLINE.', 'success');
+                                  checkRealStatus();
+                                } else {
+                                  showNotification('Falha ao ativar simulação.', 'error');
+                                }
+                              } catch (err: any) {
+                                showNotification('Erro: ' + err.message, 'error');
+                              }
+                            }}
+                            className="py-2.5 px-5 rounded-lg text-[9px] font-black uppercase bg-brand-primary text-black hover:scale-[1.02] active:scale-95 transition-all"
+                          >
+                            Conectar Bot via Simulação
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* QR Code Presentation Box */}
+                    {qrCode && (
+                      <div className="bg-white/5 border border-white/10 rounded-xl p-6 flex flex-col items-center justify-center space-y-4 animate-in zoom-in-95 duration-500 relative overflow-hidden">
+                        {qrIsSimulated && (
+                          <div className="absolute top-0 inset-x-0 bg-brand-primary text-black font-black uppercase text-[8px] py-1 text-center tracking-widest animate-pulse">
+                            MODO SIMULAÇÃO ATIVO
+                          </div>
+                        )}
+
+                        <h5 className="text-xs font-black uppercase text-brand-primary mt-2">
+                          {qrIsSimulated ? '⚡ QR Code de Testes (Simulado)' : 'Escaneie o QR Code'}
+                        </h5>
+
+                        <div className="p-4 bg-white rounded-2xl shadow-xl border border-white/20 flex items-center justify-center relative">
+                          <img 
+                            src={qrCode} 
+                            alt="WhatsApp QR Code" 
+                            className="w-[280px] h-[280px] md:w-[320px] md:h-[320px] max-w-full object-contain" 
+                            style={{ imageRendering: 'pixelated' }}
+                            referrerPolicy="no-referrer" 
+                          />
+                          {qrIsSimulated && (
+                            <div className="absolute inset-2 bg-black/90 flex flex-col items-center justify-center p-4 text-center rounded-xl border border-brand-primary/20">
+                              <span className="text-brand-primary font-black text-sm uppercase tracking-wider mb-2 animate-bounce">⚡ MOCK BOT ATIVO</span>
+                              <p className="text-[10px] text-white font-medium max-w-[220px] leading-relaxed">
+                                Este QR Code é fictício/simulado para testes do clube.
+                              </p>
+                              <p className="text-[9px] text-white/60 max-w-[220px] mt-1.5 leading-normal">
+                                NÃO o escaneie com seu celular real, ou receberá "QR Code inválido" no WhatsApp!
+                              </p>
+                            </div>
+                          )}
+                        </div>
+
+                        {qrIsSimulated ? (
+                          <div className="space-y-4 text-center max-w-[380px] w-full">
+                            <div className="text-[10px] text-brand-primary font-black uppercase bg-brand-primary/5 border border-brand-primary/10 rounded-xl p-3 leading-relaxed">
+                              {qrMessage || "A Evolution API do WhatsApp está offline ou configurada incorretamente (recebeu erro 404). Nós geramos esse QR Code simulado para que você possa conectar o bot virtual de testes."}
+                            </div>
+                            
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                try {
+                                  const sRes = await fetch('/api/whatsapp/simulate-scan', { method: 'POST' });
+                                  const sData = await sRes.json();
+                                  if (sData.success) {
+                                    showNotification('Bot Virtual Conectado com Sucesso! O status mudou para ONLINE.', 'success');
+                                    setQrCode(null);
+                                    setQrIsSimulated(false);
+                                    setQrMessage(null);
+                                    checkRealStatus();
+                                  } else {
+                                    showNotification('Falha ao simular conexão.', 'error');
+                                  }
+                                } catch (err: any) {
+                                  showNotification('Erro: ' + err.message, 'error');
+                                }
+                              }}
+                              className="w-full py-3 px-5 rounded-xl text-[10px] font-black uppercase bg-brand-primary text-black hover:scale-[1.02] active:scale-95 transition-all text-center"
+                            >
+                              Simular Aprovação (Conectar Bot Virtual)
+                            </button>
+                          </div>
+                        ) : (
+                          <p className="text-[10px] text-white/50 text-center max-w-[280px]">
+                            Abra o WhatsApp no celular, vá em <span className="text-white font-bold">Aparelhos Conectados</span> {'>'} <span className="text-white font-bold">Conectar Aparelho</span> e aponte para a tela.
+                          </p>
+                        )}
+
+                        <button
+                          onClick={() => {
+                            setQrCode(null);
+                            setQrIsSimulated(false);
+                            setQrMessage(null);
+                          }}
+                          className="text-[9px] font-black uppercase text-red-500 hover:underline pt-2"
+                        >
+                          Ocultar QR Code
+                        </button>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-white/40 uppercase tracking-widest ml-1">Evolution API URL</label>
+                        <input
+                          type="url"
+                          placeholder="Ex: https://api.suadominio.com"
+                          value={waConfig.apiUrl || ''}
+                          onChange={e => setWaConfig({ ...waConfig, apiUrl: e.target.value })}
+                          className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl focus:border-brand-primary outline-none text-white text-xs font-bold transition-all"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-white/40 uppercase tracking-widest ml-1">Evolution API Token / ApiKey</label>
+                        <input
+                          type="password"
+                          placeholder="Ex: apikey_token_here"
+                          value={waConfig.apiKey || ''}
+                          onChange={e => setWaConfig({ ...waConfig, apiKey: e.target.value })}
+                          className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl focus:border-brand-primary outline-none text-white text-xs font-bold transition-all"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-white/40 uppercase tracking-widest ml-1">Nome da Instância</label>
+                        <input
+                          type="text"
+                          placeholder="Ex: santo-volei"
+                          value={waConfig.instanceName || ''}
+                          onChange={e => setWaConfig({ ...waConfig, instanceName: e.target.value })}
+                          className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl focus:border-brand-primary outline-none text-white text-xs font-bold transition-all"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-white/40 uppercase tracking-widest ml-1">WhatsApp JID do Grupo</label>
+                        <div className="relative">
+                          <input
+                            type="text"
+                            placeholder="Ex: 120363025219382210@g.us"
+                            value={waConfig.groupJid || ''}
+                            onChange={e => setWaConfig({ ...waConfig, groupJid: e.target.value })}
+                            className="w-full pl-4 pr-32 py-3 bg-white/5 border border-white/10 rounded-xl focus:border-brand-primary outline-none text-white text-xs font-bold transition-all font-mono"
+                          />
+                          <button
+                            type="button"
+                            disabled={loadingGroups}
+                            onClick={handleFetchGroups}
+                            className="absolute right-2 top-1.5 bottom-1.5 px-3 rounded-lg text-[9px] font-black uppercase tracking-wider bg-brand-primary text-black hover:scale-[1.02] active:scale-95 transition-all flex items-center gap-1 disabled:opacity-50"
+                          >
+                            {loadingGroups ? (
+                              <>
+                                <span className="animate-spin inline-block w-2 bg-black border border-t-transparent rounded-full" />
+                                Carregando...
+                              </>
+                            ) : (
+                              "Listar Grupos"
+                            )}
+                          </button>
+                        </div>
+
+                        {fetchedGroups && (
+                          <div className="mt-2.5 p-3 rounded-xl bg-black border border-brand-primary/20 space-y-2 max-h-[180px] overflow-y-auto">
+                            <p className="text-[9px] font-black uppercase text-brand-primary tracking-wider">
+                              Selecione o Grupo do Clube:
+                            </p>
+                            {fetchedGroups.length === 0 ? (
+                              <p className="text-[10px] text-white/50 italic py-1">Nenhum grupo encontrado na conta conectada.</p>
+                            ) : (
+                              <div className="grid grid-cols-1 gap-1.5">
+                                {fetchedGroups.map((group) => (
+                                  <button
+                                    key={group.id}
+                                    type="button"
+                                    onClick={() => {
+                                      setWaConfig(prev => ({ ...prev, groupJid: group.id }));
+                                      setFetchedGroups(null);
+                                      showNotification(`Grupo JID selecionado: ${group.subject}`, 'success');
+                                    }}
+                                    className={`w-full text-left p-2 rounded-lg text-[10px] font-mono hover:bg-white/5 border transition-all ${
+                                      waConfig.groupJid === group.id
+                                        ? 'border-brand-primary text-brand-primary bg-brand-primary/5'
+                                        : 'border-white/5 text-white/80 hover:border-white/10'
+                                    }`}
+                                  >
+                                    <div className="font-sans font-bold text-white text-xs truncate">{group.subject}</div>
+                                    <div className="text-[9px] text-white/40 truncate mt-0.5">{group.id}</div>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="bg-black/40 p-4 rounded-xl border border-white/5 space-y-4">
+                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                        <div>
+                          <p className="text-xs font-bold text-slate-300">Target Webhook URL</p>
+                          <p className="text-[10px] text-slate-500">Copie e registre no Evolution se a ativação automatica falhar.</p>
+                          <code className="block mt-2 bg-brand-secondary/80 p-2.5 rounded text-[10px] font-mono text-brand-primary select-all break-all border border-white/5">
+                            {waConfig.webhookUrl}
+                          </code>
+                        </div>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(waConfig.webhookUrl);
+                            showNotification('Webhook URL copiado com sucesso!', 'success');
+                          }}
+                          className="md:self-end shrink-0 py-2.5 px-4 rounded-xl font-black uppercase text-[9px] bg-white/10 hover:bg-white/20 text-white transition-all border border-white/15"
+                        >
+                          Copiar URL
+                        </button>
+                      </div>
+
+                      <div className="flex items-center gap-3 pt-2">
+                        <input
+                          type="checkbox"
+                          id="botActive"
+                          checked={waConfig.botActive || false}
+                          onChange={e => setWaConfig({ ...waConfig, botActive: e.target.checked })}
+                          className="rounded border-white/20 bg-white/5 text-brand-primary focus:ring-transparent h-4 w-4"
+                        />
+                        <label htmlFor="botActive" className="text-xs font-black uppercase tracking-wider text-slate-300 cursor-pointer">
+                          Ativar Agente de Resposta Automática (SIM/NÃO via Direct)
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-3 pt-2">
+                      <button
+                        onClick={async () => {
+                          await handleSaveWaConfig();
+                          checkRealStatus();
+                        }}
+                        disabled={isWaSaving}
+                        className="flex-1 min-w-[200px] py-3 px-6 rounded-xl font-black uppercase tracking-widest text-[10px] bg-brand-primary text-black hover:scale-[1.02] shadow-xl shadow-brand-primary/10 transition-all disabled:opacity-50"
+                      >
+                        {isWaSaving ? 'Salvando...' : 'Salvar & Sincronizar Instância'}
+                      </button>
+
+                      <button
+                        onClick={handleSendWaPrompts}
+                        disabled={isPnSending}
+                        className="flex-1 min-w-[200px] py-3 px-6 rounded-xl font-black uppercase tracking-widest text-[10px] bg-white/5 hover:bg-white/10 text-white border border-brand-primary/40 transition-all disabled:opacity-50"
+                      >
+                        {isPnSending ? 'Disparando...' : 'Perguntar Prontidão p/ Sócio (Direct)'}
+                      </button>
+
+                      <button
+                        onClick={handleSendWaGroup}
+                        disabled={isGroupSending}
+                        className="flex-1 min-w-[200px] py-3 px-6 rounded-xl font-black uppercase tracking-widest text-[10px] bg-green-500/20 text-green-400 hover:bg-green-500 hover:text-black transition-all disabled:opacity-50"
+                      >
+                        {isGroupSending ? 'Enviando...' : 'Enviar Lista Atual p/ Grupo'}
+                      </button>
+                    </div>
+
+                    {/* Monitoramento de Envio por Etapas com Pequenos LEDs */}
+                    {waSteps && (
+                      <div className="mt-6 p-5 rounded-2xl border border-white/10 bg-white/[0.02] animate-in fade-in slide-in-from-top-4 duration-300">
+                        <div className="flex items-center justify-between mb-4 pb-2 border-b border-white/5">
+                          <div className="flex items-center gap-2">
+                            <span className="relative flex h-2 w-2">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-brand-primary opacity-75"></span>
+                              <span className="relative inline-flex rounded-full h-2 w-2 bg-brand-primary"></span>
+                            </span>
+                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-300">
+                              Etapas de Rastreio ({waTaskType === 'group' ? 'Lista do Grupo' : 'Lembretes Direct'})
+                            </span>
+                          </div>
+                          <button 
+                            onClick={() => setWaSteps(null)} 
+                            className="text-[9px] font-black text-rose-400 hover:text-rose-300 uppercase tracking-wider transition-all"
+                          >
+                            Recolher Monitor
+                          </button>
+                        </div>
+
+                        <div className="space-y-3.5">
+                          {waSteps.map((step, idx) => {
+                            let ledColor = 'bg-slate-700 shadow-none';
+                            let textColor = 'text-slate-500';
+                            let pulseClass = '';
+
+                            if (step.status === 'success') {
+                              ledColor = 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.7)]';
+                              textColor = 'text-emerald-400';
+                            } else if (step.status === 'failed') {
+                              ledColor = 'bg-rose-500 shadow-[0_0_10px_rgba(239,68,68,0.8)]';
+                              textColor = 'text-rose-400';
+                              pulseClass = 'animate-pulse';
+                            } else if (step.status === 'pending') {
+                              ledColor = 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.6)]';
+                              textColor = 'text-amber-400';
+                              pulseClass = 'animate-pulse';
+                            } else if (step.status === 'skipped') {
+                              ledColor = 'bg-slate-600';
+                              textColor = 'text-slate-400 opacity-60';
+                            }
+
+                            return (
+                              <div key={step.id || idx} className="flex items-start gap-4 p-2.5 rounded-xl bg-black/40 border border-white/[0.02] hover:border-white/5 transition-all">
+                                <div className="pt-1 flex-shrink-0">
+                                  <div className={`w-3 h-3 rounded-full transition-all duration-300 ${ledColor} ${pulseClass}`} />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex justify-between items-center">
+                                    <p className={`text-[10px] font-black uppercase tracking-wider ${textColor}`}>
+                                      {step.name}
+                                    </p>
+                                    <span className="text-[8px] font-mono uppercase px-1.5 py-0.5 rounded bg-black text-slate-400 tracking-wider">
+                                      {step.status}
+                                    </span>
+                                  </div>
+                                  {step.details && (
+                                    <p className="mt-1 text-[9px] font-mono text-slate-400 lowercase italic break-all leading-relaxed">
+                                      → {step.details}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -328,47 +1188,47 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
               goingPlayers.map((p, i) => {
                 const isCheckedIn = attendance.some(a => a.id === p.id);
                 return (
-                  <div key={p.id} className="flex items-center justify-between bg-brand-primary/5 p-3 rounded-xl border border-brand-primary/40">
-                    <div className="flex items-center gap-3">
-                      <span className="text-brand-primary font-black text-xs w-4">{i + 1}.</span>
-                      <div className="flex items-center gap-2">
-                        {userRole === 'ADMIN' && (
-                          <div className="shrink-0" title={`Nível: ${p.impactLevel === 3 ? 'Elite' : p.impactLevel === 2 ? 'Médio' : 'Base'}`}>
-                            {getImpactIcon(p.impactLevel)}
-                          </div>
-                        )}
-                        <span className="text-white text-sm font-bold">{p.name}</span>
-                        <span className="ml-2">
-                        <EvasionIcon 
-                          level={p.evasionLevel || calculateEvasionLevel(p as Player)} 
-                          customLabel={`${(p.evasionLevel || calculateEvasionLevel(p as Player)).charAt(0).toUpperCase() + (p.evasionLevel || calculateEvasionLevel(p as Player)).slice(1)} - ${p.wins || 0}V ${p.losses || 0}D`} 
-                        />
-                        </span>
+                  <div key={p.id} className="flex items-center justify-between bg-brand-primary/5 p-4 sm:p-3 rounded-2xl border border-brand-primary/30 hover:border-brand-primary transition-colors gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="text-brand-primary font-black text-xs w-4 shrink-0">{i + 1}.</span>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {userRole === 'ADMIN' && (
+                            <div className="shrink-0" title={`Nível: ${p.impactLevel === 3 ? 'Elite' : p.impactLevel === 2 ? 'Médio' : 'Base'}`}>
+                              {getImpactIcon(p.impactLevel)}
+                            </div>
+                          )}
+                          <span className="text-white text-base sm:text-sm font-bold tracking-tight">{capitalizeName(p.name)}</span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 mt-1.5 px-0.5">
+                          {getAttendanceBadge(p.id)}
+                          {getEvasionBadge(p)}
+                        </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 shrink-0">
                       {isCheckedIn ? (
-                        <span className="text-[10px] font-black uppercase tracking-wider bg-green-500/20 text-green-400 px-3 py-1.5 rounded-lg border border-green-500/30 flex items-center gap-1">
-                          <UserCheck className="w-3 h-3" /> Na Quadra
+                        <span className="text-[10px] font-black uppercase tracking-wider bg-green-500/20 text-green-400 px-3 py-2 sm:px-4 rounded-xl border border-green-500/30 flex items-center gap-1.5 shrink-0">
+                          <UserCheck className="w-3.5 h-3.5" /> <span className="hidden xs:inline">Na Quadra</span>
                         </span>
                       ) : (
                         <>
                           {userRole === 'ADMIN' && (
                             <button
                               onClick={() => resetIntent(p.id)}
-                              className="p-1.5 text-slate-400 hover:text-brand-primary hover:bg-brand-primary/10 rounded-lg transition-all"
+                              className="p-2 text-slate-400 hover:text-brand-primary hover:bg-brand-primary/10 rounded-xl transition-all shrink-0"
                               title="Mover para Não Confirmados"
                             >
-                              <RotateCcw className="w-3.5 h-3.5" />
+                              <RotateCcw className="w-4 h-4 sm:w-5 sm:h-5" />
                             </button>
                           )}
                           {userRole === 'ADMIN' && (
                             <button
                               onClick={() => onMoveToAttendance(p.id)}
-                              className="text-[10px] font-black uppercase tracking-wider bg-brand-primary/20 text-brand-primary px-3 py-1.5 rounded-lg hover:bg-brand-primary hover:text-black transition-colors flex items-center gap-1"
+                              className="bg-brand-primary text-black p-2.5 rounded-xl hover:scale-110 transition-all flex items-center justify-center shadow-lg shadow-brand-primary/20 shrink-0"
                               title="Fazer Check-in na Quadra"
                             >
-                              Check-in <ArrowRight className="w-3 h-3" />
+                              <ArrowRight className="w-4 h-4" />
                             </button>
                           )}
                         </>
@@ -397,41 +1257,45 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
                 {searchTerm ? 'Nenhum sócio encontrado.' : 'Todos já responderam!'}
               </p>
             ) : (
-              filteredUndecided.map(p => (
-                <div key={p.id} className="flex items-center justify-between bg-slate-500/5 p-3 rounded-xl border border-slate-500/40">
-                  <div className="flex items-center gap-2">
-                    {userRole === 'ADMIN' && (
-                      <div className="shrink-0" title={`Nível: ${p.impactLevel === 3 ? 'Elite' : p.impactLevel === 2 ? 'Médio' : 'Base'}`}>
-                        {getImpactIcon(p.impactLevel)}
+              undecidedPlayers.map((p, i) => (
+                <div key={p.id} className="flex items-center justify-between bg-slate-500/5 p-4 sm:p-3 rounded-2xl border border-white/5 hover:border-slate-500/40 transition-colors gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="text-slate-500 font-black text-[10px] w-4 shrink-0">{i + 1}.</span>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {userRole === 'ADMIN' && (
+                          <div className="shrink-0" title={`Nível: ${p.impactLevel === 3 ? 'Elite' : p.impactLevel === 2 ? 'Médio' : 'Base'}`}>
+                            {getImpactIcon(p.impactLevel)}
+                          </div>
+                        )}
+                        <span className="text-white text-base sm:text-sm font-bold tracking-tight">{capitalizeName(p.name)}</span>
                       </div>
-                    )}
-                    <span className="text-white text-sm font-bold">{p.name}</span>
-                    <span className="ml-2">
-                      <EvasionIcon 
-                        level={p.evasionLevel || calculateEvasionLevel(p as Player)} 
-                        customLabel={`${(p.evasionLevel || calculateEvasionLevel(p as Player)).charAt(0).toUpperCase() + (p.evasionLevel || calculateEvasionLevel(p as Player)).slice(1)} - ${p.wins || 0}V ${p.losses || 0}D`} 
-                      />
-                    </span>
+                      <div className="flex flex-wrap items-center gap-2 mt-1.5 px-0.5">
+                        {getAttendanceBadge(p.id)}
+                        {getEvasionBadge(p)}
+                      </div>
+                    </div>
                   </div>
                   {userRole === 'ADMIN' && (
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 shrink-0">
                       <button
                         onClick={() => setIntent(p.id, 'GOING')}
-                        className="text-[8px] font-black uppercase tracking-widest bg-brand-primary/10 text-brand-primary px-3 py-1.5 rounded-lg hover:bg-brand-primary hover:text-black transition-all flex items-center gap-1"
+                        className="bg-brand-primary text-black p-2.5 rounded-xl hover:bg-brand-primary/90 transition-all flex items-center justify-center shrink-0 shadow-lg shadow-brand-primary/10"
+                        title="Confirmar Presença"
                       >
-                        Confirmar <ArrowRight className="w-3 h-3" />
+                        <CheckCircle2 className="w-4 h-4" />
                       </button>
                       <button
                         onClick={() => setIntent(p.id, 'NOT_GOING')}
-                        className="p-1.5 text-red-500 hover:bg-red-500/10 rounded-lg transition-all"
+                        className="p-2 text-red-500 hover:bg-red-500/10 rounded-xl transition-all shrink-0"
                         title="Marcar como Ausente"
                       >
-                        <UserX className="w-4 h-4" />
+                        <UserX className="w-4 h-4 sm:w-5 sm:h-5" />
                       </button>
                     </div>
                   )}
                   {userRole !== 'ADMIN' && (
-                    <span className="text-[8px] font-black text-brand-primary/40 uppercase tracking-widest">Aguardando</span>
+                    <span className="text-[10px] font-black text-brand-primary/40 uppercase tracking-widest bg-brand-primary/5 px-3 py-1 rounded-full shrink-0">Aguardando</span>
                   )}
                 </div>
               ))
@@ -453,34 +1317,40 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
             {notGoingPlayers.length === 0 ? (
               <p className="text-slate-500 text-xs italic text-center py-4">Nenhuma ausência registrada.</p>
             ) : (
-              notGoingPlayers.map(p => (
-                <div key={p.id} className="flex items-center justify-between bg-red-500/5 p-3 rounded-xl border border-red-500/40">
-                    <div className="flex items-center gap-3 opacity-50">
-                      {userRole === 'ADMIN' && (
-                        <div className="shrink-0" title={`Nível: ${p.impactLevel === 3 ? 'Elite' : p.impactLevel === 2 ? 'Médio' : 'Base'}`}>
-                          {getImpactIcon(p.impactLevel)}
+              notGoingPlayers.map((p, i) => (
+                <div key={p.id} className="flex items-center justify-between bg-red-500/5 p-4 sm:p-3 rounded-2xl border border-red-500/20 hover:border-red-500/40 transition-colors gap-3">
+                    <div className="flex items-center gap-3 opacity-50 min-w-0">
+                      <span className="text-red-500/50 font-black text-[10px] w-4 shrink-0">{i + 1}.</span>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {userRole === 'ADMIN' && (
+                            <div className="shrink-0" title={`Nível: ${p.impactLevel === 3 ? 'Elite' : p.impactLevel === 2 ? 'Médio' : 'Base'}`}>
+                              {getImpactIcon(p.impactLevel)}
+                            </div>
+                          )}
+                          <span className="text-white text-base sm:text-sm font-medium line-through tracking-tight">{capitalizeName(p.name)}</span>
                         </div>
-                      )}
-                      <span className="text-white text-sm font-medium line-through">{p.name}</span>
-                      <span className="ml-2">
-                        <EvasionIcon level={p.evasionLevel || calculateEvasionLevel(p as Player)} />
-                      </span>
+                        <div className="flex flex-wrap items-center gap-2 mt-1.5 px-0.5">
+                          {getAttendanceBadge(p.id)}
+                          {getEvasionBadge(p)}
+                        </div>
+                      </div>
                     </div>
-                  {userRole === 'ADMIN' && (
-                    <div className="flex items-center gap-2">
+                    {userRole === 'ADMIN' && (
+                    <div className="flex items-center gap-2 shrink-0">
                       <button
                         onClick={() => setIntent(p.id, 'GOING')}
-                        className="p-1.5 text-brand-primary hover:bg-brand-primary/10 rounded-lg transition-all"
+                        className="p-2 text-brand-primary hover:bg-brand-primary/10 rounded-xl transition-all shrink-0"
                         title="Mover para Confirmados"
                       >
-                        <UserCheck className="w-4 h-4" />
+                        <UserCheck className="w-4 h-4 sm:w-5 sm:h-5" />
                       </button>
                       <button
                         onClick={() => resetIntent(p.id)}
-                        className="p-1.5 text-slate-400 hover:text-brand-primary hover:bg-brand-primary/10 rounded-lg transition-all"
+                        className="p-2 text-slate-400 hover:text-brand-primary hover:bg-brand-primary/10 rounded-xl transition-all shrink-0"
                         title="Mover para Não Confirmados"
                       >
-                        <RotateCcw className="w-4 h-4" />
+                        <RotateCcw className="w-4 h-4 sm:w-5 sm:h-5" />
                       </button>
                     </div>
                   )}

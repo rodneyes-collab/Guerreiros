@@ -1,6 +1,8 @@
 import React from 'react';
+import { motion } from 'motion/react';
 import { Player, Team } from '../types';
 import { PlayerRow } from './PlayerRow';
+import { suggestPosition, calculateTeamPositions } from '../utils/teamLogic';
 import { 
   Swords, 
   Sparkles 
@@ -9,6 +11,7 @@ import {
 interface TeamCardProps {
   title: string;
   team: Team;
+  opponent?: Team;
   color: 'blue' | 'green';
   attendance: Player[];
   userRole?: string;
@@ -16,18 +19,25 @@ interface TeamCardProps {
   onRemove: (pid: string) => void;
   onPromote: (pid: string) => void;
   activeSwapId: string | undefined;
+  hoveredPlayerId: string | null;
+  setHoveredPlayerId: (id: string | null) => void;
+  rivalId: string | null;
 }
 
 export const TeamCard: React.FC<TeamCardProps> = ({ 
   title, 
   team, 
+  opponent,
   color, 
   attendance, 
   userRole,
   onSwap, 
   onRemove, 
   onPromote, 
-  activeSwapId 
+  activeSwapId,
+  hoveredPlayerId,
+  setHoveredPlayerId,
+  rivalId
 }) => {
   const colorClass = color === 'blue' ? 'bg-brand-secondary' : 'bg-brand-primary';
   const lightColorClass = color === 'blue' ? 'bg-brand-secondary/10 text-brand-secondary' : 'bg-brand-primary/10 text-brand-primary';
@@ -41,41 +51,34 @@ export const TeamCard: React.FC<TeamCardProps> = ({
 
   // Calcula posições sugeridas para exibir na lista
   const getSuggestedPositions = () => {
-    const setter = team.setter;
-    const others = [...team.players].sort((a, b) => b.elo - a.elo);
-    const finalSetter = setter || others.pop();
-    
-    const mapping: Record<string, string> = {};
-    if (finalSetter) mapping[finalSetter.id] = "3";
-    if (others[0]) mapping[others[0].id] = "4";
-    if (others[1]) mapping[others[1].id] = "2";
-    if (others[2]) mapping[others[2].id] = "5";
-    if (others[3]) mapping[others[3].id] = "6";
-    if (others[4]) mapping[others[4].id] = "1";
-    
-    return mapping;
+    return calculateTeamPositions(team, opponent || null);
   };
 
   const suggestedPositions = getSuggestedPositions();
 
+  // Helper para identificar o "oposto" tático (Regra 1-4, 2-5, 3-6)
+  const getOppositePos = (pos: string) => {
+    const map: Record<string, string> = { '1': '4', '4': '1', '2': '5', '5': '2', '3': '6', '6': '3' };
+    return map[pos];
+  };
+
+  const getPlayerAtPos = (pos: string) => {
+    const all = [team.setter, ...team.players].filter((p): p is Player => p !== null);
+    const entry = Object.entries(suggestedPositions).find(([_, pPos]) => pPos === pos);
+    if (!entry) return null;
+    return all.find(p => p.id === entry[0]);
+  };
+
   return (
-    <div className="bg-brand-light rounded-[2rem] sm:rounded-[3rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-2xl overflow-hidden flex flex-col h-full animate-in zoom-in-95 duration-500 hover:border-brand-primary/40 transition-all team-card-container"
-      onDragOver={(e) => {
-        if (userRole !== 'ADMIN') return;
-        e.preventDefault();
-        e.currentTarget.classList.add('ring-4', 'ring-brand-primary/20');
+    <motion.div 
+      initial={{ opacity: 0, y: 30, scale: 0.95 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ 
+        duration: 0.8, 
+        ease: [0.16, 1, 0.3, 1],
+        delay: title.includes('A') ? 0.1 : 0.2
       }}
-      onDragLeave={(e) => {
-        e.currentTarget.classList.remove('ring-4', 'ring-brand-primary/20');
-      }}
-      onDrop={(e) => {
-        if (userRole !== 'ADMIN') return;
-        e.preventDefault();
-        e.currentTarget.classList.remove('ring-4', 'ring-brand-primary/20');
-        const draggedPlayerId = e.dataTransfer.getData('playerId');
-        // Se soltar no container vazio do time, e não houver um alvo específico (já tratado no PlayerRow),
-        // poderíamos opcionalmente fazer algo, mas o PlayerRow já trata a troca entre jogadores.
-      }}
+      className="bg-brand-light rounded-[2rem] sm:rounded-[3rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-2xl overflow-hidden flex flex-col h-full hover:border-brand-primary/40 transition-all team-card-container"
     >
       <div className={`p-6 sm:p-8 bg-brand-light ${textColorClass} relative border-b border-brand-primary/10`}>
         <div className="absolute top-0 right-0 p-4 sm:p-8 opacity-10">
@@ -91,53 +94,77 @@ export const TeamCard: React.FC<TeamCardProps> = ({
       </div>
       
       <div className="p-4 sm:p-8 space-y-6 sm:space-y-8 flex-grow">
-        <div className="space-y-3 sm:space-y-4">
-          <h4 className="text-[10px] sm:text-sm font-black text-white/40 uppercase tracking-[0.2em] px-2 flex items-center gap-2">
-            <Sparkles className="w-3 h-3 sm:w-4 h-4 text-brand-primary" />
-            Cérebro do Time
-          </h4>
-          {team.setter ? (
-            <PlayerRow 
-              p={team.setter} 
-              isSetter 
-              isActive={activeSwapId === team.setter.id} 
-              isTimeA={color === 'green'}
-              attendancePosition={getPos(team.setter.id)}
-              suggestedPosition={suggestedPositions[team.setter.id]}
-              userRole={userRole}
-              onSwap={onSwap} 
-              onRemove={onRemove}
-            />
-          ) : (
-            <div className="p-4 sm:p-8 rounded-2xl sm:rounded-3xl border-2 border-dashed border-brand-primary/40 bg-white/5 text-center">
-              <p className="text-[10px] sm:text-sm font-black text-white/40 uppercase tracking-widest italic">Aguardando Levantador</p>
-            </div>
-          )}
-        </div>
+        {/* Visualização de Quadra removida conforme solicitação de retirar as quadras */}
 
-        <div className="space-y-3 sm:space-y-4">
-          <h4 className="text-[10px] sm:text-sm font-black text-white/40 uppercase tracking-[0.2em] px-2 flex items-center gap-2">
-            <Swords className="w-3 h-3 sm:w-4 h-4 text-brand-primary" />
-            Atacantes e Defesa
-          </h4>
-          <div className="flex flex-col gap-2 sm:gap-3">
-            {team.players.map((p: Player) => (
-              <PlayerRow 
-                key={p.id} 
-                p={p} 
-                isActive={activeSwapId === p.id} 
-                isTimeA={color === 'green'}
-                attendancePosition={getPos(p.id)}
-                suggestedPosition={suggestedPositions[p.id]}
-                userRole={userRole}
-                onSwap={onSwap} 
-                onRemove={onRemove}
-                onPromote={!team.setter ? onPromote : undefined}
-              />
-            ))}
+        <div className="space-y-6 sm:space-y-8">
+          <div className="space-y-3 sm:space-y-4">
+            <h4 className="text-[10px] sm:text-sm font-black text-white/40 uppercase tracking-[0.2em] px-2 flex items-center gap-2">
+              <Sparkles className="w-3 h-3 sm:w-4 h-4 text-brand-primary" />
+              Cérebro da Equipe
+            </h4>
+            {team.setter ? (
+              <div 
+                onMouseEnter={() => setHoveredPlayerId(team.setter!.id)}
+                onMouseLeave={() => setHoveredPlayerId(null)}
+                onTouchStart={() => setHoveredPlayerId(team.setter!.id)}
+                onTouchEnd={() => setHoveredPlayerId(null)}
+                onTouchCancel={() => setHoveredPlayerId(null)}
+              >
+                <PlayerRow 
+                  p={team.setter} 
+                  isSetter 
+                  isActive={activeSwapId === team.setter.id} 
+                  isTimeA={color === 'green'}
+                  attendancePosition={getPos(team.setter.id)}
+                  suggestedPosition={suggestedPositions[team.setter.id]}
+                  userRole={userRole}
+                  onSwap={onSwap} 
+                  onRemove={onRemove}
+                  isRival={rivalId === team.setter.id}
+                  isHovered={hoveredPlayerId === team.setter.id}
+                />
+              </div>
+            ) : (
+              <div className="p-4 sm:p-8 rounded-2xl sm:rounded-3xl border-2 border-dashed border-brand-primary/40 bg-white/5 text-center">
+                <p className="text-[10px] sm:text-sm font-black text-white/40 uppercase tracking-widest italic">Aguardando Levantador</p>
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-3 sm:space-y-4">
+            <h4 className="text-[10px] sm:text-sm font-black text-white/40 uppercase tracking-[0.2em] px-2 flex items-center gap-2">
+              <Swords className="w-3 h-3 sm:w-4 h-4 text-brand-primary" />
+              Atacantes e Defesa
+            </h4>
+            <div className="flex flex-col gap-2 sm:gap-3">
+              {team.players.map((p: Player) => (
+                <div 
+                  key={p.id}
+                  onMouseEnter={() => setHoveredPlayerId(p.id)}
+                  onMouseLeave={() => setHoveredPlayerId(null)}
+                  onTouchStart={() => setHoveredPlayerId(p.id)}
+                  onTouchEnd={() => setHoveredPlayerId(null)}
+                  onTouchCancel={() => setHoveredPlayerId(null)}
+                >
+                  <PlayerRow 
+                    p={p} 
+                    isActive={activeSwapId === p.id} 
+                    isTimeA={color === 'green'}
+                    attendancePosition={getPos(p.id)}
+                    suggestedPosition={suggestedPositions[p.id]}
+                    userRole={userRole}
+                    onSwap={onSwap} 
+                    onRemove={onRemove}
+                    onPromote={!team.setter ? onPromote : undefined}
+                    isRival={rivalId === p.id}
+                    isHovered={hoveredPlayerId === p.id}
+                  />
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 };

@@ -3,6 +3,7 @@ import { motion } from 'motion/react';
 import { useStore } from '../store';
 import { Player } from '../types';
 import { calculateEffectiveElo } from '../utils/teamLogic';
+import { capitalizeName } from '../utils/helpers';
 import { 
   UserCheck, 
   ArrowLeftRight, 
@@ -23,6 +24,8 @@ interface PlayerRowProps {
   onSwap: (pid: string) => void;
   onRemove?: (pid: string) => void;
   onPromote?: (pid: string) => void;
+  isRival?: boolean;
+  isHovered?: boolean;
 }
 
 export const PlayerRow: React.FC<PlayerRowProps> = ({ 
@@ -35,11 +38,13 @@ export const PlayerRow: React.FC<PlayerRowProps> = ({
   userRole,
   onSwap, 
   onRemove, 
-  onPromote 
+  onPromote,
+  isRival,
+  isHovered
 }) => {
   const players = useStore(state => state.players);
   const fullPlayer = players.find(fp => fp.id === p.id);
-  const displayName = p.name || fullPlayer?.name || "Sócio sem nome";
+  const displayName = capitalizeName(p.name || fullPlayer?.name || "Sócio sem nome");
 
   const handleDragStart = (e: React.DragEvent) => {
     if (userRole !== 'ADMIN') return;
@@ -78,27 +83,48 @@ export const PlayerRow: React.FC<PlayerRowProps> = ({
   return (
     <div 
       draggable={userRole === 'ADMIN'}
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={(e) => {
-        if (userRole !== 'ADMIN') return;
-        e.preventDefault();
-        e.currentTarget.classList.remove('ring-4', 'ring-brand-primary/40');
-        const draggedPlayerId = e.dataTransfer.getData('playerId');
-        if (draggedPlayerId && draggedPlayerId !== p.id) {
-          // Se já houver algo selecionado, limpa.
-          // Aqui precisamos de uma lógica que receba os dois IDs ou use o estado existente.
-          onSwap(p.id); // Seleciona o alvo
-          onSwap(draggedPlayerId); // Seleciona o origem e executa a troca se onSwap for o handleSwapClick do useAppLogic
-        }
-      }}
-      className={`flex items-center justify-between p-2 sm:p-5 rounded-[1.2rem] sm:rounded-[2rem] border transition-all group ${isActive ? 'bg-brand-primary/10 border border-white/5 border-l-[6px] border-l-brand-primary shadow-md ring-2 ring-brand-primary/20' : 'bg-brand-light border border-white/5 border-l-[6px] border-l-brand-primary shadow-sm hover:shadow-md'}`}
+      onDragStart={handleDragStart as any}
+      onDragEnd={handleDragEnd as any}
+      onDragOver={handleDragOver as any}
+      onDragLeave={handleDragLeave as any}
+      onDrop={handleDrop as any}
+      className={`relative flex items-center justify-between p-2 sm:p-5 rounded-[1.2rem] sm:rounded-[2rem] border transition-all duration-300 group ${
+        isActive 
+          ? 'bg-brand-primary/10 border-brand-primary/50 border-l-[6px] border-l-brand-primary shadow-lg ring-2 ring-brand-primary/30 z-10' 
+          : isRival
+            ? 'bg-brand-primary/20 border-brand-primary border-l-[8px] border-l-brand-primary shadow-[0_0_20px_rgba(245,196,41,0.2)] scale-[1.02] z-10'
+            : isHovered
+              ? 'bg-white/5 border-white/20 border-l-[8px] border-l-white/40 scale-[1.02] z-10'
+              : 'bg-brand-light border border-white/5 border-l-[6px] border-l-brand-primary shadow-sm hover:shadow-md'
+      }`}
     >
-      <div className="flex items-center gap-2 sm:gap-6 min-w-0">
+      {(isActive || isRival || isHovered) && (
+        <motion.div
+          layoutId={`active-glow-${p.id}`}
+          className="absolute inset-0 rounded-[1.2rem] sm:rounded-[2rem] pointer-events-none"
+          animate={{
+            boxShadow: [
+              "0 0 0px rgba(245, 196, 41, 0)",
+              isRival ? "0 0 40px rgba(245, 196, 41, 0.5)" : "0 0 30px rgba(245, 196, 41, 0.4)",
+              "0 0 0px rgba(245, 196, 41, 0)"
+            ],
+            borderColor: [
+              "rgba(245, 196, 41, 0.2)",
+              isRival ? "#F5C429" : "rgba(245, 196, 41, 0.8)",
+              "rgba(245, 196, 41, 0.2)"
+            ]
+          }}
+          transition={{
+            duration: 1.5,
+            repeat: Infinity,
+            ease: "easeInOut"
+          }}
+          style={{ border: '2px solid transparent' }}
+        />
+      )}
+      <div className="flex items-center gap-2 sm:gap-6 min-w-0 relative z-10">
         <div className="relative shrink-0">
-          <div className={`w-8 h-8 sm:w-16 sm:h-16 rounded-full flex items-center justify-center text-sm sm:text-2xl font-black ${isSetter ? (isTimeA ? 'bg-brand-primary/20 text-brand-primary' : 'bg-brand-primary/20 text-brand-secondary dark:text-white') : 'bg-brand-primary/5 text-brand-secondary/40 dark:text-white/40'} border border-brand-primary/10 shadow-sm`}>
+          <div className={`w-8 h-8 sm:w-11 sm:h-11 rounded-full flex items-center justify-center text-sm sm:text-base font-black ${isSetter ? (isTimeA ? 'bg-brand-primary/20 text-brand-primary' : 'bg-brand-primary/20 text-brand-secondary dark:text-white') : 'bg-brand-primary/5 text-brand-secondary/40 dark:text-white/40'} border border-brand-primary/10 shadow-sm`}>
             {attendancePosition && attendancePosition !== 0 ? attendancePosition : '?'}
           </div>
           {isSetter && <div className="absolute -top-1 -right-1 sm:-top-2 sm:-right-2 w-4 h-4 sm:w-6 sm:h-6 bg-brand-primary rounded-full border-2 border-brand-nav flex items-center justify-center shadow-sm"><UserCheck className="w-2 h-2 sm:w-3 h-3 text-brand-secondary" /></div>}
@@ -112,7 +138,7 @@ export const PlayerRow: React.FC<PlayerRowProps> = ({
               stiffness: 400,
               damping: 10
             }}
-            className={`text-xs sm:text-3xl font-black ${isTimeA ? 'text-brand-primary drop-shadow-[0_0_8px_rgba(245,196,41,0.3)]' : 'text-brand-secondary dark:text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.2)]'} tracking-tight leading-none truncate`}
+            className={`text-sm sm:text-lg md:text-xl font-extrabold ${isTimeA ? 'text-brand-primary drop-shadow-[0_0_6px_rgba(245,196,41,0.2)]' : 'text-brand-secondary dark:text-white'} tracking-tight leading-tight truncate`}
           >
             {displayName}
           </motion.p>
@@ -122,7 +148,13 @@ export const PlayerRow: React.FC<PlayerRowProps> = ({
             <span className="text-[8px] sm:text-[11px] text-brand-secondary/60 dark:text-white/60 font-bold uppercase flex items-center gap-1 sm:gap-2">
               <span className="hidden xs:inline">EFIC:</span> <span className="text-brand-primary font-black">{Math.round(calculateEffectiveElo(p))}</span>
               {suggestedPosition && (
-                <span className="bg-brand-primary/10 text-brand-primary px-1 py-0.5 rounded text-[7px] sm:text-[10px] border border-brand-primary/40">P{suggestedPosition}</span>
+                <span className={`${
+                  isTimeA 
+                    ? 'bg-brand-primary/10 text-brand-primary border-brand-primary/40 shadow-[0_0_10px_rgba(245,196,41,0.1)]' 
+                    : 'bg-white/10 text-white border-white/20'
+                } px-2.5 py-0.5 rounded text-[11px] sm:text-[15px] border font-black`}>
+                  P{suggestedPosition}
+                </span>
               )}
             </span>
           </div>

@@ -36,6 +36,8 @@ export const playerSchema = z.object({
   }).optional(),
   isExempt: z.boolean().optional(),
   isDM: z.boolean().optional(),
+  phone: z.string().regex(/^\d{10,14}$/, "Telefone deve conter apenas números (DDD + Número, 10 a 14 dígitos)").optional().or(z.literal(''))
+    .transform(val => val === '' || val === null || val === undefined ? undefined : val),
   uid: z.string().optional(),
   fcmToken: z.string().optional(),
   hasSeenWelcome: z.boolean().optional(),

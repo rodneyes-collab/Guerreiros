@@ -107,18 +107,52 @@ export const calculateAttendanceStats = (history: Record<string, Player[]>, allP
 
   const stats = Array.from(playerMap.values()).map(player => {
     let attendedSessions = 0;
-    Object.values(history).forEach(dayPlayers => {
+    let eligibleSessionsCount = 0;
+    
+    // Determine player's join/registration time
+    let firstActivityTime = player.createdAt || 0;
+    
+    // Find the date of their first attendance in history as a safeguard
+    let firstAttendedTime = Infinity;
+    Object.entries(history).forEach(([dateStr, dayPlayers]) => {
       if (dayPlayers.some(p => p.id === player.id)) {
-        attendedSessions++;
+        const [year, month, day] = dateStr.split('-').map(Number);
+        const sessionTime = new Date(year, month - 1, day, 0, 0, 0).getTime();
+        if (sessionTime < firstAttendedTime) {
+          firstAttendedTime = sessionTime;
+        }
       }
     });
+    
+    if (firstAttendedTime !== Infinity && (firstActivityTime === 0 || firstAttendedTime < firstActivityTime)) {
+      // 1-day buffer before first attendance
+      firstActivityTime = firstAttendedTime - 24 * 60 * 60 * 1000;
+    }
+    
+    Object.entries(history).forEach(([dateStr, dayPlayers]) => {
+      const [year, month, day] = dateStr.split('-').map(Number);
+      const sessionTime = new Date(year, month - 1, day, 23, 59, 59).getTime();
+      
+      const isEligible = firstActivityTime === 0 || sessionTime >= firstActivityTime;
+      
+      if (isEligible) {
+        eligibleSessionsCount++;
+        if (dayPlayers.some(p => p.id === player.id)) {
+          attendedSessions++;
+        }
+      }
+    });
+    
+    // Fallback to global totalSessions if eligibleSessionsCount is 0 to avoid NaNs
+    const playerTotalSessions = eligibleSessionsCount > 0 ? eligibleSessionsCount : totalSessions;
+    const percentage = playerTotalSessions > 0 ? (attendedSessions / playerTotalSessions) * 100 : 0;
 
     return {
       playerId: player.id,
       playerName: player.name,
       attendedSessions,
-      totalSessions,
-      percentage: (attendedSessions / totalSessions) * 100
+      totalSessions: playerTotalSessions,
+      percentage: percentage
     };
   });
 

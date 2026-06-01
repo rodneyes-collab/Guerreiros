@@ -66,6 +66,7 @@ import { analyzeBillingCosts } from '../services/geminiService';
 
 import { useBirthdays } from '../src/hooks/useBirthdays';
 import { BirthdayAdminCard } from '../src/components/BirthdayAdminCard';
+import { BleModuleConfigCard } from '../src/components/BleModuleConfigCard';
 import { HelpTooltip } from '../src/components/HelpTooltip';
 
 import { getLevelSuggestions, LevelSuggestion } from '../utils/levelAuditUtils';
@@ -783,6 +784,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                 <div className="lg:col-span-2 space-y-8">
                   {/* Monitor de Memória */}
                   <MemoryMonitorCard />
+                  <BleModuleConfigCard />
 
                   {/* Aniversariantes do Dia */}
                   {todayBirthdays.length > 0 && (
@@ -1573,12 +1575,27 @@ export const AdminView: React.FC<AdminViewProps> = ({
                         'Tem certeza que deseja apagar todas as notificações recebidas?',
                         async () => {
                           try {
-                            const batch = writeBatch(db);
-                            allNotifications.forEach(notif => {
-                              batch.delete(doc(db, 'notifications', notif.id));
-                            });
-                            await batch.commit();
-                            showNotification('Todas as notificações foram limpas.', 'success');
+                            // Get all notifications to clear everything, not just the visible 100
+                            const allNotifsSnap = await getDocs(collection(db, 'notifications'));
+                            
+                            if (allNotifsSnap.empty) {
+                              showNotification('Não há notificações para limpar.', 'info');
+                              return;
+                            }
+
+                            // Firestore batch limit is 500
+                            const docs = allNotifsSnap.docs;
+                            for (let i = 0; i < docs.length; i += 400) {
+                              const batch = writeBatch(db);
+                              const chunk = docs.slice(i, i + 400);
+                              chunk.forEach(d => {
+                                batch.delete(d.ref);
+                              });
+                              await batch.commit();
+                            }
+                            
+                            setAllNotifications([]);
+                            showNotification(`${docs.length} notificações foram limpas.`, 'success');
                           } catch (e) {
                             console.error(e);
                             showNotification('Erro ao limpar notificações.', 'error');

@@ -160,6 +160,30 @@ export const PlayerForm: React.FC<PlayerFormProps> = ({
             />
           </div>
 
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-white/40 uppercase tracking-widest ml-1">WhatsApp (Celular - DDD + Número)</label>
+            <input
+              type="text"
+              name="phone"
+              value={formData.phone || ''}
+              onChange={e => setFormData({ ...formData, phone: e.target.value })}
+              className="w-full px-6 py-4 bg-white/5 border border-brand-primary/40 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none placeholder:text-white/20"
+              placeholder="Ex: 5511999999999 (Sem espaços ou traços)"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-white/40 uppercase tracking-widest ml-1">Device ID (Bluetooth NRF52810)</label>
+            <input
+              type="text"
+              name="deviceId"
+              value={formData.deviceId || ''}
+              onChange={e => setFormData({ ...formData, deviceId: e.target.value })}
+              className="w-full px-6 py-4 bg-white/5 border border-brand-primary/40 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none placeholder:text-white/20"
+              placeholder="Ex: NRF-XXXX"
+            />
+          </div>
+
           {(isAdmin || editingPlayer?.isAdmin) && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-2">

@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 
 import { HelpTooltip } from '../src/components/HelpTooltip';
+import { capitalizeName } from '../utils/helpers';
 
 interface PaymentsViewProps {
   deletePayment: (id: string) => void;
@@ -493,6 +494,20 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
           </p>
         </div>
 
+        <div className="bg-black backdrop-blur-xl p-4 sm:p-6 rounded-[2rem] border border-white/5 border-l-[6px] border-l-emerald-500 shadow-sm">
+          <p className="text-[9px] sm:text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">Total Pago (Filtro)</p>
+          <p className="text-xl sm:text-2xl font-black font-mono text-emerald-500">
+            R$ {summary.paid.toFixed(2)}
+          </p>
+        </div>
+
+        <div className="bg-black backdrop-blur-xl p-4 sm:p-6 rounded-[2rem] border border-white/5 border-l-[6px] border-l-rose-500 shadow-sm">
+          <p className="text-[9px] sm:text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">Total Despesas (Filtro)</p>
+          <p className="text-xl sm:text-2xl font-black font-mono text-rose-500">
+            R$ {summary.expenses.toFixed(2)}
+          </p>
+        </div>
+
         {filterMonth && (
           <div className="bg-white/5 backdrop-blur-xl p-4 sm:p-6 rounded-[2rem] border border-brand-primary/40 shadow-sm col-span-2 lg:col-span-1">
             <p className="text-[9px] sm:text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">Orçamento ({formatMonth(filterMonth)})</p>
@@ -938,7 +953,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                       return (
                         <tr key={player.id} className="hover:bg-white/5 transition-colors group">
                           <td className="px-8 py-5">
-                            <p className="font-black text-white">{player.name}</p>
+                            <p className="font-bold text-white text-sm">{capitalizeName(player.name)}</p>
                             <p className="text-[10px] text-white/40 font-bold uppercase tracking-widest">{player.gender === 'MALE' ? 'Sócio' : 'Sócia'}</p>
                           </td>
                           <td className="px-8 py-5 text-center">
@@ -998,7 +1013,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                   return (
                     <div key={player.id} className="p-4 flex items-center justify-between gap-4">
                       <div className="flex-1 min-w-0">
-                        <p className="font-black text-white truncate">{player.name}</p>
+                        <p className="font-bold text-white text-sm truncate">{capitalizeName(player.name)}</p>
                         <div className="flex items-center gap-2 mt-1">
                           <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[8px] font-black uppercase tracking-widest border ${getStatusColor(status)}`}>
                             {getStatusIcon(status)}

@@ -441,45 +441,48 @@ export const generateTeamAnnouncementAudio = async (teamA: Team, teamB: Team): P
  * Generates a summary audio directly from stats to reduce latency.
  */
 export const generateDailySummaryAudio = async (stats: { 
-  mvp?: string; 
-  bestSetter?: string; 
+  mvp?: string;
+  bestSetter?: string;
   dailyKing?: string;
   matchesCount?: number;
-  rankingChanges?: string[]; // Adicionado campo para mudanças no ranking
+  rankingChanges?: string[];
+  sessionLeaderboard?: any[];
   date?: string;
   avgMatchTime?: number;
+  summaryType?: 'session' | 'career';
 }): Promise<string | null> => {
-  const cacheKey = `summary_audio_v8_${stats.mvp}_${stats.bestSetter}_${stats.dailyKing}_${stats.matchesCount}_${stats.rankingChanges?.join(',')}_${stats.date}_${stats.avgMatchTime}`;
+  const cacheKey = `summary_audio_v11_${stats.summaryType}_${stats.mvp}_${stats.bestSetter}_${stats.dailyKing}_${stats.matchesCount}_${stats.rankingChanges?.join(',')}_${stats.date}_${stats.avgMatchTime}`;
   if (analysisCache[cacheKey]) return analysisCache[cacheKey];
 
   const ai = getAI(true);
   const rankingInfo = stats.rankingChanges && stats.rankingChanges.length > 0
-    ? `\n- Mudanças no Ranking Geral: ${stats.rankingChanges.join(', ')}`
+    ? `\n- Performance dos Jogadores: ${stats.rankingChanges.join('; ')}`
     : '';
 
+  const isCareer = stats.summaryType === 'career';
+  const typeLabel = isCareer ? 'GERAL ACUMULADO' : 'DA SESSÃO';
+  
   const prompt = `Você é um narrador esportivo brasileiro carismático e enérgico do Guerreiros Volleyball.
-    Resumo do Dia:
-    - Data da partida: ${stats.date || new Date().toLocaleDateString('pt-BR')}
-    - Partidas: ${stats.matchesCount || 0}
-    - Tempo médio das partidas: ${stats.avgMatchTime || 'não disponível'} minutos
-    - MVP (Maior Pontuador/Destaque): ${stats.mvp || 'N/A'}
-    - Melhor Levantador(a): ${stats.bestSetter || 'N/A'}
-    - Rei/Rainha do Dia (Maior Ganho ELO): ${stats.dailyKing || 'N/A'}${rankingInfo}
+    TIPO DE RESUMO: ${typeLabel}
     
-    TAREFA: Narre os resultados acima de forma NATURAL, FLUIDA e ENÉRGICA para o Guerreiros Volleyball.
-    MUITO IMPORTANTE: A PRIMEIRA FRASE DEVE SER EXATAMENTE: "Resumo da partida do dia ${stats.date || new Date().toLocaleDateString('pt-BR')} do Guerreiros Volleyball:".
+    DADOS:
+    - Data/Período: ${stats.date || 'Geral'}
+    - Partidas Realizadas: ${stats.matchesCount || 0}
+    - Tempo médio de jogo: ${stats.avgMatchTime || '0'} minutos
+    - Craque da Rodada (MVP): ${stats.mvp || 'N/A'}
+    - Melhore Levantador(a): ${stats.bestSetter || 'N/A'}
+    - Rei/Rainha da Quadra: ${stats.dailyKing || 'N/A'}
+    ${stats.sessionLeaderboard ? `- Top 5 Atual: ${stats.sessionLeaderboard.slice(0, 5).map((p: any, i: number) => `${i+1}º ${p.name}`).join(', ')}` : ''}
+    ${rankingInfo}
     
-    INSTRUÇÕES GERAIS:
-    1. Gênero: Analise o NOME e identifique o gênero para adaptar:
-       - Levantador/Levantadora.
-       - Rei/Rainha do Dia (se mulher, Rainha do Dia; se homem, Rei do Dia).
-       Se não tiver certeza, use as formas neutras como "Levantador(a)" ou "Rei/Rainha".
-    2. Nomes e Emoção: Você DEVE citar o NOME de todos os jogadores mencionados (MVP, Melhor Levantador e Rei/Rainha do Dia). Analise o placar: vitórias dominantes indicam entrosamento perfeito; vitórias apertadas mostram resiliência. Use termos como "ponto a ponto" ou "atropelou sem dó".
-    3. Estilo: Use entonação de rádio esportivo vibrante. Não faça listas.
-    4. Rankings: Se houver mudanças no ranking, mencione as vitórias e derrotas. NÃO use a palavra "hoje" ao citar mudanças de ranking.
-    5. Termos: MVP deve ser mantido como "MVP".
-    6. Fechamento: Finalize dizendo de forma triunfal: "Guerreiros Volleyball: onde o racha é de outro nível!".
-    7. Fale de forma direta e enérgica. Use "Equipe" em vez de "Time".`;
+    TAREFA: Narre os resultados de forma NATURAL, ENTUSIASTA e IMPACTANTE.
+    
+    REGRAS CRÍTICAS DE NARRAÇÃO:
+    1. A PRIMEIRA FRASE DEVE SER: "Resumo ${isCareer ? 'do Ranking Geral' : 'da rodada'} do Guerreiros Volleyball:".
+    2. DATA: Sempre narre a data fornecida no formato "dia [dia] de [mês]" (ex: "dia 28 de maio"). Se a data for "Global" ou "Geral", diga "de todo o histórico".
+    3. VALORES: NUNCA mencione números de pontos ELO. Fale sobre ganhos, perdas, subidas e descidas no ranking. SEMPRE use o termo "posições" (ex: "subiu duas posições") e NUNCA use termos como "degraus".
+    4. JOGADORES: Mencione o MVP, Melhor Levantador e Rei/Rainha. Em seguida, introduza a próxima parte dizendo claramente: "Agora, vamos ao Ranking Acumulado, com as subidas e descidas de posições:". Então, narre de forma dinâmica a performance e mudanças de TODOS os jogadores listados em "Performance dos Jogadores". Não ignore ninguém!
+    5. ESTILO: Use entonação de locutor de vôlei. Termine com: "Guerreiros Volleyball: onde o racha é de outro nível!".`;
 
   try {
     // Retry logic for transient errors
@@ -569,7 +572,7 @@ export const getNarrationAudio = async (text: string): Promise<string | null> =>
  */
 export const speakNarration = async (text: string, forceAIVoice = false): Promise<void> => {
   // Pré-processamento para garantir pronúncia correta
-  const processedText = text.replace(/\bTime\b/gi, 'Equipe');
+  const processedText = text;
 
   // Setup Media Session Metadata
   if ('mediaSession' in navigator) {
@@ -596,7 +599,7 @@ export const speakNarration = async (text: string, forceAIVoice = false): Promis
     
     if (ptVoice) utterance.voice = ptVoice;
     
-    utterance.rate = 1.0; 
+    utterance.rate = 1.1; 
     utterance.pitch = 1.0;
 
     if ('mediaSession' in navigator) {

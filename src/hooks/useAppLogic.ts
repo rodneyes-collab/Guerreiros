@@ -669,7 +669,7 @@ export const useAppLogic = () => {
       setNegativeSynergy(newNegativeSynergy);
       setRivalry(newRivalry);
 
-      showNotification(`Partida registrada! Vitória do Time ${winner}`, 'success');
+      showNotification(`Partida registrada! Vitória da Equipe ${winner}`, 'success');
     } catch (error) {
       console.error('Erro ao finalizar partida:', error);
       handleFirestoreError(error, OperationType.WRITE, 'finish-match');
@@ -738,7 +738,6 @@ export const useAppLogic = () => {
   const [isRequestingAccess, setIsRequestingAccess] = useState(false);
   const [requestName, setRequestName] = useState('');
   const [isRequestSubmitted, setIsRequestSubmitted] = useState(false);
-  const [isNarratingSummary, setIsNarratingSummary] = useState(false);
 
   const triggerDbStatus = useCallback((status: 'reading' | 'writing') => {
     setDbStatus(status);
@@ -1701,7 +1700,16 @@ export const useAppLogic = () => {
         dailyEloGain: playerData.dailyEloGain || 0,
         impactLevel: playerData.impactLevel || 1,
         status: finalStatus,
-        createdAt: playerData.createdAt || Date.now()
+        createdAt: playerData.createdAt || Date.now(),
+        phone: playerData.phone ? (() => {
+          let cleaned = playerData.phone.replace(/\D/g, '');
+          if (cleaned.length === 10) {
+             // Example: 81 97330924 -> 81 997330924
+             // Add 9 after DDD (positions 0, 1)
+             cleaned = cleaned.substring(0, 2) + '9' + cleaned.substring(2);
+          }
+          return cleaned.length >= 10 ? cleaned : undefined;
+        })() : undefined
       };
 
       // Validate player data
@@ -2290,35 +2298,35 @@ export const useAppLogic = () => {
           }
         };
 
-        // Notificar Time A
+        // Notificar Equipe A
         const notifyTeamA = (p: Player | null | undefined) => {
           if (!p) return;
           const otherTeammates = [result.teamA.setter, ...result.teamA.players]
             .filter(tp => tp && tp.id !== p.id)
             .map(tp => tp!.name)
             .join(', ');
-
+ 
           queueNotification(
             p,
             `Partida #${matchNumber} - Sua vez!`,
-            `Você está no Time A com: ${otherTeammates}.\nHoje: ${p.dailyWins || 0}V / ${p.dailyLosses || 0}D.\nDirija-se à quadra!`
+            `Você está na Equipe A com: ${otherTeammates}.\nHoje: ${p.dailyWins || 0}V / ${p.dailyLosses || 0}D.\nDirija-se à quadra!`
           );
         };
         notifyTeamA(result.teamA.setter);
         result.teamA.players.forEach(notifyTeamA);
-
-        // Notificar Time B
+ 
+        // Notificar Equipe B
         const notifyTeamB = (p: Player | null | undefined) => {
           if (!p) return;
           const otherTeammates = [result.teamB.setter, ...result.teamB.players]
             .filter(tp => tp && tp.id !== p.id)
             .map(tp => tp!.name)
             .join(', ');
-
+ 
           queueNotification(
             p,
             `Partida #${matchNumber} - Sua vez!`,
-            `Você está no Time B com: ${otherTeammates}.\nHoje: ${p.dailyWins || 0}V / ${p.dailyLosses || 0}D.\nDirija-se à quadra!`
+            `Você está na Equipe B com: ${otherTeammates}.\nHoje: ${p.dailyWins || 0}V / ${p.dailyLosses || 0}D.\nDirija-se à quadra!`
           );
         };
         notifyTeamB(result.teamB.setter);
@@ -2382,7 +2390,7 @@ export const useAppLogic = () => {
 
     if (generationResult) {
       showConfirmModal(
-        isReshuffle ? 'Reorganizar Times' : 'Nova Escalação',
+        isReshuffle ? 'Reorganizar Equipes' : 'Nova Escalação',
         isReshuffle 
           ? 'Deseja trocar os jogadores de lado mantendo apenas estes 12 em quadra? O placar será zerado.'
           : 'Deseja descartar a escalação atual e gerar uma nova? O progresso atual será perdido.',
@@ -3766,7 +3774,6 @@ export const useAppLogic = () => {
     isAnalyzing,
     isScanningAnomalies,
     anomalyReport,
-    isNarratingSummary,
     createDataSnapshot,
     fixDatabaseAnomalies,
     recalculateAllElo,
