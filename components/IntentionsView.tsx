@@ -2,7 +2,7 @@ import React from 'react';
 import confetti from 'canvas-confetti';
 import { useIntentions } from '../src/hooks/useIntentions';
 import { useStore } from '../store';
-import { CalendarCheck, Copy, BellRing, Settings, UserCheck, UserX, Clock, ArrowRight, RotateCcw, Zap, Star, Shield, Trash2, CheckCircle2, AlertTriangle, Flame, AlertCircle } from 'lucide-react';
+import { CalendarCheck, Copy, BellRing, Settings, UserCheck, UserX, Clock, ArrowRight, RotateCcw, Zap, Star, Shield, Trash2, CheckCircle2, AlertTriangle, Flame, AlertCircle, MessageCircle, LogOut } from 'lucide-react';
 import { EvasionIcon } from './EvasionIcon';
 import { calculateEvasionLevel } from '../utils/evasion';
 import { Player } from '../types';
@@ -22,6 +22,16 @@ interface IntentionsViewProps {
 export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, currentPlayer, onMoveToAttendance, showNotification }) => {
   const { intentions, isLoaded, setIntent, resetIntent, clearIntentions, toggleAutomation, sendReminders, copyToWhatsApp, copyReminder } = useIntentions();
   const { players, attendance, showConfirmModal } = useStore();
+
+  const getWhatsAppLink = (player: Player) => {
+    let clean = (player.phone || '').replace(/\D/g, '');
+    if (!clean) return '';
+    if (clean.length === 10 || clean.length === 11) {
+      clean = '55' + clean;
+    }
+    const msg = `Olá, *${capitalizeName(player.name)}*! 🏐 Passando para lembrar de confirmar sua presença ou ausência para a próxima partida no Guerreiros App!\n\nConfirme em 5 segundos no link:\n${window.location.origin}/?public=true\n\nValeu!`;
+    return `https://api.whatsapp.com/send?phone=${clean}&text=${encodeURIComponent(msg)}`;
+  };
 
   // --- WhatsApp & Evolution API Integration State ---
   const [waConfig, setWaConfig] = React.useState({
@@ -397,10 +407,17 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
 
     return (
       <span 
-        className={`inline-flex items-center justify-center p-1.5 rounded-full border ${color} cursor-help transition-all relative select-none`}
-        title={`${label} — ${tooltip}`}
+        className={`group inline-flex items-center justify-center p-1.5 rounded-full border ${color} cursor-help transition-all relative select-none`}
       >
         <Icon className="w-3.5 h-3.5 shrink-0" />
+        
+        {/* Custom Tooltip */}
+        <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block w-48 p-2.5 bg-black border border-brand-primary/40 rounded-xl shadow-2xl text-[10px] text-white font-bold leading-normal text-center normal-case tracking-normal z-50 pointer-events-none transition-all duration-300">
+          <span className="text-brand-primary font-black uppercase tracking-wider block mb-1">{label}</span>
+          <span>{tooltip}</span>
+          {/* Tooltip arrow */}
+          <span className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-black" />
+        </span>
       </span>
     );
   };
@@ -419,11 +436,17 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
 
     return (
       <span 
-        className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border ${colorClass} text-[10px] font-bold cursor-help transition-all relative select-none`}
-        title={`${desc}: ${pct}% de presença no clube`}
+        className={`group inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border ${colorClass} text-[10px] font-bold cursor-help transition-all relative select-none`}
       >
         <CalendarCheck className="w-3.5 h-3.5 shrink-0 text-brand-primary" />
         <span className="font-mono text-[9px] font-black">{pct}%</span>
+        
+        {/* Custom Tooltip */}
+        <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block w-48 p-2.5 bg-black border border-brand-primary/40 rounded-xl shadow-2xl text-[10px] text-white font-bold leading-normal text-center normal-case tracking-normal z-50 pointer-events-none transition-all duration-300">
+          {desc}: {pct}% de presença no clube
+          {/* Tooltip arrow */}
+          <span className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-black" />
+        </span>
       </span>
     );
   };
@@ -484,6 +507,21 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
         <div className="absolute top-0 right-0 w-64 h-64 bg-brand-primary/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
         <div className="relative z-10 flex flex-col items-stretch sm:items-center sm:flex-row justify-between gap-8">
           <div className="text-left">
+            {currentPlayer && (
+              <div className="mb-4 inline-flex items-center gap-2 px-3 py-1.5 bg-brand-primary/10 border border-brand-primary/20 rounded-full">
+                <span className="text-[10px] font-black text-brand-primary uppercase tracking-widest">
+                  Boas Vindas, {capitalizeName(currentPlayer.name)}!
+                </span>
+                {(isGoing || isNotGoing) && (
+                  <>
+                    <span className="w-1 h-1 bg-brand-primary/50 rounded-full" />
+                    <span className="text-[10px] font-black text-white/70 uppercase tracking-widest">
+                      {isGoing ? 'Você confirmou presença' : 'Você informou ausência'}
+                    </span>
+                  </>
+                )}
+              </div>
+            )}
             <div className="flex items-center gap-3 mb-3">
               <CalendarCheck className="w-8 h-8 sm:w-10 sm:h-10 text-brand-primary" />
               <h2 className="text-2xl sm:text-4xl font-black text-white uppercase tracking-tighter flex items-center gap-2">
@@ -502,7 +540,7 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
           </div>
           
           {/* Player Actions */}
-          {currentPlayer && (
+          {currentPlayer && !isGoing && !isNotGoing && (
             <div className="flex flex-col xs:flex-row items-stretch gap-4 bg-brand-secondary/30 p-5 rounded-[2rem] border border-brand-primary/20 w-full sm:w-auto">
               <button
                 onClick={handleConfirm}
@@ -535,9 +573,11 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
         </div>
       </div>
 
-      {/* Admin Controls - Strictly for ADMIN role */}
-      {userRole === 'ADMIN' && (
-        <div className="bg-black rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary p-6 sm:p-8">
+      {(!currentPlayer || isGoing || isNotGoing || userRole === 'ADMIN') ? (
+        <>
+          {/* Admin Controls - Strictly for ADMIN role */}
+          {userRole === 'ADMIN' && (
+            <div className="bg-black rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary p-6 sm:p-8">
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-3">
               <Settings className="w-5 h-5 text-brand-primary" />
@@ -634,6 +674,25 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
               >
                 <Copy className="w-3 h-3" />
                 Copiar Lista
+              </button>
+            </div>
+
+            <div className="bg-brand-primary/5 p-5 rounded-2xl border border-brand-primary/40 flex flex-col justify-between gap-4">
+              <div>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Link de Presença</p>
+                <p className="text-[10px] text-slate-500">Copia o link público de confirmação sem login para o grupo.</p>
+              </div>
+              <button
+                onClick={() => {
+                  const link = `${window.location.origin}/?public=true`;
+                  navigator.clipboard.writeText(link)
+                    .then(() => showNotification('Link público copiado com sucesso!', 'success'))
+                    .catch(() => showNotification('Erro ao copiar o link. Tente copiar manualmente.', 'error'));
+                }}
+                className="w-full py-3 rounded-xl font-black uppercase tracking-widest text-[10px] bg-brand-primary text-black hover:scale-105 transition-all flex items-center justify-center gap-2"
+              >
+                <Copy className="w-3 h-3" />
+                Copiar Link Público
               </button>
             </div>
 
@@ -1181,64 +1240,38 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
             <span className="bg-brand-primary text-black text-xs font-black px-3 py-1 rounded-full">{goingPlayers.length}</span>
           </div>
           
-          <div className="flex-1 space-y-2">
-            {goingPlayers.length === 0 ? (
-              <p className="text-slate-500 text-xs italic text-center py-4">Nenhum confirmado ainda.</p>
-            ) : (
-              goingPlayers.map((p, i) => {
-                const isCheckedIn = attendance.some(a => a.id === p.id);
-                return (
-                  <div key={p.id} className="flex items-center justify-between bg-brand-primary/5 p-4 sm:p-3 rounded-2xl border border-brand-primary/30 hover:border-brand-primary transition-colors gap-3">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <span className="text-brand-primary font-black text-xs w-4 shrink-0">{i + 1}.</span>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          {userRole === 'ADMIN' && (
-                            <div className="shrink-0" title={`Nível: ${p.impactLevel === 3 ? 'Elite' : p.impactLevel === 2 ? 'Médio' : 'Base'}`}>
-                              {getImpactIcon(p.impactLevel)}
+                  <div className="grid grid-cols-2 gap-2 mt-4 pr-1">
+                    {goingPlayers.map((p, i) => {
+                      const isCheckedIn = (attendance || []).some(a => a.id === p.id);
+                      return (
+                        <div key={p.id} className="flex items-center justify-between bg-brand-primary/5 p-3 rounded-2xl border border-brand-primary/20 hover:border-brand-primary/40 transition-colors gap-2 min-w-0">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="text-brand-primary font-black text-xs w-4 shrink-0">{i + 1}.</span>
+                            <span className="text-white text-[12px] font-black uppercase tracking-tighter leading-tight">
+                              {capitalizeName(p.name)}
+                            </span>
+                          </div>
+                          {isCheckedIn && (
+                            <div title="Na Quadra" className="p-2 text-green-400 bg-green-500/10 rounded-lg shrink-0">
+                              <UserCheck className="w-4 h-4" />
                             </div>
                           )}
-                          <span className="text-white text-base sm:text-sm font-bold tracking-tight">{capitalizeName(p.name)}</span>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2 mt-1.5 px-0.5">
-                          {getAttendanceBadge(p.id)}
-                          {getEvasionBadge(p)}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      {isCheckedIn ? (
-                        <span className="text-[10px] font-black uppercase tracking-wider bg-green-500/20 text-green-400 px-3 py-2 sm:px-4 rounded-xl border border-green-500/30 flex items-center gap-1.5 shrink-0">
-                          <UserCheck className="w-3.5 h-3.5" /> <span className="hidden xs:inline">Na Quadra</span>
-                        </span>
-                      ) : (
-                        <>
-                          {userRole === 'ADMIN' && (
+                          {!isCheckedIn && (currentPlayer?.id === p.id || userRole === 'ADMIN') && (
                             <button
-                              onClick={() => resetIntent(p.id)}
-                              className="p-2 text-slate-400 hover:text-brand-primary hover:bg-brand-primary/10 rounded-xl transition-all shrink-0"
-                              title="Mover para Não Confirmados"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                resetIntent(p.id);
+                              }}
+                              className={`p-2.5 rounded-xl transition-all shadow-lg shrink-0 ${currentPlayer?.id === p.id ? 'bg-red-500 text-white shadow-red-500/20' : 'bg-brand-primary text-black shadow-brand-primary/20 hover:scale-105 active:scale-95'}`}
+                              title={currentPlayer?.id === p.id ? "Sair da Lista" : "Remover"}
                             >
-                              <RotateCcw className="w-4 h-4 sm:w-5 sm:h-5" />
+                              {currentPlayer?.id === p.id ? <LogOut className="w-4 h-4" /> : <RotateCcw className="w-4 h-4" />}
                             </button>
                           )}
-                          {userRole === 'ADMIN' && (
-                            <button
-                              onClick={() => onMoveToAttendance(p.id)}
-                              className="bg-brand-primary text-black p-2.5 rounded-xl hover:scale-110 transition-all flex items-center justify-center shadow-lg shadow-brand-primary/20 shrink-0"
-                              title="Fazer Check-in na Quadra"
-                            >
-                              <ArrowRight className="w-4 h-4" />
-                            </button>
-                          )}
-                        </>
-                      )}
-                    </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                );
-              })
-            )}
-          </div>
         </div>
 
         {/* Undecided */}
@@ -1251,56 +1284,27 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
             <span className="bg-white/10 text-slate-400 text-xs font-black px-3 py-1 rounded-full">{undecidedPlayers.length}</span>
           </div>
           
-          <div className="flex-1 space-y-2 overflow-y-auto max-h-[400px] pr-2 custom-scrollbar">
-            {filteredUndecided.length === 0 ? (
-              <p className="text-slate-500 text-xs italic text-center py-4">
-                {searchTerm ? 'Nenhum sócio encontrado.' : 'Todos já responderam!'}
-              </p>
-            ) : (
-              undecidedPlayers.map((p, i) => (
-                <div key={p.id} className="flex items-center justify-between bg-slate-500/5 p-4 sm:p-3 rounded-2xl border border-white/5 hover:border-slate-500/40 transition-colors gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <span className="text-slate-500 font-black text-[10px] w-4 shrink-0">{i + 1}.</span>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
+                  <div className="grid grid-cols-2 gap-2 mt-4 overflow-y-auto max-h-[400px] pr-1 custom-scrollbar">
+                    {filteredUndecided.map((p, i) => (
+                      <div key={p.id} className="flex items-center justify-between bg-slate-500/5 p-3 rounded-2xl border border-white/5 hover:border-slate-500/40 transition-colors gap-2 min-w-0">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-slate-500 font-black text-xs w-4 shrink-0">{i + 1}.</span>
+                          <span className="text-white text-[12px] font-black uppercase tracking-tighter leading-tight">
+                            {capitalizeName(p.name)}
+                          </span>
+                        </div>
                         {userRole === 'ADMIN' && (
-                          <div className="shrink-0" title={`Nível: ${p.impactLevel === 3 ? 'Elite' : p.impactLevel === 2 ? 'Médio' : 'Base'}`}>
-                            {getImpactIcon(p.impactLevel)}
-                          </div>
+                          <button
+                            onClick={() => setIntent(p.id, 'GOING')}
+                            className="p-2.5 bg-brand-primary text-black rounded-xl hover:scale-105 active:scale-95 transition-all shadow-lg shadow-brand-primary/20 shrink-0"
+                            title="Confirmar"
+                          >
+                            <UserCheck className="w-4 h-4" />
+                          </button>
                         )}
-                        <span className="text-white text-base sm:text-sm font-bold tracking-tight">{capitalizeName(p.name)}</span>
                       </div>
-                      <div className="flex flex-wrap items-center gap-2 mt-1.5 px-0.5">
-                        {getAttendanceBadge(p.id)}
-                        {getEvasionBadge(p)}
-                      </div>
-                    </div>
+                    ))}
                   </div>
-                  {userRole === 'ADMIN' && (
-                    <div className="flex items-center gap-2 shrink-0">
-                      <button
-                        onClick={() => setIntent(p.id, 'GOING')}
-                        className="bg-brand-primary text-black p-2.5 rounded-xl hover:bg-brand-primary/90 transition-all flex items-center justify-center shrink-0 shadow-lg shadow-brand-primary/10"
-                        title="Confirmar Presença"
-                      >
-                        <CheckCircle2 className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => setIntent(p.id, 'NOT_GOING')}
-                        className="p-2 text-red-500 hover:bg-red-500/10 rounded-xl transition-all shrink-0"
-                        title="Marcar como Ausente"
-                      >
-                        <UserX className="w-4 h-4 sm:w-5 sm:h-5" />
-                      </button>
-                    </div>
-                  )}
-                  {userRole !== 'ADMIN' && (
-                    <span className="text-[10px] font-black text-brand-primary/40 uppercase tracking-widest bg-brand-primary/5 px-3 py-1 rounded-full shrink-0">Aguardando</span>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
         </div>
 
         {/* Not Going */}
@@ -1313,51 +1317,38 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
             <span className="bg-red-500/20 text-red-500 text-xs font-black px-3 py-1 rounded-full">{notGoingPlayers.length}</span>
           </div>
           
-          <div className="flex-1 space-y-2 overflow-y-auto max-h-[400px] pr-2 custom-scrollbar">
-            {notGoingPlayers.length === 0 ? (
-              <p className="text-slate-500 text-xs italic text-center py-4">Nenhuma ausência registrada.</p>
-            ) : (
-              notGoingPlayers.map((p, i) => (
-                <div key={p.id} className="flex items-center justify-between bg-red-500/5 p-4 sm:p-3 rounded-2xl border border-red-500/20 hover:border-red-500/40 transition-colors gap-3">
-                    <div className="flex items-center gap-3 opacity-50 min-w-0">
-                      <span className="text-red-500/50 font-black text-[10px] w-4 shrink-0">{i + 1}.</span>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          {userRole === 'ADMIN' && (
-                            <div className="shrink-0" title={`Nível: ${p.impactLevel === 3 ? 'Elite' : p.impactLevel === 2 ? 'Médio' : 'Base'}`}>
-                              {getImpactIcon(p.impactLevel)}
-                            </div>
-                          )}
-                          <span className="text-white text-base sm:text-sm font-medium line-through tracking-tight">{capitalizeName(p.name)}</span>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2 mt-1.5 px-0.5">
-                          {getAttendanceBadge(p.id)}
-                          {getEvasionBadge(p)}
-                        </div>
+                  <div className="grid grid-cols-2 gap-2 mt-4 overflow-y-auto max-h-[400px] pr-1 custom-scrollbar">
+                    {notGoingPlayers.length === 0 ? (
+                      <div className="col-span-full py-8 text-center bg-white/5 rounded-2xl border border-dashed border-white/10">
+                        <p className="text-slate-500 text-sm font-medium italic">Nenhuma ausência registrada.</p>
                       </div>
-                    </div>
-                    {userRole === 'ADMIN' && (
-                    <div className="flex items-center gap-2 shrink-0">
-                      <button
-                        onClick={() => setIntent(p.id, 'GOING')}
-                        className="p-2 text-brand-primary hover:bg-brand-primary/10 rounded-xl transition-all shrink-0"
-                        title="Mover para Confirmados"
-                      >
-                        <UserCheck className="w-4 h-4 sm:w-5 sm:h-5" />
-                      </button>
-                      <button
-                        onClick={() => resetIntent(p.id)}
-                        className="p-2 text-slate-400 hover:text-brand-primary hover:bg-brand-primary/10 rounded-xl transition-all shrink-0"
-                        title="Mover para Não Confirmados"
-                      >
-                        <RotateCcw className="w-4 h-4 sm:w-5 sm:h-5" />
-                      </button>
-                    </div>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
+                    ) : (
+                      notGoingPlayers.map((p, i) => (
+                        <div key={p.id} className="flex items-center justify-between bg-red-500/5 p-3 rounded-2xl border border-red-500/20 hover:border-red-500/40 transition-colors gap-2 min-w-0">
+                          <div className="flex items-center gap-2 opacity-50 min-w-0">
+                            <span className="text-red-500/50 font-black text-xs w-4 shrink-0">{i + 1}.</span>
+                            <span className="text-white text-[12px] font-black uppercase tracking-tighter leading-tight">
+                              {capitalizeName(p.name)}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            {(currentPlayer?.id === p.id || userRole === 'ADMIN') && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  resetIntent(p.id);
+                                }}
+                                className={`p-2.5 rounded-xl transition-all shadow-lg shrink-0 ${currentPlayer?.id === p.id ? 'bg-red-500 text-white shadow-red-500/20' : 'bg-brand-primary text-black shadow-brand-primary/20 hover:scale-105 active:scale-95'}`}
+                                title={currentPlayer?.id === p.id ? "Voltar para a Lista" : "Remover"}
+                              >
+                                {currentPlayer?.id === p.id ? <LogOut className="w-4 h-4" /> : <RotateCcw className="w-4 h-4" />}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
         </div>
       </div>
 
@@ -1391,6 +1382,16 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
           
           <p className="mt-6 text-[10px] font-bold text-slate-500 uppercase tracking-widest text-center">
             A lista de espera segue a ordem de cadastro. Quando um sócio ativo sair, o primeiro da lista entra automaticamente.
+          </p>
+        </div>
+      )}
+        </>
+      ) : (
+        <div className="flex flex-col items-center justify-center p-12 bg-black rounded-[2rem] border border-brand-primary/20 text-center animate-in fade-in zoom-in-95">
+          <CalendarCheck className="w-16 h-16 text-brand-primary/50 mb-6" />
+          <h3 className="text-xl font-black text-white uppercase tracking-tight mb-2">Confirme sua intenção</h3>
+          <p className="text-sm text-slate-400">
+            Você precisa confirmar presença ou ausência nos botões acima para visualizar a lista completa de intenções dos outros sócios.
           </p>
         </div>
       )}

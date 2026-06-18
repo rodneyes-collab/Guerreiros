@@ -52,7 +52,11 @@ export const RulesView: React.FC = () => {
               },
               { 
                 title: "Formação do Ranking", 
-                desc: "O ranking de sócios é atualizado após cada partida. Ele combina sua pontuação ELO, sua porcentagem de vitórias (Win Rate) e seu desempenho no dia (MVP). Estar no topo significa ser o jogador mais consistente e decisivo do clube." 
+                desc: "O ranking de sócios é atualizado após cada partida. Ele combina sua pontuação ELO, sua porcentagem de vitórias e seu desempenho no dia (MVP). Estar no topo significa ser o jogador mais consistente e decisivo do clube." 
+              },
+              {
+                title: "Fidelidade e Presença",
+                desc: "A cada sessão em que o sócio estiver presente (registrar pelo menos uma partida no dia), ele recebe um bônus imediato e retroativo de +50 pontos ELO, que são somados na construção do ranking de toda a sua história no clube."
               }
             ].map((item, i) => (
               <div key={i} className="flex gap-6 group">
@@ -154,7 +158,7 @@ export const RulesView: React.FC = () => {
             </div>
             <div className="mt-6 p-6 bg-brand-primary/5 rounded-[2rem] border border-brand-primary/20">
               <p className="text-xs text-brand-primary font-bold leading-relaxed">
-                <span className="font-black uppercase tracking-wide">Refinamento:</span> Sócios Prata, Ouro e Elite podem receber o sufixo <span className="text-white">"Top"</span>, <span className="text-white">"Pro"</span> ou <span className="text-white">"Star"</span> se mantiverem um aproveitamento (Win Rate) acima da média do grupo e alta consistência.
+                <span className="font-black uppercase tracking-wide">Refinamento:</span> Sócios Prata, Ouro e Elite podem receber o sufixo <span className="text-white">"Top"</span>, <span className="text-white">"Pro"</span> ou <span className="text-white">"Star"</span> se mantiverem um aproveitamento (Vitórias) acima da média do grupo e alta consistência.
               </p>
             </div>
           </div>

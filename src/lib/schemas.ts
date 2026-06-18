@@ -62,5 +62,6 @@ export const matchSchema = z.object({
   duration: z.number().int().min(0),
   startTime: z.number(),
   endTime: z.number(),
-  mode: z.string()
+  mode: z.string(),
+  stats: z.array(z.any()).optional()
 });

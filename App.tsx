@@ -1,6 +1,7 @@
 
 import React, { useState, useMemo, useEffect, lazy, Suspense } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { playSound } from './src/utils/audio';
 import { 
   Users, 
   Trophy, 
@@ -22,7 +23,9 @@ import {
   BarChart3,
   ListTodo,
   Medal,
-  DollarSign
+  DollarSign,
+  WifiOff,
+  Bluetooth
 } from 'lucide-react';
 
 import { getBrazilDay, getFirestoreDateKey, db, doc, updateDoc } from './firebase';
@@ -57,6 +60,7 @@ import { PaymentForm } from './components/PaymentForm';
 import { ExpenseForm } from './components/ExpenseForm';
 import { PlayerStatusCard } from './src/components/PlayerStatusCard';
 import { LoginView } from './src/components/LoginView';
+import { PublicPresenceView } from './components/PublicPresenceView';
 import { AccessRequestView } from './src/components/AccessRequestView';
 import { Logo } from './src/components/Logo';
 import { clearOldStorage } from './services/geminiService';
@@ -68,6 +72,7 @@ import { useDatabaseMaintenance } from './src/hooks/useDatabaseMaintenance';
 import { BirthdayBanner } from './src/components/BirthdayBanner';
 import { WelcomeBanner } from './src/components/WelcomeBanner';
 import { NotificationCenter } from './src/components/NotificationCenter';
+import { ReloadPrompt } from './src/components/ReloadPrompt';
 
 const App: React.FC = () => {
   // --- Hooks ---
@@ -79,27 +84,15 @@ const App: React.FC = () => {
   useDatabaseMaintenance();
   const { handleAnnounce } = useNarration();
   
-  // Checkout logic
+  // --- Store State ---
   const isNearCourt = useStore(state => state.isNearCourt);
+  const currentBeaconRssi = useStore(state => state.currentBeaconRssi);
   const attendance = useStore(state => state.attendance);
   const setAttendance = useStore(state => state.setAttendance);
+  const players = useStore(state => state.players);
   const showConfirmModal = useStore(state => state.showConfirmModal);
-  const prevIsNearCourt = React.useRef(isNearCourt);
-
-  useEffect(() => {
-    if (prevIsNearCourt.current === true && isNearCourt === false && currentPlayer) {
-      // Left the court! Trigger checkout confirmation.
-      showConfirmModal("Check-out", "Você saiu do raio de sinal da quadra. Confirmar saída?", () => {
-        setAttendance(prev => prev.filter(p => p.uid !== currentPlayer.uid));
-      });
-    }
-    prevIsNearCourt.current = isNearCourt;
-  }, [isNearCourt, currentPlayer, showConfirmModal, setAttendance]);
-
-  // --- Store State ---
   const viewMode = useStore(state => state.viewMode);
   const setViewMode = useStore(state => state.setViewMode);
-  const players = useStore(state => state.players);
   const matches = useStore(state => state.matches);
   const payments = useStore(state => state.payments);
   const preConfirmations = useStore(state => state.preConfirmations);
@@ -136,44 +129,9 @@ const App: React.FC = () => {
   const setEditingPlayer = useStore(state => state.setEditingPlayer);
   const forceSync = useStore(state => state.triggerSync);
   const isNarratingSummary = useStore(state => state.isNarratingSummary);
+  const prevIsNearCourt = React.useRef(isNearCourt);
 
-  const { todayBirthdays } = useBirthdays();
-  const { showWelcome, setShowWelcome } = useWelcomeCelebration();
-
-  // Limpeza de storage antigo uma única vez no boot
-  useEffect(() => {
-    clearOldStorage();
-    
-    // Handle tab from URL
-    const params = new URLSearchParams(window.location.search);
-    const tab = params.get('tab');
-    if (tab && ['presence', 'history', 'generation', 'members', 'dashboard', 'rules', 'payments', 'admin', 'tournament', 'attendance_report', 'intentions'].includes(tab)) {
-      setViewMode(tab as any);
-      // Clear the param from URL without refreshing
-      window.history.replaceState({}, '', window.location.pathname);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (theme === 'dark') {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-  }, [theme]);
-
-  // Safety reset for narration
-  useEffect(() => {
-    let timeout: any;
-    if (isNarratingSummary || isNarrating) {
-      timeout = setTimeout(() => {
-        useStore.getState().setIsNarratingSummary(false);
-        useStore.getState().setIsNarrating(false);
-      }, 60000); // 1 minute safety reset
-    }
-    return () => clearTimeout(timeout);
-  }, [isNarratingSummary, isNarrating]);
-
+  // --- App Logic ---
   const {
     magicLinkEmail,
     setMagicLinkEmail,
@@ -234,8 +192,139 @@ const App: React.FC = () => {
     resetTournamentMatch,
     deleteTournament
   } = useAppLogic();
+  
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  const [entryRoute, setEntryRoute] = useState<'CHOICE' | 'LOGIN' | 'PRESENCE_BIOMETRICS'>('LOGIN');
+  const { intentions, setIntent } = useIntentions();
+  const [skippedIntentionChoice, setSkippedIntentionChoice] = useState(false);
+  const [isSubmittingIntention, setIsSubmittingIntention] = useState(false);
+
+  useEffect(() => {
+    if (!user) {
+      setSkippedIntentionChoice(false);
+    }
+  }, [user]);
+  useEffect(() => {
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // --- Check-in automático de Presença via Bluetooth (com validação contínua e debounce de 3 segundos) ---
+  useEffect(() => {
+    if (!currentPlayer) return;
+
+    const threshold = systemMetadata.bleProximityThreshold || -60;
+    const rssiValue = currentBeaconRssi ?? -100;
+    
+    // O sinal é considerado aceitável se o scanner estiver ativo, estiver perto da quadra e com sinal forte o suficiente
+    const isSignalAcceptable = isNearCourt && rssiValue >= threshold;
+
+    let checkInTimer: NodeJS.Timeout | null = null;
+
+    if (isSignalAcceptable) {
+      const isAlreadyCheckedIn = attendance.some(p => p.email === currentPlayer.email);
+      if (!isAlreadyCheckedIn) {
+        // Inicia o contador de 3 segundos de sinal estável e contínuo
+        checkInTimer = setTimeout(() => {
+          registerAttendance(currentPlayer);
+          showNotification(
+            `Estabilização de Sinal Confirmada! Sinal potente de rádio (${rssiValue} dBm >= limite de ${threshold} dBm) por 3s contínuos. Check-in automático de presença realizado com sucesso na quadra!`,
+            'success'
+          );
+        }, 3000);
+      }
+    }
+
+    return () => {
+      if (checkInTimer) {
+        clearTimeout(checkInTimer);
+      }
+    };
+  }, [isNearCourt, currentBeaconRssi, systemMetadata.bleProximityThreshold, currentPlayer, attendance, registerAttendance, showNotification]);
+
+  // --- Gerenciador de saída de quadra (Check-out) ---
+  useEffect(() => {
+    if (prevIsNearCourt.current === true && isNearCourt === false && currentPlayer) {
+      // Saiu da quadra! Dispara confirmação de checkout.
+      showConfirmModal("Check-out", "Você saiu do raio de sinal da quadra. Confirmar saída?", () => {
+        setAttendance(prev => prev.filter(p => p.uid !== currentPlayer.uid));
+      });
+    }
+    prevIsNearCourt.current = isNearCourt;
+  }, [isNearCourt, currentPlayer, showConfirmModal, setAttendance]);
+
+
+
+  useEffect(() => {
+    if (user && entryRoute === 'PRESENCE_BIOMETRICS') {
+      const player = players.find(p => p.email === user.email);
+      if (player) {
+        registerAttendance(player);
+        setEntryRoute('CHOICE'); 
+        setViewMode('intentions'); 
+      }
+    }
+  }, [user, entryRoute, players, registerAttendance, setViewMode]);
+
+
+
+  const { todayBirthdays } = useBirthdays();
+  const { showWelcome, setShowWelcome } = useWelcomeCelebration();
+
+  // Limpeza de storage antigo uma única vez no boot
+  useEffect(() => {
+    clearOldStorage();
+    
+    // Handle tab from URL
+    const params = new URLSearchParams(window.location.search);
+    const tab = params.get('tab');
+    if (tab && ['presence', 'history', 'generation', 'members', 'dashboard', 'rules', 'payments', 'admin', 'tournament', 'attendance_report', 'intentions'].includes(tab)) {
+      setViewMode(tab as any);
+      // Clear the param from URL without refreshing
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [theme]);
+
+  // Safety reset for narration
+  useEffect(() => {
+    let timeout: any;
+    if (isNarratingSummary || isNarrating) {
+      timeout = setTimeout(() => {
+        useStore.getState().setIsNarratingSummary(false);
+        useStore.getState().setIsNarrating(false);
+      }, 60000); // 1 minute safety reset
+    }
+    return () => clearTimeout(timeout);
+  }, [isNarratingSummary, isNarrating]);
 
   // --- Local UI State ---
+  const [isPublicMode, setIsPublicMode] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('public') === 'true';
+  });
+
+  useEffect(() => {
+    if (user) {
+      setIsPublicMode(false);
+    }
+  }, [user]);
+
   const [showRescueLoader, setShowRescueLoader] = useState(false);
   const [selectedPlayerForHistory, setSelectedPlayerForHistory] = useState<any>(null);
 
@@ -251,7 +340,13 @@ const App: React.FC = () => {
     }
   }, [isAuthReady, isRoleLoading, user]);
 
-  const handleRescueReset = () => {
+  const handleRescueReset = async () => {
+    try {
+      const { clearIndexedDbPersistence, db } = await import('./firebase');
+      await clearIndexedDbPersistence(db);
+    } catch (e) {
+      console.warn('Failed to clear Firestore persistence during rescue:', e);
+    }
     localStorage.clear();
     sessionStorage.clear();
     window.location.href = '/';
@@ -484,13 +579,17 @@ const App: React.FC = () => {
     { id: 'history', label: 'Histórico', icon: History, adminOnly: false },
     { id: 'members', label: 'Sócios', icon: Users, adminOnly: false },
     { id: 'payments', label: 'Financeiro', icon: DollarSign, adminOnly: true },
+    { id: 'my_payments', label: 'Pagamentos', icon: CreditCard, adminOnly: false },
     { id: 'ranking', label: 'Ranking', icon: Medal, adminOnly: false },
     { id: 'rules', label: 'Regras', icon: ShieldAlert, adminOnly: false },
     { id: 'admin', label: 'Admin', icon: Settings, adminOnly: true },
   ].filter(item => {
     if (item.adminOnly && userRole !== 'ADMIN') return false;
     if (item.id === 'tournament' && !systemMetadata.isTournamentEnabled && userRole !== 'ADMIN') return false;
-    if (item.id === 'presence' && !isGameDay && userRole !== 'ADMIN') return false;
+    if (item.id === 'presence' && !isGameDay && userRole !== 'ADMIN') {
+       // Permite ver a lista de presença se houver alguém nela, mesmo que não seja quinta-feira oficialmente
+       if (attendance.length === 0) return false;
+    }
     return true;
   }), [userRole, systemMetadata.isTournamentEnabled, isGameDay]);
 
@@ -674,14 +773,38 @@ const App: React.FC = () => {
   }
 
   if (!user) {
+    if (isPublicMode) {
+      return (
+        <PublicPresenceView 
+          onBackToLogin={() => {
+            setIsPublicMode(false);
+            const url = new URL(window.location.href);
+            url.searchParams.delete('public');
+            window.history.replaceState({}, document.title, url.pathname + url.search);
+          }} 
+          handleGoogleLogin={handleGoogleLogin}
+        />
+      );
+    }
+
     return (
       <LoginView 
+        isAttendanceMode={entryRoute === 'PRESENCE_BIOMETRICS'}
         magicLinkEmail={magicLinkEmail}
         setMagicLinkEmail={setMagicLinkEmail}
         isSendingMagicLink={isSendingMagicLink}
         isLoggingIn={isLoggingIn}
         handleMagicLink={handleMagicLink}
         handleGoogleLogin={handleGoogleLogin}
+        onClickPublic={() => {
+          setIsPublicMode(true);
+          const url = new URL(window.location.href);
+          url.searchParams.set('public', 'true');
+          window.history.replaceState({}, document.title, url.pathname + url.search);
+        }}
+        onLoginSuccess={() => {
+          setIsPublicMode(false);
+        }}
       />
     );
   }
@@ -702,6 +825,7 @@ const App: React.FC = () => {
 
   return (
     <ErrorBoundary>
+      <ReloadPrompt />
       <BirthdayBanner birthdays={todayBirthdays} />
       <WelcomeBanner 
         show={showWelcome} 
@@ -733,11 +857,32 @@ const App: React.FC = () => {
                 <h1 className="text-lg sm:text-5xl font-black text-white tracking-tighter uppercase leading-none drop-shadow-2xl">
                   Guerreiros <span className="text-brand-primary">Volleyball</span> Club
                 </h1>
-                <div className="flex items-center gap-2 sm:gap-3 mt-1 sm:mt-4">
-                  <div className={`w-2 h-2 sm:w-3 sm:h-3 rounded-full shadow-[0_0_12px_rgba(245,196,41,0.5)] ${dbStatus === 'idle' ? 'bg-brand-primary' : 'bg-brand-primary animate-pulse'}`}></div>
-                  <p className="text-[8px] sm:text-xs font-black text-brand-primary uppercase tracking-[0.3em] drop-shadow-md">
-                    {dbStatus === 'idle' ? 'Sistema Online' : 'Sincronizando...'}
-                  </p>
+                <div className="flex items-center flex-wrap gap-2 sm:gap-4 mt-1 sm:mt-4">
+                  {isOffline ? (
+                    <div className="flex items-center gap-1.5 sm:gap-2">
+                      <WifiOff className="w-3 h-3 sm:w-4 sm:h-4 text-red-500 animate-pulse drop-shadow-md" />
+                      <p className="text-[8px] sm:text-[10px] font-black text-red-500 uppercase tracking-[0.2em] drop-shadow-md leading-tight">
+                        Modo Offline <span className="hidden sm:inline">- Sincronização Pendente</span>
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1.5 sm:gap-2">
+                      <div className={`w-2 h-2 sm:w-3 sm:h-3 rounded-full shadow-[0_0_12px_rgba(245,196,41,0.5)] ${dbStatus === 'idle' ? 'bg-brand-primary' : 'bg-brand-primary animate-pulse'}`}></div>
+                      <p className="text-[8px] sm:text-xs font-black text-brand-primary uppercase tracking-[0.3em] drop-shadow-md">
+                        {dbStatus === 'idle' ? 'Sistema Online' : 'Sincronizando...'}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Bluetooth Beacon Live Status Badge */}
+                  <div className={`flex items-center gap-1.5 px-2 py-0.5 sm:px-3 sm:py-1 rounded-full border text-[7.5px] sm:text-[10px] font-black uppercase tracking-wider leading-none transition-all ${
+                    isNearCourt 
+                      ? 'border-brand-primary bg-brand-primary/10 text-brand-primary shadow-[0_0_8px_rgba(245,196,41,0.2)]' 
+                      : 'border-white/10 bg-white/5 text-white/40'
+                  }`}>
+                    <Bluetooth className={`w-3 h-3 ${isNearCourt ? 'animate-pulse text-brand-primary' : 'text-white/25'}`} />
+                    <span>BLE: {isNearCourt ? 'Quadra Detectada' : 'Sem Sinal'}</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -860,8 +1005,17 @@ const App: React.FC = () => {
                   <button
                     onClick={async () => {
                       try {
-                        const playerRef = doc(db, 'players', currentPlayer.id);
-                        await updateDoc(playerRef, { uid: user.uid });
+                        const res = await fetch(`/api/players/${currentPlayer.id}/link`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ uid: user.uid })
+                        });
+                        
+                        if (!res.ok) {
+                          const errData = await res.json();
+                          throw new Error(errData.error || 'Falha ao vincular dispositivo');
+                        }
+                        
                         showNotification('Vínculo de dispositivo atualizado com sucesso para este navegador!', 'success');
                       } catch (e: any) {
                         console.error('Erro ao atualizar vínculo:', e);
@@ -929,7 +1083,10 @@ const App: React.FC = () => {
                   isVerifyingRules={isVerifyingRules}
                   isAnalyzing={isAnalyzing}
                   isNarratingSummary={isNarratingSummary}
-                  onAnnounce={() => handleAnnounce('teams')}
+                  onAnnounce={() => {
+                    handleAnnounce('teams');
+                    playSound('announce');
+                  }}
                   onSwapClick={handleSwapClick}
                   onRemovePlayer={handleRemovePlayer}
                   onPromoteToSetter={promoteToSetter}

@@ -10,7 +10,7 @@ export const Notification: React.FC = () => {
     if (notification) {
       const timer = setTimeout(() => {
         hideNotification();
-      }, 5000);
+      }, 3000);
       return () => clearTimeout(timer);
     }
   }, [notification, hideNotification]);

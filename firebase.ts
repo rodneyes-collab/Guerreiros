@@ -12,37 +12,93 @@ import {
   signInWithEmailLink,
   signInAnonymously,
   signOut,
-  User 
+  User,
+  setPersistence,
+  browserLocalPersistence
 } from 'firebase/auth';
-import { getFirestore, collection, doc, updateDoc, onSnapshot, setDoc, deleteDoc, getDoc, getDocFromServer, getDocs, writeBatch, increment, query, where, orderBy, arrayUnion, addDoc, serverTimestamp, collectionGroup, limit, setLogLevel } from 'firebase/firestore';
+import { 
+  getFirestore, 
+  collection, 
+  doc, 
+  updateDoc as updateDoc, 
+  onSnapshot, 
+  setDoc, 
+  deleteDoc, 
+  getDoc, 
+  getDocFromServer, 
+  getDocs, 
+  writeBatch, 
+  increment, 
+  query, 
+  where, 
+  orderBy, 
+  arrayUnion, 
+  addDoc, 
+  serverTimestamp, 
+  collectionGroup, 
+  limit, 
+  setLogLevel, 
+  enableIndexedDbPersistence,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+  clearIndexedDbPersistence, 
+  enableNetwork, 
+  disableNetwork 
+} from 'firebase/firestore';
 import { getMessaging, getToken, onMessage } from 'firebase/messaging';
 import firebaseConfig from './firebase-applet-config.json';
 
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-
-// Silencia logs internos do Firestore SDK para evitar que avisos de timeout em ambiente offline falhem o build/teste
-if (typeof window !== 'undefined') {
-  setLogLevel('silent');
+// Initialize Firebase with persistence-friendly settings
+let app;
+try {
+  app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+} catch (e) {
+  console.error('[Firebase] Init error:', e);
+  app = getApp();
 }
 
-// Força o uso do banco de dados '(default)' para carregar os sócios, partidas e pagamentos reais do clube.
-export const db = getFirestore(app);
+// Silencia logs internos do Firestore SDK para evitar ruído
+if (typeof window !== 'undefined') {
+  try {
+    setLogLevel('error');
+  } catch (e) {}
+}
 
-// Initialize Firebase Cloud Messaging and get a reference to the service
+// Multi-Tab Persistence Setup for Firebase 11
+let dbInstance;
+// Forçamos o uso do banco '(default)' pois é onde residem os dados reais do Guerreiros
+// O databaseId secundário do config causou a perda de visibilidade dos sócios legítimos.
+const dbId = '(default)';
+
+if (typeof window !== 'undefined') {
+  try {
+    dbInstance = initializeFirestore(app, {
+      localCache: persistentLocalCache({
+        tabManager: persistentMultipleTabManager()
+      })
+    }, dbId);
+  } catch (e) {
+    console.warn('[Firestore] Modern persistence failed, using default init:', e);
+    dbInstance = getFirestore(app, dbId);
+    // Legacy fallback attempt
+    enableIndexedDbPersistence(dbInstance).catch(() => {});
+  }
+} else {
+  dbInstance = getFirestore(app, dbId);
+}
+
+export const db = dbInstance;
+export const auth = getAuth(app);
 export const messaging = typeof window !== 'undefined' && 'Notification' in window ? getMessaging(app) : null;
 
-/* 
-// Enable offline persistence - Temporarily disabled to investigate "Unexpected state (ID: ca9)" in Firestore SDK 11.10.0
-enableIndexedDbPersistence(db).catch((err) => {
-  if (err.code == 'failed-precondition') {
-    console.warn('Multiple tabs open, persistence can only be enabled in one tab at a a time.');
-  } else if (err.code == 'unimplemented') {
-    console.warn('The current browser does not support all of the features required to enable persistence');
-  }
-});
-*/
+// Persistence Auth
+if (typeof window !== 'undefined') {
+  setPersistence(auth, browserLocalPersistence).catch((err) => {
+    console.warn('[Firebase Auth] Failed to configure persistence:', err);
+  });
+}
 
-export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 export const emailProvider = new EmailAuthProvider();
 
@@ -395,7 +451,8 @@ export {
   arrayUnion,
   addDoc,
   serverTimestamp,
-  collectionGroup
+  collectionGroup,
+  clearIndexedDbPersistence
 };
 export type { User };
 

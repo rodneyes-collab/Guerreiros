@@ -51,14 +51,17 @@ O sistema agora separa a **Eficiência Técnica** (usada para equilibrar times) 
 - **Destaque:** O Ranking é ordenado por padrão pela Eficiência Técnica, garantindo que os melhores jogadores (mais consistentes) estejam no topo, independentemente do volume total de partidas.
 
 ### 3. Distribuição e Balanceamento
-- **Distribuição Alternada (ABAB):** Após definir os levantadores, os jogadores restantes são ordenados por **Eficiência Técnica** e distribuídos entre Time A e Time B seguindo o padrão ABAB ABAB.
+- **Distribuição Alternada (ABAB com Foco em Gênero):** O sistema agora distribui inicialmente homens e mulheres de forma explicitamente balanceada. Ele verifica a contagem de cada gênero nos times A e B em tempo real e força a entrada de novos jogadores no time com menor representação daquele gênero antes de aplicar o padrão ABAB normal por eficiência.
 - **Penalidade de Recorrência:** O sistema aplica uma "multa" no score de equilíbrio se muitas duplas ou núcleos de jogadores se repetirem em relação à última partida. Isso força a alternância de parceiros mesmo em grupos fixos de 12 jogadores.
-- **Separação Técnica Obrigatória (Bottom 2):** As duas jogadoras com a menor **Soma de Habilidades Práticas** (Saque, Ataque, Defesa, Levantamento) são obrigatoriamente separadas entre os times. Elas são protegidas da aleatoriedade inicial para garantir que o ABAB as coloque em lados opostos.
-- **Refinamento por Trocas (Optimizer):** O sistema realiza milhares de simulações de trocas (respeitando o gênero) para minimizar as diferenças de Eficiência Total, Destaques (Top 4) e Simetria.
-- **Agente de Auto-Correção:** Uma camada final de validação (Agente de IA de Balanceamento) verifica se as regras críticas (como a separação das 2 jogadoras mais fracas) foram cumpridas e realiza trocas automáticas de emergência caso identifique alguma violação antes de exibir a escalação.
+- **Separação Técnica Obrigatória (Bottom 2):** Os dois jogadores (independente de gênero, mas geralmente mapeados pelas piores métricas) com a menor **Soma de Habilidades Práticas** (Saque, Ataque, Defesa, Levantamento) são obrigatoriamente separados entre os times. Eles são protegidos para que NUNCA caiam no mesmo time.
+- **Refinamento por Trocas (Optimizer):** O sistema realiza milhares de simulações de trocas (respeitando estritamente o gênero e o fato de ser levantador ou não) para minimizar as diferenças de Eficiência Total, Destaques (Top 4) e Simetria.
+- **Agente de Auto-Correção e Fiscalização de Regras (AI Agent):** Uma camada implacável e final de validação do sistema garante as seguintes discrepâncias zeradas:
+    1. **Separação de Bottom 2:** Verifica se os 2 jogadores mais fracos estão no mesmo time e realiza trocas forçadas.
+    2. **Desequilíbrio de Gênero:** O agente fiscaliza a distribuição do gênero após o sorteio/otimização. Ele possui diretrizes para corrigir discrepâncias bizarras (como 3 homens em um time e 1 em outro, ou times com quantidades assimétricas de mulheres) movendo cirurgicamente peças do mesmo gênero.
+    3. Nos casos do "AUTO-FIX" por emergência do Bottom 2, o agente foi programado para não estragar a contagem de gêneros na hora de separar jogadores mais fracos (só quebra gênero se não achar mais nenhuma saída lógica).
 
-### 4. Gênero
-- O sistema mantém o equilíbrio de gênero entre as equipes durante todas as fases de troca e balanceamento.
+### 4. Gênero (Aplicação Severa)
+- O sistema mantém o **equilíbrio de gênero obrigatório** entre as equipes durante todas as fases de sorteio, otimização e troca final. Um time nunca pode ficar com 3 homens e outro com 1, salvo em condições de total inviabilidade matemática dos presentes na quadra. Toda lógica tem contadores explícitos que guarnecem as trocas de modo que A e B batam número idêntico (ou diferença máxima de +1/-1 ímpar) do mesmo gênero.
 
 ## Diretrizes de Implementação
 - **Proteção de Sincronização:** Durante o envio de dados ou geração de times, o botão de "Nova Escalação" e "Confirmar Vitória" deve ser desabilitado acompanhado de um indicador visual de "Guerreiros Intelligence" para evitar corrupção de estado ou cliques duplos.

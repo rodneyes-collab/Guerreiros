@@ -40,7 +40,9 @@ import {
   DollarSign,
   ExternalLink,
   Edit2,
-  Star
+  Star,
+  Fingerprint,
+  ScanFace
 } from 'lucide-react';
 import { 
   AreaChart, 
@@ -59,14 +61,16 @@ import {
 import { db, doc, updateDoc, setDoc, deleteDoc, onSnapshot, writeBatch, collection, serverTimestamp, getDocs, query, where, orderBy, limit, getFirestoreDateKey } from '../firebase';
 import firebaseConfig from '../firebase-applet-config.json';
 import { Player } from '../types';
+import { generateUUID } from '../utils/helpers';
 import Markdown from 'react-markdown';
 import { Logo } from '../src/components/Logo';
 import { motion, AnimatePresence } from 'motion/react';
 import { analyzeBillingCosts } from '../services/geminiService';
 
 import { useBirthdays } from '../src/hooks/useBirthdays';
+import { useWebAuthn } from '../src/hooks/useWebAuthn';
 import { BirthdayAdminCard } from '../src/components/BirthdayAdminCard';
-import { BleModuleConfigCard } from '../src/components/BleModuleConfigCard';
+import { BeaconManager } from './BeaconManager';
 import { HelpTooltip } from '../src/components/HelpTooltip';
 
 import { getLevelSuggestions, LevelSuggestion } from '../utils/levelAuditUtils';
@@ -145,7 +149,7 @@ interface AdminViewProps {
   savePlayer: (player: Player) => Promise<void>;
 }
 
-type AdminTab = 'dashboard' | 'members' | 'maintenance' | 'sentinel' | 'tournaments' | 'system' | 'notifications' | 'audit';
+type AdminTab = 'dashboard' | 'members' | 'maintenance' | 'sentinel' | 'tournaments' | 'system' | 'notifications' | 'audit' | 'security';
 
 export const AdminView: React.FC<AdminViewProps> = ({
   resetDailyStats,
@@ -192,6 +196,22 @@ export const AdminView: React.FC<AdminViewProps> = ({
     setSelectedRankingPlayerId,
     setViewMode
   } = useStore();
+  
+  const { register } = useWebAuthn();
+  const [isRegisteredLocally, setIsRegisteredLocally] = useState(false);
+  const [isPasskeySupported, setIsPasskeySupported] = useState(false);
+
+  useEffect(() => {
+    // Check for Passkey/WebAuthn support
+    if (window.PublicKeyCredential && PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable) {
+      PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable().then(setIsPasskeySupported);
+    }
+  }, []);
+
+  // Sync isRegisteredLocally with store
+  useEffect(() => {
+      setIsRegisteredLocally(!!(user && (user as any).webAuthnCredentials));
+  }, [user]);
 
   const { todayBirthdays, sendBirthdayPush } = useBirthdays();
 
@@ -218,6 +238,119 @@ export const AdminView: React.FC<AdminViewProps> = ({
   const [sentinelReports, setSentinelReports] = useState<any[]>([]);
   const [isRunningSentinel, setIsRunningSentinel] = useState(false);
   const [loadingSentinel, setLoadingSentinel] = useState(false);
+
+  // Estados e Funções para Recuperação de Partidas (Backup/Snapshots)
+  const [snapshots, setSnapshots] = useState<any[]>([]);
+  const [selectedSnapshot, setSelectedSnapshot] = useState<any | null>(null);
+  const [loadingSnapshots, setLoadingSnapshots] = useState(false);
+
+  const fetchSnapshots = async () => {
+    try {
+      setLoadingSnapshots(true);
+      const q = query(collection(db, 'snapshots'), orderBy('timestamp', 'desc'), limit(30));
+      const querySnapshot = await getDocs(q);
+      const docsList: any[] = [];
+      querySnapshot.forEach((doc) => {
+        docsList.push({ id: doc.id, ...doc.data() });
+      });
+      setSnapshots(docsList);
+    } catch (err) {
+      console.error('Error fetching snapshots:', err);
+    } finally {
+      setLoadingSnapshots(false);
+    }
+  };
+
+  const handleRestoreMatchFromSnapshot = async (m: any) => {
+    showConfirmModal(
+      'Recuperar Partida do Backup',
+      `Deseja realmente recuperar a partida #${m.dailyNumber || '?'} (${m.teamA?.length || 0} contra ${m.teamB?.length || 0} jogadores - placar: ${m.scoreA}x${m.scoreB}) de ${m.date || 'data desconhecida'}? O saldo de vitórias/ELO dos participantes será restabelecido.`,
+      async () => {
+        try {
+          const batch = writeBatch(db);
+          
+          // 1. Re-adicionar a partida no Firestore matches
+          const restoredMatchId = m.id || generateUUID();
+          const matchRef = doc(db, 'matches', restoredMatchId);
+          
+          // Limpa campos vazios ou nulos
+          const cleanedMatch = {
+            id: restoredMatchId,
+            timestamp: m.timestamp || Date.now(),
+            date: m.date || getFirestoreDateKey(),
+            teamA: m.teamA || [],
+            teamB: m.teamB || [],
+            winner: m.winner || 'A',
+            scoreA: m.scoreA || 15,
+            scoreB: m.scoreB || 0,
+            dailyNumber: m.dailyNumber || 1,
+            isDraft: m.isDraft === undefined ? false : m.isDraft,
+            courtTime: m.courtTime || 0,
+            synced: true,
+            isManual: m.isManual === undefined ? true : m.isManual
+          };
+
+          batch.set(matchRef, cleanedMatch, { merge: true });
+          
+          // 2. Atualizar ou recalcular ELO dos jogadores envolvidos
+          const allPlayersInMatch = [...(m.teamA || []), ...(m.teamB || [])];
+          allPlayersInMatch.forEach(pid => {
+            const p = players.find(player => player.id === pid);
+            if (!p) return;
+            
+            const isWinner = (m.winner === 'A' && m.teamA.includes(pid)) || 
+                             (m.winner === 'B' && m.teamB.includes(pid));
+            const eloChange = isWinner ? 20 : -20;
+            
+            const previousElo = p.elo || 1200;
+            const newElo = previousElo + eloChange;
+            
+            const playerRef = doc(db, 'players', pid);
+            
+            // Re-atualiza o eloHistory
+            let updatedHistory = [...(p.eloHistory || [])];
+            updatedHistory.push({
+              matchId: restoredMatchId,
+              date: m.date || getFirestoreDateKey(),
+              elo: newElo,
+              timestamp: m.timestamp || Date.now()
+            });
+
+            const isToday = m.date === getFirestoreDateKey();
+            let results = [...(p.dailyResults || [])];
+            let dailyMatches = p.dailyMatches || 0;
+            let dailyWins = p.dailyWins || 0;
+
+            if (isToday) {
+              results.push(isWinner ? 'V' : 'D');
+              dailyMatches += 1;
+              if (isWinner) dailyWins += 1;
+            }
+            
+            batch.set(playerRef, {
+              elo: newElo,
+              eloHistory: updatedHistory,
+              ...(isToday ? {
+                dailyMatches,
+                dailyWins,
+                dailyResults: results
+              } : {})
+            }, { merge: true });
+          });
+
+          await batch.commit();
+          showNotification(`Partida #${m.dailyNumber || '?'} de ${m.date} recuperada com sucesso! Os pontos ELO de ${allPlayersInMatch.length} guerreiros foram devidamente atualizados no banco de dados.`, 'success');
+          triggerSync();
+        } catch (error: any) {
+          showNotification('Erro ao restaurar a partida: ' + (error.message || error), 'error');
+        }
+      }
+    );
+  };
+
+  useEffect(() => {
+    fetchSnapshots();
+  }, []);
 
   useEffect(() => {
     if (activeTab !== 'sentinel') return;
@@ -722,6 +855,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
     { id: 'tournaments', label: 'Torneios', icon: Trophy },
     { id: 'system', label: 'Sistema', icon: Settings },
     { id: 'audit', label: 'Auditoria', icon: ShieldCheck },
+    { id: 'security', label: 'Segurança', icon: Shield },
   ];
 
   return (
@@ -784,7 +918,6 @@ export const AdminView: React.FC<AdminViewProps> = ({
                 <div className="lg:col-span-2 space-y-8">
                   {/* Monitor de Memória */}
                   <MemoryMonitorCard />
-                  <BleModuleConfigCard />
 
                   {/* Aniversariantes do Dia */}
                   {todayBirthdays.length > 0 && (
@@ -1188,14 +1321,14 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                 <div className="flex items-center justify-end gap-1">
                                   <button 
                                     onClick={() => { setSelectedRankingPlayerId(player.id); setViewMode('dashboard'); }}
-                                    className="p-1.5 rounded-lg text-white/20 hover:text-brand-primary hover:bg-brand-primary/10 transition-all"
+                                    className="p-2 rounded-lg text-white bg-white/10 hover:bg-brand-primary hover:text-black transition-all"
                                     title="Ver Análise de Performance"
                                   >
                                     <Trophy className="w-3.5 h-3.5" />
                                   </button>
                                   <button 
                                     onClick={() => { setEditingPlayer(player); setIsFormOpen(true); }}
-                                    className="p-1.5 rounded-lg text-white/20 hover:text-brand-primary hover:bg-brand-primary/10 transition-all"
+                                    className="p-2 rounded-lg text-brand-primary bg-brand-primary/10 hover:bg-brand-primary hover:text-brand-secondary border border-brand-primary/20 transition-all font-bold"
                                     title="Editar Sócio"
                                   >
                                     <Edit2 className="w-3.5 h-3.5" />
@@ -1391,6 +1524,40 @@ export const AdminView: React.FC<AdminViewProps> = ({
                   )}
                 </section>
 
+                {/* Recálculo Profundo */}
+                <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-brand-primary/40 shadow-2xl shadow-brand-primary/10 text-white space-y-6 relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-64 h-64 bg-brand-primary/5 rounded-full blur-3xl -mr-32 -mt-32"></div>
+                  
+                  <div className="relative flex flex-col md:flex-row md:items-center justify-between gap-6">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 bg-brand-primary/10 rounded-xl flex items-center justify-center border border-brand-primary">
+                        <TrendingUp className="w-5 h-5 text-brand-primary" />
+                      </div>
+                      <div>
+                        <h3 className="text-xl font-black uppercase tracking-tight text-white flex items-center gap-2">
+                          Recálculo Total de ELO
+                          <span className="px-2 py-0.5 bg-brand-primary text-black text-[8px] font-black uppercase tracking-widest rounded-full">Recomendado</span>
+                        </h3>
+                        <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest leading-relaxed max-w-lg mt-1">
+                          Reconstrói e corrige todo o histórico do Ranking (+20/-20), consistências e diárias com base no arquivo real das partidas.
+                        </p>
+                      </div>
+                    </div>
+                    
+                    <button 
+                      onClick={() => showConfirmModal(
+                        "Confirmar Recálculo Total",
+                        "Isso varrerá todas as partidas desde o início e recalculará o Ranking (ELO) e as estatísticas diárias de todos os jogadores. Essa ação corrige divergências.",
+                        recalculateAllElo
+                      )}
+                      className="px-6 py-4 bg-brand-primary text-brand-secondary rounded-2xl font-black uppercase tracking-widest text-xs hover:scale-105 transition-all shadow-xl shadow-brand-primary/20 flex items-center gap-2 shrink-0 border border-brand-primary/50"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                      Iniciar Recálculo
+                    </button>
+                  </div>
+                </section>
+
                 {/* Manutenção de Dados */}
                 <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary space-y-8">
                   <div className="flex items-center gap-4 text-white">
@@ -1446,12 +1613,6 @@ export const AdminView: React.FC<AdminViewProps> = ({
                         desc: "Corrige inconsistências e limpa dados órfãos.", 
                         action: repairDatabase, 
                         icon: Database 
-                      },
-                      { 
-                        label: "Recalcular ELO", 
-                        desc: "Recalcula todos os pontos (+20/-20) desde o início.", 
-                        action: recalculateAllElo, 
-                        icon: TrendingUp 
                       },
                       { 
                         label: "Histórico ELO", 
@@ -1765,6 +1926,9 @@ export const AdminView: React.FC<AdminViewProps> = ({
 
             {activeTab === 'system' && (
               <div className="space-y-8">
+                {/* Detecção e Configuração do Beacon Físico da Quadra */}
+                <BeaconManager />
+
                 {/* Configurações de Algoritmo */}
                 <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary space-y-8">
                   <div className="flex items-center gap-4 text-white">
@@ -1915,6 +2079,114 @@ export const AdminView: React.FC<AdminViewProps> = ({
                       </div>
                     </button>
                   </div>
+
+                  {/* Recuperar Partidas via Snapshots */}
+                  <div className="border-t border-white/5 pt-6 space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <h4 className="font-black text-brand-primary uppercase text-[10px] tracking-[0.2em] flex items-center gap-2">
+                          <History className="w-4 h-4" /> Restaurar Partida Excluída via Backup
+                        </h4>
+                        <p className="text-white/40 text-[9px] font-medium mt-0.5">Encontre e recupere a partida excluída de 04/06 (ou qualquer outro dia) a partir dos snapshots automáticos ou manuais</p>
+                      </div>
+                      <button 
+                        onClick={fetchSnapshots}
+                        className="px-3 py-1.5 bg-white/5 hover:bg-white/10 active:scale-95 text-white text-[9px] font-black uppercase tracking-wider rounded-lg transition-all flex items-center gap-1.5 self-start sm:self-center"
+                      >
+                        <RefreshCw className={`w-3 h-3 ${loadingSnapshots ? 'animate-spin' : ''}`} /> Atualizar Lista
+                      </button>
+                    </div>
+
+                    {snapshots.length === 0 ? (
+                      <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-6 text-center text-[10px] uppercase font-black tracking-widest text-white/30">
+                        {loadingSnapshots ? 'Carregando snapshots do Firestore...' : 'Nenhum backup encontrado. Clique em "Atualizar Lista".'}
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="space-y-1">
+                            <label className="text-[8px] font-black uppercase tracking-widest text-white/50">Selecione o Backup (Snapshot)</label>
+                            <select 
+                              onChange={(e) => {
+                                const selected = snapshots.find(snap => snap.id === e.target.value);
+                                setSelectedSnapshot(selected || null);
+                              }}
+                              className="w-full bg-brand-secondary border border-white/10 rounded-xl px-3 py-2.5 text-xs font-black uppercase tracking-tight text-white focus:border-brand-primary outline-none"
+                              value={selectedSnapshot?.id || ''}
+                            >
+                              <option value="">Selecione um backup disponível...</option>
+                              {snapshots.map(snap => {
+                                const dateStr = snap.date || new Date(snap.timestamp).toLocaleDateString('pt-BR');
+                                return (
+                                  <option key={snap.id} value={snap.id} className="text-black">
+                                    [{dateStr}] - {snap.label || 'Sem rótulo'} ({snap.matches?.length || 0} partidas)
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          </div>
+                        </div>
+
+                        {selectedSnapshot && (
+                          <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-4 space-y-3">
+                            <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                              <span className="text-[10px] font-black uppercase tracking-widest text-brand-primary">Partidas contidas neste Backup</span>
+                              <span className="text-[8px] font-bold text-white/40">{selectedSnapshot.matches?.length || 0} partidas registradas</span>
+                            </div>
+
+                            {(!selectedSnapshot.matches || selectedSnapshot.matches.length === 0) ? (
+                              <p className="text-[10px] font-bold uppercase text-white/30 text-center py-4">Nenhuma partida registrada neste snapshot.</p>
+                            ) : (
+                              <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
+                                {selectedSnapshot.matches.map((m: any, idx: number) => {
+                                  const getNamesList = (ids: string[]) => {
+                                    return (ids || []).map(id => {
+                                      const p = players.find(player => player.id === id);
+                                      return p?.name || 'Sócio Excluído';
+                                    }).join(', ');
+                                  };
+
+                                  const alreadyExists = matches.some(match => match.id === m.id);
+
+                                  return (
+                                    <div key={m.id || idx} className="bg-black/50 border border-white/5 hover:border-white/10 rounded-xl p-3 flex flex-col sm:flex-row justify-between sm:items-center gap-3 transition-all">
+                                      <div className="space-y-1">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          <span className="text-[10px] font-black uppercase tracking-widest text-white/90">Partida #{m.dailyNumber || idx + 1} ({m.date})</span>
+                                          {alreadyExists ? (
+                                            <span className="text-[8px] font-black uppercase tracking-[0.1em] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-1.5 py-0.5 rounded">Ativa no app</span>
+                                          ) : (
+                                            <span className="text-[8px] font-black uppercase tracking-[0.1em] bg-amber-500/10 text-amber-500 border border-amber-500/20 px-1.5 py-0.5 rounded">Excluída / Pendente</span>
+                                          )}
+                                        </div>
+                                        <p className="text-[9px] text-white/40 font-bold leading-relaxed">
+                                          <strong className="text-white/80">Equipe A:</strong> {getNamesList(m.teamA)} <br />
+                                          <strong className="text-white/80">Equipe B:</strong> {getNamesList(m.teamB)}
+                                        </p>
+                                        <div className="text-[8px] text-brand-primary font-black uppercase tracking-widest">
+                                          Resultado: Placar {m.scoreA} x {m.scoreB} (Vitória do Time {m.winner})
+                                        </div>
+                                      </div>
+
+                                      <div className="shrink-0 flex items-center sm:justify-end">
+                                        <button
+                                          onClick={() => handleRestoreMatchFromSnapshot(m)}
+                                          disabled={alreadyExists}
+                                          className={`px-3 py-2 text-[9px] font-black uppercase tracking-wider rounded-xl transition-all ${alreadyExists ? 'bg-white/5 text-white/30 cursor-not-allowed border border-white/5' : 'bg-brand-primary text-brand-secondary hover:bg-brand-primary/95 hover:scale-[1.02] active:scale-[0.98]'}`}
+                                        >
+                                          {alreadyExists ? 'Já existe' : 'Recuperar Partida'}
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </section>
 
                 {/* Zona de Perigo */}
@@ -2023,6 +2295,64 @@ export const AdminView: React.FC<AdminViewProps> = ({
                     </div>
                   )}
                 </div>
+              </div>
+            )}
+
+            {activeTab === 'security' && (
+              <div className="bg-black p-8 rounded-[2.5rem] border border-brand-primary/20 shadow-2xl space-y-8">
+                <h3 className="text-xl font-black uppercase tracking-tight text-brand-primary flex items-center gap-3">
+                  <Shield className="w-6 h-6" /> Segurança (Passkeys)
+                </h3>
+                
+                {isPasskeySupported ? (
+                  <div className="space-y-6">
+                    <div className="flex items-center gap-4 p-4 bg-brand-primary/5 border border-brand-primary/20 rounded-2xl">
+                      {user && isRegisteredLocally ? (
+                        <>
+                          <div className="p-2 bg-brand-primary text-black rounded-full">
+                            <ShieldCheck className="w-6 h-6" />
+                          </div>
+                          <div>
+                            <p className="text-white font-black uppercase tracking-widest text-xs">Biometria Ativa</p>
+                            <p className="text-white/60 font-bold text-[10px]">Configuração finalizada com êxito.</p>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="p-2 bg-white/20 text-white rounded-full">
+                            <Shield className="w-6 h-6" />
+                          </div>
+                          <div>
+                            <p className="text-white font-black uppercase tracking-widest text-xs">Configuração Pendente</p>
+                            <p className="text-white/60 font-bold text-[10px]">Configure seu acesso biométrico para login rápido.</p>
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+                    {!isRegisteredLocally && (
+                      <button
+                        onClick={async () => {
+                           const success = await register(user?.email || undefined);
+                           if (success) setIsRegisteredLocally(true);
+                        }}
+                        className="w-full flex items-center justify-center gap-3 px-8 py-5 bg-brand-primary text-black rounded-2xl font-black uppercase tracking-widest text-xs hover:scale-[1.02] active:scale-[0.98] transition-all shadow-lg hover:shadow-brand-primary/20"
+                      >
+                         <div className="flex items-center gap-1">
+                           <Fingerprint className="w-5 h-5" />
+                           <ScanFace className="w-5 h-5 opacity-80" />
+                         </div>
+                         <span className="ml-1">Configurar Acesso Biométrico</span>
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-2xl">
+                    <p className="text-red-500 font-bold text-[10px] uppercase tracking-widest text-center">
+                      Biometria (Passkeys) não disponível neste dispositivo ou navegador.
+                    </p>
+                  </div>
+                )}
               </div>
             )}
           </motion.div>

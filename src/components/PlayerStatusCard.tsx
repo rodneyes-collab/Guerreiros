@@ -2,7 +2,7 @@
 import React, { useMemo } from 'react';
 import { motion } from 'motion/react';
 import { getPlayerTier } from '../../utils/tierUtils';
-import { Zap, Clock, PlayCircle, Smartphone, Trophy, Target } from 'lucide-react';
+import { Zap, Clock, PlayCircle, Smartphone, Trophy, Target, Medal, Flame } from 'lucide-react';
 import { Player, GenerationResult, Match, SystemMetadata, Tournament } from '../../types';
 import { getPriorityQueue } from '../../utils/teamLogic';
 import { usePlayerStatusNotification } from '../hooks/usePlayerStatusNotification';
@@ -26,6 +26,9 @@ export const PlayerStatusCard: React.FC<PlayerStatusCardProps> = ({
   activeTournament
 }) => {
   const showNotification = useStore(state => state.showNotification);
+  const swapSelection = useStore(state => state.swapSelection);
+  const allPlayers = useStore(state => state.players);
+  const isSelectedForSwap = currentPlayer && swapSelection?.playerId === currentPlayer.id;
   const { 
     isEnabled, 
     isMatchEnabled,
@@ -40,6 +43,35 @@ export const PlayerStatusCard: React.FC<PlayerStatusCardProps> = ({
   );
   const [isRequesting, setIsRequesting] = React.useState(false);
   const [isTogglingMatch, setIsTogglingMatch] = React.useState(false);
+
+  const { isTopAssiduidade, isTopEloGain } = useMemo(() => {
+    if (!currentPlayer || !allPlayers.length) return { isTopAssiduidade: false, isTopEloGain: false };
+    
+    let maxMatches = 0;
+    let maxGain = -9999;
+    
+    for (const p of allPlayers) {
+      if ((p.matchesPlayed || 0) > maxMatches) maxMatches = p.matchesPlayed || 0;
+      
+      if (p.eloHistory && p.eloHistory.length > 0) {
+        const lastEntry = p.eloHistory[p.eloHistory.length - 1];
+        if ((lastEntry.change || 0) > maxGain) {
+          maxGain = lastEntry.change || 0;
+        }
+      }
+    }
+
+    const isAssiduo = maxMatches > 0 && (currentPlayer.matchesPlayed || 0) === maxMatches;
+    
+    let myGain = -9999;
+    if (currentPlayer.eloHistory && currentPlayer.eloHistory.length > 0) {
+      const lastEntry = currentPlayer.eloHistory[currentPlayer.eloHistory.length - 1];
+      myGain = lastEntry.change || 0;
+    }
+    const isGainTop = maxGain > 0 && myGain === maxGain;
+
+    return { isTopAssiduidade: isAssiduo, isTopEloGain: isGainTop };
+  }, [currentPlayer, allPlayers]);
 
   const handleToggleNotifications = async () => {
     console.log('handleToggleNotifications: isEnabled =', isEnabled, 'isRequesting =', isRequesting);
@@ -153,7 +185,7 @@ export const PlayerStatusCard: React.FC<PlayerStatusCardProps> = ({
   if (!status) return null;
 
   return (
-    <div className="flex items-center gap-2">
+    <div className={`flex items-center gap-2 p-1 rounded-[2rem] transition-all duration-300 ${isSelectedForSwap ? 'bg-brand-primary/10 border border-brand-primary/60 shadow-[0_0_20px_rgba(245,196,41,0.5)] ring-2 ring-brand-primary/40 animate-[pulse_2s_ease-in-out_infinite]' : ''}`}>
       {currentPlayer && (
         <motion.div
           initial={{ opacity: 0, scale: 0.9 }}
@@ -166,6 +198,35 @@ export const PlayerStatusCard: React.FC<PlayerStatusCardProps> = ({
           </span>
         </motion.div>
       )}
+
+      {isTopAssiduidade && (
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 backdrop-blur-sm"
+          title={`Maior Assiduidade (${currentPlayer.matchesPlayed} partidas)`}
+        >
+          <Medal className="w-3 h-3 sm:w-4 sm:h-4 text-amber-500" />
+          <span className="hidden sm:inline text-[9px] sm:text-[10px] font-black uppercase tracking-wider text-amber-500">
+            Veterano
+          </span>
+        </motion.div>
+      )}
+
+      {isTopEloGain && (
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 backdrop-blur-sm"
+          title="Jogador que mais ganhou ELO na última partida"
+        >
+          <Flame className="w-3 h-3 sm:w-4 sm:h-4 text-emerald-500" />
+          <span className="hidden sm:inline text-[9px] sm:text-[10px] font-black uppercase tracking-wider text-emerald-500">
+            Em Chamas
+          </span>
+        </motion.div>
+      )}
+
       <motion.div
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}

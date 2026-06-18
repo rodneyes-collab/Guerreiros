@@ -3,6 +3,7 @@ import { useStore } from '../store';
 import { Player, Gender } from '../types';
 import { translateGender, capitalizeName } from '../utils/helpers';
 import { getPlayerTier } from '../utils/tierUtils';
+import { Tooltip } from '../src/components/Tooltip';
 import { 
   Trash2, 
   UserPlus, 
@@ -284,7 +285,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
                     <div className="flex items-center gap-2">
                       <div className="flex items-center gap-1.5 min-w-0">
                         {userRole === 'ADMIN' && <div className="shrink-0">{getImpactIcon(player.impactLevel)}</div>}
-                        <div className={`font-bold text-xs truncate ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
+                        <div className={`font-bold text-xs break-words whitespace-normal ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
                           {capitalizeName(player.name) || "Sócio sem nome"}
                           {player.isDM && <span className="ml-2 px-1.5 py-0.5 rounded-full text-[8px] font-black bg-rose-500 text-white">DM</span>}
                           <span className="ml-2">
@@ -383,26 +384,47 @@ export const MembersView: React.FC<MembersViewProps> = ({
                     </span>
                   </td>
                   <td className="px-3 py-2 text-right flex items-center justify-end gap-2">
-                    <button 
-                      onClick={() => setViewMode('dashboard')}
-                      className="p-2 text-white/40 hover:text-brand-primary transition-all"
-                      title="Ver no Ranking"
-                    >
-                      <Target className="w-4 h-4" />
-                    </button>
+                    <Tooltip content="Ver no Ranking">
+                      <button 
+                        onClick={() => setViewMode('dashboard')}
+                        className="p-2 text-white bg-white/10 hover:bg-brand-primary hover:text-black rounded-xl transition-all"
+                      >
+                        <Target className="w-4 h-4" />
+                      </button>
+                    </Tooltip>
                     {userRole === 'ADMIN' ? (
                       <>
-                        <button 
-                          onClick={() => {
-                            const newStatus = player.status === 'active' ? 'inactive' : 'active';
-                            savePlayer({ ...player, status: newStatus });
-                          }}
-                          className={`p-2 rounded-xl transition-all ${player.status === 'inactive' ? 'text-emerald-500 hover:bg-emerald-500/10' : 'text-amber-500 hover:bg-amber-500/10'}`}
-                        >
-                          {player.status === 'inactive' ? <UserCheck className="w-4 h-4" /> : <UserX className="w-4 h-4" />}
-                        </button>
-                        <button onClick={() => { setEditingPlayer(player); setIsFormOpen(true); }} className="p-2 text-white/40 hover:text-brand-primary"><Edit2 className="w-4 h-4" /></button>
-                        <button onClick={() => deletePlayer(player.id)} className="p-2 text-white/40 hover:text-rose-500"><Trash2 className="w-4 h-4" /></button>
+                        <Tooltip content={player.status === 'inactive' ? "Ativar Sócio" : "Inativar Sócio"}>
+                          <button 
+                            onClick={() => {
+                              const newStatus = player.status === 'active' ? 'inactive' : 'active';
+                              savePlayer({ ...player, status: newStatus });
+                            }}
+                            className={`p-2 rounded-xl transition-all ${
+                              player.status === 'inactive' 
+                                ? 'text-emerald-500 bg-emerald-500/10 hover:bg-emerald-500 hover:text-white' 
+                                : 'text-amber-500 bg-amber-500/10 hover:bg-amber-500 hover:text-white'
+                            }`}
+                          >
+                            {player.status === 'inactive' ? <UserCheck className="w-4 h-4" /> : <UserX className="w-4 h-4" />}
+                          </button>
+                        </Tooltip>
+                        <Tooltip content="Editar Sócio">
+                          <button 
+                            onClick={() => { setEditingPlayer(player); setIsFormOpen(true); }} 
+                            className="p-2 text-brand-primary bg-brand-primary/10 hover:bg-brand-primary hover:text-brand-secondary rounded-xl transition-all font-bold border border-brand-primary/20"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                        </Tooltip>
+                        <Tooltip content="Excluir Sócio" position="left">
+                          <button 
+                            onClick={() => deletePlayer(player.id)} 
+                            className="p-2 text-rose-500 bg-rose-500/10 hover:bg-rose-500 hover:text-white rounded-xl transition-all"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </Tooltip>
                       </>
                     ) : '-'}
                   </td>
@@ -434,7 +456,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <h4 className={`text-base font-bold tracking-tight truncate ${player.status === 'inactive' ? 'text-white/40' : 'text-white'}`}>
+                    <h4 className={`text-sm font-bold tracking-tight break-words whitespace-normal leading-tight ${player.status === 'inactive' ? 'text-white/40' : 'text-white'}`}>
                       {capitalizeName(player.name)} {player.isDM && <span className="ml-2 px-1.5 py-0.5 rounded-full text-[10px] font-black bg-rose-500 text-white font-sans">DM</span>}
                       <span className="ml-2">
                         <EvasionIcon 
@@ -521,7 +543,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
             </div>
             {userRole === 'ADMIN' && (
               <div className="flex gap-2 pt-2 border-t border-white/5">
-                <button onClick={() => { setEditingPlayer(player); setIsFormOpen(true); }} className="flex-1 py-3 bg-white/5 text-white/60 rounded-2xl font-black text-[9px] uppercase hover:bg-brand-primary/10 transition-all flex items-center justify-center gap-2">
+                <button onClick={() => { setEditingPlayer(player); setIsFormOpen(true); }} className="flex-1 py-3 bg-brand-primary/10 text-brand-primary border border-brand-primary/20 rounded-2xl font-black text-[9px] uppercase hover:bg-brand-primary hover:text-brand-secondary transition-all flex items-center justify-center gap-2">
                   <Edit2 className="w-3 h-3" /> Editar
                 </button>
                 <button onClick={() => deletePlayer(player.id)} className="flex-1 py-3 bg-rose-500/10 text-rose-500 rounded-2xl font-black text-[9px] uppercase hover:bg-rose-500/20 transition-all flex items-center justify-center gap-2">

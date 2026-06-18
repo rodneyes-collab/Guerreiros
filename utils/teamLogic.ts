@@ -111,7 +111,7 @@ export const calculateTeamPositions = (team: Team, opponent: Team | null = null)
   const positions: (Player | null)[] = new Array(7).fill(null); // use 1-6 indices
 
   // 1. Levantador Oficial no 3 (ou o melhor 'passador' técnico)
-  const mainSetter = allPlayers.find(p => p.isOfficialSetter) || sorted.find(p => (p.skills?.setting || 0) >= 3) || sorted[2];
+  const mainSetter = team.setter || allPlayers.find(p => p.isOfficialSetter) || sorted.find(p => (p.skills?.setting || 0) >= 3) || sorted[2];
   positions[3] = mainSetter;
   
   let remaining = allPlayers.filter(p => p.id !== mainSetter.id);
@@ -145,8 +145,8 @@ export const calculateTeamPositions = (team: Team, opponent: Team | null = null)
     const m1 = teamMen[0];
     const m2 = teamMen[1];
     
-    let pos1Idx = positions.findIndex(p => p?.id === m1.id);
-    let pos2Idx = positions.findIndex(p => p?.id === m2.id);
+    const pos1Idx = positions.findIndex(p => p?.id === m1.id);
+    const pos2Idx = positions.findIndex(p => p?.id === m2.id);
     
     if (pos1Idx > 0 && pos2Idx > 0) {
       const isOpposite = (a: number, b: number) => 
@@ -155,11 +155,37 @@ export const calculateTeamPositions = (team: Team, opponent: Team | null = null)
         (a === 3 && b === 6) || (a === 6 && b === 3);
 
       if (!isOpposite(pos1Idx, pos2Idx)) {
-        const targetPos = pos1Idx === 1 ? 4 : (pos1Idx === 4 ? 1 : (pos1Idx === 2 ? 5 : (pos1Idx === 5 ? 2 : (pos1Idx === 3 ? 6 : 3))));
-        const currentAtTarget = positions[targetPos];
+        // Garantimos que a posição 3 (Levantador) NUNCA seja afetada por essa rotação de opostos
+        const setterId = mainSetter.id;
         
-        positions[pos2Idx] = currentAtTarget;
-        positions[targetPos] = m2;
+        if (m1.id === setterId) {
+          // m1 é o levantador (na P3). m2 deve ser colocado na posição 6 (oposta direta de P3).
+          const currentAt6 = positions[6];
+          positions[pos2Idx] = currentAt6;
+          positions[6] = m2;
+        } else if (m2.id === setterId) {
+          // m2 é o levantador (na P3). m1 deve ser colocado na posição 6 (oposta direta de P3).
+          const currentAt6 = positions[6];
+          positions[pos1Idx] = currentAt6;
+          positions[6] = m1;
+        } else {
+          // Nenhum dos dois é o levantador. O levantador está seguro na posição 3.
+          // Como o levantador ocupa a P3, eles não podem usar a diagonal (3, 6).
+          // Devem, portanto, ser opostos nas diagonais (1, 4) ou (2, 5).
+          if (pos1Idx === 1 || pos1Idx === 4 || pos1Idx === 2 || pos1Idx === 5) {
+            const targetPos = pos1Idx === 1 ? 4 : (pos1Idx === 4 ? 1 : (pos1Idx === 2 ? 5 : 2));
+            const currentAtTarget = positions[targetPos];
+            positions[pos2Idx] = currentAtTarget;
+            positions[targetPos] = m2;
+          } else {
+            // Se pos1Idx for 6, significa que m2 está em uma posição (1, 2, 4, 5).
+            // Colocamos m1 na posição oposta de m2.
+            const targetPos = pos2Idx === 1 ? 4 : (pos2Idx === 4 ? 1 : (pos2Idx === 2 ? 5 : 2));
+            const currentAtTarget = positions[targetPos];
+            positions[pos1Idx] = currentAtTarget;
+            positions[targetPos] = m1;
+          }
+        }
       }
     }
   }
@@ -257,6 +283,169 @@ export const checkSimilarity = (result: GenerationResult, previousFormations: {s
   return false;
 };
 
+// Reusable safety function to validate and enforce 6 vs 6 team sizes with unique players
+export const validateAndForceBalancedSizes = (result: GenerationResult, matchPool: Player[]): GenerationResult => {
+  const setterA = result.teamA.setter;
+  const setterB = result.teamB.setter;
+  const playersA = result.teamA.players || [];
+  const playersB = result.teamB.players || [];
+
+  const allAssignedIds = new Set([
+    setterA?.id,
+    ...playersA.map(p => p.id),
+    setterB?.id,
+    ...playersB.map(p => p.id)
+  ].filter(Boolean));
+
+  const totalA = (setterA ? 1 : 0) + playersA.length;
+  const totalB = (setterB ? 1 : 0) + playersB.length;
+
+  if (totalA !== 6 || totalB !== 6 || allAssignedIds.size !== 12) {
+    console.warn("Anomalia detectada na integridade ou tamanho dos times (Atletas A:", totalA, ", Atletas B:", totalB, "). Aplicando correção rígida.");
+    const cleanPool = matchPool && matchPool.length >= 12 ? matchPool.slice(0, 12) : [];
+    if (cleanPool.length < 12) return result; // Fallback if not enough players
+
+    // Designate Setters
+    let fixedSetterA = setterA && cleanPool.some(p => p.id === setterA.id) ? setterA : null;
+    let fixedSetterB = setterB && cleanPool.some(p => p.id === setterB.id) ? setterB : null;
+
+    const settersPool = cleanPool.filter(p => p.isOfficialSetter);
+    if (!fixedSetterA) {
+      fixedSetterA = settersPool[0] || cleanPool[0];
+    }
+    if (!fixedSetterB) {
+      fixedSetterB = settersPool.filter(p => p.id !== fixedSetterA?.id)[0] || cleanPool.filter(p => p.id !== fixedSetterA?.id)[0];
+    }
+
+    const assignedSetters = new Set([fixedSetterA?.id, fixedSetterB?.id].filter(Boolean));
+    const cleanNonSetters = cleanPool.filter(p => !assignedSetters.has(p.id));
+
+    // Sort cleanNonSetters by gender, then by ELO to balance
+    const getElo = (p: Player | null) => calculateEffectiveElo(p);
+    const targetA = fixedSetterA ? 5 : 6;
+    const targetB = fixedSetterB ? 5 : 6;
+
+    const fixedPlayersA: Player[] = [];
+    const fixedPlayersB: Player[] = [];
+
+    // Prioridade absoluta: identificar e separar as 2 jogadoras / atletas mais fracas (pela soma técnica)
+    const techSorted = [...cleanPool].sort((a, b) => calculatePracticalSkillsSum(a) - calculatePracticalSkillsSum(b));
+    const cleanSetterIds = new Set([fixedSetterA?.id, fixedSetterB?.id].filter(Boolean));
+    const cleanBottomTwoArray = techSorted.slice(0, 2);
+    const cleanBottomTwoSetters = cleanBottomTwoArray.filter(p => cleanSetterIds.has(p.id));
+    const cleanBottomTwoNonSetters = cleanBottomTwoArray.filter(p => !cleanSetterIds.has(p.id));
+
+  if (cleanBottomTwoSetters.length === 1) {
+      const otherB2 = cleanBottomTwoNonSetters[0];
+      // If setterA is the B2, we need to assign otherB2 to B, but only if it doesn't break gender balance.
+      // Or rather, we assign otherB2 to the opposite team of B2Setter, but check if it helps or hurts gender balance.
+      // For now, let's keep the mandatory separation, but we can improve which team gets which if there were options.
+      // Mandatory: B2 Setter and B2 Non-setter must be in different teams.
+      if (fixedSetterA?.id === cleanBottomTwoSetters[0].id) {
+        if (fixedPlayersB.length < targetB) fixedPlayersB.push(otherB2);
+      } else {
+        if (fixedPlayersA.length < targetA) fixedPlayersA.push(otherB2);
+      }
+    } else if (cleanBottomTwoSetters.length === 0 && cleanBottomTwoNonSetters.length === 2) {
+      // Both are non-setters, must separate.
+      const b2_1 = cleanBottomTwoNonSetters[0];
+      const b2_2 = cleanBottomTwoNonSetters[1];
+      
+      fixedPlayersA.push(b2_1);
+      fixedPlayersB.push(b2_2);
+    }
+
+    const preAssignedIds = new Set([...fixedPlayersA, ...fixedPlayersB].map(p => p.id));
+    const menPool = cleanNonSetters.filter(p => p.gender === Gender.MALE && !preAssignedIds.has(p.id)).sort((a, b) => getElo(b) - getElo(a));
+    const womenPool = cleanNonSetters.filter(p => p.gender === Gender.FEMALE && !preAssignedIds.has(p.id)).sort((a, b) => getElo(b) - getElo(a));
+
+    const getGenderCountA = (gender: Gender) => fixedPlayersA.filter(p => p.gender === gender).length;
+    const getGenderCountB = (gender: Gender) => fixedPlayersB.filter(p => p.gender === gender).length;
+
+    // Alternate distribution of men while checking overall balance
+    menPool.forEach((m, idx) => {
+      const canAddToA = fixedPlayersA.length < targetA;
+      const canAddToB = fixedPlayersB.length < targetB;
+      const mA = getGenderCountA(Gender.MALE);
+      const mB = getGenderCountB(Gender.MALE);
+
+      if (mA < mB && canAddToA) {
+        fixedPlayersA.push(m);
+      } else if (mB < mA && canAddToB) {
+        fixedPlayersB.push(m);
+      } else {
+        if (idx % 2 === 0) {
+          if (canAddToA) fixedPlayersA.push(m);
+          else if (canAddToB) fixedPlayersB.push(m);
+        } else {
+          if (canAddToB) fixedPlayersB.push(m);
+          else if (canAddToA) fixedPlayersA.push(m);
+        }
+      }
+    });
+
+    // Alternate distribution of women while checking overall balance
+    womenPool.forEach((w, idx) => {
+      const canAddToA = fixedPlayersA.length < targetA;
+      const canAddToB = fixedPlayersB.length < targetB;
+      const wA = getGenderCountA(Gender.FEMALE);
+      const wB = getGenderCountB(Gender.FEMALE);
+
+      if (wA < wB && canAddToA) {
+        fixedPlayersA.push(w);
+      } else if (wB < wA && canAddToB) {
+        fixedPlayersB.push(w);
+      } else {
+        if (idx % 2 === 0) {
+          if (canAddToA) fixedPlayersA.push(w);
+          else if (canAddToB) fixedPlayersB.push(w);
+        } else {
+          if (canAddToB) fixedPlayersB.push(w);
+          else if (canAddToA) fixedPlayersA.push(w);
+        }
+      }
+    });
+
+    // Safe fallbacks to guarantee exact layout counts
+    const alreadyAssigned = new Set([...fixedPlayersA.map(p => p.id), ...fixedPlayersB.map(p => p.id)]);
+    const remainder = cleanNonSetters.filter(p => !alreadyAssigned.has(p.id));
+    remainder.forEach(p => {
+      if (fixedPlayersA.length < targetA) fixedPlayersA.push(p);
+      else if (fixedPlayersB.length < targetB) fixedPlayersB.push(p);
+    });
+
+    // Truncate/pad to exact target lengths just in case of any weird bounds
+    while (fixedPlayersA.length > targetA) fixedPlayersA.pop();
+    while (fixedPlayersB.length > targetB) fixedPlayersB.pop();
+
+    const realElo = (setter: Player | null, players: Player[]) => {
+      return players.reduce((sum, p) => sum + (p.elo || 1200), 0) + (setter?.elo || 0);
+    };
+
+    const totalEff = (setter: Player | null, players: Player[]) => {
+      return Math.round(players.reduce((sum, p) => sum + calculateEffectiveElo(p), 0) + calculateEffectiveElo(setter));
+    };
+
+    return {
+      ...result,
+      teamA: {
+        setter: fixedSetterA,
+        players: fixedPlayersA,
+        totalElo: realElo(fixedSetterA, fixedPlayersA),
+        totalEfficiency: totalEff(fixedSetterA, fixedPlayersA)
+      },
+      teamB: {
+        setter: fixedSetterB,
+        players: fixedPlayersB,
+        totalElo: realElo(fixedSetterB, fixedPlayersB),
+        totalEfficiency: totalEff(fixedSetterB, fixedPlayersB)
+      }
+    };
+  }
+
+  return result;
+};
+
 // Function to apply forced swaps to increase variety
 export const applyForcedSwaps = (result: GenerationResult, bottomTwoIds?: Set<string>): GenerationResult => {
   const teamA = result.teamA;
@@ -317,13 +506,20 @@ export const applyForcedSwaps = (result: GenerationResult, bottomTwoIds?: Set<st
 
       const pMov = sPlayers.find(p => bottomTwoIds.has(p.id));
       if (pMov) {
-        const pTar = tPlayers.find(p => p.gender === pMov.gender && !bottomTwoIds.has(p.id)) || 
-                     tPlayers.find(p => !bottomTwoIds.has(p.id));
+        const pTar = tPlayers.find(p => p.gender === pMov.gender && !bottomTwoIds.has(p.id));
         if (pTar) {
           const idxS = sPlayers.indexOf(pMov);
           const idxT = tPlayers.indexOf(pTar);
           sPlayers[idxS] = pTar;
           tPlayers[idxT] = pMov;
+        } else {
+          const pTarFallback = tPlayers.find(p => !bottomTwoIds.has(p.id));
+          if (pTarFallback) {
+             const idxS = sPlayers.indexOf(pMov);
+             const idxT = tPlayers.indexOf(pTarFallback);
+             sPlayers[idxS] = pTarFallback;
+             tPlayers[idxT] = pMov;
+          }
         }
       } else if (setterS && bottomTwoIds.has(setterS.id)) {
         // If setter is the one to move, it's more complex, but we can just swap another player
@@ -332,13 +528,20 @@ export const applyForcedSwaps = (result: GenerationResult, bottomTwoIds?: Set<st
         // moving the non-setter B2 works.
         const otherB2 = sPlayers.find(p => bottomTwoIds.has(p.id));
         if (otherB2) {
-           const pTar = tPlayers.find(p => p.gender === otherB2.gender && !bottomTwoIds.has(p.id)) || 
-                        tPlayers.find(p => !bottomTwoIds.has(p.id));
+           const pTar = tPlayers.find(p => p.gender === otherB2.gender && !bottomTwoIds.has(p.id));
            if (pTar) {
              const idxS = sPlayers.indexOf(otherB2);
              const idxT = tPlayers.indexOf(pTar);
              sPlayers[idxS] = pTar;
              tPlayers[idxT] = otherB2;
+           } else {
+             const pTarFallback = tPlayers.find(p => !bottomTwoIds.has(p.id));
+             if (pTarFallback) {
+               const idxS = sPlayers.indexOf(otherB2);
+               const idxT = tPlayers.indexOf(pTarFallback);
+               sPlayers[idxS] = pTarFallback;
+               tPlayers[idxT] = otherB2;
+             }
            }
         }
       }
@@ -373,25 +576,56 @@ export function getPriorityQueue(attendanceList: Player[], count: number = 12, m
     return 0;
   };
 
-  // 1. Separate setters and non-setters, both sorted by priority
-  const allSetters = attendanceList.filter(p => p.isOfficialSetter).sort(sortByPriority);
-  const allNonSetters = attendanceList.filter(p => !p.isOfficialSetter).sort(sortByPriority);
+  const allPlayersSorted = [...attendanceList].sort(sortByPriority);
 
-  // 2. Select exactly up to 2 setters (one for each team)
-  const selectedSetters = allSetters.slice(0, maxSetters);
-  
-  // 3. Fill the rest of the slots with non-setters
-  const neededNonSetters = count - selectedSetters.length;
-  const selectedNonSetters = allNonSetters.slice(0, neededNonSetters);
+  // 1. Selecionamos inicialmente os 12 primeiros
+  let topPlayers = allPlayersSorted.slice(0, count);
+  let remainingPlayers = allPlayersSorted.slice(count);
 
-  // 4. Combine to form the match pool and sort by priority (respects arrival order for tie-breaks)
-  const topPlayers = [...selectedSetters, ...selectedNonSetters].sort(sortByPriority);
+  // 2. Ajustamos o número de levantadores para exatamente maxSetters
+  const currentSetters = topPlayers.filter(p => p.isOfficialSetter);
   
-  // 5. Remaining players are those not selected, sorted by priority for the waitlist
-  const selectedIds = new Set(topPlayers.map(p => p.id));
-  const remainingPlayers = attendanceList
-    .filter(p => !selectedIds.has(p.id))
-    .sort(sortByPriority);
+  // Se houver mais levantadores do que permitido, removemos o excedente
+  if (currentSetters.length > maxSetters) {
+      const extraCount = currentSetters.length - maxSetters;
+      for (let i = 0; i < extraCount; i++) {
+          const setterIdx = topPlayers.slice().reverse().findIndex(p => p.isOfficialSetter);
+          const actualIdx = topPlayers.length - 1 - setterIdx;
+          const extraSetter = topPlayers.splice(actualIdx, 1)[0];
+          remainingPlayers.push(extraSetter);
+          
+          const nonSetterIdx = remainingPlayers.findIndex(p => !p.isOfficialSetter);
+          if (nonSetterIdx !== -1) {
+              const replacement = remainingPlayers.splice(nonSetterIdx, 1)[0];
+              topPlayers.push(replacement);
+          }
+      }
+  } 
+  // Se houver menos levantadores do que permitido, adicionamos
+  else if (currentSetters.length < maxSetters) {
+    const needed = maxSetters - currentSetters.length;
+    
+    for (let i = 0; i < needed; i++) {
+        // Busca um levantador no pool de espera
+        const setterIndex = remainingPlayers.findIndex(p => p.isOfficialSetter);
+        if (setterIndex !== -1) {
+            const setter = remainingPlayers.splice(setterIndex, 1)[0];
+            
+            // Remove um não-levantador do topPlayers
+            const nonSetterIndex = topPlayers.slice().reverse().findIndex(p => !p.isOfficialSetter);
+            if (nonSetterIndex !== -1) {
+                const actualIndex = topPlayers.length - 1 - nonSetterIndex;
+                const replaced = topPlayers.splice(actualIndex, 1)[0];
+                topPlayers.push(setter);
+                remainingPlayers.push(replaced);
+            }
+        }
+    }
+  }
+
+  // 3. Re-ordena ambos os pools para manter a prioridade calculada
+  topPlayers = topPlayers.sort(sortByPriority);
+  remainingPlayers = remainingPlayers.sort(sortByPriority);
 
   return {
     topPlayers,
@@ -589,51 +823,51 @@ export function generateTeams(attendanceList: Player[], previousFormations?: {se
   const { topPlayers: matchPool, remainingPlayers } = getPriorityQueue(attendanceList, 12, 2);
 
   // Shuffle matchPool to handle equal ELOs randomly and vary initial distribution
-  const shuffledPool = [...matchPool].sort(() => Math.random() - 0.5);
+  // const shuffledPool = [...matchPool].sort(() => Math.random() - 0.5);
+  const shuffledPool = [...matchPool];
 
   const poolSetters = shuffledPool.filter(p => p.isOfficialSetter);
   const poolNonSettersStrict = shuffledPool.filter(p => !p.isOfficialSetter).sort((a, b) => getElo(b) - getElo(a));
-  
-  // Identificamos as jogadoras mais fracas pela SOMA TÉCNICA (Analise prática: Saque, Ataque, etc)
-  // e não por ELO ou Eficiência. Protegemos elas da aleatoriedade inicial para garantir que
-  // o ABAB as coloque em times opostos.
-  const techSorted = [...shuffledPool].sort((a, b) => calculatePracticalSkillsSum(a) - calculatePracticalSkillsSum(b));
-  const bottomTwoIds = new Set(techSorted.slice(0, 2).map(p => p.id));
-  const bottomTechIds = new Set(techSorted.slice(0, 4).map(p => p.id));
-
-  const poolNonSetters = poolNonSettersStrict.map((p) => {
-    // Se for uma das tecnicamente mais fracas (pela soma saque/ataque/etc), protege do ruído aleatório
-    if (bottomTechIds.has(p.id)) return { p, sortElo: getElo(p) };
-    // Para os outros (núcleo técnico), aplica o ruído de ±3% para permitir variações de formação
-    return { p, sortElo: getRandomizedElo(p) };
-  })
-  .sort((a, b) => b.sortElo - a.sortElo)
-  .map(item => item.p);
 
   let setterA: Player | null = null;
   let setterB: Player | null = null;
   
+  // 1. Determina os levantadores (setterA e setterB) antes de tudo
   if (poolSetters.length >= 2) {
-    // Randomly assign setters to A or B
+    // Sorteia aleatoriamente os levantadores para A e B
     const sIndices = [0, 1].sort(() => Math.random() - 0.5);
     setterA = poolSetters[sIndices[0]];
     setterB = poolSetters[sIndices[1]];
-    
-    if (poolSetters.length > 2) {
-      poolNonSetters.push(...poolSetters.slice(2));
-      poolNonSetters.sort((a, b) => getElo(b) - getElo(a));
-    }
   } else if (poolSetters.length === 1) {
     setterA = poolSetters[0];
-    if (poolNonSetters.length > 0) {
-      setterB = poolNonSetters.shift()!;
+    if (poolNonSettersStrict.length > 0) {
+      setterB = poolNonSettersStrict[0];
     }
   } else {
-    if (poolNonSetters.length >= 2) {
-      setterA = poolNonSetters.shift()!;
-      setterB = poolNonSetters.shift()!;
+    if (poolNonSettersStrict.length >= 2) {
+      setterA = poolNonSettersStrict[0];
+      setterB = poolNonSettersStrict[1];
     }
   }
+
+  const setterIds = new Set([setterA?.id, setterB?.id].filter(Boolean));
+  // Os outros 10 jogadores que não são levantadores designados da partida
+  const matchNonSetters = shuffledPool.filter(p => !setterIds.has(p.id));
+  
+  // Identificamos as jogadoras mais fracas pela SOMA TÉCNICA (Analise prática: Saque, Ataque, etc)
+  // e não por ELO ou Eficiência, utilizando estritamente os 10 não-levantadores.
+  const techSorted = [...matchNonSetters].sort((a, b) => calculatePracticalSkillsSum(a) - calculatePracticalSkillsSum(b));
+  const bottomTwoIds = new Set(techSorted.slice(0, 2).map(p => p.id));
+  const topTwoIds = new Set(techSorted.slice(-2).map(p => p.id));
+  const bottomTechIds = new Set([...techSorted.slice(0, 4).map(p => p.id), ...techSorted.slice(-2).map(p => p.id)]);
+
+  const poolNonSetters = matchNonSetters.map((p) => {
+    // Se for uma das tecnicamente mais fracas/fortes (pela soma saque/ataque/etc), protege do ruído aleatório
+    if (bottomTechIds.has(p.id)) return { p, sortElo: getElo(p) };
+    return { p, sortElo: getRandomizedElo(p) };
+  })
+  .sort((a, b) => b.sortElo - a.sortElo)
+  .map(item => item.p);
 
   let playersA: Player[] = [];
   let playersB: Player[] = [];
@@ -641,29 +875,16 @@ export function generateTeams(attendanceList: Player[], previousFormations?: {se
   const requiredA = setterA ? 5 : 6;
   const requiredB = setterB ? 5 : 6;
 
-  // Rule: Mandatory separation of the 2 players with lowest practical skills (Bottom 2)
-  // We identify them from the matchPool and ensure they start on different teams.
-  const setterIds = new Set([setterA?.id, setterB?.id].filter(Boolean));
+  // Rule: Mandatory separation of the 2 players with lowest practical skills (Bottom 2) among non-setters
   const bottomTwoArray = techSorted.slice(0, 2);
-  const bottomTwoSetters = bottomTwoArray.filter(p => setterIds.has(p.id));
-  const bottomTwoNonSetters = bottomTwoArray.filter(p => !setterIds.has(p.id));
-
-  // Pre-assignment logic to ensure separation
-  if (bottomTwoSetters.length === 1) {
-    // One B2 is a setter, assign the other B2 to the opposite team's player list
-    const otherB2 = bottomTwoNonSetters[0];
-    if (setterA?.id === bottomTwoSetters[0].id) {
-       playersB.push(otherB2);
-    } else {
-       playersA.push(otherB2);
-    }
-  } else if (bottomTwoSetters.length === 0 && bottomTwoNonSetters.length === 2) {
-    // Both are non-setters, assign one to A and one to B randomly
-    const shuffledB2 = [...bottomTwoNonSetters].sort(() => Math.random() - 0.5);
-    playersA.push(shuffledB2[0]);
-    playersB.push(shuffledB2[1]);
+  if (bottomTwoArray.length === 2) {
+    const b2_1 = bottomTwoArray[0];
+    const b2_2 = bottomTwoArray[1];
+    
+    // Separate the two bottom players
+    playersA.push(b2_1);
+    playersB.push(b2_2);
   }
-  // (If both are setters, they are already separated into A and B)
 
   const preAssignedIds = new Set([...playersA, ...playersB].map(p => p.id));
   const men = poolNonSetters.filter(p => p.gender === Gender.MALE && !preAssignedIds.has(p.id));
@@ -681,34 +902,55 @@ export function generateTeams(attendanceList: Player[], previousFormations?: {se
 
   let globalIdx = 0;
 
-  // Distribute men first using Snake pattern
+  // Calculate current gender counts to help balance initial distribution
+  const getGenderCount = (gender: Gender, setter: Player | null, players: Player[]) => {
+    return players.filter(p => p.gender === gender).length;
+  };
+
+  // Distribute men first, explicitly balancing counts
   men.forEach((man) => {
     const canAddToA = playersA.length < requiredA;
     const canAddToB = playersB.length < requiredB;
-    const targetTeam = getTargetTeam(globalIdx, firstTeam === 'A');
+    const countMenA = getGenderCount(Gender.MALE, setterA, playersA);
+    const countMenB = getGenderCount(Gender.MALE, setterB, playersB);
 
-    if (targetTeam === 'A') {
-      if (canAddToA) playersA.push(man);
-      else if (canAddToB) playersB.push(man);
+    if (countMenA < countMenB && canAddToA) {
+      playersA.push(man);
+    } else if (countMenB < countMenA && canAddToB) {
+      playersB.push(man);
     } else {
-      if (canAddToB) playersB.push(man);
-      else if (canAddToA) playersA.push(man);
+      const targetTeam = getTargetTeam(globalIdx, firstTeam === 'A');
+      if (targetTeam === 'A') {
+        if (canAddToA) playersA.push(man);
+        else if (canAddToB) playersB.push(man);
+      } else {
+        if (canAddToB) playersB.push(man);
+        else if (canAddToA) playersA.push(man);
+      }
     }
     globalIdx++;
   });
 
-  // Distribute women next using Snake pattern
+  // Distribute women next, explicitly balancing counts
   women.forEach((woman) => {
     const canAddToA = playersA.length < requiredA;
     const canAddToB = playersB.length < requiredB;
-    const targetTeam = getTargetTeam(globalIdx, firstTeam === 'A');
+    const countWomenA = getGenderCount(Gender.FEMALE, setterA, playersA);
+    const countWomenB = getGenderCount(Gender.FEMALE, setterB, playersB);
 
-    if (targetTeam === 'A') {
-      if (canAddToA) playersA.push(woman);
-      else if (canAddToB) playersB.push(woman);
+    if (countWomenA < countWomenB && canAddToA) {
+      playersA.push(woman);
+    } else if (countWomenB < countWomenA && canAddToB) {
+      playersB.push(woman);
     } else {
-      if (canAddToB) playersB.push(woman);
-      else if (canAddToA) playersA.push(woman);
+      const targetTeam = getTargetTeam(globalIdx, firstTeam === 'A');
+      if (targetTeam === 'A') {
+        if (canAddToA) playersA.push(woman);
+        else if (canAddToB) playersB.push(woman);
+      } else {
+        if (canAddToB) playersB.push(woman);
+        else if (canAddToA) playersA.push(woman);
+      }
     }
     globalIdx++;
   });
@@ -751,9 +993,10 @@ export function generateTeams(attendanceList: Player[], previousFormations?: {se
             
             const sortedElos = allPlayers.map(p => getElo(p)).sort((a,b) => b-a);
             
-            // Compare top 4 and bottom 4 as requested
-            const top4Elo = sortedElos.slice(0, 4).reduce((a,b)=>a+b, 0);
-            const bot4Elo = sortedElos.slice(-4).reduce((a,b)=>a+b, 0);
+            // Compare top 4 and bottom 4 as requested (excluding the setter from the top 4 / bottom 4 calculations)
+            const sortedNonSetterElos = players.map(p => getElo(p)).sort((a,b) => b-a);
+            const top4Elo = sortedNonSetterElos.slice(0, 4).reduce((a,b)=>a+b, 0);
+            const bot4Elo = sortedNonSetterElos.slice(-4).reduce((a,b)=>a+b, 0);
 
             return { totalElo, top4Elo, bot4Elo, totalSkills, sortedElos };
           };
@@ -782,15 +1025,16 @@ export function generateTeams(attendanceList: Player[], previousFormations?: {se
           const recurrencePenalty = calculateRecurrencePenalty(setterA, tempPlayersA, previousFormations || []) + 
                                    calculateRecurrencePenalty(setterB, tempPlayersB, previousFormations || []);
 
-          // Penalidade para as 2 jogadoras mais fracas ficarem juntas
+          // Penalidade para as 2 jogadoras mais fracas e as 2 mais fortes ficarem juntas (Regra Extremados 4)
           const tempIdsA = new Set([setterA?.id, ...tempPlayersA.map(p => p.id)].filter(Boolean));
           const bottomTwoCountInTempA = Array.from(bottomTwoIds).filter(id => tempIdsA.has(id)).length;
+          const topTwoCountInTempA = Array.from(topTwoIds).filter(id => tempIdsA.has(id)).length;
           // Se Count for 2 ou 0, significa que estão juntas (ou no A ou no B)
           const bottomTwoTogetherPenalty = (bottomTwoCountInTempA === 2 || bottomTwoCountInTempA === 0) ? 10000 : 0;
+          const topTwoTogetherPenalty = (topTwoCountInTempA === 2 || topTwoCountInTempA === 0) ? 10000 : 0;
 
-          // Combined score with symmetry weight, RECURRENCE PENALTY and BOTTOM 2 SPLIT
-          // Aumentamos o peso do diffBot4 para garantir que os mais fracos fiquem separados
-          const newScore = diffElo + (diffTop4 * 0.8) + (diffBot4 * 1.5) + (diffSkills * 20) + (symmetryDiff * 0.5) + recurrencePenalty + bottomTwoTogetherPenalty;
+          // Combined score with symmetry weight, RECURRENCE PENALTY and EXTREMES 4 SPLIT
+          const newScore = diffElo + (diffTop4 * 0.8) + (diffBot4 * 1.5) + (diffSkills * 20) + (symmetryDiff * 0.5) + recurrencePenalty + bottomTwoTogetherPenalty + topTwoTogetherPenalty;
           
           const currentMetricsA = getTeamMetrics(setterA, playersA);
           const currentMetricsB = getTeamMetrics(setterB, playersB);
@@ -806,13 +1050,15 @@ export function generateTeams(attendanceList: Player[], previousFormations?: {se
 
           const currentIdsA = new Set([setterA?.id, ...playersA.map(p => p.id)].filter(Boolean));
           const bottomTwoCountInCurrA = Array.from(bottomTwoIds).filter(id => currentIdsA.has(id)).length;
+          const topTwoCountInCurrA = Array.from(topTwoIds).filter(id => currentIdsA.has(id)).length;
           const currentBottomTwoPenalty = (bottomTwoCountInCurrA === 2 || bottomTwoCountInCurrA === 0) ? 10000 : 0;
+          const currentTopTwoPenalty = (topTwoCountInCurrA === 2 || topTwoCountInCurrA === 0) ? 10000 : 0;
 
           const currentScore = Math.abs(currentMetricsA.totalElo - currentMetricsB.totalElo) + 
                                Math.abs(currentMetricsA.top4Elo - currentMetricsB.top4Elo) * 0.8 +
                                Math.abs(currentMetricsA.bot4Elo - currentMetricsB.bot4Elo) * 1.5 +
                                Math.abs(currentMetricsA.totalSkills - currentMetricsB.totalSkills) * 20 +
-                               (currentSymmetry * 0.5) + currentRecurrence + currentBottomTwoPenalty;
+                               (currentSymmetry * 0.5) + currentRecurrence + currentBottomTwoPenalty + currentTopTwoPenalty;
 
           // Tie-breaker criterion using the sum of practical skills (Ataque, Defesa, Levantamento)
           const currentPracticalDiff = Math.abs(
@@ -847,8 +1093,12 @@ export function generateTeams(attendanceList: Player[], previousFormations?: {se
         const totalSkills = allPlayers.reduce((sum, p) => 
            sum + (p.skills?.setting || 1) + (p.skills?.attacking || 1) + (p.skills?.defense || 1) + (p.skills?.serving || 1), 0);
         const sortedElos = allPlayers.map(p => calculateEffectiveElo(p)).sort((a,b) => b-a);
-        const top4Elo = sortedElos.slice(0, 4).reduce((a,b)=>a+b, 0);
-        const bot4Elo = sortedElos.slice(-4).reduce((a,b)=>a+b, 0);
+        
+        // Compare top 4 and bottom 4 as requested (excluding the setter)
+        const sortedNonSetterElos = pls.map(p => calculateEffectiveElo(p)).sort((a,b) => b-a);
+        const top4Elo = sortedNonSetterElos.slice(0, 4).reduce((a,b)=>a+b, 0);
+        const bot4Elo = sortedNonSetterElos.slice(-4).reduce((a,b)=>a+b, 0);
+        
         return { totalElo, top4Elo, bot4Elo, totalSkills, sortedElos };
       };
 
@@ -867,7 +1117,9 @@ export function generateTeams(attendanceList: Player[], previousFormations?: {se
         if (sA) idsA.add(sA.id);
         const b2Count = Array.from(bottomTwoIds).filter(id => idsA.has(id)).length;
         const b2Penalty = (b2Count === 2 || b2Count === 0) ? 5000 : 0;
-        return diffElo + (diffTop4 * 0.8) + (diffBot4 * 1.5) + (diffSkills * 20) + (symmetry * 0.5) + rec + b2Penalty;
+        const t2Count = Array.from(topTwoIds).filter(id => idsA.has(id)).length;
+        const t2Penalty = (t2Count === 2 || t2Count === 0) ? 5000 : 0;
+        return diffElo + (diffTop4 * 0.8) + (diffBot4 * 1.5) + (diffSkills * 20) + (symmetry * 0.5) + rec + b2Penalty + t2Penalty;
       };
 
       const cScore = getScoreForSetters(setterA, setterB, playersA, playersB);
@@ -892,6 +1144,11 @@ export function generateTeams(attendanceList: Player[], previousFormations?: {se
     return Array.from(bottomTwoIds).filter(id => ids.has(id)).length;
   };
 
+  const checkTopTwo = (s: Player | null, pls: Player[]) => {
+    const ids = new Set([s?.id, ...pls.map(p => p.id)].filter(Boolean));
+    return Array.from(topTwoIds).filter(id => ids.has(id)).length;
+  };
+
   let b2CountInA = checkBottomTwo(setterA, playersA);
   if (b2CountInA === 2 || b2CountInA === 0) {
     const isBothInA = b2CountInA === 2;
@@ -901,9 +1158,8 @@ export function generateTeams(attendanceList: Player[], previousFormations?: {se
     // Tenta mover qualquer um dos Bottom 2 que esteja na lista de jogadores
     const pMov = sPlayers.find(p => bottomTwoIds.has(p.id));
     if (pMov) {
-      // Prioridade: manter gênero. Secundário: qualquer troca possível
-      const pTar = tPlayers.find(p => p.gender === pMov.gender && !bottomTwoIds.has(p.id)) || 
-                   tPlayers.find(p => !bottomTwoIds.has(p.id));
+      // Prioridade MÁXIMA: manter gênero para NÃO quebrar a distribuição (ex: 3x1 homens)
+      const pTar = tPlayers.find(p => p.gender === pMov.gender && !bottomTwoIds.has(p.id) && !topTwoIds.has(p.id));
       
       if (pTar) {
         const idxS = sPlayers.indexOf(pMov);
@@ -911,7 +1167,84 @@ export function generateTeams(attendanceList: Player[], previousFormations?: {se
         sPlayers[idxS] = pTar;
         tPlayers[idxT] = pMov;
         swaps.push({ playerA: `AUTO-FIX: ${pMov.name}`, playerB: pTar.name });
+      } else {
+         // Se não for possível trocar por mesmo gênero (raro), infelizmente quebra-se o gênero
+         // mas pelo menos a regra bottom 2 será observada
+         const pTarFallback = tPlayers.find(p => !bottomTwoIds.has(p.id) && !topTwoIds.has(p.id));
+         if (pTarFallback) {
+           const idxS = sPlayers.indexOf(pMov);
+           const idxT = tPlayers.indexOf(pTarFallback);
+           sPlayers[idxS] = pTarFallback;
+           tPlayers[idxT] = pMov;
+           swaps.push({ playerA: `AUTO-FIX (MIX): ${pMov.name}`, playerB: pTarFallback.name });
+         }
       }
+    }
+  }
+
+  // Auto-correção para as 2 jogadoras mais fortes (Top 2)
+  let t2CountInA = checkTopTwo(setterA, playersA);
+  if (t2CountInA === 2 || t2CountInA === 0) {
+    const isBothInA = t2CountInA === 2;
+    const sPlayers = isBothInA ? playersA : playersB;
+    const tPlayers = isBothInA ? playersB : playersA;
+
+    const pMov = sPlayers.find(p => topTwoIds.has(p.id));
+    if (pMov) {
+      const pTar = tPlayers.find(p => p.gender === pMov.gender && !topTwoIds.has(p.id) && !bottomTwoIds.has(p.id));
+      
+      if (pTar) {
+        const idxS = sPlayers.indexOf(pMov);
+        const idxT = tPlayers.indexOf(pTar);
+        sPlayers[idxS] = pTar;
+        tPlayers[idxT] = pMov;
+        swaps.push({ playerA: `AUTO-FIX TOP-2: ${pMov.name}`, playerB: pTar.name });
+      } else {
+         const pTarFallback = tPlayers.find(p => !topTwoIds.has(p.id) && !bottomTwoIds.has(p.id));
+         if (pTarFallback) {
+           const idxS = sPlayers.indexOf(pMov);
+           const idxT = tPlayers.indexOf(pTarFallback);
+           sPlayers[idxS] = pTarFallback;
+           tPlayers[idxT] = pMov;
+           swaps.push({ playerA: `AUTO-FIX TOP-2 (MIX): ${pMov.name}`, playerB: pTarFallback.name });
+         }
+      }
+    }
+  }
+
+  // --- AGENTE DE GÊNERO (AUTO-FIX) ---
+  // Verifica se há discrepância na quantidade de homens/mulheres entre A e B (desconsiderando os levantadores)
+  let totalMenA = playersA.filter(p => p.gender === Gender.MALE).length;
+  let totalMenB = playersB.filter(p => p.gender === Gender.MALE).length;
+
+  // O ideal é que Math.abs(totalMenA - totalMenB) <= 1
+  while (Math.abs(totalMenA - totalMenB) > 1) {
+    const isAMoreMen = totalMenA > totalMenB;
+    const sPlayersWithMoreMen = isAMoreMen ? playersA : playersB;
+    const sPlayersWithLessMen = isAMoreMen ? playersB : playersA;
+
+    // Acha um homem do time com mais homens (que não seja um bottom 2 / top 2 protegido se possível)
+    let manToMove = sPlayersWithMoreMen.find(p => p.gender === Gender.MALE && !bottomTwoIds.has(p.id) && !topTwoIds.has(p.id));
+    if (!manToMove) manToMove = sPlayersWithMoreMen.find(p => p.gender === Gender.MALE && !bottomTwoIds.has(p.id));
+    if (!manToMove) manToMove = sPlayersWithMoreMen.find(p => p.gender === Gender.MALE);
+
+    // Acha uma mulher do time com menos homens (que não seja bottom 2 / top 2 se possível)
+    let womanToMove = sPlayersWithLessMen.find(p => p.gender === Gender.FEMALE && !bottomTwoIds.has(p.id) && !topTwoIds.has(p.id));
+    if (!womanToMove) womanToMove = sPlayersWithLessMen.find(p => p.gender === Gender.FEMALE && !bottomTwoIds.has(p.id));
+    if (!womanToMove) womanToMove = sPlayersWithLessMen.find(p => p.gender === Gender.FEMALE);
+
+    if (manToMove && womanToMove) {
+      const idxS = sPlayersWithMoreMen.indexOf(manToMove);
+      const idxT = sPlayersWithLessMen.indexOf(womanToMove);
+      sPlayersWithMoreMen[idxS] = womanToMove;
+      sPlayersWithLessMen[idxT] = manToMove;
+      swaps.push({ playerA: `GENDER-FIX: ${manToMove.name}`, playerB: womanToMove.name });
+
+      // Atualiza os contadores
+      totalMenA = playersA.filter(p => p.gender === Gender.MALE).length;
+      totalMenB = playersB.filter(p => p.gender === Gender.MALE).length;
+    } else {
+      break; // Proteção contra loop infinito se não houver pares para trocar
     }
   }
 
@@ -939,14 +1272,17 @@ export function generateTeams(attendanceList: Player[], previousFormations?: {se
     },
     swaps,
     combinationsCount,
-    remainingPlayers
+    remainingPlayers,
+    bottomTwoIds: Array.from(bottomTwoIds),
+    topTwoIds: Array.from(topTwoIds)
   };
 
   // Check similarity and apply forced swaps if needed
   if (previousFormations && checkSimilarity(result, previousFormations)) {
-    return applyForcedSwaps(result, bottomTwoIds);
+    const forcedResult = applyForcedSwaps(result, bottomTwoIds);
+    return validateAndForceBalancedSizes(forcedResult, matchPool);
   }
 
-  return result;
+  return validateAndForceBalancedSizes(result, matchPool);
 }
 

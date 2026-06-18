@@ -30,7 +30,7 @@ import { useStore } from '../../store';
 import { cleanObject, generateUUID } from '../../utils/helpers';
 import { calculateTrueSkillUpdate } from '../utils/trueSkill';
 import { Player, Team, Match, Gender, Tournament, TournamentTeam, TournamentMatch, SetScore, SystemMetadata, TournamentStrategy } from '../../types';
-import { generateTeams, generateTournamentTeams } from '../../utils/teamLogic';
+import { generateTeams, generateTournamentTeams, getPriorityQueue } from '../../utils/teamLogic';
 import { playerSchema, matchSchema } from '../lib/schemas';
 
 import { analyzeMatch, verifyRules, detectAnomalies, generateTeamAnnouncementAudio } from '../../services/geminiService';
@@ -263,7 +263,7 @@ export const useAppLogic = () => {
                 if (p) {
                   p.dailyMatches++;
                   p.dailyWins++;
-                  p.dailyEloGain = (p.dailyEloGain || 0) + 25; // Base estimate for Guardian
+                  p.dailyEloGain = (p.dailyEloGain || 0) + 20; // Base estimate for Guardian
                   p.dailyResults = [...(p.dailyResults || []), 'V' as const];
                   p.playedLastMatch = true;
                   p.consecutiveBenched = 0;
@@ -372,7 +372,7 @@ export const useAppLogic = () => {
     );
   };
 
-  const handleFinishMatch = async (winner: 'A' | 'B', manualScoreA?: number, manualScoreB?: number) => {
+  const handleFinishMatch = async (winner: 'A' | 'B', manualScoreA?: number, manualScoreB?: number, stats?: any[]) => {
     if (!generationResult) return;
     
     try {
@@ -435,7 +435,8 @@ export const useAppLogic = () => {
         startTime: systemMetadata.matchStartTime || (timestamp - elapsedTime * 1000),
         endTime: timestamp,
         mode: scoreMode,
-        dailyNumber: finalCount
+        dailyNumber: finalCount,
+        stats: stats || []
       };
       
       // Validate match data
@@ -469,38 +470,67 @@ export const useAppLogic = () => {
         // Acúmulo de pontos pró e contra
         const pFor = isTeamA ? finalScoreA : finalScoreB;
         const pAgainst = isTeamA ? finalScoreB : finalScoreA;
+        const pBalance = pFor - pAgainst;
         
-        const newElo = Math.max(800, p.elo + totalEloChange);
+        const hasFidelityToday = p.lastFidelityDate === date;
+        let finalPlayerElo = p.elo;
+        let updatedHistory = [...(p.eloHistory || [])];
+        
+        const updates: any = {};
+        
+        // Se ainda não recebeu bônus de fidelidade hoje, adiciona +50 de fidelidade e soma 50 ao ELO
+        if (!hasFidelityToday) {
+          updates.fidelityPoints = (p.fidelityPoints || 0) + 50;
+          updates.lastFidelityDate = date;
+          finalPlayerElo += 50;
+          updates.dailyEloGain = (p.dailyEloGain || 0) + 50;
+          
+          const fidelityHistoryEntry = {
+            date: date,
+            elo: finalPlayerElo,
+            matchId: `fidelity-bonus-${date}-${timestamp}`,
+            change: 50,
+            timestamp: timestamp - 1000,
+            result: 'P' as 'P',
+            fidelityBonus: true
+          };
+          updatedHistory.push(fidelityHistoryEntry);
+        }
+        
+        // Aplica o ELO da partida sobre o ELO com bônus de fidelidade
+        const eloAfterMatch = Math.max(800, finalPlayerElo + totalEloChange);
+        
         const playerRef = doc(db, 'players', p.id);
         const attendanceRef = doc(db, 'attendance', date, 'players', p.id);
         
         // ELO History with more metadata for the statement view
         const newHistoryEntry = { 
           date: date, 
-          elo: newElo, 
+          elo: eloAfterMatch, 
           matchId: matchId,
           change: totalEloChange,
           timestamp: timestamp,
           result: (isWinner ? 'V' : 'D') as 'V' | 'D'
         };
-        const updatedHistory = [...(p.eloHistory || []), newHistoryEntry].slice(-200); // Increased buffer to 200
+        updatedHistory.push(newHistoryEntry);
         
-        const updates: any = {
-          elo: newElo,
-          matchesPlayed: (p.matchesPlayed || 0) + 1,
-          pointsFor: (p.pointsFor || 0) + pFor,
-          pointsAgainst: (p.pointsAgainst || 0) + pAgainst,
-          wins: isWinner ? (p.wins || 0) + 1 : (p.wins || 0),
-          losses: !isWinner ? (p.losses || 0) + 1 : (p.losses || 0),
-          dailyMatches: (p.dailyMatches || 0) + 1,
-          dailyWins: isWinner ? (p.dailyWins || 0) + 1 : (p.dailyWins || 0),
-          dailyLosses: !isWinner ? (p.dailyLosses || 0) + 1 : (p.dailyLosses || 0),
-          dailyEloGain: (p.dailyEloGain || 0) + totalEloChange,
-          dailyResults: [...(p.dailyResults || []), (isWinner ? 'V' : 'D') as 'V' | 'D'],
-          playedLastMatch: true,
-          consecutiveBenched: 0,
-          eloHistory: updatedHistory
-        };
+        updates.elo = eloAfterMatch;
+        updates.matchesPlayed = (p.matchesPlayed || 0) + 1;
+        updates.pointsFor = (p.pointsFor || 0) + pFor;
+        updates.pointsAgainst = (p.pointsAgainst || 0) + pAgainst;
+        updates.pointsBalance = (p.pointsBalance || 0) + pBalance;
+        updates.wins = isWinner ? (p.wins || 0) + 1 : (p.wins || 0);
+        updates.losses = !isWinner ? (p.losses || 0) + 1 : (p.losses || 0);
+        updates.dailyMatches = (p.dailyMatches || 0) + 1;
+        updates.dailyWins = isWinner ? (p.dailyWins || 0) + 1 : (p.dailyWins || 0);
+        updates.dailyLosses = !isWinner ? (p.dailyLosses || 0) + 1 : (p.dailyLosses || 0);
+        updates.dailyEloGain = (updates.dailyEloGain || 0) + totalEloChange;
+        updates.dailyResults = [...(p.dailyResults || []), (isWinner ? 'V' : 'D') as 'V' | 'D'];
+        updates.playedLastMatch = true;
+        updates.consecutiveBenched = 0;
+        updates.eloHistory = updatedHistory.slice(-200);
+
+        console.log(`[DEBUG - handleFinishMatch] Player ${p.name} (${p.id}): matchesPlayed before=`, p.matchesPlayed, `new value=`, updates.matchesPlayed, `new dailyMatches=`, updates.dailyMatches);
         
         const trueskillUpdate = tsMap.get(p.id);
         if (trueskillUpdate) {
@@ -559,8 +589,35 @@ export const useAppLogic = () => {
 
       generationResult.remainingPlayers.forEach(p => {
         const newConsecutiveBenched = (p.consecutiveBenched || 0) + 1;
-        batch.set(doc(db, 'players', p.id), cleanObject({ playedLastMatch: false, consecutiveBenched: newConsecutiveBenched }), { merge: true });
-        batch.set(doc(db, 'attendance', date, 'players', p.id), cleanObject({ playedLastMatch: false, consecutiveBenched: newConsecutiveBenched }), { merge: true });
+        
+        const updates: any = {
+          playedLastMatch: false,
+          consecutiveBenched: newConsecutiveBenched
+        };
+        
+        const hasFidelityToday = p.lastFidelityDate === date;
+        if (!hasFidelityToday) {
+          updates.fidelityPoints = (p.fidelityPoints || 0) + 50;
+          updates.lastFidelityDate = date;
+          
+          const newElo = p.elo + 50;
+          updates.elo = newElo;
+          updates.dailyEloGain = (p.dailyEloGain || 0) + 50;
+          
+          const fidelityHistoryEntry = {
+            date: date,
+            elo: newElo,
+            matchId: `fidelity-bonus-${date}-${timestamp}`,
+            change: 50,
+            timestamp: timestamp - 1000,
+            result: 'P' as 'P',
+            fidelityBonus: true
+          };
+          updates.eloHistory = [...(p.eloHistory || []), fidelityHistoryEntry].slice(-200);
+        }
+        
+        batch.set(doc(db, 'players', p.id), cleanObject(updates), { merge: true });
+        batch.set(doc(db, 'attendance', date, 'players', p.id), cleanObject(updates), { merge: true });
       });
       
       // Limpar partida atual do Firestore
@@ -669,6 +726,7 @@ export const useAppLogic = () => {
       setNegativeSynergy(newNegativeSynergy);
       setRivalry(newRivalry);
 
+      setViewMode('generation');
       showNotification(`Partida registrada! Vitória da Equipe ${winner}`, 'success');
     } catch (error) {
       console.error('Erro ao finalizar partida:', error);
@@ -766,6 +824,12 @@ export const useAppLogic = () => {
       const maxOrder = currentAttendance.reduce((max, p) => Math.max(max, p.arrivalOrder || 0), 0);
       const nextOrder = maxOrder + 1;
       
+      // Calculate actual today's stats from matches list rather than trusting potentially stale player object
+      const todayMatches = matches.filter(m => m.date === dateKey && (m.teamA.includes(player.id) || m.teamB.includes(player.id)));
+      const actualDailyMatches = todayMatches.length;
+      const actualDailyWins = todayMatches.filter(m => (m.winner === 'A' && m.teamA.includes(player.id)) || (m.winner === 'B' && m.teamB.includes(player.id))).length;
+      const actualDailyLosses = todayMatches.filter(m => (m.winner === 'B' && m.teamA.includes(player.id)) || (m.winner === 'A' && m.teamB.includes(player.id))).length;
+      
       // Ensure we have the most up-to-date name from the players list
       const fullPlayer = players.find(p => p.id === player.id);
       const nameToSave = fullPlayer?.name || player.name || "Sócio sem nome";
@@ -775,7 +839,13 @@ export const useAppLogic = () => {
         name: nameToSave,
         arrivalOrder: nextOrder,
         isPresent: true,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        dailyMatches: actualDailyMatches,
+        dailyWins: actualDailyWins,
+        dailyLosses: actualDailyLosses,
+        dailyResults: [],
+        playedLastMatch: false,
+        consecutiveBenched: 0
       }));
 
       // Clear old reminders for this player
@@ -1090,6 +1160,7 @@ export const useAppLogic = () => {
               matchesPlayed: Math.max(0, (p.matchesPlayed || 0) - 1),
               pointsFor: Math.max(0, (p.pointsFor || 0) - (isTeamA ? matchToDelete.scoreA : matchToDelete.scoreB)),
               pointsAgainst: Math.max(0, (p.pointsAgainst || 0) - (isTeamA ? matchToDelete.scoreB : matchToDelete.scoreA)),
+              pointsBalance: (p.pointsBalance || 0) - ((isTeamA ? matchToDelete.scoreA : matchToDelete.scoreB) - (isTeamA ? matchToDelete.scoreB : matchToDelete.scoreA)),
               wins: isWinner ? Math.max(0, (p.wins || 0) - 1) : (p.wins || 0),
               losses: !isWinner ? Math.max(0, (p.losses || 0) - 1) : (p.losses || 0),
               dailyMatches: isToday ? Math.max(0, (p.dailyMatches || 0) - 1) : (p.dailyMatches || 0),
@@ -1233,6 +1304,7 @@ export const useAppLogic = () => {
                 matchesPlayed: Math.max(0, (p.matchesPlayed || 0) - 1),
                 pointsFor: Math.max(0, (p.pointsFor || 0) - (isTeamA ? match.scoreA : match.scoreB)),
                 pointsAgainst: Math.max(0, (p.pointsAgainst || 0) - (isTeamA ? match.scoreB : match.scoreA)),
+                pointsBalance: (p.pointsBalance || 0) - ((isTeamA ? match.scoreA : match.scoreB) - (isTeamA ? match.scoreB : match.scoreA)),
                 wins: isWinner ? Math.max(0, (p.wins || 0) - 1) : (p.wins || 0),
                 losses: !isWinner ? Math.max(0, (p.losses || 0) - 1) : (p.losses || 0),
                 dailyMatches: isToday ? Math.max(0, (p.dailyMatches || 0) - 1) : (p.dailyMatches || 0),
@@ -1708,6 +1780,9 @@ export const useAppLogic = () => {
              // Add 9 after DDD (positions 0, 1)
              cleaned = cleaned.substring(0, 2) + '9' + cleaned.substring(2);
           }
+          if (cleaned.length === 11 && !cleaned.startsWith('55')) {
+             cleaned = '55' + cleaned;
+          }
           return cleaned.length >= 10 ? cleaned : undefined;
         })() : undefined
       };
@@ -1902,12 +1977,15 @@ export const useAppLogic = () => {
         matchesPlayed: 0,
         pointsFor: 0,
         pointsAgainst: 0,
+        pointsBalance: 0,
         eloHistory: [],
         dailyEloGain: 0,
         dailyWins: 0,
         dailyLosses: 0,
         dailyMatches: 0,
         dailyResults: [],
+        fidelityPoints: 0,
+        lastFidelityDate: null,
         trueSkill: { mu: 25, sigma: 25 / 3 }
       }));
 
@@ -1940,6 +2018,27 @@ export const useAppLogic = () => {
           const p = playerMap.get(pId);
           if (!p) return;
 
+          // Bônus de fidelidade (Presença na sessão) - Aplicado apenas uma vez por dia
+          if (p.lastFidelityDate !== m.date) {
+            p.fidelityPoints = (p.fidelityPoints || 0) + 50;
+            p.lastFidelityDate = m.date;
+            p.elo = p.elo + 50;
+            
+            p.eloHistory.push({
+              date: m.date,
+              elo: p.elo,
+              matchId: `fidelity-bonus-${m.date}-${m.timestamp}`,
+              change: 50,
+              timestamp: m.timestamp - 1000,
+              result: 'P',
+              fidelityBonus: true
+            });
+
+            if (m.date === getFirestoreDateKey()) {
+              p.dailyEloGain += 50;
+            }
+          }
+
           const isWinner = (isTeamA && winner === 'A') || (!isTeamA && winner === 'B');
           const change = isWinner ? 20 : -20;
           const newElo = Math.max(800, p.elo + change);
@@ -1950,6 +2049,7 @@ export const useAppLogic = () => {
           
           p.pointsFor += isTeamA ? (m.scoreA || 0) : (m.scoreB || 0);
           p.pointsAgainst += isTeamA ? (m.scoreB || 0) : (m.scoreA || 0);
+          p.pointsBalance = (p.pointsBalance || 0) + ((isTeamA ? (m.scoreA || 0) : (m.scoreB || 0)) - (isTeamA ? (m.scoreB || 0) : (m.scoreA || 0)));
 
           p.eloHistory.push({
             date: m.date,
@@ -1959,6 +2059,19 @@ export const useAppLogic = () => {
             timestamp: m.timestamp,
             result: isWinner ? 'V' : 'D'
           });
+
+          // UPDATE DAILY STATS FOR CURRENT DAY
+          if (m.date === getFirestoreDateKey()) {
+            p.dailyEloGain += change;
+            p.dailyMatches++;
+            if (isWinner) {
+              p.dailyWins++;
+              p.dailyResults.push('V');
+            } else {
+              p.dailyLosses++;
+              p.dailyResults.push('D');
+            }
+          }
         };
 
         teamAIds.forEach(id => updateStats(id, true));
@@ -2059,14 +2172,14 @@ export const useAppLogic = () => {
         // Fall back to redirect login only if popups are blocked AND we are in a safe redirect environment (no iframe, not standalone PWA)
         const isPopupBlocked = popupError.code === 'auth/popup-blocked' || popupError.code === 'auth/cancelled-popup-request';
         
-        if (!isInIframe && !isStandalone && (isMobile || isPopupBlocked)) {
+        if (!isStandalone && (isMobile || isPopupBlocked)) {
           console.log('Falling back to redirect login...');
           await signInWithRedirect(auth, googleProvider);
           return; // Redirecting...
         }
         
-        if (isStandalone && isPopupBlocked) {
-          showNotification('O pop-up de login foi bloqueado. Por favor, libere pop-ups nas configurações de seu navegador ou do aparelho.', 'error');
+        if (isPopupBlocked) {
+          showNotification('O pop-up de login foi bloqueado. Por favor, libere pop-ups nas configurações ou toque em "Abrir em Nova Aba".', 'error');
         }
         
         throw popupError;
@@ -2191,16 +2304,16 @@ export const useAppLogic = () => {
     // Filter out DMs
     playersToUse = playersToUse.filter(p => !p.isDM);
 
-    // Enrich players with full data from the master players list to ensure no missing fields
+    // Enrich players with full data from the master players list but keep attendance state as priority
     playersToUse = playersToUse.map(p => {
-      const fullPlayer = players.find(fp => fp.id === p.id);
+      const fullPlayer = players.find(fp => fp.id === p.id) || {} as any;
       return {
-        ...p,
         ...fullPlayer,
-        name: fullPlayer?.name || p.name || "Sócio sem nome",
-        elo: fullPlayer?.elo || p.elo || 1200,
-        gender: fullPlayer?.gender || p.gender || Gender.MALE,
-        arrivalOrder: p.arrivalOrder || fullPlayer?.arrivalOrder || 0
+        ...p,
+        name: p.name || fullPlayer.name || "Sócio sem nome",
+        elo: p.elo ?? fullPlayer.elo ?? 1200,
+        gender: p.gender || fullPlayer.gender || Gender.MALE,
+        arrivalOrder: p.arrivalOrder ?? fullPlayer.arrivalOrder ?? 0
       };
     });
 
@@ -2228,7 +2341,34 @@ export const useAppLogic = () => {
           playersB: m.teamB.slice(1)
         }));
 
-        const generationResult = generateTeams(playersToUse, previousFormations);
+        let generationResult = generateTeams(playersToUse, previousFormations);
+        if (isReshuffle) {
+          // Keep/calculate the remaining players from the full attendance list who are NOT on the court
+          const fullAttendance = attendance.filter(p => (!p.status || p.status === 'active') && !p.isDM);
+          
+          // Enrich players with full data from the master players list but keep attendance state as priority
+          const enrichedFullAttendance = fullAttendance.map(p => {
+            const fullPlayer = players.find(fp => fp.id === p.id) || {} as any;
+            return {
+              ...fullPlayer,
+              ...p,
+              name: p.name || fullPlayer.name || "Sócio sem nome",
+              elo: p.elo ?? fullPlayer.elo ?? 1200,
+              gender: p.gender || fullPlayer.gender || Gender.MALE,
+              arrivalOrder: p.arrivalOrder ?? fullPlayer.arrivalOrder ?? 0
+            };
+          });
+
+          const currentOnCourtIds = new Set(playersToUse.map(p => p.id));
+          const pq = getPriorityQueue(enrichedFullAttendance, 12, 2);
+          const allSorted = [...pq.topPlayers, ...pq.remainingPlayers];
+          const remainingPlayers = allSorted.filter(p => !currentOnCourtIds.has(p.id));
+
+          generationResult = {
+            ...generationResult,
+            remainingPlayers
+          };
+        }
         result = { ...generationResult, timestamp: now };
         
         // Persistir partida no Firestore para outros admins
@@ -2540,7 +2680,7 @@ export const useAppLogic = () => {
           if (p) {
             p.dailyMatches++;
             p.dailyWins++;
-            p.dailyEloGain = (p.dailyEloGain || 0) + 25;
+            p.dailyEloGain = (p.dailyEloGain || 0) + 20;
             p.dailyResults = [...(p.dailyResults || []), 'V' as const];
             p.playedLastMatch = true;
             p.consecutiveBenched = 0;
@@ -2742,8 +2882,8 @@ export const useAppLogic = () => {
           setPlayers(players.map(resetStats));
           setAttendance(attendance.map(resetStats));
           
-          // Local matches filter - hide all current matches
-          setMatches(matches.filter(m => m.timestamp > now));
+          // Local matches filter - hide all current matches (REMOVED so Ranking has access to historical sessions)
+          // setMatches(matches.filter(m => m.timestamp > now));
           
           setSystemMetadata({
             ...systemMetadata,

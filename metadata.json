@@ -1,7 +1,10 @@
 {
   "name": "Guerreiros Volleyball Club",
   "description": "Ferramenta avançada para vôlei com Ranking ELO (+20/-20) e balanceamento por Eficiência Técnica. Prioriza jogadores com menos partidas no dia para garantir rotação justa.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": [
+    "publickey-credentials-get",
+    "publickey-credentials-create"
+  ],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
   ]

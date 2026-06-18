@@ -20,6 +20,7 @@ import {
 
 import { getPriorityQueue, calculateEffectiveElo } from '../utils/teamLogic';
 import { HelpTooltip } from '../src/components/HelpTooltip';
+import { Tooltip } from '../src/components/Tooltip';
 
 interface AttendanceViewProps {
   clearAttendance: () => void;
@@ -152,38 +153,41 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                   <p className="text-[10px] text-brand-primary font-black uppercase tracking-widest mt-1.5">{attendance.length} Guerreiros Confirmados</p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button 
-                    onClick={() => setViewMode('attendance_report')} 
-                    title="Ver Relatório de Presença" 
-                    className="p-3 text-white/40 hover:text-brand-primary hover:bg-brand-primary/10 rounded-xl transition-all group/btn"
-                  >
-                    <BarChart3 className="w-6 h-6 group-hover/btn:scale-110 transition-transform"/>
-                  </button>
+                  <Tooltip content="Ver Relatório de Presença">
+                    <button 
+                      onClick={() => setViewMode('attendance_report')} 
+                      className="p-3 text-white/40 hover:text-brand-primary hover:bg-brand-primary/10 rounded-xl transition-all group/btn"
+                    >
+                      <BarChart3 className="w-6 h-6 group-hover/btn:scale-110 transition-transform"/>
+                    </button>
+                  </Tooltip>
                   {userRole === 'ADMIN' && (
                     <>
-                      <button 
-                        onClick={clearAttendance} 
-                        disabled={isSyncing}
-                        title="Limpar lista" 
-                        className={`p-3 rounded-xl transition-all group/btn ${isSyncing ? 'text-white/10' : 'text-white/40 hover:text-red-400 hover:bg-red-500/10'}`}
-                      >
-                        <Trash2 className="w-6 h-6 group-hover/btn:scale-110 transition-transform"/>
-                      </button>
-                      <button 
-                        onClick={resetDailyMatches} 
-                        disabled={isSyncing}
-                        title="Finalizar dia" 
-                        className={`p-3 rounded-xl transition-all group/btn ${isSyncing ? 'text-white/10' : 'text-white/40 hover:text-brand-primary hover:bg-brand-primary/10'}`}
-                      >
-                        <RotateCcw className="w-6 h-6 group-hover/btn:rotate-180 transition-transform duration-500"/>
-                      </button>
+                      <Tooltip content="Limpar lista" position="left">
+                        <button 
+                          onClick={clearAttendance} 
+                          disabled={isSyncing}
+                          className={`p-3 rounded-xl transition-all group/btn ${isSyncing ? 'text-white/10' : 'text-white/40 hover:text-red-400 hover:bg-red-500/10'}`}
+                        >
+                          <Trash2 className="w-6 h-6 group-hover/btn:scale-110 transition-transform"/>
+                        </button>
+                      </Tooltip>
+                      <Tooltip content="Finalizar dia" position="left">
+                        <button 
+                          onClick={resetDailyMatches} 
+                          disabled={isSyncing}
+                          className={`p-3 rounded-xl transition-all group/btn ${isSyncing ? 'text-white/10' : 'text-white/40 hover:text-brand-primary hover:bg-brand-primary/10'}`}
+                        >
+                          <RotateCcw className="w-6 h-6 group-hover/btn:rotate-180 transition-transform duration-500"/>
+                        </button>
+                      </Tooltip>
                     </>
                   )}
                 </div>
               </div>
-              <div className="p-6 space-y-5 max-h-[60vh] lg:max-h-[600px] overflow-y-auto scrollbar-hide">
+              <div className="p-4 grid grid-cols-2 gap-3 max-h-[60vh] lg:max-h-[600px] overflow-y-auto scrollbar-hide">
                 {attendance.length === 0 ? (
-                  <div className="text-center py-24 space-y-6">
+                  <div className="col-span-full text-center py-24 space-y-6">
                     <div className="relative inline-block">
                       <div className="absolute inset-0 bg-brand-primary/10 blur-2xl rounded-full"></div>
                       <Users className="w-24 h-24 text-white/20 relative z-10 mx-auto opacity-40" />
@@ -201,57 +205,35 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                       const displayBenchedCount = (player.consecutiveBenched || 0) + (isCurrentlyBenched ? 1 : 0);
                       
                       return (
-                        <div key={player.id || `attendance-${idx}`} className="flex items-center justify-between p-4 rounded-2xl border transition-all group shadow-sm hover:shadow-xl hover:-translate-y-0.5 bg-brand-light border-brand-primary/20 hover:border-brand-primary/50">
-                          <div className="flex items-center gap-4">
-                            <div className="flex flex-col items-center justify-center w-8">
-                              <span className="text-xl font-black italic transition-colors text-brand-primary/40">
-                                #{player.arrivalOrder || idx + 1}
-                              </span>
-                              <span className="text-[8px] font-black text-white/30 uppercase tracking-tighter">Chegada</span>
-                            </div>
-                            <div>
-                              <p className={`text-base font-bold flex items-center gap-2 leading-none tracking-tight ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
-                                {userRole === 'ADMIN' && (
-                                  <span className="shrink-0" title={`Nível: ${fullPlayer?.impactLevel === 3 ? 'Elite' : fullPlayer?.impactLevel === 2 ? 'Médio' : 'Base'}`}>
-                                    {getImpactIcon(fullPlayer?.impactLevel)}
-                                  </span>
-                                )}
-                                {capitalizeName(displayName)}
-                                <span className="text-[10px] sm:text-xs font-black opacity-30 ml-2 italic tracking-tighter">
-                                  {Math.round(calculateEffectiveElo(fullPlayer || player))}
-                                </span>
-                                {player.timestamp && (
-                                  <span className="text-[10px] text-white/30 font-medium lowercase tracking-normal">
-                                    {new Date(player.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                                  </span>
-                                )}
-                                {player.isOfficialSetter && <span className="text-[8px] font-black uppercase bg-brand-primary/10 text-brand-primary px-2 py-0.5 rounded-full border border-brand-primary/40">Levantador</span>}
-                                {player.playedLastMatch && (
-                                  <span className="text-[8px] font-black uppercase bg-white/10 text-white/40 px-2 py-0.5 rounded-full border border-white/10" title="Participou da última partida - Prioridade reduzida para a próxima">
-                                    Jogou Última
-                                  </span>
-                                )}
-                                {displayBenchedCount > 0 && (
-                                  <span className="text-[8px] font-black uppercase bg-brand-primary/10 text-brand-primary px-2 py-0.5 rounded-full border border-brand-primary/40 animate-pulse">
-                                    {displayBenchedCount} fora
-                                  </span>
-                                )}
-                              </p>
-                              <p className="text-[9px] font-black text-white/20 uppercase tracking-widest mt-1 italic">
-                                Ordem: #{player.arrivalOrder} <span className="mx-2 text-white/10">|</span> 
-                                Partidas: {player.dailyMatches || 0}
-                              </p>
-                            </div>
+                        <div key={player.id || `attendance-${idx}`} className="flex flex-col p-2 rounded-xl border transition-all group shadow-sm hover:shadow-xl bg-brand-light border-brand-primary/20 hover:border-brand-primary/50 gap-1.5 relative overflow-hidden">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[8px] font-black italic text-brand-primary/40">
+                              #{(player.arrivalOrder && player.arrivalOrder < 999) ? player.arrivalOrder : idx + 1}
+                            </span>
+                            {userRole === 'ADMIN' && (
+                              <button 
+                                onClick={() => removeAttendance(player.id)} 
+                                disabled={isSyncing}
+                                className={`p-1 rounded-lg transition-all ${isSyncing ? 'text-white/5' : 'text-white/20 hover:text-red-400 hover:bg-red-500/10'}`}
+                              >
+                                <X className="w-4 h-4" />
+                              </button>
+                            )}
                           </div>
-                          {userRole === 'ADMIN' && (
-                            <button 
-                              onClick={() => removeAttendance(player.id)} 
-                              disabled={isSyncing}
-                              className={`p-2 rounded-lg transition-all ${isSyncing ? 'text-white/5' : 'text-white/20 hover:text-red-400 hover:bg-red-500/10'}`}
-                            >
-                              <X className="w-6 h-6" />
-                            </button>
-                          )}
+                          
+                          <div className="min-w-0">
+                             <p className={`text-[12px] font-black uppercase leading-none tracking-tighter ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
+                               {capitalizeName(displayName)}
+                             </p>
+                             <div className="flex items-center gap-1 mt-1 flex-wrap">
+                               <span className="text-[8px] font-black text-brand-primary/60 italic tracking-tighter uppercase shrink-0">
+                                 ELO {Math.round(calculateEffectiveElo(fullPlayer || player))}
+                               </span>
+                               {displayBenchedCount > 0 && (
+                                 <div className="px-1.5 py-0.5 rounded-full bg-brand-primary text-black text-[8px] font-black shrink-0">{displayBenchedCount}B</div>
+                               )}
+                             </div>
+                          </div>
                         </div>
                       );
                     })
@@ -281,7 +263,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                   {(availablePlayers || []).length} Sócios Ativos
                 </div>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-6">
                 {userRole !== 'ADMIN' ? (
                   <div className="col-span-full py-32 text-center bg-white/5 rounded-[2.5rem] border-2 border-dashed border-brand-primary/40 space-y-6">
                     <Users className="w-20 h-20 text-white/20 mx-auto" />
@@ -303,20 +285,15 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                         key={player.id || `available-${idx}`} 
                         onClick={() => registerAttendance(player)} 
                         disabled={isSyncing}
-                        className={`flex items-center justify-between p-4 rounded-2xl border hover:shadow-2xl transition-all text-left group hover:-translate-y-0.5 bg-brand-light border-brand-primary/40 hover:border-brand-primary/50 ${isSyncing ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        className={`flex items-center justify-between p-2 rounded-xl border hover:shadow-xl transition-all text-left group bg-brand-light border-brand-primary/40 hover:border-brand-primary/50 ${isSyncing ? 'opacity-50 cursor-not-allowed' : ''}`}
                       >
-                        <div className="space-y-1">
-                          <p className={`text-base font-bold flex items-center gap-2 leading-none tracking-tight ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
-                            {userRole === 'ADMIN' && (
-                              <span className="shrink-0" title={`Nível: ${player.impactLevel === 3 ? 'Elite' : player.impactLevel === 2 ? 'Médio' : 'Base'}`}>
-                                {getImpactIcon(player.impactLevel)}
-                              </span>
-                            )}
-                            {capitalizeName(player.name || "Sócio sem nome")}
-                            {player.isOfficialSetter && <span className="text-[8px] font-black uppercase bg-brand-primary/10 text-brand-primary px-2 py-0.5 rounded-full border border-brand-primary/40">Levantador</span>}
+                        <div className="min-w-0">
+                          <p className={`text-[12px] font-black uppercase flex items-center gap-1.5 leading-tight tracking-tighter ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
+                            {capitalizeName(player.name || "Sócio")}
+                            {player.isOfficialSetter && <span className="text-[7px] font-black uppercase bg-brand-primary/10 text-brand-primary px-1.5 py-0.5 rounded-full border border-brand-primary/40 leading-none">L</span>}
                           </p>
                         </div>
-                        <div className="p-2 bg-brand-primary/10 text-brand-primary group-hover:bg-brand-primary group-hover:text-brand-secondary rounded-xl shadow-xl transition-all border border-brand-primary/40 group-hover:scale-110"><Plus className="w-5 h-5" /></div>
+                        <div className="p-1 bg-brand-primary/10 text-brand-primary group-hover:bg-brand-primary group-hover:text-brand-secondary rounded-lg shadow-lg transition-all border border-brand-primary/40 shrink-0"><Plus className="w-4 h-4" /></div>
                       </button>
                     ))
                 )}

@@ -25,6 +25,7 @@ interface AppState {
   user: User | null;
   userRole: 'ADMIN' | 'MEMBER' | null;
   isNearCourt: boolean;
+  currentBeaconRssi: number | null;
   currentPlayer: Player | null;
   pendingRequests: any[];
   usageStats: UsageStats;
@@ -62,6 +63,13 @@ interface AppState {
   theme: 'light' | 'dark';
   selectedRankingPlayerId: string | null;
   
+  // Match State
+  matchServingTeam: 'A' | 'B';
+  matchRotationA: string[];
+  matchRotationB: string[];
+  matchPlayEvents: any[];
+  matchActiveGenerationId: string | null;
+  
   // Management State
   isFormOpen: boolean;
   editingPlayer: Player | null;
@@ -97,6 +105,7 @@ interface AppState {
   setUser: (user: User | null) => void;
   setUserRole: (role: 'ADMIN' | 'MEMBER' | null) => void;
   setIsNearCourt: (is: boolean) => void;
+  setCurrentBeaconRssi: (rssi: number | null) => void;
   setCurrentPlayer: (player: Player | null) => void;
   setPendingRequests: (requests: any[]) => void;
   setUsageStats: (stats: UsageStats) => void;
@@ -126,6 +135,12 @@ interface AppState {
   setAnomalyReport: (report: string | null) => void;
   setTheme: (theme: 'light' | 'dark') => void;
   toggleTheme: () => void;
+  
+  setMatchServingTeam: (team: 'A' | 'B') => void;
+  setMatchRotationA: (rot: string[] | ((prev: string[]) => string[])) => void;
+  setMatchRotationB: (rot: string[] | ((prev: string[]) => string[])) => void;
+  setMatchPlayEvents: (events: any[] | ((prev: any[]) => any[])) => void;
+  setMatchActiveGenerationId: (id: string | null) => void;
   
   setIsFormOpen: (isOpen: boolean) => void;
   setEditingPlayer: (player: Player | null) => void;
@@ -172,6 +187,7 @@ export const useStore = create<AppState>((set) => ({
   user: null,
   userRole: null,
   isNearCourt: false,
+  currentBeaconRssi: null,
   currentPlayer: null,
   pendingRequests: [],
   usageStats: { reads: 0, writes: 0, aiCalls: 0, lastUpdate: '' },
@@ -202,6 +218,12 @@ export const useStore = create<AppState>((set) => ({
   theme: (typeof window !== 'undefined' && localStorage.getItem('spikegen_theme') as 'light' | 'dark') || 'dark',
   selectedRankingPlayerId: null,
   
+  matchServingTeam: 'A',
+  matchRotationA: [],
+  matchRotationB: [],
+  matchPlayEvents: [],
+  matchActiveGenerationId: null,
+
   isFormOpen: false,
   editingPlayer: null,
   isPaymentFormOpen: false,
@@ -253,6 +275,7 @@ export const useStore = create<AppState>((set) => ({
   setUser: (user) => set({ user }),
   setUserRole: (userRole) => set({ userRole }),
   setIsNearCourt: (isNearCourt) => set({ isNearCourt }),
+  setCurrentBeaconRssi: (currentBeaconRssi) => set({ currentBeaconRssi }),
   setCurrentPlayer: (currentPlayer) => set({ currentPlayer }),
   setPendingRequests: (pendingRequests) => set({ pendingRequests }),
   setUsageStats: (usageStats) => set({ usageStats }),
@@ -306,6 +329,12 @@ export const useStore = create<AppState>((set) => ({
     }
     return { theme: newTheme };
   }),
+  
+  setMatchServingTeam: (matchServingTeam) => set({ matchServingTeam }),
+  setMatchRotationA: (rot) => set((state) => ({ matchRotationA: typeof rot === 'function' ? rot(state.matchRotationA) : rot })),
+  setMatchRotationB: (rot) => set((state) => ({ matchRotationB: typeof rot === 'function' ? rot(state.matchRotationB) : rot })),
+  setMatchPlayEvents: (events) => set((state) => ({ matchPlayEvents: typeof events === 'function' ? events(state.matchPlayEvents) : events })),
+  setMatchActiveGenerationId: (matchActiveGenerationId) => set({ matchActiveGenerationId }),
   
   setIsFormOpen: (isFormOpen) => set({ isFormOpen }),
   setEditingPlayer: (editingPlayer) => set({ editingPlayer }),

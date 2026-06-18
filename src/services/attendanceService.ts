@@ -9,13 +9,16 @@ export interface AttendanceRecord extends Player {
 
 export const clearAttendanceHistory = async () => {
   try {
-    const playersSnap = await getDocs(collectionGroup(db, 'players'));
+    const attendanceSnap = await getDocs(collection(db, 'attendance'));
     let batch = writeBatch(db);
     let count = 0;
     
-    for (const d of playersSnap.docs) {
-      if (d.ref.path.startsWith('attendance/')) {
-        batch.delete(d.ref);
+    for (const dateDoc of attendanceSnap.docs) {
+      const date = dateDoc.id;
+      const playersSnap = await getDocs(collection(db, 'attendance', date, 'players'));
+      
+      for (const playerDoc of playersSnap.docs) {
+        batch.delete(playerDoc.ref);
         count++;
         if (count >= 400) {
           await batch.commit();
@@ -23,27 +26,18 @@ export const clearAttendanceHistory = async () => {
           count = 0;
         }
       }
+      
+      batch.delete(dateDoc.ref);
+      count++;
+      if (count >= 400) {
+        await batch.commit();
+        batch = writeBatch(db);
+        count = 0;
+      }
     }
     
     if (count > 0) {
       await batch.commit();
-    }
-    
-    // Also delete the parent documents
-    const attendanceSnap = await getDocs(collection(db, 'attendance'));
-    let parentBatch = writeBatch(db);
-    let parentCount = 0;
-    for (const d of attendanceSnap.docs) {
-      parentBatch.delete(d.ref);
-      parentCount++;
-      if (parentCount >= 400) {
-        await parentBatch.commit();
-        parentBatch = writeBatch(db);
-        parentCount = 0;
-      }
-    }
-    if (parentCount > 0) {
-      await parentBatch.commit();
     }
     
   } catch (error) {
@@ -56,28 +50,26 @@ export const fetchAttendanceHistory = async (month?: string) => {
   const attendanceHistory: Record<string, Player[]> = {};
   
   try {
-    // Use collectionGroup to find all players in any 'players' subcollection
-    // We'll then filter by path to ensure they belong to 'attendance'
-    const playersSnap = await getDocs(collectionGroup(db, 'players'));
+    // Instead of collectionGroup('players') which requires cross-collection read permissions
+    // and fetches the master players collection as well, we query 'attendance' first.
+    const attendanceDatesSnap = await getDocs(collection(db, 'attendance'));
     
-    playersSnap.docs.forEach(d => {
-      const path = d.ref.path;
-      // Path format: attendance/{date}/players/{playerId}
-      if (path.startsWith('attendance/')) {
-        const parts = path.split('/');
-        if (parts.length >= 3) {
-          const date = parts[1];
-          
-          // Filter by month if provided (format YYYY-MM)
-          if (!month || date.startsWith(month)) {
-            if (!attendanceHistory[date]) {
-              attendanceHistory[date] = [];
-            }
-            attendanceHistory[date].push(d.data() as Player);
-          }
-        }
+    // We can fetch players concurrently for all dates
+    const fetchPromises = attendanceDatesSnap.docs.map(async (dateDoc) => {
+      const date = dateDoc.id;
+      
+      // Filter by month if provided (format YYYY-MM)
+      if (month && !date.startsWith(month)) {
+        return;
+      }
+      
+      const playersSnap = await getDocs(collection(db, 'attendance', date, 'players'));
+      if (!playersSnap.empty) {
+        attendanceHistory[date] = playersSnap.docs.map(d => d.data() as Player);
       }
     });
+
+    await Promise.all(fetchPromises);
     
     return attendanceHistory;
   } catch (error) {

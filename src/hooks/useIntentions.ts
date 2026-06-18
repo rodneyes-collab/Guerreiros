@@ -124,228 +124,50 @@ export const useIntentions = () => {
     }
   };
 
-  const setIntent = async (playerId: string, status: 'GOING' | 'NOT_GOING') => {
+  const setIntent = async (playerId: string, status: 'GOING' | 'NOT_GOING' | 'RESET', phoneDigits?: string) => {
     try {
-      const player = players.find(p => p.id === playerId);
-      const previousStatus = intentions.responses[playerId];
-      const newResponses = { ...intentions.responses, [playerId]: status };
+      const currentStore = useStore.getState();
+      const currentAuthUser = currentStore.currentPlayer; // We need uid.
+
+      const res = await fetch('/api/presence/set', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          playerId, 
+          status, 
+          phoneDigits,
+          uid: currentAuthUser?.uid || null,
+          isAdmin: currentStore.userRole === 'ADMIN'
+        })
+      });
       
-      const updates: any = {
-        responses: newResponses
-      };
-
-      if (status === 'GOING' && previousStatus !== 'GOING') {
-        updates[`confirmationTimestamps.${playerId}`] = Date.now();
-        // Clear old reminders if confirming
-        await clearRemindersForPlayer(playerId, player?.uid);
-      } else if (status === 'NOT_GOING') {
-        updates[`confirmationTimestamps.${playerId}`] = null;
+      if (!res.ok) {
+        const errorData = await res.json();
+        const errorMessage = errorData.error || 'Falha ao registrar presença';
+        const errorDetails = errorData.details ? ` (${errorData.details})` : '';
+        throw new Error(errorMessage + errorDetails);
       }
-
-      await updateDoc(doc(db, 'metadata', 'intentions'), updates);
-
-      // Notify admins silently
-      if (player) {
-        const batch = writeBatch(db);
-        const admins = players.filter(p => p.isAdmin);
-        
-        // Prepare to fetch unread counts for all admins
-        const adminCounts = await Promise.all(admins.map(async (admin) => {
-          if (admin.id === playerId || !admin.fcmToken) return { id: admin.id, count: 1 };
-          try {
-            const q = query(collection(db, 'notifications'), where('playerUid', '==', admin.uid), where('read', '==', false));
-            const snap = await getDocs(q);
-            return { id: admin.id, count: snap.size + 1 };
-          } catch (e) {
-            return { id: admin.id, count: 1 };
-          }
-        }));
-
-        if (status === 'GOING') {
-          // --- Player Notification ---
-          const appNotifRefPlayer = doc(collection(db, 'notifications'));
-          batch.set(appNotifRefPlayer, {
-            playerId: player.id,
-            playerUid: player.uid || null,
-            title: 'Confirmação',
-            message: 'Presença confirmada!',
-            createdAt: Date.now(),
-            read: false,
-            type: 'system'
-          });
-
-          // --- Admin Notifications ---
-          admins.forEach(admin => {
-            const unreadCount = adminCounts.find(c => c.id === admin.id)?.count || 1;
-            
-            // In-app notification
-            const appNotifRefAdmin = doc(collection(db, 'notifications'));
-            batch.set(appNotifRefAdmin, {
-              playerId: admin.id,
-              playerUid: admin.uid || null,
-              title: 'Confirmação na Lista',
-              message: `${player.name} confirmou presença para quinta-feira!`,
-              createdAt: Date.now(),
-              read: false,
-              type: 'system'
-            });
-
-            // FCM notification
-            if (admin.fcmToken) {
-              const notifRef = doc(collection(db, 'fcm_messages'));
-              batch.set(notifRef, {
-                token: admin.fcmToken,
-                notification: {
-                  title: 'Confirmação na Lista',
-                  body: `${player.name} confirmou presença para quinta-feira!`,
-                  sound: 'default'
-                },
-                data: {
-                  unreadCount: String(unreadCount),
-                  type: 'system'
-                },
-                android: {
-                  notification: {
-                    sound: 'default'
-                  }
-                },
-                apns: {
-                  payload: {
-                    aps: {
-                      sound: 'default'
-                    }
-                  }
-                },
-                createdAt: serverTimestamp()
-              });
-            }
-          });
-          await batch.commit();
-        } else if (status === 'NOT_GOING' && previousStatus === 'GOING') {
-          // --- Player Notification ---
-          const appNotifRefPlayer = doc(collection(db, 'notifications'));
-          batch.set(appNotifRefPlayer, {
-            playerId: player.id,
-            playerUid: player.uid || null,
-            title: 'Desistência',
-            message: 'Desistência registrada.',
-            createdAt: Date.now(),
-            read: false,
-            type: 'system'
-          });
-
-          // --- Admin Notifications ---
-          admins.forEach(admin => {
-            const unreadCount = adminCounts.find(c => c.id === admin.id)?.count || 1;
-            
-            // In-app notification
-            const appNotifRefAdmin = doc(collection(db, 'notifications'));
-            batch.set(appNotifRefAdmin, {
-              playerId: admin.id,
-              playerUid: admin.uid || null,
-              title: 'Desistência na Lista',
-              message: `${player.name} desistiu de ir na quinta-feira. Atualize a lista!`,
-              createdAt: Date.now(),
-              read: false,
-              type: 'system'
-            });
-
-            // FCM notification
-            if (admin.fcmToken) {
-              const notifRef = doc(collection(db, 'fcm_messages'));
-              batch.set(notifRef, {
-                token: admin.fcmToken,
-                notification: {
-                  title: 'Desistência na Lista',
-                  body: `${player.name} desistiu de ir na quinta-feira. Atualize a lista!`,
-                  sound: 'default'
-                },
-                data: {
-                  unreadCount: String(unreadCount),
-                  type: 'system'
-                },
-                android: {
-                  notification: {
-                    sound: 'default'
-                  }
-                },
-                apns: {
-                  payload: {
-                    aps: {
-                      sound: 'default'
-                    }
-                  }
-                },
-                createdAt: serverTimestamp()
-              });
-            }
-          });
-          await batch.commit();
-        }
-      }
-    } catch (err) {
+      
+    } catch (err: any) {
       console.error('Erro ao definir intenção:', err);
-      handleFirestoreError(err, OperationType.UPDATE, 'metadata/intentions');
+      throw err;
     }
   };
 
   const resetIntent = async (playerId: string) => {
     try {
-      const previousStatus = intentions.responses[playerId];
-      const newResponses = { ...intentions.responses };
-      delete newResponses[playerId];
-      
-      await updateDoc(doc(db, 'metadata', 'intentions'), {
-        responses: newResponses,
-        [`confirmationTimestamps.${playerId}`]: null
-      });
-
-      // Notify admins if they were going
-      if (previousStatus === 'GOING') {
-        const player = players.find(p => p.id === playerId);
-        if (player) {
-          const batch = writeBatch(db);
-          const admins = players.filter(p => p.isAdmin && p.fcmToken);
-          admins.forEach(admin => {
-            if (admin.id !== playerId) {
-              const notifRef = doc(collection(db, 'fcm_messages'));
-              batch.set(notifRef, {
-                token: admin.fcmToken,
-                notification: {
-                  title: 'Alteração na Lista',
-                  body: `${player.name} removeu a confirmação de quinta-feira.`,
-                  sound: 'default'
-                },
-                android: {
-                  notification: {
-                    sound: 'default'
-                  }
-                },
-                apns: {
-                  payload: {
-                    aps: {
-                      sound: 'default'
-                    }
-                  }
-                },
-                createdAt: serverTimestamp()
-              });
-            }
-          });
-          await batch.commit();
-        }
-      }
+      // Use the API to reset intent to bypass permission issues
+      await setIntent(playerId, 'RESET');
     } catch (err) {
       console.error('Erro ao resetar intenção:', err);
-      handleFirestoreError(err, OperationType.UPDATE, 'metadata/intentions');
     }
   };
 
   const toggleAutomation = async (enabled: boolean) => {
     try {
-      await updateDoc(doc(db, 'metadata', 'intentions'), {
+      await setDoc(doc(db, 'metadata', 'intentions'), {
         automationEnabled: enabled
-      });
+      }, { merge: true });
     } catch (err) {
       console.error('Erro ao alternar automação:', err);
       handleFirestoreError(err, OperationType.UPDATE, 'metadata/intentions');

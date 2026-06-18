@@ -18,7 +18,11 @@ import {
   User,
   ShieldCheck,
   Trash2,
-  BarChart3
+  BarChart3,
+  Copy,
+  Check,
+  Sparkles,
+  CheckCircle2
 } from 'lucide-react';
 import { motion } from 'motion/react';
 
@@ -83,15 +87,112 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
     const sortedDates = Array.from(dates).sort((a, b) => b.localeCompare(a));
     return ['Hoje', ...sortedDates];
   }, [matches]);
+
+  const filterSessionDates = useMemo(() => {
+    const dates = new Set<string>();
+    matches.forEach(m => {
+      const d = m.date || (m.timestamp ? new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Sao_Paulo',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      }).format(new Date(m.timestamp)) : '');
+      if (d) {
+        dates.add(d);
+      }
+    });
+    return Array.from(dates).sort((a, b) => b.localeCompare(a));
+  }, [matches]);
+
+  const formatDateLabel = (dateStr: string) => {
+    if (!dateStr) return '';
+    const parts = dateStr.split('-');
+    if (parts.length === 3) {
+      return `${parts[2]}/${parts[1]}/${parts[2].length === 4 ? parts[0] : parts[0]}`; // formatting DD/MM/YYYY
+    }
+    return dateStr;
+  };
+
   const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterPlayerId, setFilterPlayerId] = useState<string>('');
   const [filterDate, setFilterDate] = useState<string>('');
   const [filterMatchId, setFilterMatchId] = useState<string>('');
   const [isFilterExpanded, setIsFilterExpanded] = useState(false);
+  const [copyFeedback, setCopyFeedback] = useState(false);
 
   const getPlayerName = (id: string) => {
-    return players.find(p => p.id === id)?.name || 'Jogador Desconhecido';
+    return allPlayers.find(p => p.id === id)?.name || 'Jogador Desconhecido';
+  };
+
+  const handleCopyReport = () => {
+    if (filteredMatches.length === 0) return;
+
+    let reportText = `🏆 *GUERREIROS PLAYA - HISTÓRICO DE PARTIDAS* 🏆\n`;
+    
+    // Filtros aplicados no cabeçalho se existirem
+    const appliedFilters: string[] = [];
+    if (filterPlayerId) {
+      const pName = getPlayerName(filterPlayerId);
+      appliedFilters.push(`👤 *Sócio:* ${pName}`);
+    }
+    if (filterDate) {
+      const formattedDate = filterDate.split('-').reverse().join('/');
+      appliedFilters.push(`📅 *Data:* ${formattedDate}`);
+    }
+    if (filterMatchId) {
+      appliedFilters.push(`🔢 *Filtro Partida:* #${filterMatchId}`);
+    }
+    if (searchTerm) {
+      appliedFilters.push(`🔍 *Busca:* "${searchTerm}"`);
+    }
+
+    if (appliedFilters.length > 0) {
+      reportText += `⚙️ *Filtros Aplicados:*\n${appliedFilters.join('\n')}\n`;
+    }
+    reportText += `⚡ *Partidas Encontradas:* ${filteredMatches.length}\n`;
+    reportText += `==================================\n\n`;
+
+    filteredMatches.forEach((m, index) => {
+      const matchNum = m.dailyNumber || m.id.split('_')[1]?.slice(-3).toUpperCase() || `---`;
+      
+      const mDateObj = new Date(m.timestamp);
+      const mDate = mDateObj.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+      
+      const startTimeText = formatHour(m.startTime);
+      const endTimeText = formatHour(m.endTime);
+      const durationText = formatTime(m.duration);
+
+      const teamANames = (m.teamA || []).map(id => getPlayerName(id)).join(', ');
+      const teamBNames = (m.teamB || []).map(id => getPlayerName(id)).join(', ');
+
+      reportText += `🎾 *PARTIDA #${matchNum}* (${mDate})\n`;
+      reportText += `🕒 *Início:* ${startTimeText} | *Fim:* ${endTimeText} (Duração: ${durationText})\n`;
+      reportText += `📊 *Placar:* Equipe A *${m.scoreA}* x *${m.scoreB}* Equipe B\n`;
+      
+      const winnerTeamName = m.winner === 'A' ? 'Equipe A' : 'Equipe B';
+      reportText += `🏆 *Vencedor:* ${winnerTeamName}\n`;
+
+      if (filterPlayerId) {
+        const isTeamA = (m.teamA || []).includes(filterPlayerId);
+        const isTeamB = (m.teamB || []).includes(filterPlayerId);
+        const won = (isTeamA && m.winner === 'A') || (isTeamB && m.winner === 'B');
+        reportText += `🎯 *Desempenho do Sócio:* ${won ? '✅ VITÓRIA' : '❌ DERROTA'}\n`;
+      }
+
+      reportText += `👥 *Participantes Equipe A:* ${teamANames}\n`;
+      reportText += `👥 *Participantes Equipe B:* ${teamBNames}\n`;
+      reportText += `----------------------------------\n\n`;
+    });
+
+    reportText += `_Relatório gerado em ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR')} por Guerreiros Intelligence ⚡_`;
+
+    navigator.clipboard.writeText(reportText).then(() => {
+      setCopyFeedback(true);
+      setTimeout(() => setCopyFeedback(false), 2000);
+    }).catch(err => {
+      console.error('Erro ao copiar relatório:', err);
+    });
   };
 
   const formatHour = (timestamp?: number) => {
@@ -321,6 +422,64 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
                 ))}
               </div>
             </div>
+
+            {/* Lances/Estatísticas Detalhadas Ponto a Ponto */}
+            {selectedMatch.stats && selectedMatch.stats.length > 0 && (
+              <div className="col-span-1 md:col-span-2 bg-black/60 p-6 rounded-[2rem] border border-brand-primary/35 shadow-xl">
+                <div className="flex items-center gap-3 mb-6 border-b border-white/5 pb-3">
+                  <div className="p-2 bg-brand-primary/10 rounded-xl border border-brand-primary/45">
+                    <BarChart3 className="w-5 h-5 text-brand-primary" />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-black text-white uppercase tracking-[0.2em] leading-none mb-1">Linha do Tempo Tática</h3>
+                    <p className="text-[10px] font-black text-white/40 uppercase tracking-widest leading-none">Estatísticas Ponto a Ponto</p>
+                  </div>
+                </div>
+
+                <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                  {selectedMatch.stats.map((event: any, sIdx: number) => {
+                    const isPoint = event.type === 'point';
+                    const isError = event.type === 'error';
+                    return (
+                      <div 
+                        key={event.id || sIdx} 
+                        className={`flex items-center justify-between p-3 rounded-2xl border transition-all ${
+                          isPoint 
+                            ? 'bg-emerald-500/5 border-emerald-500/20' 
+                            : isError 
+                              ? 'bg-rose-500/5 border-rose-500/20'
+                              : 'bg-zinc-900/60 border-white/5'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className={`inline-flex items-center justify-center w-6 h-6 rounded-lg font-black text-[9px] ${
+                            isPoint 
+                              ? 'bg-emerald-500 text-black' 
+                              : isError 
+                                ? 'bg-rose-600 text-white'
+                                : 'bg-zinc-800 text-white'
+                          }`}>
+                            {isPoint ? 'V' : isError ? 'D' : '-'}
+                          </span>
+                          <div>
+                            <p className="text-[11px] font-black text-white uppercase tracking-tight">
+                              {event.playerName || 'Guerreiro'} • <span className="text-brand-primary">{event.action || 'Lance'}</span>
+                            </p>
+                            <p className="text-[10px] text-white/50 font-semibold mt-0.5">{event.description}</p>
+                          </div>
+                        </div>
+
+                        {event.scoreA !== undefined && event.scoreB !== undefined && (
+                          <span className="text-[10px] font-black text-brand-primary font-mono bg-brand-primary/15 px-2.5 py-1 rounded-lg border border-brand-primary/30">
+                            {event.scoreA} x {event.scoreB}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -395,14 +554,15 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
                 <tbody>
                   {participants.map((player, idx) => {
                     const displayName = player.name || "Sócio sem nome";
-                    const arrivalOrder = player.arrivalOrder || 0;
+                    const rawArrivalOrder = player.arrivalOrder || 0;
+                    const displayArrivalOrder = (rawArrivalOrder && rawArrivalOrder < 999) ? rawArrivalOrder : (idx + 1);
 
                     return (
                       <tr key={player.id || `participant-row-${idx}`} className="group">
                         <td className="py-4 px-6 sticky left-0 bg-black z-10 border-y border-l border-brand-primary/40 rounded-l-2xl group-hover:bg-brand-secondary transition-colors">
                           <div className="flex items-center gap-4">
                             <div className="w-8 h-8 rounded-xl bg-black border border-brand-primary/40 text-brand-primary flex items-center justify-center text-[10px] font-black shadow-lg">
-                              {arrivalOrder || '?'}
+                              {displayArrivalOrder}
                             </div>
                             <div>
                               <p className={`text-xs font-black uppercase tracking-tight ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>{displayName}</p>
@@ -481,9 +641,26 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
                 className="w-full pl-11 pr-4 py-3 bg-white/5 border border-brand-primary/40 rounded-2xl text-xs font-bold text-white focus:ring-2 focus:ring-brand-primary outline-none transition-all shadow-sm placeholder:text-white/40"
               />
             </div>
+            
+            <button 
+              onClick={handleCopyReport}
+              disabled={filteredMatches.length === 0}
+              className={`p-3 rounded-2xl border transition-all ${
+                filteredMatches.length === 0 
+                ? 'bg-white/5 text-white/20 border-white/5 cursor-not-allowed' 
+                : copyFeedback 
+                  ? 'bg-emerald-500 border-emerald-500 text-white scale-105' 
+                  : 'bg-brand-primary border-brand-primary text-black hover:bg-brand-primary/80 active:scale-95 hover:scale-105'
+              }`}
+              title="Copiar Relatório p/ WhatsApp"
+            >
+              {copyFeedback ? <Check className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
+            </button>
+
             <button 
               onClick={() => setIsFilterExpanded(!isFilterExpanded)}
               className={`p-3 rounded-2xl border transition-all ${isFilterExpanded ? 'bg-brand-primary border-brand-primary text-brand-secondary' : 'bg-white/5 border-brand-primary/40 text-white/60 hover:bg-white/10 hover:text-white'}`}
+              title="Filtros Avançados"
             >
               <Users className="w-5 h-5" />
             </button>
@@ -506,13 +683,19 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
               </select>
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-white/40 uppercase tracking-widest px-1">Filtrar por Data</label>
-              <input 
-                type="date" 
+              <label className="text-[10px] font-black text-white/40 uppercase tracking-widest px-1">Filtrar por Sessão / Data</label>
+              <select 
                 value={filterDate}
                 onChange={(e) => setFilterDate(e.target.value)}
                 className="w-full p-3 bg-white/5 border border-brand-primary/40 rounded-xl text-xs font-bold text-white outline-none focus:ring-2 focus:ring-brand-primary"
-              />
+              >
+                <option value="" className="bg-brand-secondary text-white">Todas as Datas</option>
+                {filterSessionDates.map(date => (
+                  <option key={date} value={date} className="bg-brand-secondary text-white">
+                    {formatDateLabel(date)}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="space-y-2">
               <label className="text-[10px] font-black text-white/40 uppercase tracking-widest px-1">Número da Partida</label>
@@ -524,7 +707,31 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
                 className="w-full p-3 bg-white/5 border border-brand-primary/40 rounded-xl text-xs font-bold text-white outline-none focus:ring-2 focus:ring-brand-primary placeholder:text-white/20"
               />
             </div>
-            <div className="sm:col-span-3 flex justify-end">
+            <div className="sm:col-span-3 flex flex-col sm:flex-row justify-between items-center gap-4 mt-2 border-t border-white/5 pt-4">
+              <button
+                onClick={handleCopyReport}
+                disabled={filteredMatches.length === 0}
+                className={`w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                  filteredMatches.length === 0 
+                  ? 'bg-white/5 text-white/20 border border-white/5 cursor-not-allowed' 
+                  : copyFeedback 
+                    ? 'bg-emerald-500 text-white border border-emerald-500' 
+                    : 'bg-brand-primary text-black border border-brand-primary hover:bg-brand-primary/80 active:scale-95 shadow-lg shadow-brand-primary/10'
+                }`}
+              >
+                {copyFeedback ? (
+                  <>
+                    <Check className="w-4 h-4" />
+                    Relatório Copiado!
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-4 h-4" />
+                    Copiar WhatsApp ({filteredMatches.length})
+                  </>
+                )}
+              </button>
+              
               <button 
                 onClick={() => {
                   setFilterPlayerId('');

@@ -7,7 +7,8 @@ import {
   XCircle,
   Calendar,
   DollarSign,
-  Trash2
+  Trash2,
+  Copy
 } from 'lucide-react';
 import { useStore } from '../store';
 import { PaymentStatus, Payment } from '../types';
@@ -32,6 +33,7 @@ export const MyPaymentsView: React.FC<MyPaymentsViewProps> = ({ playerId }) => {
   const { deletePayment } = useAppLogic();
   const [localPayments, setLocalPayments] = React.useState<Payment[]>([]);
   const [loading, setLoading] = React.useState(true);
+  const [toastMessage, setToastMessage] = React.useState('');
 
   // Se for Admin, usa os pagamentos do store global (que já estão sendo sincronizados)
   // Se for Membro, carrega apenas os seus próprios pagamentos via query segura
@@ -39,8 +41,11 @@ export const MyPaymentsView: React.FC<MyPaymentsViewProps> = ({ playerId }) => {
     if (userRole === 'ADMIN') {
       setLocalPayments(storePayments);
       setLoading(false);
-      return;
     }
+  }, [userRole, storePayments]);
+
+  React.useEffect(() => {
+    if (userRole === 'ADMIN') return;
 
     if (!playerId) {
       setLoading(false);
@@ -49,14 +54,7 @@ export const MyPaymentsView: React.FC<MyPaymentsViewProps> = ({ playerId }) => {
 
     console.info('MyPaymentsView: Carregando pagamentos via query para sócio:', playerId);
     
-    // Use playerUid (Auth UID) for more secure and rule-compliant filtering
-    const userUid = auth.currentUser?.uid;
-    if (!userUid) {
-      setLoading(false);
-      return;
-    }
-
-    const q = query(collection(db, 'payments'), where('playerUid', '==', userUid));
+    const q = query(collection(db, 'payments'), where('playerId', '==', playerId));
     const unsub = onSnapshot(q, (snap) => {
       const list: Payment[] = [];
       snap.forEach((doc) => list.push({ ...doc.data(), id: doc.id } as Payment));
@@ -69,7 +67,7 @@ export const MyPaymentsView: React.FC<MyPaymentsViewProps> = ({ playerId }) => {
     });
 
     return () => unsub();
-  }, [playerId, userRole, storePayments]);
+  }, [playerId, userRole]);
 
   const myPayments = React.useMemo(() => {
     return localPayments
@@ -121,24 +119,10 @@ export const MyPaymentsView: React.FC<MyPaymentsViewProps> = ({ playerId }) => {
         <p className="text-sm font-bold text-white/40 uppercase tracking-widest">Acompanhe seu histórico de mensalidades</p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 max-w-md">
         <div className="bg-black/40 backdrop-blur-xl p-6 rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-2xl">
           <p className="text-[10px] font-black text-brand-primary uppercase tracking-[0.2em] mb-2">Valor Mensalidade</p>
           <p className="text-3xl font-black text-white font-mono tracking-tighter">R$ {(systemMetadata.monthlyFee || 0).toFixed(2)}</p>
-        </div>
-        
-        <div className="bg-black/40 backdrop-blur-xl p-6 rounded-[2rem] border border-white/5 border-l-[6px] border-l-emerald-500 shadow-2xl">
-          <p className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.2em] mb-2">Total Pago</p>
-          <p className="text-3xl font-black text-white font-mono tracking-tighter">
-            R$ {myPayments.filter(p => p.status === PaymentStatus.PAID).reduce((acc, p) => acc + p.amount, 0).toFixed(2)}
-          </p>
-        </div>
-
-        <div className="bg-black/40 backdrop-blur-xl p-6 rounded-[2rem] border border-white/5 border-l-[6px] border-l-amber-500 shadow-2xl">
-          <p className="text-[10px] font-black text-amber-500 uppercase tracking-[0.2em] mb-2">Pendências</p>
-          <p className="text-3xl font-black text-white font-mono tracking-tighter">
-            {myPayments.filter(p => p.status !== PaymentStatus.PAID).length} Meses
-          </p>
         </div>
       </div>
 
@@ -232,18 +216,59 @@ export const MyPaymentsView: React.FC<MyPaymentsViewProps> = ({ playerId }) => {
         )}
       </div>
 
-      <div className="bg-brand-primary/5 rounded-[2rem] border border-brand-primary/20 p-6 flex items-start gap-4">
-        <div className="p-3 bg-brand-primary/20 rounded-2xl">
-          <DollarSign className="w-6 h-6 text-brand-primary" />
+      {/* Área Pagar PIX */}
+      <div className="bg-black/40 backdrop-blur-xl p-6 rounded-[2.5rem] border border-brand-primary/40 shadow-2xl flex flex-col md:flex-row items-center gap-6 mt-8">
+        <div className="bg-white p-3 rounded-2xl border border-brand-primary/40 flex-shrink-0 shadow-lg">
+          <img 
+            src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=00020126580014BR.GOV.BCB.PIX01360a037bb4-fce6-4971-b751-a6185cde5f6d520400005303986540550.005802BR5925Elizabeth de Souza Santos6009SAO PAULO62140510wu4xDTVIft63040EA7" 
+            alt="Pix QR Code" 
+            className="w-32 h-32 md:w-36 md:h-36 object-contain"
+            referrerPolicy="no-referrer"
+          />
         </div>
-        <div>
-          <h4 className="text-sm font-black text-white uppercase tracking-tight">Instruções para Pagamento</h4>
-          <p className="text-xs font-medium text-white/60 mt-1 leading-relaxed">
-            Realize o pagamento via PIX para a chave informada pelo administrador. 
-            Após o pagamento, envie o comprovante no privado para que sua situação seja regularizada no sistema.
-          </p>
+        <div className="flex-1 space-y-3 text-center md:text-left w-full">
+          <div className="space-y-1">
+            <h3 className="text-lg font-black text-brand-primary uppercase tracking-tight flex items-center justify-center md:justify-start gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-brand-primary animate-pulse" />
+              QR Code de Pagamento Inteligente
+            </h3>
+            <p className="text-xs font-semibold text-white/60">
+              Aponte a câmera do celular para pagar diretamente via Pix, ou copie o código "Copia e Cola" abaixo. Após a transferência pelo seu banco, lembre-se de enviar o comprovante ao administrador.
+            </p>
+          </div>
+          
+          <div className="flex flex-col sm:flex-row items-center gap-3 w-full">
+            <div className="w-full sm:flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 font-mono text-[10px] text-white/40 truncate text-left">
+              00020126580014BR.GOV.BCB.PIX01360a037bb4-fce6-4971-b751-a6185cde5f6d520400005303986540550.005802BR5925Elizabeth de Souza Santos6009SAO PAULO62140510wu4xDTVIft63040EA7
+            </div>
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText("00020126580014BR.GOV.BCB.PIX01360a037bb4-fce6-4971-b751-a6185cde5f6d520400005303986540550.005802BR5925Elizabeth de Souza Santos6009SAO PAULO62140510wu4xDTVIft63040EA7");
+                setToastMessage("Pix Copia e Cola copiado! ⚡");
+                setTimeout(() => setToastMessage(""), 3500);
+              }}
+              className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-brand-primary text-brand-secondary rounded-xl font-black text-[10px] uppercase tracking-widest hover:scale-105 active:scale-95 transition-all shadow-md shadow-brand-primary/10 hover:bg-brand-primary/95"
+              title="Copiar código Pix Copia e Cola"
+            >
+              <Copy className="w-4 h-4" />
+              Copiar Código
+            </button>
+          </div>
+          
+          <div className="text-[10px] font-bold text-brand-primary/60 uppercase tracking-wider flex flex-wrap gap-x-4 gap-y-1 justify-center md:justify-start">
+            <span>👤 Favorecido: Elizabeth de Souza Santos</span>
+            <span>🏦 Banco: NUBANK</span>
+          </div>
         </div>
       </div>
+
+      {/* Toast Message */}
+      {toastMessage && (
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-emerald-500 text-white px-6 py-3 rounded-2xl font-black text-sm uppercase tracking-widest shadow-xl flex items-center gap-2 z-50 animate-in fade-in slide-in-from-bottom-4">
+          <CheckCircle2 className="w-5 h-5" />
+          {toastMessage}
+        </div>
+      )}
     </div>
   );
 };

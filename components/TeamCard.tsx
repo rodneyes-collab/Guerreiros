@@ -45,8 +45,12 @@ export const TeamCard: React.FC<TeamCardProps> = ({
   const iconColorClass = color === 'blue' ? 'text-brand-primary' : 'text-brand-secondary';
 
   const getPos = (pid: string) => {
-    const player = attendance.find(ap => ap.id === pid);
-    return player?.arrivalOrder || '?';
+    const sorted = [...attendance].sort((a, b) => (a.arrivalOrder || 0) - (b.arrivalOrder || 0));
+    const idx = sorted.findIndex(ap => ap.id === pid);
+    if (idx === -1) return '?';
+    const player = sorted[idx];
+    const rawArrivalOrder = player?.arrivalOrder || 0;
+    return (rawArrivalOrder && rawArrivalOrder < 999) ? rawArrivalOrder : (idx + 1);
   };
 
   // Calcula posições sugeridas para exibir na lista

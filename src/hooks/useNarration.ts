@@ -155,9 +155,9 @@ export const useNarration = () => {
         audioData = await generateTeamAnnouncementAudio(generationResult!.teamA, generationResult!.teamB);
       } else {
         audioData = await generateDailySummaryAudio({
-          mvp: rankingData?.mvp || rankingData?.dailyMvp?.name,
-          bestSetter: rankingData?.bestSetter || rankingData?.dailyBestSetter?.name,
-          dailyKing: rankingData?.dailyKing || rankingData?.dailyKing?.name,
+          mvp: rankingData?.mvp?.name || rankingData?.dailyMvp?.name || rankingData?.mvp,
+          bestSetter: rankingData?.bestSetter?.name || rankingData?.dailyBestSetter?.name || rankingData?.bestSetter,
+          dailyKing: rankingData?.dailyKing?.name || rankingData?.dailyKing,
           matchesCount: rankingData?.matchesCount || rankingData?.dailyMatchesCount,
           rankingChanges: rankingData?.rankingChanges,
           sessionLeaderboard: rankingData?.sessionLeaderboard,

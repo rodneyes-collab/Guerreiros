@@ -83,6 +83,44 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
     });
   };
 
+  const copyPaymentReport = () => {
+    if (!filterMonth) {
+      setToastMessage('Selecione um mês!');
+      setTimeout(() => setToastMessage(''), 3000);
+      return;
+    }
+
+    const [year, month] = filterMonth.split('-');
+    
+    // Lista de sócios ativos
+    const activePlayers = players.sort((a, b) => a.name.localeCompare(b.name));
+
+    let text = `📋 LISTA DE APURAÇÃO DE PAGAMENTO:\n`;
+    text += `Mensalidade do mes de: ${formatMonth(filterMonth)}\n`;
+    text += `Data do Vencimento: 05/${month}/${year}\n\n`;
+    
+    activePlayers.forEach((player, index) => {
+      const payment = payments.find(p => p.playerId === player.id && p.month === filterMonth);
+      const isPaid = getCalculatedStatus(payment, player.id, filterMonth) === PaymentStatus.PAID;
+      
+      text += `${(index + 1).toString().padStart(2, ' ')}. [${isPaid ? '✅' : '   '}] ${player.name}\n`;
+    });
+
+    text += `\n*PIX Copia e Cola:*\n00020126580014BR.GOV.BCB.PIX01360a037bb4-fce6-4971-b751-a6185cde5f6d520400005303986540550.005802BR5925Elizabeth de Souza Santos6009SAO PAULO62140510wu4xDTVIft63040EA7\n`;
+    text += `*Favorecido:* Elizabeth de Souza Santos\n`;
+    text += `*Banco:* NUBANK\n\n`;
+    text += `--- \nAtualizado pelo App Guerreiros`;
+
+    navigator.clipboard.writeText(text).then(() => {
+      setToastMessage('Lista de pagamentos copiada!');
+      setTimeout(() => setToastMessage(''), 3000);
+    }).catch(err => {
+      console.error('Erro ao copiar: ', err);
+      setToastMessage('Erro ao copiar');
+      setTimeout(() => setToastMessage(''), 3000);
+    });
+  };
+
   const generateWhatsAppReport = () => {
     if (!filterMonth) return;
 
@@ -97,10 +135,9 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
     reportText += `*Horário: 19:30 às 22 h*\n\n`;
     reportText += `*R$ ${feeAmount}*\n\n`;
     reportText += `*Pagamento até dia 05 - de cada mês*\n\n`;
-    reportText += `*PIX: 81988006345*\n`;
-    reportText += `*NUBANK*\n`;
-    reportText += `*ELIZABETH DE SOUZA SANTOS*\n`;
-    reportText += `https://nubank.com.br/cobrar/35905/69d5455a-6fc4-4801-9678-833bbe2d425f\n\n`;
+    reportText += `*PIX Copia e Cola:*\n\`00020126580014BR.GOV.BCB.PIX01360a037bb4-fce6-4971-b751-a6185cde5f6d520400005303986540550.005802BR5925Elizabeth de Souza Santos6009SAO PAULO62140510wu4xDTVIft63040EA7\`\n\n`;
+    reportText += `*Favorecido:* Elizabeth de Souza Santos\n`;
+    reportText += `*Banco:* NUBANK\n\n`;
 
     sortedPlayers.forEach((player, index) => {
       const payment = payments.find(p => p.playerId === player.id && p.month === filterMonth);
@@ -464,6 +501,16 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
           Mensalidades
         </button>
         <button
+          onClick={() => setActiveTab('COMPLIANCE')}
+          className={`px-4 py-2 sm:px-8 sm:py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${
+            activeTab === 'COMPLIANCE' 
+              ? 'bg-brand-primary text-brand-secondary shadow-xl shadow-brand-primary/20' 
+              : 'text-white/40 hover:text-white hover:bg-white/5'
+          }`}
+        >
+          Gestão de Mensalidades
+        </button>
+        <button
           onClick={() => setActiveTab('EXPENSES')}
           className={`px-4 py-2 sm:px-8 sm:py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${
             activeTab === 'EXPENSES' 
@@ -517,6 +564,52 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
             </div>
           </div>
         )}
+      </div>
+
+      {/* Área Pagar PIX */}
+      <div className="bg-black backdrop-blur-xl p-6 rounded-[2rem] border border-brand-primary/40 shadow-sm flex flex-col md:flex-row items-center gap-6">
+        <div className="bg-white p-3 rounded-2xl border border-brand-primary/40 flex-shrink-0">
+          <img 
+            src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=00020126580014BR.GOV.BCB.PIX01360a037bb4-fce6-4971-b751-a6185cde5f6d520400005303986540550.005802BR5925Elizabeth de Souza Santos6009SAO PAULO62140510wu4xDTVIft63040EA7" 
+            alt="Pix QR Code" 
+            className="w-32 h-32 md:w-36 md:h-36 object-contain"
+            referrerPolicy="no-referrer"
+          />
+        </div>
+        <div className="flex-1 space-y-3 text-center md:text-left w-full">
+          <div className="space-y-1">
+            <h3 className="text-lg font-black text-brand-primary uppercase tracking-tight flex items-center justify-center md:justify-start gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-brand-primary animate-pulse" />
+              QR Code Inteligente
+            </h3>
+            <p className="text-xs font-semibold text-white/60">
+              O QR Code de pagamento gerado na tela agora está apontando diretamente para o seu Pix Copia e Cola, pronto para ser lido por qualquer aplicativo de banco.
+            </p>
+          </div>
+          
+          <div className="flex flex-col sm:flex-row items-center gap-3 w-full">
+            <div className="w-full sm:flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 font-mono text-[10px] text-white/40 truncate text-left">
+              00020126580014BR.GOV.BCB.PIX01360a037bb4-fce6-4971-b751-a6185cde5f6d520400005303986540550.005802BR5925Elizabeth de Souza Santos6009SAO PAULO62140510wu4xDTVIft63040EA7
+            </div>
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText("00020126580014BR.GOV.BCB.PIX01360a037bb4-fce6-4971-b751-a6185cde5f6d520400005303986540550.005802BR5925Elizabeth de Souza Santos6009SAO PAULO62140510wu4xDTVIft63040EA7");
+                setToastMessage("Pix Copia e Cola copiado! ⚡");
+                setTimeout(() => setToastMessage(""), 3500);
+              }}
+              className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-brand-primary text-brand-secondary rounded-xl font-black text-[10px] uppercase tracking-widest hover:scale-105 active:scale-95 transition-all shadow-md shadow-brand-primary/10"
+              title="Copiar código Pix Copia e Cola"
+            >
+              <Copy className="w-4 h-4" />
+              Copiar Código
+            </button>
+          </div>
+          
+          <div className="text-[10px] font-bold text-brand-primary/60 uppercase tracking-wider flex flex-wrap gap-x-4 gap-y-1 justify-center md:justify-start">
+            <span>👤 Favorecido: Elizabeth de Souza Santos</span>
+            <span>🏦 Banco: NUBANK</span>
+          </div>
+        </div>
       </div>
 
       {/* Filters */}
@@ -590,6 +683,13 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                 <option value={PaymentStatus.OVERDUE} className="bg-slate-900">Atrasado</option>
               </select>
             </div>
+            <button
+              onClick={copyPaymentReport}
+              className="flex items-center justify-center gap-2 px-6 py-3 bg-brand-primary text-brand-secondary rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-brand-primary/90 transition-all shadow-lg shadow-brand-primary/20 h-[38px] sm:h-[46px]"
+              title="Copiar lista de pagamentos"
+            >
+              <Copy className="w-4 h-4" /> Copiar Lista
+            </button>
           </>
         )}
 

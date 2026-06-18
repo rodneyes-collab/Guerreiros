@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { Swords } from 'lucide-react';
 import { Team, Player } from '../../types';
+import { calculateTeamPositions } from '../../utils/teamLogic';
 
 interface CourtDiagramProps {
   teamA: Team;
@@ -12,17 +13,18 @@ export const CourtDiagram: React.FC<CourtDiagramProps> = ({ teamA, teamB }) => {
   const [isComparisonMode, setIsComparisonMode] = useState(false);
 
   const getPositions = (team: Team) => {
-    const setter = team.setter;
-    const others = [...team.players].sort((a, b) => b.elo - a.elo);
-    const finalSetter = setter || others.pop();
+    const mapping = calculateTeamPositions(team);
+    const all = [team.setter, ...team.players].filter((p): p is Player => p !== null);
+    
+    const findByPos = (posStr: string) => all.find(p => mapping[p.id] === posStr);
     
     return {
-      p4: others[0],
-      p3: finalSetter,
-      p2: others[1],
-      p5: others[2],
-      p6: others[3],
-      p1: others[4]
+      p1: findByPos('1'),
+      p2: findByPos('2'),
+      p3: findByPos('3'),
+      p4: findByPos('4'),
+      p5: findByPos('5'),
+      p6: findByPos('6')
     };
   };
 

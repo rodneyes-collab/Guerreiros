@@ -157,7 +157,8 @@ export const useFirestoreSync = () => {
 
   // Real-time Sync (Players, Attendance, Pending Requests, Matches)
   useEffect(() => {
-    if (!user) return;
+    const isPublicMode = window.location.search.includes('public=true');
+    if (!user && !isPublicMode) return;
     
     let unsubscribePlayers: (() => void) | undefined;
     let unsubscribeAttendance: (() => void) | undefined;
@@ -214,6 +215,9 @@ export const useFirestoreSync = () => {
                 dailyEloGain: data.dailyEloGain || 0,
                 wins: data.wins || 0,
                 losses: data.losses || 0,
+                pointsFor: data.pointsFor || 0,
+                pointsAgainst: data.pointsAgainst || 0,
+                pointsBalance: data.pointsBalance || 0,
                 arrivalOrder: data.arrivalOrder || 999,
                 ...data
               };

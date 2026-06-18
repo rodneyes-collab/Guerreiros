@@ -490,7 +490,8 @@ export const generateDailySummaryAudio = async (stats: {
     let retries = 2;
     while (retries >= 0) {
       try {
-        response = await ai.models.generateContent({
+        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('AI Request timeout')), 25000));
+        const callPromise = ai.models.generateContent({
           model: "gemini-3.1-flash-tts-preview",
           contents: [{ parts: [{ text: prompt }] }],
           config: {
@@ -502,9 +503,11 @@ export const generateDailySummaryAudio = async (stats: {
             },
           },
         });
+        
+        response = await Promise.race([callPromise, timeoutPromise]) as any;
         break;
       } catch (error: any) {
-        if (retries > 0 && (error.message?.includes('500') || error.message?.includes('429'))) {
+        if (retries > 0 && (error.message?.includes('500') || error.message?.includes('429') || error.message?.includes('timeout'))) {
           retries--;
           await new Promise(resolve => setTimeout(resolve, 2000));
           continue;
@@ -520,7 +523,7 @@ export const generateDailySummaryAudio = async (stats: {
     
     return result;
   } catch (error: any) {
-    if (isQuotaOrBillingError(error) || error?.message?.includes('500')) {
+    if (isQuotaOrBillingError(error) || error?.message?.includes('500') || error?.message?.includes('timeout')) {
       console.warn("AI Summary Audio transient error or Quota/Permission Reached (429/403/RESOURCE_EXHAUSTED). Falling back.");
       return null;
     }

@@ -26,6 +26,7 @@ export interface Player {
   dailyEloGain: number; // ELO ganho no dia atual
   pointsFor?: number; // Pontos marcados acumulados
   pointsAgainst?: number; // Pontos sofridos acumulados
+  pointsBalance?: number; // Saldo de Pontos
   wins: number;
   losses: number;
   elo: number;
@@ -35,7 +36,8 @@ export interface Player {
     matchId?: string; 
     change?: number; 
     timestamp?: number;
-    result?: 'V' | 'D';
+    result?: 'V' | 'D' | 'P';
+    fidelityBonus?: boolean;
   }[];
   arrivalOrder?: number;
   isAdmin?: boolean;
@@ -76,6 +78,8 @@ export interface Player {
     mu: number;
     sigma: number;
   };
+  fidelityPoints?: number;
+  lastFidelityDate?: string;
 }
 
 export interface AppNotification {
@@ -114,9 +118,11 @@ export interface Match {
   endTime?: number; // Timestamp
   mode: MatchMode;
   dailyNumber?: number;
+  stats?: any[];
 }
 
 export interface SystemMetadata {
+  bleBeaconUuids?: string[];
   bleProximityThreshold?: number;
   lastResetDate: string | null;
   lastResetTimestamp?: number;
@@ -130,6 +136,8 @@ export interface SystemMetadata {
   showTeamCards?: boolean;
   showWaitlist?: boolean;
   showPerformance?: boolean;
+  showTelemetry?: boolean;
+  showCourtForecast?: boolean;
   enableAutoBirthdays?: boolean;
   useTrueSkill?: boolean;
   courtLocation?: { lat: number; lng: number };
@@ -179,6 +187,8 @@ export interface GenerationResult {
   teamB: Team;
   remainingPlayers: Player[];
   swaps?: { playerA: string; playerB: string }[];
+  bottomTwoIds?: string[];
+  topTwoIds?: string[];
   timestamp?: number;
   combinationsCount?: number;
   trueskill?: {
