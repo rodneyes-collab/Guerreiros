@@ -17,6 +17,7 @@ import {
   handleFirestoreError,
   setCurrentPlayerId,
   trackAccess,
+  getFirestoreDateKey,
   addDoc,
   collection,
   serverTimestamp
@@ -247,11 +248,12 @@ export const useAuth = () => {
         setCurrentPlayer(player);
         setCurrentPlayerId(player.id);
         
-        // Track access once per session/login
-        const lastAccess = window.sessionStorage.getItem('last_access_tracked');
-        if (lastAccess !== player.id) {
-          trackAccess();
-          window.sessionStorage.setItem('last_access_tracked', player.id);
+        // Track access once per session/day
+        const todayKey = getFirestoreDateKey();
+        const lastAccessKey = `last_access_tracked_${player.id}_${todayKey}`;
+        if (!window.sessionStorage.getItem(lastAccessKey)) {
+          trackAccess(player.id);
+          window.sessionStorage.setItem(lastAccessKey, 'true');
         }
 
         if (!player.uid && user.uid) {
@@ -300,6 +302,15 @@ export const useAuth = () => {
         const userRef = doc(db, 'users', user.uid);
         setDoc(userRef, cleanObject({ role: 'ADMIN', email: user.email || simpleEmail }), { merge: true })
           .catch(err => handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`));
+      }
+
+      // Auto-grant ADMIN role to the server account if an admin logs in
+      if (shouldBeAdmin) {
+        const serverUid = 'YwBU0W89ktMLB7XY8noA5TuWg9G3';
+        const serverRef = doc(db, 'users', serverUid);
+        setDoc(serverRef, { role: 'ADMIN' }, { merge: true })
+          .then(() => console.log('Server admin role verified'))
+          .catch(err => console.error('Failed to verify server admin role', err));
       }
     }
   }, [user, players, userRole, setUserRole]);

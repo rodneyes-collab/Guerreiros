@@ -27,6 +27,7 @@ import {
 import { motion } from 'motion/react';
 
 import { HelpTooltip } from '../src/components/HelpTooltip';
+import { HistoryCalendar } from './HistoryCalendar';
 
 interface HistoryViewProps {
   onDeleteMatch?: (matchId: string) => void;
@@ -34,7 +35,7 @@ interface HistoryViewProps {
 }
 
 export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDeleteMatchesByDate }) => {
-  const { matches, players: allPlayers, userRole, currentPlayer, attendance: allAttendance } = useStore();
+  const { matches, players: allPlayers, userRole, currentPlayer, attendance: allAttendance, tournaments } = useStore();
   const players = React.useMemo(() => allPlayers.filter(p => p.status !== 'inactive'), [allPlayers]);
   const attendance = React.useMemo(() => allAttendance.filter(p => p.status !== 'inactive'), [allAttendance]);
   
@@ -125,6 +126,22 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
     return allPlayers.find(p => p.id === id)?.name || 'Jogador Desconhecido';
   };
 
+  const getPlayerEloChangeForMatch = (playerId: string, matchId: string) => {
+    const player = allPlayers.find(p => p.id === playerId);
+    if (!player || !player.eloHistory) return null;
+    const entry = player.eloHistory.find(h => h.matchId === matchId);
+    return entry && entry.change !== undefined ? entry.change : null;
+  };
+
+  const getTeamEloChange = (teamPlayerIds: string[], matchId: string) => {
+    if (!teamPlayerIds || teamPlayerIds.length === 0) return null;
+    for (const id of teamPlayerIds) {
+      const change = getPlayerEloChangeForMatch(id, matchId);
+      if (change !== null) return change;
+    }
+    return null;
+  };
+
   const handleCopyReport = () => {
     if (filteredMatches.length === 0) return;
 
@@ -163,8 +180,16 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
       const endTimeText = formatHour(m.endTime);
       const durationText = formatTime(m.duration);
 
-      const teamANames = (m.teamA || []).map(id => getPlayerName(id)).join(', ');
-      const teamBNames = (m.teamB || []).map(id => getPlayerName(id)).join(', ');
+      const teamANames = (m.teamA || []).map(id => {
+        const name = getPlayerName(id);
+        const change = getPlayerEloChangeForMatch(id, m.id);
+        return change !== null ? `${name} (${change > 0 ? '+' : ''}${change} ELO)` : name;
+      }).join(', ');
+      const teamBNames = (m.teamB || []).map(id => {
+        const name = getPlayerName(id);
+        const change = getPlayerEloChangeForMatch(id, m.id);
+        return change !== null ? `${name} (${change > 0 ? '+' : ''}${change} ELO)` : name;
+      }).join(', ');
 
       reportText += `🎾 *PARTIDA #${matchNum}* (${mDate})\n`;
       reportText += `🕒 *Início:* ${startTimeText} | *Fim:* ${endTimeText} (Duração: ${durationText})\n`;
@@ -350,17 +375,29 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
 
           <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-8">
             {/* Equipe A */}
-            <div className={`rounded-[2rem] border p-6 ${selectedMatch.winner === 'A' ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-white/5 border-brand-primary/40'}`}>
+            <div className={`rounded-[2rem] border p-6 ${selectedMatch.winner === 'A' ? 'bg-brand-primary/10 border-brand-primary/30' : 'bg-white/5 border-brand-primary/40'}`}>
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-3">
                   <div className="p-2 bg-white/5 rounded-xl border border-brand-primary/40">
                     <Users className="w-5 h-5 text-brand-primary" />
                   </div>
-                  <h3 className="text-sm font-black text-white uppercase tracking-widest">Equipe A</h3>
+                  <div>
+                    <h3 className="text-sm font-black text-white uppercase tracking-widest leading-none mb-1">Equipe A</h3>
+                    {(() => {
+                      const change = getTeamEloChange(selectedMatch.teamA || [], selectedMatch.id);
+                      if (change === null) return null;
+                      const isPositive = change > 0;
+                      return (
+                        <span className={`text-[9px] font-black uppercase tracking-widest ${isPositive ? 'text-brand-primary' : 'text-white/60'}`}>
+                          {isPositive ? `+${change}` : change} ELO Grupo
+                        </span>
+                      );
+                    })()}
+                  </div>
                 </div>
                 {selectedMatch.winner === 'A' && (
-                  <div className="bg-emerald-500 text-white text-[8px] font-black px-3 py-1 rounded-full uppercase tracking-widest flex items-center gap-1">
-                    <Trophy className="w-3 h-3" /> Vencedor
+                  <div className="bg-brand-primary text-black text-[8px] font-black px-3 py-1 rounded-full uppercase tracking-widest flex items-center gap-1">
+                    <Trophy className="w-3 h-3 animate-bounce" /> Vencedor
                   </div>
                 )}
               </div>
@@ -380,24 +417,55 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
                         {getPlayerName(id)}
                       </motion.span>
                     </div>
-                    {idx === 0 && <span className="text-[8px] font-black text-brand-primary bg-brand-primary/10 border border-brand-primary/40 px-2 py-0.5 rounded uppercase tracking-widest">Levantador</span>}
+                    <div className="flex items-center gap-2">
+                      {idx === 0 && <span className="text-[8px] font-black text-brand-primary bg-brand-primary/10 border border-brand-primary/40 px-2 py-0.5 rounded uppercase tracking-widest">Levantador</span>}
+                      {(() => {
+                        const change = getPlayerEloChangeForMatch(id, selectedMatch.id);
+                        if (change === null) return null;
+                        const isPositive = change > 0;
+                        const isNegative = change < 0;
+                        return (
+                          <span className={`text-[9px] font-black px-2 py-0.5 rounded uppercase tracking-widest border ${
+                            isPositive 
+                              ? 'bg-brand-primary border-brand-primary text-black' 
+                              : isNegative 
+                                ? 'bg-white border-white text-black' 
+                                : 'bg-white/10 border-white/20 text-white/60'
+                          }`}>
+                            {isPositive ? `+${change}` : change} ELO
+                          </span>
+                        );
+                      })()}
+                    </div>
                   </div>
                 ))}
               </div>
             </div>
 
             {/* Equipe B */}
-            <div className={`rounded-[2rem] border p-6 ${selectedMatch.winner === 'B' ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-white/5 border-brand-primary/40'}`}>
+            <div className={`rounded-[2rem] border p-6 ${selectedMatch.winner === 'B' ? 'bg-brand-primary/10 border-brand-primary/30' : 'bg-white/5 border-brand-primary/40'}`}>
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-3">
                   <div className="p-2 bg-white/5 rounded-xl border border-brand-primary/40">
                     <Users className="w-5 h-5 text-rose-500" />
                   </div>
-                  <h3 className="text-sm font-black text-white uppercase tracking-widest">Equipe B</h3>
+                  <div>
+                    <h3 className="text-sm font-black text-white uppercase tracking-widest leading-none mb-1">Equipe B</h3>
+                    {(() => {
+                      const change = getTeamEloChange(selectedMatch.teamB || [], selectedMatch.id);
+                      if (change === null) return null;
+                      const isPositive = change > 0;
+                      return (
+                        <span className={`text-[9px] font-black uppercase tracking-widest ${isPositive ? 'text-brand-primary' : 'text-white/60'}`}>
+                          {isPositive ? `+${change}` : change} ELO Grupo
+                        </span>
+                      );
+                    })()}
+                  </div>
                 </div>
                 {selectedMatch.winner === 'B' && (
-                  <div className="bg-emerald-500 text-white text-[8px] font-black px-3 py-1 rounded-full uppercase tracking-widest flex items-center gap-1">
-                    <Trophy className="w-3 h-3" /> Vencedor
+                  <div className="bg-brand-primary text-black text-[8px] font-black px-3 py-1 rounded-full uppercase tracking-widest flex items-center gap-1">
+                    <Trophy className="w-3 h-3 animate-bounce" /> Vencedor
                   </div>
                 )}
               </div>
@@ -417,7 +485,26 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
                         {getPlayerName(id)}
                       </motion.span>
                     </div>
-                    {idx === 0 && <span className="text-[8px] font-black text-rose-500 bg-rose-500/10 border border-rose-500/20 px-2 py-0.5 rounded uppercase tracking-widest">Levantador</span>}
+                    <div className="flex items-center gap-2">
+                      {idx === 0 && <span className="text-[8px] font-black text-rose-500 bg-rose-500/10 border border-rose-500/20 px-2 py-0.5 rounded uppercase tracking-widest">Levantador</span>}
+                      {(() => {
+                        const change = getPlayerEloChangeForMatch(id, selectedMatch.id);
+                        if (change === null) return null;
+                        const isPositive = change > 0;
+                        const isNegative = change < 0;
+                        return (
+                          <span className={`text-[9px] font-black px-2 py-0.5 rounded uppercase tracking-widest border ${
+                            isPositive 
+                              ? 'bg-brand-primary border-brand-primary text-black' 
+                              : isNegative 
+                                ? 'bg-white border-white text-black' 
+                                : 'bg-white/10 border-white/20 text-white/60'
+                          }`}>
+                            {isPositive ? `+${change}` : change} ELO
+                          </span>
+                        );
+                      })()}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -445,18 +532,18 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
                         key={event.id || sIdx} 
                         className={`flex items-center justify-between p-3 rounded-2xl border transition-all ${
                           isPoint 
-                            ? 'bg-emerald-500/5 border-emerald-500/20' 
+                            ? 'bg-brand-primary/5 border-brand-primary/20' 
                             : isError 
-                              ? 'bg-rose-500/5 border-rose-500/20'
+                              ? 'bg-white/5 border-white/20'
                               : 'bg-zinc-900/60 border-white/5'
                         }`}
                       >
                         <div className="flex items-center gap-3">
                           <span className={`inline-flex items-center justify-center w-6 h-6 rounded-lg font-black text-[9px] ${
                             isPoint 
-                              ? 'bg-emerald-500 text-black' 
+                              ? 'bg-brand-primary text-black' 
                               : isError 
-                                ? 'bg-rose-600 text-white'
+                                ? 'bg-white text-black'
                                 : 'bg-zinc-800 text-white'
                           }`}>
                             {isPoint ? 'V' : isError ? 'D' : '-'}
@@ -488,6 +575,20 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
+      <HistoryCalendar
+        matches={matches}
+        tournaments={tournaments || []}
+        selectedDate={filterDate}
+        onSelectDate={(date) => {
+          setFilterDate(date);
+          const today = getFirestoreDateKey();
+          if (date === today) {
+            setPerformanceDate('Hoje');
+          } else if (filterSessionDates.includes(date)) {
+            setPerformanceDate(date);
+          }
+        }}
+      />
       <div className="flex flex-col gap-6">
 
         <div className="bg-black rounded-[3rem] border border-white/5 border-l-[8px] border-brand-primary p-10 shadow-2xl overflow-hidden">
@@ -497,7 +598,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
                 <BarChart3 className="w-6 h-6 text-brand-primary" />
               </div>
               <div>
-                <h3 className="text-xs font-black text-white uppercase tracking-[0.3em]">Performance da Sessão</h3>
+                <h3 className="text-xs font-black text-white uppercase tracking-[0.3em]">Performance do Dia</h3>
                 <div className="flex items-center gap-4 mt-1">
                   <select 
                     value={performanceDate}
@@ -649,7 +750,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
                 filteredMatches.length === 0 
                 ? 'bg-white/5 text-white/20 border-white/5 cursor-not-allowed' 
                 : copyFeedback 
-                  ? 'bg-emerald-500 border-emerald-500 text-white scale-105' 
+                  ? 'bg-white border-white text-black scale-105' 
                   : 'bg-brand-primary border-brand-primary text-black hover:bg-brand-primary/80 active:scale-95 hover:scale-105'
               }`}
               title="Copiar Relatório p/ WhatsApp"
@@ -683,7 +784,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
               </select>
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-white/40 uppercase tracking-widest px-1">Filtrar por Sessão / Data</label>
+              <label className="text-[10px] font-black text-white/40 uppercase tracking-widest px-1">Filtrar por Dia / Data</label>
               <select 
                 value={filterDate}
                 onChange={(e) => setFilterDate(e.target.value)}
@@ -715,7 +816,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
                   filteredMatches.length === 0 
                   ? 'bg-white/5 text-white/20 border border-white/5 cursor-not-allowed' 
                   : copyFeedback 
-                    ? 'bg-emerald-500 text-white border border-emerald-500' 
+                    ? 'bg-white text-black border border-white' 
                     : 'bg-brand-primary text-black border border-brand-primary hover:bg-brand-primary/80 active:scale-95 shadow-lg shadow-brand-primary/10'
                 }`}
               >

@@ -2,8 +2,10 @@
 import { useEffect, useCallback } from 'react';
 import { useStore } from '../../store';
 import { generateNarrationScript, generateDailySummaryAudio, generateTeamAnnouncementAudio, speakNarration } from '../../services/geminiService';
+import { useAIStatus } from './useAIStatus';
 
 export const useNarration = () => {
+  const { status: aiStatus } = useAIStatus();
   const { 
     generationResult, 
     setNarrationScript, 
@@ -151,20 +153,30 @@ export const useNarration = () => {
       
       // Start AI generation
       let audioData = null;
-      if (type === 'teams') {
-        audioData = await generateTeamAnnouncementAudio(generationResult!.teamA, generationResult!.teamB);
+      
+      if (!aiStatus.isAvailable) {
+        console.warn("[Narration] AI is not available:", aiStatus.errorMessage);
+        showNotification(aiStatus.errorMessage, "info");
       } else {
-        audioData = await generateDailySummaryAudio({
-          mvp: rankingData?.mvp?.name || rankingData?.dailyMvp?.name || rankingData?.mvp,
-          bestSetter: rankingData?.bestSetter?.name || rankingData?.dailyBestSetter?.name || rankingData?.bestSetter,
-          dailyKing: rankingData?.dailyKing?.name || rankingData?.dailyKing,
-          matchesCount: rankingData?.matchesCount || rankingData?.dailyMatchesCount,
-          rankingChanges: rankingData?.rankingChanges,
-          sessionLeaderboard: rankingData?.sessionLeaderboard,
-          date: rankingData?.date,
-          avgMatchTime: rankingData?.avgMatchTime,
-          summaryType: rankingData?.summaryType 
-        });
+        try {
+          if (type === 'teams') {
+            audioData = await generateTeamAnnouncementAudio(generationResult!.teamA, generationResult!.teamB);
+          } else {
+            audioData = await generateDailySummaryAudio({
+              mvp: rankingData?.mvp?.name || rankingData?.dailyMvp?.name || rankingData?.mvp,
+              bestSetter: rankingData?.bestSetter?.name || rankingData?.dailyBestSetter?.name || rankingData?.bestSetter,
+              dailyKing: rankingData?.dailyKing?.name || rankingData?.dailyKing,
+              matchesCount: rankingData?.matchesCount || rankingData?.dailyMatchesCount,
+              rankingChanges: rankingData?.rankingChanges,
+              sessionLeaderboard: rankingData?.sessionLeaderboard,
+              date: rankingData?.date,
+              avgMatchTime: rankingData?.avgMatchTime,
+              summaryType: rankingData?.summaryType 
+            });
+          }
+        } catch (error: any) {
+          console.error("[Narration] AI generation failed:", error);
+        }
       }
 
       if (audioData) {

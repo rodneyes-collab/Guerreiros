@@ -44,7 +44,8 @@ import {
   persistentMultipleTabManager,
   clearIndexedDbPersistence, 
   enableNetwork, 
-  disableNetwork 
+  disableNetwork,
+  deleteField 
 } from 'firebase/firestore';
 import { getMessaging, getToken, onMessage } from 'firebase/messaging';
 import firebaseConfig from './firebase-applet-config.json';
@@ -67,22 +68,22 @@ if (typeof window !== 'undefined') {
 
 // Multi-Tab Persistence Setup for Firebase 11
 let dbInstance;
-// Forçamos o uso do banco '(default)' pois é onde residem os dados reais do Guerreiros
-// O databaseId secundário do config causou a perda de visibilidade dos sócios legítimos.
-const dbId = '(default)';
+// Prioriza o banco default para os dados do Guerreiros Volleyball Club
+const dbId = firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)' 
+  ? firebaseConfig.firestoreDatabaseId 
+  : undefined;
 
 if (typeof window !== 'undefined') {
   try {
     dbInstance = initializeFirestore(app, {
       localCache: persistentLocalCache({
         tabManager: persistentMultipleTabManager()
-      })
+      }),
+      experimentalForceLongPolling: true
     }, dbId);
   } catch (e) {
-    console.warn('[Firestore] Modern persistence failed, using default init:', e);
+    console.warn('[Firestore] Modern persistence init skipped or already initialized, using existing instance:', e);
     dbInstance = getFirestore(app, dbId);
-    // Legacy fallback attempt
-    enableIndexedDbPersistence(dbInstance).catch(() => {});
   }
 } else {
   dbInstance = getFirestore(app, dbId);
@@ -169,26 +170,77 @@ export const setCurrentPlayerId = (id: string | null) => {
   }
 };
 
-export const trackAccess = async () => {
-  if (!currentPlayerId || isQuotaExceeded) return;
+export const trackAccess = async (overridePlayerId?: string) => {
+  const targetId = overridePlayerId || currentPlayerId;
+  if (!targetId || isQuotaExceeded) {
+    if (!targetId && auth.currentUser) {
+      try {
+        const email = auth.currentUser.email;
+        const uid = auth.currentUser.uid;
+        const playersRef = collection(db, 'players');
+        let q = query(playersRef, where('uid', '==', uid), limit(1));
+        let snap = await getDocs(q);
+        let foundId: string | null = null;
+        if (!snap.empty) {
+          foundId = snap.docs[0].id;
+        } else if (email) {
+          q = query(playersRef, where('email', '==', email.trim().toLowerCase()), limit(1));
+          snap = await getDocs(q);
+          if (!snap.empty) {
+            foundId = snap.docs[0].id;
+          }
+        }
+        if (foundId) {
+          currentPlayerId = foundId;
+          return trackAccess(foundId);
+        }
+      } catch (err) {
+        console.warn('[trackAccess] Failed fallback player lookup:', err);
+      }
+    }
+    return;
+  }
+
   const today = getFirestoreDateKey();
-  const playerRef = doc(db, 'players', currentPlayerId);
+  const playerRef = doc(db, 'players', targetId);
   try {
     const playerSnap = await getDoc(playerRef);
     const playerData = playerSnap.exists() ? playerSnap.data() : null;
     const isNewDay = !playerData || !playerData.lastReadUpdate || playerData.lastReadUpdate < today;
 
+    console.log(`[trackAccess] Initing track for ${targetId}. isNewDay: ${isNewDay}`);
+
+    const now = new Date().toISOString();
+    const loginHistory = playerData?.loginHistory || [];
+    
+    // Avoid duplicate recording if called within 30 seconds
+    if (loginHistory.length > 0) {
+      const lastLoginTime = new Date(loginHistory[0]).getTime();
+      if (!isNaN(lastLoginTime) && Date.now() - lastLoginTime < 30000) {
+        console.log('[trackAccess] Skipping duplicate access within 30s');
+        return;
+      }
+    }
+    
+    const newHistory = [now, ...loginHistory].slice(0, 20);
+    const currentAccesses = Number(playerData?.accesses || 0);
+
     if (isNewDay) {
       await updateDoc(playerRef, {
-        accesses: increment(1),
+        accesses: currentAccesses + 1,
         dailyAccesses: 1,
-        lastReadUpdate: today
+        lastReadUpdate: today,
+        lastLoginAt: now,
+        loginHistory: newHistory
       });
     } else {
+      const currentDaily = Number(playerData?.dailyAccesses || 0);
       await updateDoc(playerRef, {
-        accesses: increment(1),
-        dailyAccesses: increment(1),
-        lastReadUpdate: today
+        accesses: currentAccesses + 1,
+        dailyAccesses: currentDaily + 1,
+        lastReadUpdate: today,
+        lastLoginAt: now,
+        loginHistory: newHistory
       });
     }
 
@@ -200,10 +252,18 @@ export const trackAccess = async () => {
       setDoc(usageRef, { accesses: 1 }, { merge: true });
     });
 
-    console.log(`[Usage] Acesso registrado para o sócio: ${currentPlayerId} (Dia: ${isNewDay ? 1 : 'inc'})`);
+    console.log(`[Usage] Acesso registrado para o sócio: ${targetId} (Dia: ${isNewDay ? 1 : 'inc'}) às ${now}`);
   } catch (e) {
     try {
-      await setDoc(playerRef, { accesses: 1, dailyAccesses: 1, lastReadUpdate: today }, { merge: true });
+      const now = new Date().toISOString();
+      await setDoc(playerRef, { 
+        accesses: 1, 
+        dailyAccesses: 1, 
+        lastReadUpdate: today,
+        lastLoginAt: now,
+        loginHistory: [now]
+      }, { merge: true });
+      console.log(`[Usage] Acesso registrado via setDoc para o sócio: ${targetId}`);
     } catch (err) {
       console.warn('Erro ao rastrear acesso:', err);
     }
@@ -452,7 +512,8 @@ export {
   addDoc,
   serverTimestamp,
   collectionGroup,
-  clearIndexedDbPersistence
+  clearIndexedDbPersistence,
+  deleteField
 };
 export type { User };
 
@@ -481,4 +542,4 @@ async function testConnection() {
     }
   }
 }
-testConnection();
+// testConnection();

@@ -262,10 +262,63 @@ export const PlayerForm: React.FC<PlayerFormProps> = ({
               className="w-full px-6 py-4 bg-white/5 border border-brand-primary/40 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none appearance-none"
             >
               <option value="active" className="bg-brand-secondary text-white">Ativo</option>
+              <option value="guest" className="bg-brand-secondary text-white">Convidado</option>
               <option value="waitlist" className="bg-brand-secondary text-white">Lista de Espera</option>
+              <option value="dm" className="bg-brand-secondary text-white">Departamento Médico (DM)</option>
               <option value="inactive" className="bg-brand-secondary text-white">Inativo</option>
             </select>
           </div>
+
+          {formData.status === 'guest' && (
+            <div className="space-y-3 bg-brand-primary/5 p-5 rounded-3xl border border-brand-primary/20 animate-in slide-in-from-top-2 duration-200">
+              <label className="text-[10px] font-black text-brand-primary uppercase tracking-widest ml-1 block">
+                Nível Técnico do Convidado
+              </label>
+              <div className="grid grid-cols-3 gap-3">
+                {[
+                  { label: 'Iniciante', elo: 1000, val: 1 },
+                  { label: 'Intermediário', elo: 1200, val: 2 },
+                  { label: 'Avançado', elo: 1400, val: 3 }
+                ].map((preset) => {
+                  const isCurrent = formData.elo === preset.elo && 
+                    formData.skills?.setting === preset.val &&
+                    formData.skills?.attacking === preset.val &&
+                    formData.skills?.defense === preset.val &&
+                    formData.skills?.serving === preset.val;
+                    
+                  return (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      onClick={() => {
+                        setFormData({
+                          ...formData,
+                          elo: preset.elo,
+                          skills: {
+                            setting: preset.val,
+                            attacking: preset.val,
+                            defense: preset.val,
+                            serving: preset.val
+                          },
+                          impactLevel: preset.val as 1 | 2 | 3
+                        });
+                      }}
+                      className={`py-3 px-2 rounded-2xl font-black text-[10px] uppercase transition-all border ${
+                        isCurrent
+                          ? 'bg-brand-primary text-brand-secondary border-brand-primary'
+                          : 'bg-white/5 text-white/60 border-white/10 hover:border-brand-primary/40'
+                      }`}
+                    >
+                      {preset.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[8px] font-bold text-white/30 uppercase text-center mt-1">
+                Ajusta automaticamente o ELO (1000/1200/1400) e os fundamentos técnicos
+              </p>
+            </div>
+          )}
 
           {isAdmin && (
             <div className="grid grid-cols-2 gap-4">

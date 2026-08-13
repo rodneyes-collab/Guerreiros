@@ -25,10 +25,14 @@ import {
   Medal,
   DollarSign,
   WifiOff,
-  Bluetooth
+  Bluetooth,
+  Cpu,
+  RefreshCw
 } from 'lucide-react';
 
-import { getBrazilDay, getFirestoreDateKey, db, doc, updateDoc } from './firebase';
+import { ServiceWorkerDiagnostics } from './src/components/ServiceWorkerDiagnostics';
+
+import { getBrazilDay, getFirestoreDateKey, db, doc, updateDoc, clearIndexedDbPersistence } from './firebase';
 import { useStore } from './store';
 import { useAuth } from './src/hooks/useAuth';
 import { useFirestoreSync } from './src/hooks/useFirestoreSync';
@@ -37,24 +41,28 @@ import { useNarration } from './src/hooks/useNarration';
 import { usePushNotifications } from './src/hooks/usePushNotifications';
 import { useAppLogic } from './src/hooks/useAppLogic';
 import { PaymentStatus } from './types';
+import { APP_VERSION } from './constants';
 
+import { NetworkStatusIndicator } from './src/components/NetworkStatusIndicator';
+import { UpdateNotificationToast } from './src/components/UpdateNotificationToast';
+import { useServiceWorkerUpdate } from './src/hooks/useServiceWorkerUpdate';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Notification } from './components/Notification';
 import { ConfirmModal } from './components/ConfirmModal';
+import { SetterStrategyModal } from './components/SetterStrategyModal';
 import { AttendanceView } from './components/AttendanceView';
 import { AttendanceReportView } from './components/AttendanceReportView';
 import { IntentionsView } from './components/IntentionsView';
-import { useIntentions } from './src/hooks/useIntentions';
 import { MatchView } from './components/MatchView';
 import { RankingView } from './components/RankingView';
 import { MembersView } from './components/MembersView';
 import { PaymentsView } from './components/PaymentsView';
 import { RulesView } from './components/RulesView';
-const AdminView = lazy(() => import('./components/AdminView').then(m => ({ default: m.AdminView })));
-const MatchViewLazy = lazy(() => import('./components/MatchView').then(m => ({ default: m.MatchView })));
+import { AdminView } from './components/AdminView';
 import { HistoryView } from './components/HistoryView';
 import { TournamentView } from './components/TournamentView';
 import { MyPaymentsView } from './components/MyPaymentsView';
+import { useIntentions } from './src/hooks/useIntentions';
 import { PlayerForm } from './components/PlayerForm';
 import { PaymentForm } from './components/PaymentForm';
 import { ExpenseForm } from './components/ExpenseForm';
@@ -73,9 +81,14 @@ import { BirthdayBanner } from './src/components/BirthdayBanner';
 import { WelcomeBanner } from './src/components/WelcomeBanner';
 import { NotificationCenter } from './src/components/NotificationCenter';
 import { ReloadPrompt } from './src/components/ReloadPrompt';
+import { useAutoVersionCheck } from './src/hooks/useAutoVersionCheck';
+
+// Module-level safeguard to prevent multi-mount infinite loops in StrictMode/remounts
+let versionUpdateChecked = false;
 
 const App: React.FC = () => {
   // --- Hooks ---
+  useAutoVersionCheck();
   const { user, userRole, currentPlayer, isAuthReady, isRoleLoading } = useAuth();
   useFirestoreSync();
   useDailyReset();
@@ -141,6 +154,9 @@ const App: React.FC = () => {
     requestName,
     setRequestName,
     isRequestSubmitted,
+    showSetterPromptModal,
+    setShowSetterPromptModal,
+    setterPromptData,
     createDataSnapshot,
     handleLogout,
     handleGoogleLogin,
@@ -153,6 +169,7 @@ const App: React.FC = () => {
     handleFinishMatch,
     handleAnalyzeMatch,
     handleVerifyRules,
+    handleAutoFixInconsistencies,
     isAnalyzing,
     onApproveRequest,
     onRejectRequest,
@@ -161,6 +178,8 @@ const App: React.FC = () => {
     updateSystemMetadata,
     registerAttendance,
     removeAttendance,
+    updateDepartureTime,
+    updateArrivalTime,
     clearAttendance,
     onToggleIntention,
     deletePlayer,
@@ -198,6 +217,20 @@ const App: React.FC = () => {
   const { intentions, setIntent } = useIntentions();
   const [skippedIntentionChoice, setSkippedIntentionChoice] = useState(false);
   const [isSubmittingIntention, setIsSubmittingIntention] = useState(false);
+  
+  const { needRefresh, updateServiceWorker } = useServiceWorkerUpdate();
+
+  // Automatic consecutive version marker with module-level safeguard
+  useEffect(() => {
+    if (userRole === 'ADMIN' && systemMetadata && systemMetadata.appVersion !== APP_VERSION && !versionUpdateChecked) {
+      versionUpdateChecked = true;
+      const nextBuildNumber = (systemMetadata.versionNumber || 0) + 1;
+      updateSystemMetadata({
+        appVersion: APP_VERSION,
+        versionNumber: nextBuildNumber
+      });
+    }
+  }, [userRole, systemMetadata, updateSystemMetadata]);
 
   useEffect(() => {
     if (!user) {
@@ -342,7 +375,6 @@ const App: React.FC = () => {
 
   const handleRescueReset = async () => {
     try {
-      const { clearIndexedDbPersistence, db } = await import('./firebase');
       await clearIndexedDbPersistence(db);
     } catch (e) {
       console.warn('Failed to clear Firestore persistence during rescue:', e);
@@ -582,6 +614,7 @@ const App: React.FC = () => {
     { id: 'my_payments', label: 'Pagamentos', icon: CreditCard, adminOnly: false },
     { id: 'ranking', label: 'Ranking', icon: Medal, adminOnly: false },
     { id: 'rules', label: 'Regras', icon: ShieldAlert, adminOnly: false },
+    { id: 'diagnostics', label: 'Diagnóstico', icon: Cpu, adminOnly: false },
     { id: 'admin', label: 'Admin', icon: Settings, adminOnly: true },
   ].filter(item => {
     if (item.adminOnly && userRole !== 'ADMIN') return false;
@@ -678,13 +711,14 @@ const App: React.FC = () => {
     });
   };
 
-  const handleRemovePlayer = (playerId: string) => {
+  const handleRemovePlayer = (teamOrId: string, maybeId?: string) => {
+    const targetPlayerId = maybeId || teamOrId;
     if (!generationResult) return;
     if (!generationResult?.remainingPlayers || generationResult.remainingPlayers.length === 0) {
       showNotification("Não há reservas disponíveis para substituição!", "error");
       return;
     }
-    performSwap(playerId, generationResult.remainingPlayers[0].id);
+    performSwap(targetPlayerId, generationResult.remainingPlayers[0].id);
   };
 
   const promoteToSetter = (team: 'A' | 'B', playerId: string) => {
@@ -696,8 +730,13 @@ const App: React.FC = () => {
     if (playerIndex === -1) return;
     
     const player = teamData.players[playerIndex];
+    const oldSetter = teamData.setter;
+    
     const newPlayers = [...teamData.players];
     newPlayers.splice(playerIndex, 1);
+    if (oldSetter) {
+      newPlayers.push(oldSetter);
+    }
     
     setGenerationResult({
       ...generationResult,
@@ -707,7 +746,7 @@ const App: React.FC = () => {
         players: newPlayers
       }
     });
-    showNotification(`${player.name} designado como levantador temporário.`, 'info');
+    showNotification(`${player.name} designado como levantador da equipe.`, 'success');
   };
 
   // --- Render Logic ---
@@ -825,6 +864,8 @@ const App: React.FC = () => {
 
   return (
     <ErrorBoundary>
+      <NetworkStatusIndicator />
+      <UpdateNotificationToast needRefresh={needRefresh} updateServiceWorker={updateServiceWorker} />
       <ReloadPrompt />
       <BirthdayBanner birthdays={todayBirthdays} />
       <WelcomeBanner 
@@ -874,6 +915,16 @@ const App: React.FC = () => {
                     </div>
                   )}
 
+                  {/* Version & Diagnostics Badge */}
+                  <button
+                    onClick={() => setViewMode('diagnostics')}
+                    className="flex items-center gap-1.5 px-2.5 py-0.5 sm:px-3 sm:py-1 rounded-full border border-brand-primary/40 bg-brand-primary/10 text-brand-primary text-[8px] sm:text-[10px] font-black uppercase tracking-wider hover:bg-brand-primary hover:text-black transition-all cursor-pointer shadow-sm"
+                    title="Acessar Diagnóstico e Atualização do App"
+                  >
+                    <RefreshCw className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
+                    <span>v{APP_VERSION}</span>
+                  </button>
+
                   {/* Bluetooth Beacon Live Status Badge */}
                   <div className={`flex items-center gap-1.5 px-2 py-0.5 sm:px-3 sm:py-1 rounded-full border text-[7.5px] sm:text-[10px] font-black uppercase tracking-wider leading-none transition-all ${
                     isNearCourt 
@@ -881,7 +932,19 @@ const App: React.FC = () => {
                       : 'border-white/10 bg-white/5 text-white/40'
                   }`}>
                     <Bluetooth className={`w-3 h-3 ${isNearCourt ? 'animate-pulse text-brand-primary' : 'text-white/25'}`} />
-                    <span>BLE: {isNearCourt ? 'Quadra Detectada' : 'Sem Sinal'}</span>
+                    <span>
+                      BLE:{' '}
+                      {currentBeaconRssi !== null ? (
+                        <>
+                          {isNearCourt ? 'Quadra Detectada' : 'Sinal Fraco'}{' '}
+                          <span className="font-mono text-[7.5px] sm:text-[9px] opacity-80">
+                            ({currentBeaconRssi} dBm / ~{Math.pow(10, (-60 - currentBeaconRssi) / 20).toFixed(1)}m)
+                          </span>
+                        </>
+                      ) : (
+                        'Sem Sinal'
+                      )}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -969,10 +1032,23 @@ const App: React.FC = () => {
               </div>
             </button>
           ))}
+          {/* Version code at the bottom of the sidebar */}
+          <div className="hidden sm:block mt-auto pb-4">
+            <span className="text-[10px] font-black text-brand-primary/40 uppercase tracking-widest font-mono">
+              v{APP_VERSION}
+              {systemMetadata?.versionNumber ? ` (${systemMetadata.versionNumber})` : ''}
+            </span>
+          </div>
         </nav>
 
         {/* Main Content */}
         <main className="max-w-[1400px] mx-auto p-4 sm:p-8 lg:p-10">
+          <Suspense fallback={
+            <div className="flex flex-col items-center justify-center p-20 gap-4">
+              <div className="w-12 h-12 border-4 border-brand-primary border-t-transparent rounded-full animate-spin" />
+              <p className="text-white/40 font-black uppercase tracking-widest text-[10px]">Carregando Módulo...</p>
+            </div>
+          }>
           {/* Mismatch Session Control / Warning */}
           {currentPlayer && currentPlayer.uid && currentPlayer.uid !== 'undefined' && user?.uid && currentPlayer.uid !== user.uid && (
             <motion.div 
@@ -1054,11 +1130,13 @@ const App: React.FC = () => {
               currentPlayer={currentPlayer}
               registerAttendance={registerAttendance}
               removeAttendance={removeAttendance}
+              updateDepartureTime={updateDepartureTime}
+              updateArrivalTime={updateArrivalTime}
               clearAttendance={clearAttendance}
               onToggleIntention={onToggleIntention}
               refreshPlayers={refreshPlayers}
               resetDailyMatches={handleFinishDay}
-              availablePlayers={players.filter(p => (!p.status || p.status === 'active') && !p.isDM)}
+              availablePlayers={players.filter(p => (!p.status || p.status === 'active' || p.status === 'guest') && !p.isDM)}
               preConfirmations={preConfirmations}
               setViewMode={setViewMode}
             />
@@ -1069,34 +1147,35 @@ const App: React.FC = () => {
           )}
 
           {viewMode === 'generation' && (
-            <Suspense fallback={<div>Carregando...</div>}>
-              <div className="space-y-12">
-                <MatchViewLazy 
-                  onGenerate={handleGenerate}
-                  onDiscard={handleDiscard}
-                  onFinishDay={handleFinishDay}
-                  onDeleteMatchesByDate={deleteMatchesByDate}
-                  onFinishMatch={handleFinishMatch}
-                  onVerifyRules={handleVerifyRules}
-                  onAnalyzeMatch={handleAnalyzeMatch}
-                  recalculateDailyStats={recalculateDailyStats}
-                  isVerifyingRules={isVerifyingRules}
-                  isAnalyzing={isAnalyzing}
-                  isNarratingSummary={isNarratingSummary}
-                  onAnnounce={() => {
-                    handleAnnounce('teams');
-                    playSound('announce');
-                  }}
-                  onSwapClick={handleSwapClick}
-                  onRemovePlayer={handleRemovePlayer}
-                  onPromoteToSetter={promoteToSetter}
-                  systemMetadata={systemMetadata}
-                  updateSystemMetadata={updateSystemMetadata}
-                />
-                
-                {/* Posições sugeridas removidas conforme solicitação de retirar as quadras */}
-              </div>
-            </Suspense>
+            <div className="space-y-12">
+              <MatchView 
+                userRole={userRole || 'ADMIN'}
+                onGenerate={handleGenerate}
+                onDiscard={handleDiscard}
+                onFinishDay={handleFinishDay}
+                onDeleteMatchesByDate={deleteMatchesByDate}
+                onFinishMatch={handleFinishMatch}
+                onVerifyRules={handleVerifyRules}
+                onAutoFixInconsistencies={handleAutoFixInconsistencies}
+                onAnalyzeMatch={handleAnalyzeMatch}
+                recalculateDailyStats={recalculateDailyStats}
+                isVerifyingRules={isVerifyingRules}
+                isAnalyzing={isAnalyzing}
+                isNarratingSummary={isNarratingSummary}
+                onAnnounce={() => {
+                  handleAnnounce('teams');
+                  playSound('announce');
+                }}
+                onSwapClick={handleSwapClick}
+                onRemovePlayer={handleRemovePlayer}
+                onPromoteToSetter={promoteToSetter}
+                systemMetadata={systemMetadata}
+                updateSystemMetadata={updateSystemMetadata}
+                updateDepartureTime={updateDepartureTime}
+              />
+              
+              {/* Posições sugeridas removidas conforme solicitação de retirar as quadras */}
+            </div>
           )}
 
           {viewMode === 'history' && (
@@ -1152,40 +1231,45 @@ const App: React.FC = () => {
 
           {viewMode === 'rules' && <RulesView />}
 
+          {viewMode === 'diagnostics' && (
+            <div className="max-w-2xl mx-auto py-4">
+              <ServiceWorkerDiagnostics />
+            </div>
+          )}
+
           {viewMode === 'my_payments' && currentPlayer && (
             <MyPaymentsView playerId={currentPlayer.id} />
           )}
 
           {viewMode === 'admin' && (
-            <Suspense fallback={<div>Carregando Admin...</div>}>
-              <AdminView 
-                resetDailyStats={handleFinishDay}
-                resetElo={resetElo}
-                triggerSync={triggerSync}
-                recalculateDailyStats={recalculateDailyStats}
-                updateSystemMetadata={updateSystemMetadata}
-                recalculateStats={recalculateStats}
-                repairDatabase={repairDatabase}
-                initializeEloHistory={initializeEloHistory}
-                updateQuotaSettings={updateQuotaSettings}
-                createDataSnapshot={createDataSnapshot}
-                clearAllHistory={clearAllHistory}
-                clearMatchesOnly={clearMatchesOnly}
-                clearAllDatabase={clearAllDatabase}
-                pendingRequests={pendingRequests}
-                onApproveRequest={onApproveRequest}
-                onRejectRequest={onRejectRequest}
-                handleScanAnomalies={handleScanAnomalies}
-                fixDatabaseAnomalies={fixDatabaseAnomalies}
-                recalculateAllElo={recalculateAllElo}
-                deleteTournament={deleteTournament}
-                showConfirmModal={showConfirmModal}
-                setEditingPlayer={setEditingPlayer}
-                setIsFormOpen={setIsFormOpen}
-                savePlayer={savePlayer}
-              />
-            </Suspense>
+            <AdminView 
+              resetDailyStats={handleFinishDay}
+              resetElo={resetElo}
+              triggerSync={triggerSync}
+              recalculateDailyStats={recalculateDailyStats}
+              updateSystemMetadata={updateSystemMetadata}
+              recalculateStats={recalculateStats}
+              repairDatabase={repairDatabase}
+              initializeEloHistory={initializeEloHistory}
+              updateQuotaSettings={updateQuotaSettings}
+              createDataSnapshot={createDataSnapshot}
+              clearAllHistory={clearAllHistory}
+              clearMatchesOnly={clearMatchesOnly}
+              clearAllDatabase={clearAllDatabase}
+              pendingRequests={pendingRequests}
+              onApproveRequest={onApproveRequest}
+              onRejectRequest={onRejectRequest}
+              handleScanAnomalies={handleScanAnomalies}
+              fixDatabaseAnomalies={fixDatabaseAnomalies}
+              recalculateAllElo={recalculateAllElo}
+              deleteTournament={deleteTournament}
+              showConfirmModal={showConfirmModal}
+              setEditingPlayer={setEditingPlayer}
+              setIsFormOpen={setIsFormOpen}
+              savePlayer={savePlayer}
+            />
           )}
+          </Suspense>
         </main>
 
         <PlayerForm 
@@ -1229,8 +1313,9 @@ const App: React.FC = () => {
 
         {/* Modals & Notifications */}
         <Notification />
-        
+        <ReloadPrompt />
         <ConfirmModal />
+        <SetterStrategyModal />
 
         {isSyncing && (
           <div className="fixed bottom-8 right-8 z-50 bg-black backdrop-blur-md px-8 py-4 rounded-[2rem] shadow-2xl border border-brand-primary/40 flex items-center gap-4 animate-in slide-in-from-right-8 border-l-[6px] border-l-brand-primary">

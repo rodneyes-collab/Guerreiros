@@ -199,6 +199,20 @@ export const PlayerStatusCard: React.FC<PlayerStatusCardProps> = ({
         </motion.div>
       )}
 
+      {currentPlayer && (
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/5 border border-brand-primary/20 backdrop-blur-sm group/access"
+          title={`Total de Acessos: ${currentPlayer.accesses || 0}`}
+        >
+          <Clock className="w-3 h-3 sm:w-4 sm:h-4 text-brand-primary group-hover/access:animate-spin" />
+          <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-wider text-white">
+            {currentPlayer.accesses || 0}
+          </span>
+        </motion.div>
+      )}
+
       {isTopAssiduidade && (
         <motion.div
           initial={{ opacity: 0, scale: 0.9 }}

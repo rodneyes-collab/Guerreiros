@@ -239,9 +239,28 @@
         "autoFixesApplied": { "type": "integer" },
         "timestamp": { "type": "string", "format": "date-time" }
       }
+    },
+    "ScheduledMessage": {
+      "title": "Scheduled Message",
+      "description": "A message to be sent at a specific time via WhatsApp",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string", "enum": ["GAME_REMINDER", "PAYMENT_REMINDER", "CUSTOM"] },
+        "scheduledAt": { "type": "integer" },
+        "status": { "type": "string", "enum": ["PENDING", "SENT", "FAILED"] },
+        "target": { "type": "string", "enum": ["GROUP", "INDIVIDUAL"] },
+        "content": { "type": "string" },
+        "error": { "type": "string" },
+        "createdAt": { "type": "integer" }
+      }
     }
   },
   "firestore": {
+    "/scheduled_messages/{id}": {
+      "schema": "ScheduledMessage",
+      "description": "WhatsApp message queue"
+    },
     "/sentinelReports/{id}": {
       "schema": "SentinelReport",
       "description": "History of AI sentinel scans"

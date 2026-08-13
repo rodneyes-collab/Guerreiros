@@ -33,16 +33,16 @@ export const PublicPresenceView: React.FC<PublicPresenceViewProps> = ({ onBackTo
   // States
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedPlayer, setSelectedPlayer] = useState<any | null>(null);
-  const [phoneDigits, setPhoneDigits] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [successState, setSuccessState] = useState<{ active: boolean; type: 'GOING' | 'NOT_GOING' | null }>({
     active: false,
     type: null
   });
+  const [isProcessing, setIsProcessing] = useState(false);
 
   // Filter active and eligible players
   const eligiblePlayers = useMemo(() => {
-    return players.filter(p => (!p.status || p.status === 'active') && !p.isDM);
+    return players.filter(p => (!p.status || p.status === 'active' || p.status === 'guest') && !p.isDM);
   }, [players]);
 
   // Find players matching search term
@@ -55,18 +55,18 @@ export const PublicPresenceView: React.FC<PublicPresenceViewProps> = ({ onBackTo
 
   // Get going and absent players for the Live Board
   const goingPlayers = useMemo(() => {
-    return eligiblePlayers
+    return players
       .filter(p => intentions.responses[p.id] === 'GOING')
       .sort((a, b) => {
         const timeA = intentions.confirmationTimestamps?.[a.id] || 0;
         const timeB = intentions.confirmationTimestamps?.[b.id] || 0;
         return timeA - timeB;
       });
-  }, [eligiblePlayers, intentions.responses, intentions.confirmationTimestamps]);
+  }, [players, intentions.responses, intentions.confirmationTimestamps]);
 
   const absentPlayers = useMemo(() => {
-    return eligiblePlayers.filter(p => intentions.responses[p.id] === 'NOT_GOING');
-  }, [eligiblePlayers, intentions.responses]);
+    return players.filter(p => intentions.responses[p.id] === 'NOT_GOING');
+  }, [players, intentions.responses]);
 
   const undecidedCount = useMemo(() => {
     return eligiblePlayers.length - goingPlayers.length - absentPlayers.length;
@@ -89,7 +89,6 @@ export const PublicPresenceView: React.FC<PublicPresenceViewProps> = ({ onBackTo
     
     setSelectedPlayer(player);
     setSearchTerm('');
-    setPhoneDigits('');
     setErrorMsg('');
     setSuccessState({ active: false, type: null });
   };
@@ -97,22 +96,9 @@ export const PublicPresenceView: React.FC<PublicPresenceViewProps> = ({ onBackTo
   const handleResponse = async (status: 'GOING' | 'NOT_GOING') => {
     if (!selectedPlayer) return;
 
-    // Verify phone digits if player has registered phone number
-    const registeredPhone = selectedPlayer.phone || '';
-    const cleanPhone = registeredPhone.replace(/\D/g, '');
-
-    if (cleanPhone && cleanPhone.length >= 8) {
-      const lastFour = cleanPhone.slice(-4);
-      const inputDigits = phoneDigits.replace(/\D/g, '');
-
-      if (inputDigits !== lastFour) {
-        setErrorMsg('Os últimos 4 dígitos do telefone não conferem. Verifique e tente novamente.');
-        return;
-      }
-    }
-
+    setIsProcessing(true);
     try {
-      await setIntent(selectedPlayer.id, status, phoneDigits);
+      await setIntent(selectedPlayer.id, status);
       setSuccessState({ active: true, type: status });
       setErrorMsg('');
       
@@ -120,10 +106,11 @@ export const PublicPresenceView: React.FC<PublicPresenceViewProps> = ({ onBackTo
       setTimeout(() => {
         setSuccessState({ active: false, type: null });
         setSelectedPlayer(null);
-        setPhoneDigits('');
       }, 4500);
     } catch (e: any) {
       setErrorMsg('Falha ao registrar presença. Tente novamente: ' + (e.message || e));
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -282,62 +269,62 @@ export const PublicPresenceView: React.FC<PublicPresenceViewProps> = ({ onBackTo
                 {/* Success animation overlay */}
                 {successState.active ? (
                   <motion.div 
-                    initial={{ opacity: 0, scale: 0.9 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    className="p-6 bg-green-500/10 border-2 border-green-500/30 rounded-[2rem] text-center space-y-4"
+                    initial={{ opacity: 0, scale: 0.9, y: 20 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    className="p-10 bg-brand-primary text-black border-4 border-white/20 rounded-[3rem] text-center space-y-6 shadow-[0_0_50px_rgba(245,196,41,0.4)]"
                   >
-                    <div className="w-14 h-14 bg-green-500 text-black rounded-full flex items-center justify-center mx-auto shadow-lg shadow-green-500/20">
-                      <CheckCircle2 className="w-8 h-8" />
+                    <div className="w-20 h-20 bg-black text-brand-primary rounded-full flex items-center justify-center mx-auto shadow-2xl animate-bounce">
+                      <CheckCircle2 className="w-12 h-12" />
                     </div>
                     <div>
-                      <h4 className="text-lg font-black uppercase text-green-400 tracking-tight">Presença Registrada!</h4>
-                      <p className="text-xs text-white/80 leading-relaxed mt-1">
-                        Valeu, <span className="font-bold text-green-400 capitalize">{selectedPlayer.name}</span>! Sua resposta para {formattedTargetDate} foi adicionada com sucesso. Nos vemos no treino!
+                      <h4 className="text-3xl font-black uppercase tracking-tighter leading-none mb-2">Sucesso Total!</h4>
+                      <p className="text-sm font-bold uppercase tracking-widest opacity-80 leading-relaxed">
+                        Valeu, {selectedPlayer.name.split(' ')[0]}!<br/>
+                        Sua resposta foi enviada com sucesso! 🔥🏐
                       </p>
+                    </div>
+                    <div className="pt-2">
+                      <p className="text-[9px] font-black uppercase tracking-widest opacity-60">Voltando para a lista em instantes...</p>
                     </div>
                   </motion.div>
                 ) : (
                   /* Action Selection Form */
                   <div className="space-y-6">
                     
-                    {/* Security check if phone is registered */}
-                    {selectedPlayer.phone && selectedPlayer.phone.replace(/\D/g, '').length >= 8 ? (
-                      <div className="space-y-3 p-4 bg-zinc-900 rounded-2xl border border-white/5">
-                        <div className="flex items-center gap-2 text-brand-primary">
-                          <Smartphone className="w-4 h-4 shrink-0" />
-                          <span className="text-[10px] font-black uppercase tracking-wider">Verificação de Segurança</span>
-                        </div>
-                        <p className="text-[10px] text-slate-400 leading-normal">
-                          Por segurança, digite os <span className="text-white font-bold">últimos 4 dígitos</span> do seu celular cadastrado (<span className="text-white font-bold">***-XXXX</span>):
-                        </p>
-                        
-                        <input
-                          type="password"
-                          inputMode="numeric"
-                          maxLength={4}
-                          placeholder="EX: 1234"
-                          value={phoneDigits}
-                          onChange={(e) => setPhoneDigits(e.target.value.replace(/\D/g, ''))}
-                          className="w-full max-w-[140px] px-4 py-3 bg-black/50 border border-white/10 rounded-xl focus:border-brand-primary outline-none text-center text-sm font-black tracking-[0.4em] text-white"
-                        />
-                      </div>
-                    ) : null}
-
                     {/* Submit Buttons */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <button
                         type="button"
+                        disabled={isProcessing}
                         onClick={() => handleResponse('GOING')}
-                        className="flex items-center justify-center gap-3 px-6 py-5 bg-brand-primary hover:bg-brand-primary/90 text-black hover:scale-[1.02] active:scale-95 transition-all rounded-2xl font-black uppercase tracking-wider text-xs shadow-xl shadow-brand-primary/10"
+                        className="flex flex-col items-center justify-center gap-1.5 px-6 py-6 bg-brand-primary hover:bg-brand-primary/90 text-black hover:scale-[1.02] active:scale-95 transition-all rounded-3xl font-black uppercase tracking-[0.15em] text-xs shadow-xl shadow-brand-primary/10 border-2 border-black group disabled:opacity-50 disabled:pointer-events-none"
                       >
-                        <UserCheck className="w-5 h-5" /> Vou Jogar!
+                        <div className="flex items-center gap-3">
+                          {isProcessing ? (
+                            <div className="w-6 h-6 border-3 border-black border-t-transparent rounded-full animate-spin" />
+                          ) : (
+                            <UserCheck className="w-7 h-7 group-hover:scale-110 transition-transform" />
+                          )}
+                          <span className="text-xl">Vou Jogar!</span>
+                        </div>
+                        <span className="text-[9px] opacity-60 font-black tracking-widest">Confirmar Presença</span>
                       </button>
+
                       <button
                         type="button"
+                        disabled={isProcessing}
                         onClick={() => handleResponse('NOT_GOING')}
-                        className="flex items-center justify-center gap-3 px-6 py-5 bg-white/5 hover:bg-white/10 text-white rounded-2xl font-black uppercase tracking-wider text-xs border border-white/10 active:scale-95 transition-all"
+                        className="flex flex-col items-center justify-center gap-1.5 px-6 py-6 bg-white hover:bg-gray-100 text-black hover:scale-[1.02] active:scale-95 transition-all rounded-3xl font-black uppercase tracking-[0.15em] text-xs shadow-xl shadow-white/5 border-2 border-black group disabled:opacity-50 disabled:pointer-events-none"
                       >
-                        <UserX className="w-5 h-5 text-red-500" /> Não Vou Ir
+                        <div className="flex items-center gap-3">
+                          {isProcessing ? (
+                            <div className="w-6 h-6 border-3 border-black border-t-transparent rounded-full animate-spin" />
+                          ) : (
+                            <UserX className="w-7 h-7 text-red-600 group-hover:scale-110 transition-transform" />
+                          )}
+                          <span className="text-xl">Não Vou</span>
+                        </div>
+                        <span className="text-[9px] opacity-60 font-black tracking-widest">Informar Ausência</span>
                       </button>
                     </div>
 

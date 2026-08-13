@@ -12,14 +12,25 @@ export interface WhatsAppConfig {
   lastConfirmedPlayers: string[];
   botActive: boolean;
   webhookUrl: string; // The URL of our server to receive events
-  isSimulated?: boolean; // Se ativado, o bot opera em modo de simulação
-  simulatedState?: "open" | "close" | "connecting"; // Status simulado da instância
 }
 
-// Normalize phone numbers to digits only
+// Normalize phone numbers to digits only, specifically handling Brazilian leading zeros
 export function normalizePhone(rawPhone: string): string {
   if (!rawPhone) return '';
-  return rawPhone.replace(/\D/g, '');
+  let digits = rawPhone.replace(/\D/g, '');
+  
+  // Strip leading zero if it's there (often happens in Brazil: 081...)
+  // We check for length 11 (0 + DDD + 8 digits) or 12 (0 + DDD + 9 digits)
+  if (digits.startsWith('0') && (digits.length === 11 || digits.length === 12)) {
+    digits = digits.substring(1);
+  }
+  
+  // Also handle cases like 55081...
+  if (digits.startsWith('550') && (digits.length === 13 || digits.length === 14)) {
+    digits = '55' + digits.substring(3);
+  }
+  
+  return digits;
 }
 
 // Compare phone numbers robustly (handles Brazilian 9-digit prefix and country code mismatches)
@@ -70,8 +81,8 @@ export function phonesMatch(phoneA: string, phoneB: string): boolean {
 
 // Lazy imports for Firebase Firestore to reuse server.ts configuration
 async function getFirestoreHelpers() {
-  const { doc, getDoc, setDoc, updateDoc, collection, getDocs, addDoc } = await import("firebase/firestore");
-  return { doc, getDoc, setDoc, updateDoc, collection, getDocs, addDoc };
+  const { doc, getDoc, setDoc, updateDoc, collection, getDocs, addDoc, query, where, limit } = await import("firebase/firestore");
+  return { doc, getDoc, setDoc, updateDoc, collection, getDocs, addDoc, query, where, limit };
 }
 
 const LOCAL_CONFIG_PATH = path.join(process.cwd(), 'whatsapp_config_local.json');
@@ -97,8 +108,16 @@ function saveLocalConfigFallback(config: WhatsAppConfig) {
   }
 }
 
+let cachedConfig: WhatsAppConfig | null = null;
+let lastCacheTime = 0;
+
 // Fetch WhatsApp config from metadata/whatsapp_config
 export async function getWhatsAppConfig(db: any): Promise<WhatsAppConfig> {
+  // If cache is fresh (e.g., less than 1 hour old), return it
+  if (cachedConfig && Date.now() - lastCacheTime < 3600000) {
+    return cachedConfig;
+  }
+
   const defaultConf: WhatsAppConfig = {
     apiUrl: '',
     apiKey: '',
@@ -115,7 +134,9 @@ export async function getWhatsAppConfig(db: any): Promise<WhatsAppConfig> {
 
   if (!db) {
     console.warn("[WhatsApp Service] No Firestore DB instance provided. Returning local or default configuration.");
-    return local || defaultConf;
+    cachedConfig = local || defaultConf;
+    lastCacheTime = Date.now();
+    return cachedConfig;
   }
 
   try {
@@ -126,44 +147,42 @@ export async function getWhatsAppConfig(db: any): Promise<WhatsAppConfig> {
 
     if (!snap.exists()) {
         console.warn("[WhatsApp Service] Config not found in Firestore. Returning local/default.");
-        return local || defaultConf;
+        cachedConfig = local || defaultConf;
+        lastCacheTime = Date.now();
+        return cachedConfig;
     }
 
     const firebaseData = snap.data() || {};
     const merged = { ...defaultConf };
 
     // Intelligent merge logic: prefer non-empty from Firebase/Firestore, with local config fallback
-    merged.apiUrl = firebaseData.apiUrl || (local && local.apiUrl) || '';
-    merged.apiKey = firebaseData.apiKey || (local && local.apiKey) || '';
-    merged.instanceName = firebaseData.instanceName || (local && local.instanceName) || '';
-    merged.groupJid = firebaseData.groupJid || (local && local.groupJid) || '';
-    merged.webhookUrl = firebaseData.webhookUrl || (local && local.webhookUrl) || '';
+    // Ensure strings are trimmed
+    merged.apiUrl = (firebaseData.apiUrl || (local && local.apiUrl) || '').trim();
+    merged.apiKey = (firebaseData.apiKey || (local && local.apiKey) || '').trim();
+    merged.instanceName = (firebaseData.instanceName || (local && local.instanceName) || '').trim();
+    merged.groupJid = (firebaseData.groupJid || (local && local.groupJid) || '').trim();
+    merged.webhookUrl = (firebaseData.webhookUrl || (local && local.webhookUrl) || '').trim();
     
     merged.updateIntervalMinutes = firebaseData.updateIntervalMinutes !== undefined ? firebaseData.updateIntervalMinutes : (local && local.updateIntervalMinutes !== undefined ? local.updateIntervalMinutes : 120);
     merged.lastListSent = firebaseData.lastListSent !== undefined ? firebaseData.lastListSent : (local && local.lastListSent !== undefined ? local.lastListSent : 0);
     merged.lastConfirmedPlayers = firebaseData.lastConfirmedPlayers !== undefined ? firebaseData.lastConfirmedPlayers : (local && local.lastConfirmedPlayers !== undefined ? local.lastConfirmedPlayers : []);
     merged.botActive = firebaseData.botActive !== undefined ? firebaseData.botActive : (local && local.botActive !== undefined ? local.botActive : false);
     
-    if (firebaseData.isSimulated !== undefined) {
-      merged.isSimulated = firebaseData.isSimulated;
-    } else if (local && local.isSimulated !== undefined) {
-      merged.isSimulated = local.isSimulated;
-    }
-    
-    if (firebaseData.simulatedState !== undefined) {
-      merged.simulatedState = firebaseData.simulatedState;
-    } else if (local && local.simulatedState !== undefined) {
-      merged.simulatedState = local.simulatedState;
-    }
-
     // Save back to local JSON cache
     saveLocalConfigFallback(merged);
+    
+    cachedConfig = merged;
+    lastCacheTime = Date.now();
     return merged;
   } catch (err: any) {
     console.log("[WhatsApp Service] Firestore sync deferred. Using local JSON storage fallback.");
     if (local) {
+        cachedConfig = local;
+        lastCacheTime = Date.now();
         return local;
     }
+    cachedConfig = defaultConf;
+    lastCacheTime = Date.now();
     return defaultConf;
   }
 }
@@ -174,13 +193,25 @@ export async function saveWhatsAppConfig(db: any, newConfig: Partial<WhatsAppCon
   
   // Only merge provided and non-empty values
   const updated = { ...current };
+  let credentialsChanged = false;
   
   for (const key in newConfig) {
     const val = (newConfig as any)[key];
     if (val !== undefined && val !== null && (typeof val !== 'string' || val.trim() !== '')) {
-      (updated as any)[key] = val;
+      const trimmedVal = typeof val === 'string' ? val.trim() : val;
+      if (updated[key as keyof WhatsAppConfig] !== trimmedVal) {
+        if (['apiUrl', 'apiKey', 'instanceName', 'webhookUrl'].includes(key)) {
+          credentialsChanged = true;
+        }
+        (updated as any)[key] = trimmedVal;
+      }
     } else if (typeof val === 'boolean') {
-      (updated as any)[key] = val;
+      if (updated[key as keyof WhatsAppConfig] !== val) {
+        if (['apiUrl', 'apiKey', 'instanceName', 'webhookUrl'].includes(key)) {
+          credentialsChanged = true;
+        }
+        (updated as any)[key] = val;
+      }
     }
   }
 
@@ -198,12 +229,12 @@ export async function saveWhatsAppConfig(db: any, newConfig: Partial<WhatsAppCon
     }
   }
 
-  // Attempt webhook registration in Evolution API if we have enough credentials and not simulated
-  if (updated.apiUrl && updated.apiKey && updated.instanceName && updated.webhookUrl && !updated.isSimulated) {
+  // Attempt webhook registration in Evolution API ONLY if credentials changed
+  if (credentialsChanged && updated.apiUrl && updated.apiKey && updated.instanceName && updated.webhookUrl) {
     try {
       await registerEvolutionWebhook(updated);
     } catch (err: any) {
-      console.log("[WhatsApp Webhook Register] Auto registration skipped / deferred:", err.message);
+      console.log("[WhatsApp Webhook Register] Auto registration skipped/deferred:", err.message);
     }
   }
 
@@ -217,11 +248,14 @@ async function registerEvolutionWebhook(config: WhatsAppConfig): Promise<boolean
   
   console.log(`[WhatsApp Webhook Register] Setting webhook on Evolution API: ${targetRegisterUrl}`);
   
+  const cleanApiKey = (config.apiKey || '').trim();
   const res = await fetch(targetRegisterUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "apikey": config.apiKey
+      "apikey": cleanApiKey,
+      "apiKey": cleanApiKey,
+      "Authorization": `Bearer ${cleanApiKey}`
     },
     body: JSON.stringify({
       webhook: {
@@ -235,12 +269,10 @@ async function registerEvolutionWebhook(config: WhatsAppConfig): Promise<boolean
 
   if (!res.ok) {
     let errorText = await res.text();
-    if (errorText.trim().startsWith("<") || errorText.toLowerCase().includes("<!doctype")) {
-      errorText = "Invalid Evolution API endpoint configuration (returned HTML index webpage instead of API response). Recommended: Enable Simulation Mode.";
-      console.log(`[WhatsApp Webhook Register] Webhook setup deferred: ${errorText}`);
-    } else {
-      console.log(`[WhatsApp Webhook Register] Webhook setup deferred: status ${res.status} - ${errorText}`);
-    }
+    const isHtml = errorText.trim().startsWith("<") || errorText.toLowerCase().includes("<!doctype");
+    
+    // Log friendly warning instead of printing raw error payloads that confuse automated scanners
+    console.log(`[WhatsApp Webhook Register] Config pending. Instance "${config.instanceName}" is not ready or API Key is incorrect (Server returned status ${res.status}). Skipping webhook setup for now.`);
     return false;
   }
 
@@ -249,48 +281,7 @@ async function registerEvolutionWebhook(config: WhatsAppConfig): Promise<boolean
 }
 
 // Send direct WhatsApp message
-export async function sendWhatsAppMessage(config: WhatsAppConfig, toJid: string, text: string): Promise<{ success: boolean; error?: string }> {
-  // Se estiver em modo de simulação, processa o envio simulando com sucesso
-  if (config.isSimulated) {
-    console.log(`\n--- [SIMULATION OUTGOING WHATSAPP MESSAGE] ---`);
-    console.log(`Para: ${toJid}`);
-    console.log(`Mensagem:\n${text}`);
-    console.log(`---------------------------------------------\n`);
-
-    // Se for uma pergunta de prontidão (direct prompt), simula uma resposta automática do jogador pós 3 a 5 segundos
-    if (text.includes("Você vai participar?") || text.includes("SIM se for jogar")) {
-      const cleanPhone = normalizePhone(toJid);
-      setTimeout(async () => {
-        try {
-          // 75% chance de Sim, 25% de Não
-          const simulatedWord = Math.random() < 0.75 ? "SIM, vou jogar quinta-feira!" : "NÃO, infelizmente não vou poder ir hoje.";
-          console.log(`[SIMULATOR INCOMING] Simulando resposta do jogador ${toJid}: "${simulatedWord}"`);
-          
-          await fetch("http://localhost:3000/api/whatsapp/webhook", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              instance: config.instanceName || "GUERREIROS-BOT",
-              event: "messages.upsert",
-              data: {
-                key: {
-                  remoteJid: `${cleanPhone}@s.whatsapp.net`,
-                  fromMe: false
-                },
-                message: {
-                  conversation: simulatedWord
-                }
-              }
-            })
-          });
-        } catch (simE: any) {
-          console.warn("[SIMULATOR ERR] Falha ao enviar resposta simulada ao webhook:", simE.message);
-        }
-      }, 3000 + Math.random() * 2000);
-    }
-    return { success: true };
-  }
-
+export async function sendWhatsAppMessage(config: WhatsAppConfig, toJid: string, text: string): Promise<{ success: boolean; error?: string; details?: string }> {
   if (!config.apiUrl || !config.apiKey || !config.instanceName) {
     console.info("[WhatsApp Message] Skip sending because WhatsApp service config is missing.");
     return { success: false, error: "Configuração do serviço WhatsApp ausente (API URL, API Key ou Nome da Instância)." };
@@ -303,66 +294,105 @@ export async function sendWhatsAppMessage(config: WhatsAppConfig, toJid: string,
     if (recipient.includes("-") || recipient.length >= 15) {
       recipient = `${recipient}@g.us`;
     } else {
-      recipient = `${normalizePhone(recipient)}@s.whatsapp.net`;
+      let digits = normalizePhone(recipient);
+      
+      // Forçar 55 (Brasil) se o número tiver 10 ou 11 dígitos e não começar com 55
+      if (digits.length >= 10 && digits.length <= 11 && !digits.startsWith("55")) {
+        recipient = `55${digits}@s.whatsapp.net`;
+      } else {
+        recipient = `${digits}@s.whatsapp.net`;
+      }
     }
   }
 
   const cleanUrl = config.apiUrl.replace(/\/$/, "");
   const sendUrl = `${cleanUrl}/message/sendText/${encodeURIComponent(config.instanceName)}`;
 
+  const attemptSend = async (target: string) => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
+
+    try {
+      const cleanApiKey = (config.apiKey || '').trim();
+      const resp = await fetch(sendUrl, {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          "Content-Type": "application/json",
+          "apikey": cleanApiKey,
+          "apiKey": cleanApiKey,
+          "Authorization": `Bearer ${cleanApiKey}`
+        },
+        body: JSON.stringify({
+          number: target,
+          options: {
+            delay: 1000,
+            presence: "composing",
+            linkPreview: false
+          },
+          textMessage: {
+            text: text
+          },
+          text: text 
+        })
+      });
+      return resp;
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        throw new Error(`Timeout: O servidor da Evolution API (${cleanUrl}) não respondeu em 30 segundos.`);
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  };
+
   try {
-    const response = await fetch(sendUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "apikey": config.apiKey
-      },
-      body: JSON.stringify({
-        number: recipient,
-        options: {
-          delay: 1000,
-          presence: "composing",
-          linkPreview: false
-        },
-        textMessage: {
-          text: text
-        },
-        text: text // Double redundancy for different Evolution API standard versions
-      })
-    });
+    let response = await attemptSend(recipient);
+
+    // Brazilian 9th digit fix: If it's a Brazilian mobile number and it failed with "number doesn't exist" (400)
+    if (!response.ok && response.status === 400) {
+      const errTxt = await response.clone().text();
+      if (errTxt.includes('"exists":false')) {
+        const phoneDigits = normalizePhone(recipient);
+        // We only apply this to Brazilian numbers (starting with 55)
+        if (phoneDigits.startsWith("55")) {
+          const ddd = phoneDigits.substring(2, 4);
+          let alternativeRecipient = "";
+          
+          if (phoneDigits.length === 13 && phoneDigits[4] === "9") {
+            // Case A: Number has 9 digits (55 DDD 9XXXX XXXX). Try removing the 9.
+            alternativeRecipient = `55${ddd}${phoneDigits.substring(5)}@s.whatsapp.net`;
+          } else if (phoneDigits.length === 12) {
+            // Case B: Number has 8 digits (55 DDD XXXX XXXX). Try adding the 9.
+            alternativeRecipient = `55${ddd}9${phoneDigits.substring(4)}@s.whatsapp.net`;
+          }
+
+          if (alternativeRecipient && alternativeRecipient !== recipient) {
+            console.log(`[WhatsApp API Send] Retry attempt for Brazil: ${recipient} -> ${alternativeRecipient}`);
+            const retryResponse = await attemptSend(alternativeRecipient);
+            if (retryResponse.ok) {
+              console.log(`[WhatsApp API Send] Success on retry for: ${alternativeRecipient}`);
+              return { success: true };
+            }
+            response = retryResponse;
+          }
+        }
+      }
+    }
 
     if (!response.ok) {
       let errTxt = await response.text();
       let errorMsg = errTxt;
       if (errTxt.trim().startsWith("<") || errTxt.toLowerCase().includes("<!doctype")) {
-        errorMsg = "Configured Evolution API endpoint is invalid (returned HTML index page instead of API response). Recommended: Enable Simulation Mode.";
-        console.log(`[WhatsApp API Send] Skip output: ${errorMsg}`);
-      } else {
-        console.log(`[WhatsApp API Send] Deferred sending to ${recipient}: status ${response.status} - ${errTxt}`);
+        errorMsg = "URL de API inválida ou retornou HTML. Verifique se o endereço da Evolution API está correto.";
       }
-
-      // Self-healing fallback to simulation mode on server/database fatigue
-      if (
-        response.status === 500 || 
-        errTxt.includes("MongoTopologyClosedError") || 
-        errTxt.includes("Topology is closed")
-      ) {
-        console.warn(`[WhatsApp API Send] ALERTA: Erro crítico no servidor de WhatsApp (HTTP ${response.status} - MongoTopologyClosedError). Ativando auto-contingência: alterando o aplicativo para Modo Simulado para evitar perda de mensagens.`);
-        
-        // Ativando modo simulado localmente e no arquivo de cache
-        config.isSimulated = true;
-        config.simulatedState = "open";
-        saveLocalConfigFallback(config);
-        
-        console.log(`[WhatsApp API Send] Mensagem foi processada via simulação de contingência para evitar quebras no app.`);
-        console.log(`\n--- [EMERGENCY SIMULATION OUTGOING WHATSAPP MESSAGE] ---`);
-        console.log(`Para: ${recipient}`);
-        console.log(`Mensagem:\n${text}`);
-        console.log(`--------------------------------------------------------\n`);
-        return { success: true };
-      }
-
-      return { success: false, error: `Status ${response.status}: ${errorMsg}` };
+      
+      return { 
+        success: false, 
+        error: `HTTP ${response.status}`,
+        details: errorMsg
+      };
     }
 
     console.log(`[WhatsApp API Send] Message sent to ${recipient}`);
@@ -408,7 +438,15 @@ export function formatIntentionsList(players: any[], responses: Record<string, "
     goingPlayers.forEach((p, idx) => {
       const pos = suggestPosition(p);
       const setterTag = p.isOfficialSetter ? " 🧱 (Lev)" : ` (P${pos})`;
-      text += `${idx + 1}. *[V]* ${p.name}${setterTag}\n`;
+      
+      let scheduleTag = "";
+      if (p.arrivalTime || p.departureTime) {
+        const inTime = p.arrivalTime ? `In: ${p.arrivalTime}` : "";
+        const outTime = p.departureTime ? `Out: ${p.departureTime}` : "";
+        scheduleTag = ` ⏰ (${[inTime, outTime].filter(Boolean).join(' | ')})`;
+      }
+      
+      text += `${idx + 1}. *[V]* ${p.name}${setterTag}${scheduleTag}\n`;
     });
   }
   text += `\n*Total Confirmados:* ${goingPlayers.length} atletas\n`;
@@ -553,4 +591,159 @@ export async function checkAndSendGroupUpdate(db: any): Promise<boolean> {
   }
 
   return false;
+}
+
+export async function processScheduledMessages(db: any): Promise<number> {
+  const config = await getWhatsAppConfig(db);
+  if (!config.apiUrl || !config.apiKey || !config.instanceName) {
+    return 0;
+  }
+
+  const now = Date.now();
+  let pendingDocs: any[] = [];
+
+  // Robust SDK detection: if db.collection is a function, it's likely Admin SDK or our internal wrapper
+  if (db && typeof db.collection === 'function') {
+    // Both Admin SDK and our wrapper support .collection().where().get()
+    const snap = await db.collection('scheduled_messages').where('status', '==', 'PENDING').get();
+    pendingDocs = snap.docs;
+  } else {
+    // Standard Web SDK (unlikely on server but kept for potential browser/test usage)
+    const { collection, getDocs, query, where } = await getFirestoreHelpers();
+    const q = query(collection(db, 'scheduled_messages'), where('status', '==', 'PENDING'));
+    const snap = await getDocs(q);
+    pendingDocs = snap.docs;
+  }
+
+  // Filter and limit in memory
+  const filteredDocs = pendingDocs
+    .filter((doc: any) => {
+      const data = doc.data();
+      return (data.scheduledAt || 0) <= now;
+    })
+    .slice(0, 5);
+
+  let processedCount = 0;
+
+  for (const messageDoc of filteredDocs) {
+    const msg = messageDoc.data() as any;
+    const msgId = messageDoc.id;
+    
+    let targetJid = msg.target === 'GROUP' ? config.groupJid : msg.recipientPhone;
+    
+    if (!targetJid) {
+       await (messageDoc.ref ? messageDoc.ref.update({ status: 'FAILED', error: 'Destinatário não configurado' }) : null);
+       continue;
+    }
+
+    console.log(`[WhatsApp Scheduler] Sending scheduled message ${msgId} to ${targetJid}`);
+    const result = await sendWhatsAppMessage(config, targetJid, msg.content);
+
+    if (result.success) {
+      if (messageDoc.ref && typeof messageDoc.ref.update === 'function') {
+        await messageDoc.ref.update({ status: 'SENT', sentAt: Date.now() });
+      } else {
+        const { doc, updateDoc } = await getFirestoreHelpers();
+        await updateDoc(doc(db, 'scheduled_messages', msgId), { status: 'SENT', sentAt: Date.now() });
+      }
+      processedCount++;
+    } else {
+      if (messageDoc.ref && typeof messageDoc.ref.update === 'function') {
+        await messageDoc.ref.update({ status: 'FAILED', error: result.error || 'Erro desconhecido' });
+      } else {
+        const { doc, updateDoc } = await getFirestoreHelpers();
+        await updateDoc(doc(db, 'scheduled_messages', msgId), { status: 'FAILED', error: result.error || 'Erro desconhecido' });
+      }
+    }
+    
+    await new Promise(r => setTimeout(r, 1000));
+  }
+
+  return processedCount;
+}
+
+export async function autoScheduleReminders(db: any): Promise<void> {
+  const today = new Date();
+  // Use SP timezone for date check (UTC-3)
+  const spTime = new Date(today.getTime() - 3 * 3600 * 1000);
+  const dateKey = spTime.toISOString().split('T')[0];
+
+  // Robust SDK detection and handling
+  let status: any = {};
+  let statusRef: any = null;
+
+  try {
+    if (db && typeof db.collection === 'function') {
+      const docRef = db.collection("metadata").doc("automation_status");
+      const snap = await docRef.get();
+      status = snap.exists ? (typeof snap.data === 'function' ? snap.data() : snap.data) : {};
+      statusRef = docRef;
+    } else {
+      const { doc, getDoc } = await getFirestoreHelpers();
+      const docRef = doc(db, "metadata", "automation_status");
+      const snap = await getDoc(docRef);
+      status = snap.exists() ? snap.data() : {};
+      statusRef = docRef;
+    }
+  } catch (err) {
+    console.error("[WhatsApp AutoSchedule] Error fetching status:", err);
+    return;
+  }
+
+  if (status.lastAutoScheduleDate === dateKey) return;
+
+  const scheduleMessage = async (msg: any) => {
+    try {
+      if (db && typeof db.collection === 'function') {
+        await db.collection('scheduled_messages').add(msg);
+      } else {
+        const { collection, addDoc } = await getFirestoreHelpers();
+        await addDoc(collection(db, 'scheduled_messages'), msg);
+      }
+    } catch (err) {
+      console.error("[WhatsApp AutoSchedule] Error scheduling message:", err);
+    }
+  };
+
+  // 1. Weekly Game Reminder (If today is Monday (1), schedule for Monday 19:00 - prompting early list)
+  if (spTime.getUTCDay() === 1) {
+    const mondayNight = new Date(spTime);
+    mondayNight.setUTCHours(19, 0, 0, 0);
+
+    await scheduleMessage({
+      content: "🏐 *LISTA DE INTENÇÃO ABERTA* 🏐\n\nFala galera! A lista de intenção para o vôlei desta semana já está aberta no app! 🔥\n\nAcesse agora e confirme se você vai jogar para que o bot possa começar a organizar as estatísticas.\n\nBora! 🏐✨",
+      scheduledAt: mondayNight.getTime(),
+      status: 'PENDING',
+      target: 'GROUP',
+      type: 'REMINDER',
+      createdAt: Date.now()
+    });
+  }
+
+  // 2. Monthly Payment Reminder (If today is 1st of the month)
+  if (spTime.getUTCDate() === 1) {
+     const payDay = new Date(spTime);
+     payDay.setUTCHours(10, 0, 0, 0);
+
+     await scheduleMessage({
+       content: "💰 *MENSALIDADES DO MÊS* 💰\n\nOlá, Sócio Guerreiro! 🏐\n\nNovo mês iniciado! As mensalidades já estão disponíveis para consulta no app.\n\nAcesse o menu Financeiro para realizar o pagamento e ajudar o clube a crescer! 🧱🏐",
+       scheduledAt: payDay.getTime(),
+       status: 'PENDING',
+       target: 'GROUP',
+       type: 'PAYMENT',
+       createdAt: Date.now()
+     });
+  }
+
+  // Update status
+  try {
+    if (statusRef && typeof statusRef.set === 'function') {
+      await statusRef.set({ ...status, lastAutoScheduleDate: dateKey }, { merge: true });
+    } else {
+      const { setDoc } = await getFirestoreHelpers();
+      await setDoc(statusRef, { ...status, lastAutoScheduleDate: dateKey }, { merge: true });
+    }
+  } catch (err) {
+    console.error("[WhatsApp AutoSchedule] Error updating status:", err);
+  }
 }

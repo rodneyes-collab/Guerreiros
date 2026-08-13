@@ -1,54 +1,75 @@
 import { z } from 'zod';
 import { Gender } from '../../types';
 
+const nullableDefault = <T extends z.ZodTypeAny>(schema: T, defaultValue: z.infer<T>) =>
+  z.preprocess(val => (val === null || val === undefined || (typeof val === 'number' && Number.isNaN(val)) ? defaultValue : val), schema);
+
 export const playerSchema = z.object({
-  id: z.string().optional(),
+  id: z.string().nullish(),
   name: z.string().min(2, "Nome deve ter pelo menos 2 caracteres").max(50, "Nome muito longo"),
-  elo: z.number().int().min(800).max(3000).default(1200),
+  elo: nullableDefault(z.number().int().min(800).max(3000), 1200),
   gender: z.nativeEnum(Gender),
-  matchesPlayed: z.number().int().min(0).default(0),
-  wins: z.number().int().min(0).default(0),
-  losses: z.number().int().min(0).default(0),
-  dailyMatches: z.number().int().min(0).default(0),
-  dailyWins: z.number().int().min(0).default(0),
-  dailyLosses: z.number().int().min(0).default(0),
-  dailyEloGain: z.number().int().default(0),
-  dailyResults: z.array(z.enum(['V', 'D'])).default([]),
-  playedLastMatch: z.boolean().default(false),
-  isAdmin: z.boolean().default(false),
-  isOfficialSetter: z.boolean().default(false),
-  joinedAt: z.string().optional(),
-  birthDate: z.string().optional(),
-  status: z.string().optional(),
-  createdAt: z.number().optional(),
-  consecutiveBenched: z.number().int().min(0).default(0),
-  email: z.string().email("Email inválido").or(z.literal('')).optional(),
+  matchesPlayed: nullableDefault(z.number().int().min(0), 0),
+  wins: nullableDefault(z.number().int().min(0), 0),
+  losses: nullableDefault(z.number().int().min(0), 0),
+  dailyMatches: nullableDefault(z.number().int().min(0), 0),
+  dailyWins: nullableDefault(z.number().int().min(0), 0),
+  dailyLosses: nullableDefault(z.number().int().min(0), 0),
+  dailyEloGain: nullableDefault(z.number().int(), 0),
+  dailyResults: nullableDefault(z.array(z.enum(['V', 'D'])), []),
+  playedLastMatch: nullableDefault(z.boolean(), false),
+  isAdmin: nullableDefault(z.boolean(), false),
+  isOfficialSetter: nullableDefault(z.boolean(), false),
+  joinedAt: z.string().nullish(),
+  birthDate: z.string().nullish(),
+  status: z.string().nullish(),
+  createdAt: z.number().nullish(),
+  consecutiveBenched: nullableDefault(z.number().int().min(0), 0),
+  email: z.string().email("Email inválido").or(z.literal('')).nullish(),
   eloHistory: z.array(z.object({
     date: z.string(),
     elo: z.number()
-  })).optional(),
-  impactLevel: z.number().int().min(1).max(3).optional().default(1),
+  }).passthrough()).nullish(),
+  impactLevel: nullableDefault(z.number().int().min(1).max(3), 1),
   skills: z.object({
     setting: z.number().int().min(1).max(3),
     attacking: z.number().int().min(1).max(3),
     defense: z.number().int().min(1).max(3),
     serving: z.number().int().min(1).max(3)
-  }).optional(),
-  isExempt: z.boolean().optional(),
-  isDM: z.boolean().optional(),
-  phone: z.string().regex(/^\d{10,14}$/, "Telefone deve conter apenas números (DDD + Número, 10 a 14 dígitos)").optional().or(z.literal(''))
+  }).nullish(),
+  isExempt: z.boolean().nullish(),
+  isDM: z.boolean().nullish(),
+  phone: z.string().regex(/^\d{10,14}$/, "Telefone deve conter apenas números (DDD + Número, 10 a 14 dígitos)").nullish().or(z.literal(''))
     .transform(val => val === '' || val === null || val === undefined ? undefined : val),
-  uid: z.string().optional(),
-  fcmToken: z.string().optional(),
-  hasSeenWelcome: z.boolean().optional(),
-  reads: z.number().optional(),
-  writes: z.number().optional(),
-  totalReads: z.number().optional(),
-  totalWrites: z.number().optional(),
-  accesses: z.number().optional(),
-  dailyAccesses: z.number().optional(),
-  lastReadUpdate: z.string().optional()
-});
+  uid: z.string().nullish(),
+  fcmToken: z.string().nullish(),
+  hasSeenWelcome: z.boolean().nullish(),
+  reads: z.number().nullish(),
+  writes: z.number().nullish(),
+  totalReads: z.number().nullish(),
+  totalWrites: z.number().nullish(),
+  accesses: z.number().nullish(),
+  dailyAccesses: z.number().nullish(),
+  lastReadUpdate: z.string().nullish(),
+  deviceId: z.string().nullish(),
+  pushEnabled: z.boolean().nullish(),
+  matchNotificationsEnabled: z.boolean().nullish(),
+  arrivalOrder: z.number().nullish(),
+  isPresent: z.boolean().nullish(),
+  timestamp: z.number().nullish(),
+  leftAt: z.number().nullish(),
+  fidelityPoints: z.number().nullish(),
+  lastFidelityDate: z.string().nullish(),
+  pointsFor: z.number().nullish(),
+  pointsAgainst: z.number().nullish(),
+  pointsBalance: z.number().nullish(),
+  trueSkill: z.object({
+    mu: z.number(),
+    sigma: z.number()
+  }).nullish(),
+  evasionLevel: z.enum(['low', 'medium', 'high', 'critical']).nullish(),
+  auditLog: z.array(z.any()).nullish()
+}).passthrough();
 
 export const matchSchema = z.object({
   id: z.string(),
@@ -57,11 +78,12 @@ export const matchSchema = z.object({
   teamA: z.array(z.string()),
   teamB: z.array(z.string()),
   winner: z.enum(['A', 'B']),
-  scoreA: z.number().int().min(0),
-  scoreB: z.number().int().min(0),
-  duration: z.number().int().min(0),
+  scoreA: nullableDefault(z.number().int().min(0), 0),
+  scoreB: nullableDefault(z.number().int().min(0), 0),
+  duration: nullableDefault(z.number().int().min(0), 0),
   startTime: z.number(),
   endTime: z.number(),
   mode: z.string(),
-  stats: z.array(z.any()).optional()
-});
+  dailyNumber: z.number().int().nullish(),
+  stats: z.array(z.any()).nullish()
+}).passthrough();

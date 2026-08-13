@@ -1,6 +1,9 @@
+import { SynergyAnalysis } from './SynergyAnalysis';
+import { AICoach } from './AICoach';
 import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../store';
 import { useNarration } from '../src/hooks/useNarration';
+import { useAIStatus } from '../src/hooks/useAIStatus';
 import { HelpTooltip } from '../src/components/HelpTooltip';
 import { getFirestoreDateKey } from '../firebase';
 import { getPlayerTier, getEfficiencyTier } from '../utils/tierUtils';
@@ -35,7 +38,7 @@ import {
   Volume2,
   Clock,
   Timer
-} from 'lucide-react';
+, BrainCircuit} from 'lucide-react';
 import { 
   LineChart, 
   Line, 
@@ -65,6 +68,7 @@ import { WinLossChart } from '../src/components/WinLossChart';
 import { translateGender, capitalizeName } from '../utils/helpers';
 import { generateDailySummaryAudio, detectAnomalies } from '../services/geminiService';
 import { calculateEffectiveElo } from '../utils/teamLogic';
+import { calculateMvpEfficiencyScore } from '../utils/statsLogic';
 
 import { GlobalStats } from './DashboardView';
 import { EvasionIcon } from './EvasionIcon';
@@ -89,6 +93,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
   fixDatabaseAnomalies,
   isDark = false
 }) => {
+  const { status: aiStatus } = useAIStatus();
   const { 
     synergy, 
     negativeSynergy, 
@@ -117,14 +122,14 @@ export const RankingView: React.FC<RankingViewProps> = ({
   const activeIsNarrating = isNarratingSummaryFromStore || isNarratingFromStore || isNarratingSummary;
 
   const players = useMemo(() => allPlayers.filter(p => 
-    (p.status === 'active' || !p.status || p.status === '') && 
+    (p.status === 'active' || p.status === 'guest' || !p.status || p.status === '') && 
     !p.isDM && 
     p.name?.toLowerCase() !== 'financeiro'
   ), [allPlayers]);
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'daily' | 'individual' | 'global'>('daily');
+  const [activeTab, setActiveTab] = useState<'daily' | 'individual' | 'global' | 'synergy' | 'coach'>('daily');
   const [rankingPeriod, setRankingPeriod] = useState<'session' | 'career'>('session');
-  const [rankingSortMetric, setRankingSortMetric] = useState<'elo' | 'efficiency' | 'fidelity'>('elo');
+  const [rankingSortMetric, setRankingSortMetric] = useState<'elo' | 'efficiency' | 'fidelity' | 'efficiency_mvp'>('elo');
   
   const [filterStartDate, setFilterStartDate] = useState<string>('');
   const [filterEndDate, setFilterEndDate] = useState<string>('');
@@ -854,9 +859,8 @@ export const RankingView: React.FC<RankingViewProps> = ({
   const leaderboardMovements = useMemo(() => {
     if (!players || players.length === 0 || availableDates.length === 0) return {};
 
-    // Standardize dates: availableDates is sorted newest to oldest
     const currentRefDate = rankingPeriod === 'career' ? today : selectedDailyDate;
-    let prevRefDate = null;
+    let prevRefDate: string | null = null;
 
     if (rankingPeriod === 'career') {
       const latestSessionInHistory = availableDates[0];
@@ -876,120 +880,119 @@ export const RankingView: React.FC<RankingViewProps> = ({
 
     if (!prevRefDate) return {};
 
-    const getStatsAtDate = (p: any, refDate: string, isCurrentTab: boolean) => {
-      // Current live career stats
-      if (isCurrentTab && rankingPeriod === 'career' && refDate === today) {
-        return {
-          id: p.id,
-          wins: p.wins || 0,
-          matches: p.matchesPlayed || 0,
-          elo: p.elo || 1200,
-          eloGain: p.dailyEloGain || 0,
-          duration: matches
+    const getEloAtDate = (player: any, date: string) => {
+      const entry = player.eloHistory?.find((h: any) => h.date === date);
+      if (entry && entry.elo !== undefined) return entry.elo;
+      
+      const historyBefore = (player.eloHistory || [])
+        .filter((h: any) => h.date < date)
+        .sort((a: any, b: any) => b.date.localeCompare(a.date));
+      if (historyBefore.length > 0 && historyBefore[0].elo !== undefined) {
+        return historyBefore[0].elo;
+      }
+
+      // Fallback: calculate using matches after date
+      const matchesAfter = matches.filter(m => m.date > date && (m.teamA.includes(player.id) || m.teamB.includes(player.id)));
+      let gainAfter = 0;
+      matchesAfter.forEach(m => {
+        const isWinner = (m.winner === 'A' && m.teamA.includes(player.id)) || (m.winner === 'B' && m.teamB.includes(player.id));
+        gainAfter += isWinner ? 20 : -20;
+      });
+      return (player.elo || 1200) - gainAfter;
+    };
+
+    if (rankingPeriod === 'career') {
+      const currentRankings = [...players]
+        .filter(p => (p.matchesPlayed || 0) > 0)
+        .map(p => {
+          const eff = (p.trueSkill?.mu || 25) - 3 * (p.trueSkill?.sigma || 8.333);
+          const duration = matches
             .filter(m => m.teamA.includes(p.id) || m.teamB.includes(p.id))
-            .reduce((acc, m) => acc + (m.duration || 0), 0)
-        };
-      }
+            .reduce((acc, m) => acc + (m.duration || 0), 0);
+          return { id: p.id, elo: p.elo || 1200, eff, duration };
+        })
+        .sort((a, b) => {
+          if (b.elo !== a.elo) return b.elo - a.elo;
+          if (Math.abs(b.eff - a.eff) > 0.0001) return b.eff - a.eff;
+          return a.duration - b.duration;
+        });
 
-      // Session mode stats (comparing this session to previous session)
-      if (rankingPeriod === 'session') {
-        const dateMatches = matches.filter(m => m.date === refDate);
-        const playerMatches = dateMatches.filter(m => m.teamA.includes(p.id) || m.teamB.includes(p.id));
-        const winsAtDate = playerMatches.filter(m => 
-          (m.winner === 'A' && m.teamA.includes(p.id)) || 
-          (m.winner === 'B' && m.teamB.includes(p.id))
-        ).length;
-        
-        // Calculate EloGain for that session
-        const eloGainAtDate = playerMatches.reduce((acc, m) => {
-           const isWinner = (m.winner === 'A' && m.teamA.includes(p.id)) || 
-                            (m.winner === 'B' && m.teamB.includes(p.id));
-           return acc + (isWinner ? 20 : -20);
-        }, 0);
+      const prevRankings = [...players]
+        .filter(p => {
+          const matchesBefore = matches.filter(m => m.date <= prevRefDate! && (m.teamA.includes(p.id) || m.teamB.includes(p.id)));
+          return matchesBefore.length > 0;
+        })
+        .map(p => {
+          const prevElo = getEloAtDate(p, prevRefDate!);
+          const eff = (p.trueSkill?.mu || 25) - 3 * (p.trueSkill?.sigma || 8.333);
+          const duration = matches
+            .filter(m => m.date <= prevRefDate! && (m.teamA.includes(p.id) || m.teamB.includes(p.id)))
+            .reduce((acc, m) => acc + (m.duration || 0), 0);
+          return { id: p.id, elo: prevElo, eff, duration };
+        })
+        .sort((a, b) => {
+          if (b.elo !== a.elo) return b.elo - a.elo;
+          if (Math.abs(b.eff - a.eff) > 0.0001) return b.eff - a.eff;
+          return a.duration - b.duration;
+        });
 
-        return { 
-          id: p.id, 
-          wins: winsAtDate, 
-          matches: playerMatches.length, 
-          elo: 0, 
-          eloGain: eloGainAtDate,
-          duration: playerMatches.reduce((acc, m) => acc + (m.duration || 0), 0)
-        };
-      }
+      const movements: Record<string, { diff: number; type: 'up' | 'down' | 'neutral' }> = {};
+      currentRankings.forEach((p, currentIdx) => {
+        const prevIdx = prevRankings.findIndex(prevP => prevP.id === p.id);
+        if (prevIdx !== -1) {
+          const diff = prevIdx - currentIdx;
+          movements[p.id] = {
+            diff: Math.abs(diff),
+            type: diff > 0 ? 'up' : diff < 0 ? 'down' : 'neutral'
+          };
+        } else {
+          movements[p.id] = { diff: 0, type: 'neutral' };
+        }
+      });
+      return movements;
+    } else {
+      // Session mode
+      const currMatches = matches.filter(m => m.date === selectedDailyDate);
+      const prevMatches = matches.filter(m => m.date === prevRefDate);
 
-      // Career historical stats (using eloHistory)
-      const historyUntil = (p.eloHistory || [])
-        .filter((h: any) => h.date <= refDate)
-        .sort((a: any, b: any) => a.date.localeCompare(b.date));
-      
-      if (historyUntil.length === 0) return { id: p.id, wins: 0, matches: 0, elo: 1200, eloGain: 0, duration: 0 };
-      
-      const latest = historyUntil[historyUntil.length - 1];
-      const winsUntil = historyUntil.filter(h => h.result === 'V').length;
-      const matchesUntil = historyUntil.filter(h => h.result === 'V' || h.result === 'D').length;
-      const durationUntil = matches
-        .filter(m => m.date <= refDate && (m.teamA.includes(p.id) || m.teamB.includes(p.id)))
-        .reduce((acc, m) => acc + (m.duration || 0), 0);
-      
-      return { 
-        id: p.id, 
-        wins: winsUntil, 
-        matches: matchesUntil, 
-        elo: latest.elo, 
-        eloGain: 0,
-        duration: durationUntil
+      const getSessionStats = (pList: any[], sessionM: any[]) => {
+        return pList
+          .filter(p => sessionM.some(m => m.teamA.includes(p.id) || m.teamB.includes(p.id)))
+          .map(p => {
+            const pMatches = sessionM.filter(m => m.teamA.includes(p.id) || m.teamB.includes(p.id));
+            const gain = pMatches.reduce((acc, m) => {
+              const isWinner = (m.winner === 'A' && m.teamA.includes(p.id)) || (m.winner === 'B' && m.teamB.includes(p.id));
+              return acc + (isWinner ? 20 : -20);
+            }, 0);
+            const eff = (p.trueSkill?.mu || 25) - 3 * (p.trueSkill?.sigma || 8.333);
+            const duration = pMatches.reduce((acc, m) => acc + (m.duration || 0), 0);
+            return { id: p.id, gain, eff, duration };
+          })
+          .sort((a, b) => {
+            if (b.gain !== a.gain) return b.gain - a.gain;
+            if (Math.abs(b.eff - a.eff) > 0.0001) return b.eff - a.eff;
+            return a.duration - b.duration;
+          });
       };
-    };
 
-    const sortFn = (a: any, b: any) => {
-      const eloB = rankingPeriod === 'session' ? (b.eloGain || 0) : (b.elo || 0);
-      const eloA = rankingPeriod === 'session' ? (a.eloGain || 0) : (a.elo || 0);
+      const currRanked = getSessionStats(players, currMatches);
+      const prevRanked = getSessionStats(players, prevMatches);
 
-      // 1. ELO / ELO Gain
-      if (eloB !== eloA) return eloB - eloA;
-
-      // 2. Efficiency (TrueSkill)
-      const playerA = players.find(p => p.id === a.id);
-      const playerB = players.find(p => p.id === b.id);
-      const effA = playerA ? ((playerA.trueSkill?.mu || 25) - 3 * (playerA.trueSkill?.sigma || 8.333)) : 0;
-      const effB = playerB ? ((playerB.trueSkill?.mu || 25) - 3 * (playerB.trueSkill?.sigma || 8.333)) : 0;
-      if (Math.abs(effB - effA) > 0.0001) return effB - effA;
-
-      // 3. Menor tempo em quadra
-      return (a.duration || 0) - (b.duration || 0);
-    };
-
-    const currentStats = players
-      .map(p => getStatsAtDate(p, currentRefDate, true))
-      .filter(s => rankingPeriod === 'session' ? s.matches > 0 : true);
-    
-    const prevStats = players
-      .map(p => getStatsAtDate(p, prevRefDate, false))
-      .filter(s => rankingPeriod === 'session' ? s.matches > 0 : true);
-
-    const currentOrdered = [...currentStats].sort(sortFn);
-    const prevOrdered = [...prevStats].sort(sortFn);
-
-    const movements: Record<string, { diff: number; type: 'up' | 'down' | 'neutral' }> = {};
-
-    currentOrdered.forEach((p, currentIdx) => {
-      // In session mode, we only show movements for players who played today
-      if (rankingPeriod === 'session' && p.matches === 0) return;
-      
-      const prevIdx = prevOrdered.findIndex(prevP => prevP.id === p.id);
-      if (prevIdx !== -1) {
-        // If a player had 0 matches in previous stats in session mode, their movement is irrelevant
-        if (rankingPeriod === 'session' && prevOrdered[prevIdx].matches === 0) return;
-
-        const diff = prevIdx - currentIdx; 
-        movements[p.id] = {
-          diff: Math.abs(diff),
-          type: diff > 0 ? 'up' : diff < 0 ? 'down' : 'neutral'
-        };
-      }
-    });
-
-    return movements;
+      const movements: Record<string, { diff: number; type: 'up' | 'down' | 'neutral' }> = {};
+      currRanked.forEach((p, currentIdx) => {
+        const prevIdx = prevRanked.findIndex(prevP => prevP.id === p.id);
+        if (prevIdx !== -1) {
+          const diff = prevIdx - currentIdx;
+          movements[p.id] = {
+            diff: Math.abs(diff),
+            type: diff > 0 ? 'up' : diff < 0 ? 'down' : 'neutral'
+          };
+        } else {
+          movements[p.id] = { diff: 0, type: 'neutral' };
+        }
+      });
+      return movements;
+    }
   }, [players, availableDates, selectedDailyDate, today, rankingPeriod, matches]);
 
   // Calculate Elo rankings for all players (Global)
@@ -1008,10 +1011,6 @@ export const RankingView: React.FC<RankingViewProps> = ({
         const eloA = a.elo || 1200;
         if (eloB !== eloA) return eloB - eloA;
 
-        const effA = (a.trueSkill?.mu || 25) - 3 * (a.trueSkill?.sigma || 8.333);
-        const effB = (b.trueSkill?.mu || 25) - 3 * (b.trueSkill?.sigma || 8.333);
-        if (Math.abs(effB - effA) > 0.0001) return effB - effA;
-
         const timeA = totalDurations[a.id] || 0;
         const timeB = totalDurations[b.id] || 0;
         return timeA - timeB;
@@ -1024,14 +1023,22 @@ export const RankingView: React.FC<RankingViewProps> = ({
     return ranks;
   }, [players, matches]);
 
-  // Calculate Efficiency rankings for all players (Global)
+  // Calculate Efficiency rankings for all players (Global) - Based on Win Rate % (Option 1)
   const efficiencyRankings = useMemo(() => {
     const sorted = [...players]
       .filter(p => p.matchesPlayed > 0)
       .sort((a, b) => {
-        const tsA = (a.trueSkill?.mu || 25) - 3 * (a.trueSkill?.sigma || 8.333);
-        const tsB = (b.trueSkill?.mu || 25) - 3 * (b.trueSkill?.sigma || 8.333);
-        return tsB - tsA;
+        const winRateA = (a.matchesPlayed || 0) > 0 ? (a.wins || 0) / a.matchesPlayed : 0;
+        const winRateB = (b.matchesPlayed || 0) > 0 ? (b.wins || 0) / b.matchesPlayed : 0;
+        if (Math.abs(winRateB - winRateA) > 0.0001) return winRateB - winRateA;
+        
+        // Tie-breaker 1: Wins
+        if ((b.wins || 0) !== (a.wins || 0)) return (b.wins || 0) - (a.wins || 0);
+        
+        // Tie-breaker 2: Saldo (Points difference)
+        const saldoA = (a.pointsFor || 0) - (a.pointsAgainst || 0);
+        const saldoB = (b.pointsFor || 0) - (b.pointsAgainst || 0);
+        return saldoB - saldoA;
       });
     
     const ranks: Record<string, number> = {};
@@ -1144,18 +1151,18 @@ export const RankingView: React.FC<RankingViewProps> = ({
           return acc + (isA ? (m.scoreB || 0) : (m.scoreA || 0));
         }, 0);
 
-        // Calculate ELO gain based on this session's actual history, including bonuses
-        const historyForDate = (p.eloHistory || []).filter(h => h.date === dateKey);
+        // Calculate ELO gain based on this session's actual matches (+20 for wins, -20 for losses)
+        const totalMatches = playerMatches.length;
+        const wins = playerWins;
+        const losses = totalMatches - wins;
+
+        const matchEloGain = totalMatches > 0 ? (wins * 20 + losses * -20) : 0;
         
-        const matchHistory = historyForDate.filter(h => !h.fidelityBonus);
-        const fidelityHistory = historyForDate.filter(h => h.fidelityBonus);
-        
-        const matchEloGain = matchHistory.reduce((acc, curr) => acc + (curr.change || 0), 0);
-        const fidelityGain = fidelityHistory.reduce((acc, curr) => acc + (curr.change || 0), 0);
+        // Calculate fidelity bonus based on presence (+50)
+        const hasFidelityBonus = (p.eloHistory || []).some(h => h.date === dateKey && h.fidelityBonus) || (totalMatches > 0);
+        const fidelityGain = hasFidelityBonus ? 50 : 0;
         
         const eloGain = matchEloGain + fidelityGain;
-        const wins = playerWins;
-        const totalMatches = playerMatches.length;
 
         dailyStats[p.id] = {
           matches: totalMatches,
@@ -1178,36 +1185,64 @@ export const RankingView: React.FC<RankingViewProps> = ({
       return (stats?.matches || 0) > 0 ? (stats.wins || 0) / stats.matches : 0;
     };
 
+    const getDailyMvpEfficiency = (p: any) => {
+      const stats = dailyStats[p.id];
+      const wr = getDailyWinRate(p.id);
+      const matches = stats?.matches || 0;
+      const eloGain = stats?.matchEloGain !== undefined ? stats.matchEloGain : (stats?.eloGain || 0);
+      const pointsFor = stats?.pointsFor || 0;
+      const pointsAgainst = stats?.pointsAgainst || 0;
+      return calculateMvpEfficiencyScore(p, wr, matches, eloGain, pointsFor, pointsAgainst);
+    };
+
+    const getCareerMvpEfficiency = (p: any) => {
+      const matches = p.matchesPlayed || 0;
+      const wr = matches > 0 ? (p.wins || 0) / matches : 0;
+      const eloGain = (p.elo || 1200) - 1200;
+      const pointsFor = p.pointsFor || 0;
+      const pointsAgainst = p.pointsAgainst || 0;
+      return calculateMvpEfficiencyScore(p, wr, matches, eloGain, pointsFor, pointsAgainst);
+    };
+
     const mvp = [...players]
       .filter(p => (p.matchesPlayed || 0) >= MIN_MATCHES)
-      .sort((a, b) => calculateWilsonScore(b.wins, b.matchesPlayed) - calculateWilsonScore(a.wins, a.matchesPlayed) || (b.elo || 0) - (a.elo || 0) || (totalDurations[a.id] || 0) - (totalDurations[b.id] || 0))[0] || 
+      .sort((a, b) => getCareerMvpEfficiency(b) - getCareerMvpEfficiency(a) || (b.elo || 0) - (a.elo || 0) || (totalDurations[a.id] || 0) - (totalDurations[b.id] || 0))[0] || 
       [...players]
         .filter(p => (p.matchesPlayed || 0) > 0)
-        .sort((a, b) => calculateWilsonScore(b.wins, b.matchesPlayed) - calculateWilsonScore(a.wins, a.matchesPlayed) || (b.elo || 0) - (a.elo || 0) || (totalDurations[a.id] || 0) - (totalDurations[b.id] || 0))[0];
+        .sort((a, b) => getCareerMvpEfficiency(b) - getCareerMvpEfficiency(a) || (b.elo || 0) - (a.elo || 0) || (totalDurations[a.id] || 0) - (totalDurations[b.id] || 0))[0];
 
-    const bestSetter = [...players]
+    let bestSetter = [...players]
       .filter(p => p.isOfficialSetter && (p.matchesPlayed || 0) >= MIN_MATCHES)
       .sort((a, b) => calculateWilsonScore(b.wins, b.matchesPlayed) - calculateWilsonScore(a.wins, a.matchesPlayed) || (b.elo || 0) - (a.elo || 0) || (totalDurations[a.id] || 0) - (totalDurations[b.id] || 0))[0] ||
       [...players]
         .filter(p => p.isOfficialSetter && (p.matchesPlayed || 0) > 0)
         .sort((a, b) => calculateWilsonScore(b.wins, b.matchesPlayed) - calculateWilsonScore(a.wins, a.matchesPlayed) || (b.elo || 0) - (a.elo || 0) || (totalDurations[a.id] || 0) - (totalDurations[b.id] || 0))[0];
 
+    if (!bestSetter) {
+      const played = [...players].filter(p => (p.matchesPlayed || 0) > 0);
+      if (played.length > 0) {
+        const maxSetting = Math.max(...played.map(p => p.skills?.setting || 1));
+        bestSetter = played.filter(p => (p.skills?.setting || 1) === maxSetting)
+          .sort((a, b) => calculateWilsonScore(b.wins, b.matchesPlayed) - calculateWilsonScore(a.wins, a.matchesPlayed) || (b.elo || 0) - (a.elo || 0) || (totalDurations[a.id] || 0) - (totalDurations[b.id] || 0))[0];
+      }
+    }
+
     const dailyMvp = [...players]
       .filter(p => (dailyStats[p.id]?.matches || 0) >= minReqDailyMatches)
       .sort((a, b) => 
-        calculateWilsonScore(dailyStats[b.id]?.wins || 0, dailyStats[b.id]?.matches || 0) - calculateWilsonScore(dailyStats[a.id]?.wins || 0, dailyStats[a.id]?.matches || 0) || 
+        getDailyMvpEfficiency(b) - getDailyMvpEfficiency(a) || 
         ((dailyStats[b.id]?.matchEloGain !== undefined ? dailyStats[b.id].matchEloGain : (dailyStats[b.id]?.eloGain || 0)) - (dailyStats[a.id]?.matchEloGain !== undefined ? dailyStats[a.id].matchEloGain : (dailyStats[a.id]?.eloGain || 0))) || 
         (dailyStats[a.id]?.duration || 0) - (dailyStats[b.id]?.duration || 0)
       )[0] ||
       [...players]
         .filter(p => (dailyStats[p.id]?.matches || 0) > 0)
         .sort((a, b) => 
-          calculateWilsonScore(dailyStats[b.id]?.wins || 0, dailyStats[b.id]?.matches || 0) - calculateWilsonScore(dailyStats[a.id]?.wins || 0, dailyStats[a.id]?.matches || 0) || 
+          getDailyMvpEfficiency(b) - getDailyMvpEfficiency(a) || 
           ((dailyStats[b.id]?.matchEloGain !== undefined ? dailyStats[b.id].matchEloGain : (dailyStats[b.id]?.eloGain || 0)) - (dailyStats[a.id]?.matchEloGain !== undefined ? dailyStats[a.id].matchEloGain : (dailyStats[a.id]?.eloGain || 0))) || 
           (dailyStats[a.id]?.duration || 0) - (dailyStats[b.id]?.duration || 0)
         )[0];
 
-    const dailyBestSetter = [...players]
+    let dailyBestSetter = [...players]
       .filter(p => p.isOfficialSetter && (dailyStats[p.id]?.matches || 0) >= minReqDailyMatches)
       .sort((a, b) => 
         calculateWilsonScore(dailyStats[b.id]?.wins || 0, dailyStats[b.id]?.matches || 0) - calculateWilsonScore(dailyStats[a.id]?.wins || 0, dailyStats[a.id]?.matches || 0) || 
@@ -1221,6 +1256,19 @@ export const RankingView: React.FC<RankingViewProps> = ({
           ((dailyStats[b.id]?.matchEloGain !== undefined ? dailyStats[b.id].matchEloGain : (dailyStats[b.id]?.eloGain || 0)) - (dailyStats[a.id]?.matchEloGain !== undefined ? dailyStats[a.id].matchEloGain : (dailyStats[a.id]?.eloGain || 0))) || 
           (dailyStats[a.id]?.duration || 0) - (dailyStats[b.id]?.duration || 0)
         )[0];
+
+    if (!dailyBestSetter) {
+      const played = [...players].filter(p => (dailyStats[p.id]?.matches || 0) > 0);
+      if (played.length > 0) {
+        const maxSetting = Math.max(...played.map(p => p.skills?.setting || 1));
+        dailyBestSetter = played.filter(p => (p.skills?.setting || 1) === maxSetting)
+          .sort((a, b) => 
+            calculateWilsonScore(dailyStats[b.id]?.wins || 0, dailyStats[b.id]?.matches || 0) - calculateWilsonScore(dailyStats[a.id]?.wins || 0, dailyStats[a.id]?.matches || 0) || 
+            ((dailyStats[b.id]?.matchEloGain !== undefined ? dailyStats[b.id].matchEloGain : (dailyStats[b.id]?.eloGain || 0)) - (dailyStats[a.id]?.matchEloGain !== undefined ? dailyStats[a.id].matchEloGain : (dailyStats[a.id]?.eloGain || 0))) || 
+            (dailyStats[a.id]?.duration || 0) - (dailyStats[b.id]?.duration || 0)
+          )[0];
+      }
+    }
 
     const topEloCandidates = [...players]
       .filter(p => p.id !== mvp?.id)
@@ -1346,7 +1394,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
         const statsA = dailyStats[a.id];
         const statsB = dailyStats[b.id];
         
-        // 1. Maior número de ELO (ganho de ELO de QUADRA na sessão)
+        // 1. Maior número de ELO (ganho de ELO de QUADRA no dia)
         const eloB = statsB?.matchEloGain || 0;
         const eloA = statsA?.matchEloGain || 0;
         if (eloB !== eloA) return eloB - eloA;
@@ -1356,7 +1404,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
         const effB = (b.trueSkill?.mu || 25) - 3 * (b.trueSkill?.sigma || 8.333);
         if (Math.abs(effB - effA) > 0.0001) return effB - effA;
         
-        // 3. Menor tempo em quadra (tempo na sessão)
+        // 3. Menor tempo em quadra (tempo no dia)
         const timeA = statsA?.duration || 0;
         const timeB = statsB?.duration || 0;
         return timeA - timeB;
@@ -1377,6 +1425,8 @@ export const RankingView: React.FC<RankingViewProps> = ({
       mostEfficientTechnical,
       dailyEfficientTechnical,
       totalDurations,
+      getDailyMvpEfficiency,
+      getCareerMvpEfficiency,
       avgMatchTime: averageMatchDuration,
       sessionLeaderboard,
       date: resolvedDate,
@@ -1445,7 +1495,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
         });
       })()
     };
-  }, [players, effectiveMatches, selectedDailyDate, rankingPeriod, today]);
+  }, [players, effectiveMatches, selectedDailyDate, rankingPeriod, today, systemMetadata.mvpEfficiencyBonusPercent]);
 
 
 
@@ -1753,7 +1803,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
       text += `• *Rei do ELO:* ${topStats.topElo?.name || 'N/A'}\n`;
       text += ` *Sócio Mais Eficiente:* ${topStats.mostEfficientTechnical?.name || 'N/A'}\n\n`;
     } else {
-      text += `🌟 *DESTAQUES DA SESSÃO:*\n\n\n`;
+      text += `🌟 *DESTAQUES DO DIA:*\n\n\n`;
       text += `• *MVP:* ${topStats.dailyMvp?.name || 'N/A'}\n`;
       text += `• *Melhor Levantador:* ${topStats.dailyBestSetter?.name || 'N/A'}\n`;
       text += `• *Rei do Dia:* ${topStats.dailyKing?.name || 'N/A'}\n`;
@@ -1782,7 +1832,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
     text += `\n`;
 
     // Ranking Header
-    text += `📊 *RANKING (Pontos elo | (V-D) | (Tempo em quadra | Tempo fora de quadra ):*\n\n`;
+    text += `📊 *RANKING (Pontos ELO [Partidas | Bônus] | (V-D) | Quadra / Fora):*\n\n`;
 
     // Calculate career presence and court times dynamically for accumulated view
     const careerStatsList: Record<string, { duration: number, baseDuration: number }> = {};
@@ -1862,7 +1912,10 @@ export const RankingView: React.FC<RankingViewProps> = ({
         playedMatches = p.matchesPlayed || 0;
         pDuration = careerStatsList[p.id]?.duration || 0;
         pBaseDuration = careerStatsList[p.id]?.baseDuration || 0;
-        eloText = `${Math.round(p.elo || 1200)} pts`;
+        const totalElo = Math.round(p.elo || 1200);
+        const fidelityPoints = p.fidelityPoints || 0;
+        const matchElo = Math.round(totalElo - fidelityPoints);
+        eloText = `${totalElo} pts [Partidas: ${matchElo} | Bônus: +${fidelityPoints}]`;
       } else {
         const stats = topStats.dailyStats[p.id];
         wins = stats?.wins || 0;
@@ -1898,7 +1951,9 @@ export const RankingView: React.FC<RankingViewProps> = ({
         if (pBaseDuration < pDuration) pBaseDuration = pDuration;
 
         const matchElo = stats?.matchEloGain !== undefined ? stats.matchEloGain : 0;
-        eloText = `${matchElo > 0 ? '+' : ''}${matchElo} pts`;
+        const fidelityGain = stats?.fidelityGain !== undefined ? stats.fidelityGain : 0;
+        const totalGain = matchElo + fidelityGain;
+        eloText = `${totalGain > 0 ? '+' : ''}${totalGain} pts [Partidas: ${matchElo > 0 ? '+' : ''}${matchElo} | Bônus: +${fidelityGain}]`;
       }
 
       const losses = playedMatches - wins;
@@ -1909,8 +1964,21 @@ export const RankingView: React.FC<RankingViewProps> = ({
       const pPercent = pBaseDuration > 0 ? Math.round((pDuration / pBaseDuration) * 100) : 0;
 
       const rankNum = idx + 1;
-      const padPrefix = rankNum < 10 ? '\u2007' : '';
-      text += `${padPrefix}${rankNum}. *${p.name}* - ${winRate}% (${eloText}) | (${wins}V - ${losses}D) | Quadra: ${pMinutes} min / Fora: ${fMinutes} min (${pPercent}%)\n`;
+      const formattedRank = rankNum < 10 ? `0${rankNum}` : `${rankNum}`;
+
+      const mv = leaderboardMovements[p.id];
+      let movementText = ' ⚪ ➖0';
+      if (mv) {
+        if (mv.type === 'up' && mv.diff > 0) {
+          movementText = ` 🟢 ⬆️${mv.diff}`;
+        } else if (mv.type === 'down' && mv.diff > 0) {
+          movementText = ` 🔴 ⬇️${mv.diff}`;
+        } else if (mv.type === 'neutral' || mv.diff === 0) {
+          movementText = ` ⚪ ➖0`;
+        }
+      }
+
+      text += `${formattedRank}. *${p.name}* - ${winRate}% (${eloText}) | (${wins}V - ${losses}D) | Quadra: ${pMinutes} min / Fora: ${fMinutes} min (${pPercent}%)${movementText}\n`;
     });
 
     text += `\n_Gerado por Guerreiros Intelligence_ 🏐`;
@@ -2115,10 +2183,10 @@ export const RankingView: React.FC<RankingViewProps> = ({
                    handleAnnounceSummary({ ...topStats, date: displayDate });
                  }}
                   disabled={activeIsNarrating}
-                  className="flex-1 md:flex-none bg-brand-primary text-brand-secondary px-6 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-brand-primary/90 shadow-xl shadow-brand-primary/10 transition-all disabled:opacity-50 border border-brand-primary/40"
+                  className={`flex-1 md:flex-none bg-brand-primary text-brand-secondary px-6 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-brand-primary/90 shadow-xl shadow-brand-primary/10 transition-all disabled:opacity-50 border border-brand-primary/40 ${!aiStatus.isAvailable ? 'grayscale opacity-70' : ''}`}
                 >
                   <Sparkles className={`w-5 h-5 ${activeIsNarrating ? 'animate-spin' : ''}`} />
-                  {activeIsNarrating ? 'Gerando...' : 'Resumo IA'}
+                  {activeIsNarrating ? 'Gerando...' : !aiStatus.isAvailable ? 'IA Limitada' : 'Resumo IA'}
                 </button>
               )}
 
@@ -2181,7 +2249,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
               : `text-white/40 hover:text-white`
           }`}
         >
-          <Calendar className="w-4 h-4" />
+          <Calendar className="w-4 h-4 hidden sm:block" />
           Destaques
         </button>
         <button
@@ -2192,7 +2260,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
               : `text-white/40 hover:text-white`
           }`}
         >
-          <Users className="w-4 h-4" />
+          <Users className="w-4 h-4 hidden sm:block" />
           Individual
         </button>
         <button
@@ -2203,8 +2271,30 @@ export const RankingView: React.FC<RankingViewProps> = ({
               : `text-white/40 hover:text-white`
           }`}
         >
-          <BarChart3 className="w-4 h-4" />
+          <BarChart3 className="w-4 h-4 hidden sm:block" />
           Global
+        </button>
+        <button
+          onClick={() => setActiveTab('synergy')}
+          className={`flex-1 py-3 px-4 rounded-xl font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${
+            activeTab === 'synergy' 
+              ? 'bg-brand-primary text-brand-secondary shadow-lg shadow-brand-primary/20' 
+              : `text-white/40 hover:text-white`
+          }`}
+        >
+          <BrainCircuit className="w-4 h-4 hidden sm:block" />
+          Sinergia
+        </button>
+        <button
+          onClick={() => setActiveTab('coach')}
+          className={`flex-1 py-3 px-4 rounded-xl font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${
+            activeTab === 'coach' 
+              ? 'bg-brand-primary text-brand-secondary shadow-lg shadow-brand-primary/20' 
+              : `text-white/40 hover:text-white`
+          }`}
+        >
+          <Sparkles className="w-4 h-4 hidden sm:block" />
+          IA Coach
         </button>
       </div>
 
@@ -2219,7 +2309,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
           }`}
         >
           <History className="w-4 h-4" />
-          Sessão
+          Dia
         </button>
         <button
           onClick={() => setRankingPeriod('career')}
@@ -2241,7 +2331,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
             <div className="p-2 bg-brand-primary/10 rounded-xl">
               <Calendar className="w-5 h-5 text-brand-primary" />
             </div>
-            <p className="text-[10px] font-black uppercase tracking-widest text-white/60">Selecionar Sessão</p>
+            <p className="text-[10px] font-black uppercase tracking-widest text-white/60">Selecionar Dia</p>
           </div>
           <div className="flex items-center gap-2 overflow-x-auto pb-2 sm:pb-0 no-scrollbar">
             {availableDates.slice(0, 5).map(date => (
@@ -2291,6 +2381,39 @@ export const RankingView: React.FC<RankingViewProps> = ({
               selectedDailyDate={selectedDailyDate}
             />
           </motion.div>
+        ) : activeTab === 'synergy' ? (
+          <motion.div
+            key="synergy"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            transition={{ duration: 0.2 }}
+          >
+            <SynergyAnalysis players={allPlayers} matches={effectiveMatches} />
+          </motion.div>
+        ) : activeTab === 'coach' ? (
+          <motion.div
+            key="coach"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            transition={{ duration: 0.2 }}
+          >
+            {selectedPlayer ? (
+              <AICoach 
+                player={selectedPlayer} 
+                allPlayers={players} 
+                recentMatches={matches} 
+              />
+            ) : (
+              <div className="text-center py-20 bg-white/5 rounded-3xl border border-brand-primary/20">
+                <Users className="w-12 h-12 text-brand-primary/20 mx-auto mb-4" />
+                <p className="text-white/60 font-black uppercase tracking-widest text-sm">
+                  Selecione um jogador na aba "Individual" para ver o feedback da IA
+                </p>
+              </div>
+            )}
+          </motion.div>
         ) : activeTab === 'daily' ? (
           <motion.div
             key="daily"
@@ -2307,7 +2430,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
                     <Sparkles className="w-5 h-5 text-brand-primary" />
                   </div>
                   <h3 className={`text-xl font-black uppercase tracking-tight text-white`}>
-                    {rankingPeriod === 'session' ? 'Destaques da Sessão' : 'Destaques Acumulados'}
+                    {rankingPeriod === 'session' ? 'Destaques do Dia' : 'Destaques Acumulados'}
                   </h3>
                 </div>
                 {userRole === 'ADMIN' && rankingPeriod === 'session' && selectedDailyDate === today && (
@@ -2335,17 +2458,17 @@ export const RankingView: React.FC<RankingViewProps> = ({
                         <Trophy className="w-10 h-10 text-yellow-400" />
                       </div>
                       <p className="text-[9px] font-black uppercase tracking-[0.2em] text-brand-primary mb-1">
-                        {rankingPeriod === 'session' ? 'MVP da Sessão' : 'MVP Histórico'}
+                        {rankingPeriod === 'session' ? 'MVP do Dia' : 'MVP Histórico'}
                       </p>
                       <h4 className="text-base font-black text-white truncate">
                         {rankingPeriod === 'session' 
                           ? (topStats.dailyMvp ? (topStats.dailyMvp.name || "Sócio sem nome") : "Nenhum")
                           : (topStats.mvp ? (topStats.mvp.name || "Sócio sem nome") : "Nenhum")}
                       </h4>
-                      <div className="mt-3 flex items-center gap-2">
+                      <div className="mt-3 flex flex-wrap gap-2">
                         <span className={`bg-white/5 text-brand-primary border-brand-primary/40 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest border`}>
                           {rankingPeriod === 'session'
-                            ? (topStats.dailyMvp ? `${Math.round((topStats.dailyStats[topStats.dailyMvp.id].wins / (topStats.dailyStats[topStats.dailyMvp.id].matches || 1)) * 100)}% Vitórias` : "Sem partidas")
+                            ? (topStats.dailyMvp ? `${Math.round((topStats.dailyStats[topStats.dailyMvp.id]?.wins / (topStats.dailyStats[topStats.dailyMvp.id]?.matches || 1)) * 100)}% Vitórias` : "Sem partidas")
                             : (topStats.mvp ? `${Math.round((topStats.mvp.wins / (topStats.mvp.matchesPlayed || 1)) * 100)}% Vitórias` : "Sem partidas")}
                         </span>
                       </div>
@@ -2363,7 +2486,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
                         <Target className="w-10 h-10 text-yellow-400" />
                       </div>
                       <p className="text-[9px] font-black uppercase tracking-[0.2em] text-brand-primary mb-1">
-                        {rankingPeriod === 'session' ? 'Levantador Sessão' : 'Melhor Levantador'}
+                        {rankingPeriod === 'session' ? 'Levantador do Dia' : 'Melhor Levantador'}
                       </p>
                       <h4 className="text-base font-black text-white truncate">
                         {rankingPeriod === 'session'
@@ -2373,7 +2496,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
                       <div className="mt-3 flex items-center gap-2">
                         <span className={`bg-white/5 text-brand-primary border-brand-primary/40 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest border`}>
                           {rankingPeriod === 'session'
-                            ? (topStats.dailyBestSetter ? `${Math.round((topStats.dailyStats[topStats.dailyBestSetter.id].wins / (topStats.dailyStats[topStats.dailyBestSetter.id].matches || 1)) * 100)}% Vitórias` : "Sem partidas")
+                            ? (topStats.dailyBestSetter ? `${Math.round((topStats.dailyStats[topStats.dailyBestSetter.id]?.wins / (topStats.dailyStats[topStats.dailyBestSetter.id]?.matches || 1)) * 100)}% Vitórias` : "Sem partidas")
                             : (topStats.bestSetter ? `${Math.round((topStats.bestSetter.wins / (topStats.bestSetter.matchesPlayed || 1)) * 100)}% Vitórias` : "Sem partidas")}
                         </span>
                       </div>
@@ -2391,7 +2514,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
                         <Zap className="w-10 h-10 text-yellow-400" />
                       </div>
                       <p className="text-[9px] font-black uppercase tracking-[0.2em] text-brand-primary mb-1">
-                        {rankingPeriod === 'session' ? 'Rei da Sessão' : 'Rei do ELO'}
+                        {rankingPeriod === 'session' ? 'Rei do Dia' : 'Rei do ELO'}
                       </p>
                       <h4 className="text-base font-black text-white truncate">
                         {rankingPeriod === 'session'
@@ -2539,7 +2662,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
               <Users className="w-5 h-5 text-brand-primary" />
             </div>
             <h4 className={`text-xs font-black uppercase tracking-widest text-brand-primary`}>
-              Melhores Duplas {rankingPeriod === 'session' ? 'da Sessão' : '(Sinergia Geral)'}
+              Melhores Duplas {rankingPeriod === 'session' ? 'do Dia' : '(Sinergia Geral)'}
             </h4>
           </div>
           <div className="space-y-4">
@@ -2608,9 +2731,9 @@ export const RankingView: React.FC<RankingViewProps> = ({
                 ? `Ranking de ${formatBrazilianDate(selectedDailyDate)}`
                 : 'Ranking Geral Acumulado'}
               <HelpTooltip 
-                title={rankingPeriod === 'session' ? "Ranking da Sessão" : "Ranking Geral"} 
+                title={rankingPeriod === 'session' ? "Ranking do Dia" : "Ranking Geral"} 
                 content={rankingPeriod === 'session' 
-                  ? "Este ranking mostra o desempenho da sessão, ordenado por pontos ELO ganhos, com desempate por eficiência técnica e menor tempo em quadra." 
+                  ? "Este ranking mostra o desempenho do dia, ordenado por pontos ELO ganhos, com desempate por eficiência técnica e menor tempo em quadra." 
                   : "Este ranking mostra o desempenho acumulado, ordenado por pontos ELO totais, com desempate por eficiência técnica e menor tempo em quadra."}
               />
             </h3>
@@ -2680,7 +2803,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
               </div>
             ) : (
               <div className="text-[9px] font-bold text-white/40 uppercase tracking-wide bg-black/40 p-3 rounded-xl border border-white/5 flex items-center h-10">
-                Filtro de Sessão ativo no cabeçalho.
+                Filtro de Dia ativo no cabeçalho.
               </div>
             )}
           </div>
@@ -2692,7 +2815,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
               <button
                 type="button"
                 onClick={() => setRankingSortMetric('elo')}
-                className={`flex-1 h-8 rounded-lg font-black text-[9px] uppercase tracking-wider transition-all whitespace-nowrap ${
+                className={`flex-grow px-3 h-8 rounded-lg font-black text-[9px] uppercase tracking-wider transition-all whitespace-nowrap ${
                   rankingSortMetric === 'elo' 
                     ? 'bg-brand-primary text-black' 
                     : 'text-white/40 hover:text-white'
@@ -2703,7 +2826,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
               <button
                 type="button"
                 onClick={() => setRankingSortMetric('efficiency')}
-                className={`flex-1 h-8 rounded-lg font-black text-[9px] uppercase tracking-wider transition-all whitespace-nowrap ${
+                className={`flex-grow px-3 h-8 rounded-lg font-black text-[9px] uppercase tracking-wider transition-all whitespace-nowrap ${
                   rankingSortMetric === 'efficiency' 
                     ? 'bg-brand-primary text-black' 
                     : 'text-white/40 hover:text-white'
@@ -2849,6 +2972,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
                 </tr>
               </thead>
               <tbody className={`divide-y divide-white/5`}>
+                <AnimatePresence>
                 {(() => {
                   const sessionMatches = (rankingPeriod === 'session' 
                     ? (selectedDailyDate === 'global' ? matches : matches.filter(m => m.date === selectedDailyDate))
@@ -2867,7 +2991,6 @@ export const RankingView: React.FC<RankingViewProps> = ({
                     .sort((a, b) => {
                       const statsA = topStats.dailyStats[a.id];
                       const statsB = topStats.dailyStats[b.id];
-
                       // 1. Sort by specified metric
                       if (rankingSortMetric === 'fidelity') {
                         const datesA = new Set(effectiveMatches.filter(m => m.teamA.includes(a.id) || m.teamB.includes(a.id)).map(m => m.date)).size;
@@ -2878,9 +3001,39 @@ export const RankingView: React.FC<RankingViewProps> = ({
                       }
 
                       if (rankingSortMetric === 'efficiency') {
-                        const effA = (a.trueSkill?.mu || 25) - 3 * (a.trueSkill?.sigma || 8.333);
-                        const effB = (b.trueSkill?.mu || 25) - 3 * (b.trueSkill?.sigma || 8.333);
-                        if (Math.abs(effB - effA) > 0.0001) return effB - effA;
+                        const matchesA = rankingPeriod === 'session' ? (statsA?.matches || 0) : (a.matchesPlayed || 0);
+                        const matchesB = rankingPeriod === 'session' ? (statsB?.matches || 0) : (b.matchesPlayed || 0);
+                        const winsA = rankingPeriod === 'session' ? (statsA?.wins || 0) : (a.wins || 0);
+                        const winsB = rankingPeriod === 'session' ? (statsB?.wins || 0) : (b.wins || 0);
+                        
+                        const winRateA = matchesA > 0 ? (winsA / matchesA) : 0;
+                        const winRateB = matchesB > 0 ? (winsB / matchesB) : 0;
+                        
+                        if (Math.abs(winRateB - winRateA) > 0.0001) {
+                          return winRateB - winRateA;
+                        }
+                        
+                        // Tie-breaker 1: More wins
+                        if (winsB !== winsA) return winsB - winsA;
+                        
+                        // Tie-breaker 2: Point difference (Saldo)
+                        const saldoA = rankingPeriod === 'session' 
+                          ? ((statsA?.pointsFor || 0) - (statsA?.pointsAgainst || 0)) 
+                          : ((a.pointsFor || 0) - (a.pointsAgainst || 0));
+                        const saldoB = rankingPeriod === 'session' 
+                          ? ((statsB?.pointsFor || 0) - (statsB?.pointsAgainst || 0)) 
+                          : ((b.pointsFor || 0) - (b.pointsAgainst || 0));
+                        if (saldoB !== saldoA) return saldoB - saldoA;
+                      }
+
+                      if (rankingSortMetric === 'efficiency_mvp') {
+                        const scoreA = rankingPeriod === 'session'
+                          ? (topStats.getDailyMvpEfficiency ? topStats.getDailyMvpEfficiency(a) : 0)
+                          : (topStats.getCareerMvpEfficiency ? topStats.getCareerMvpEfficiency(a) : 0);
+                        const scoreB = rankingPeriod === 'session'
+                          ? (topStats.getDailyMvpEfficiency ? topStats.getDailyMvpEfficiency(b) : 0)
+                          : (topStats.getCareerMvpEfficiency ? topStats.getCareerMvpEfficiency(b) : 0);
+                        if (scoreB !== scoreA) return scoreB - scoreA;
                       }
 
                       // Default or fallback sort by ELO
@@ -2889,12 +3042,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
 
                       if (eloB !== eloA) return eloB - eloA;
 
-                      // Secondary fallback: TrueSkill Efficiency
-                      const effA = (a.trueSkill?.mu || 25) - 3 * (a.trueSkill?.sigma || 8.333);
-                      const effB = (b.trueSkill?.mu || 25) - 3 * (b.trueSkill?.sigma || 8.333);
-                      if (Math.abs(effB - effA) > 0.0001) return effB - effA;
-
-                      // Tertiary fallback: session time
+                      // Secondary fallback: session/total court time (Critério de Desempate Soberano)
                       const timeA = rankingPeriod === 'session' ? (statsA?.duration || 0) : (topStats.totalDurations[a.id] || 0);
                       const timeB = rankingPeriod === 'session' ? (statsB?.duration || 0) : (topStats.totalDurations[b.id] || 0);
                       return timeA - timeB;
@@ -2903,18 +3051,28 @@ export const RankingView: React.FC<RankingViewProps> = ({
                       const stats = topStats.dailyStats[player.id];
                       const matchesPlayed = rankingPeriod === 'session' ? stats.matches : player.matchesPlayed;
                       const wins = rankingPeriod === 'session' ? stats.wins : player.wins;
-                      const eloValue = rankingPeriod === 'session' ? stats.matchEloGain : Math.round(player.elo);
+                      const eloValue = rankingPeriod === 'session' ? stats?.matchEloGain : Math.round(player.elo);
                       const winRate = Math.round((wins / (matchesPlayed || 1)) * 100);
                       
                       const wilsonScore = calculateWilsonScore(wins, matchesPlayed);
                       const certaintyFloor = calculateCertaintyFloor(player.trueSkill?.mu, player.trueSkill?.sigma);
 
                       return (
-                        <tr key={player.id} className={`transition-colors group hover:bg-white/5`}>
+                        <motion.tr 
+                          key={player.id} 
+                          layout
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -10 }}
+                          transition={{ duration: 0.3 }}
+                          className={`transition-colors group hover:bg-white/5`}
+                        >
                           <td className="px-6 py-4">
                             <div className="flex items-center gap-3">
-                              <div className="flex flex-col items-center w-8 min-w-[32px]">
-                                <span className="text-[12px] font-black text-white/40">{idx + 1}</span>
+                              <div className="flex flex-col items-center justify-center w-8 min-w-[32px] font-mono">
+                                <span className="text-[12px] font-black text-white/40 font-mono">
+                                  {(idx + 1).toString().padStart(2, '0')}
+                                </span>
                               </div>
                               <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-black transition-colors bg-white/5 text-white group-hover:bg-brand-primary/20 group-hover:text-brand-primary`}>
                                 {player.name.charAt(0)}
@@ -2928,25 +3086,30 @@ export const RankingView: React.FC<RankingViewProps> = ({
                                     />
                                     {(() => {
                                       const mv = leaderboardMovements[player.id];
-                                      if (!mv || mv.type === 'neutral' || mv.diff === 0) return null;
+                                      if (!mv) return null;
                                       
-                                      if (mv.type === 'up') {
+                                      if (mv.type === 'up' && mv.diff > 0) {
                                         return (
-                                          <div className="flex items-center gap-0.5 animate-bounce-subtle">
+                                          <div className="flex items-center gap-0.5 animate-bounce-subtle" title={`Subiu ${mv.diff} posição(ões)`}>
                                             <TrendingUp className="w-3 h-3 text-emerald-500" />
                                             <span className="text-[10px] font-black text-emerald-500">{mv.diff}</span>
                                           </div>
                                         );
                                       }
-                                      if (mv.type === 'down') {
+                                      if (mv.type === 'down' && mv.diff > 0) {
                                         return (
-                                          <div className="flex items-center gap-0.5">
+                                          <div className="flex items-center gap-0.5" title={`Caiu ${mv.diff} posição(ões)`}>
                                             <TrendingDown className="w-3 h-3 text-rose-500" />
                                             <span className="text-[10px] font-black text-rose-500">{mv.diff}</span>
                                           </div>
                                         );
                                       }
-                                      return null;
+                                      return (
+                                        <div className="flex items-center gap-0.5" title="Mantém posição">
+                                          <Minus className="w-3 h-3 text-white/40" />
+                                          <span className="text-[10px] font-black text-white/40">0</span>
+                                        </div>
+                                      );
                                     })()}
                                   </div>
                                 </div>
@@ -2964,18 +3127,18 @@ export const RankingView: React.FC<RankingViewProps> = ({
                               </div>
                             </div>
                           </td>
-                          <td className={`px-6 py-4 text-center text-xs font-bold text-white/80`}>{matchesPlayed}</td>
-                          <td className="px-6 py-4 text-center text-xs font-bold text-brand-primary">{wins}</td>
-                          <td className="px-6 py-4 text-center text-xs font-bold text-white/40">{matchesPlayed - wins}</td>
-                          <td className={`px-6 py-4 text-center text-xs font-black ${
+                          <td className={`px-6 py-4 text-center text-xs font-bold text-white/80 font-mono`}>{matchesPlayed}</td>
+                          <td className="px-6 py-4 text-center text-xs font-bold text-brand-primary font-mono">{wins}</td>
+                          <td className="px-6 py-4 text-center text-xs font-bold text-white/40 font-mono">{matchesPlayed - wins}</td>
+                          <td className={`px-6 py-4 text-center text-xs font-black font-mono ${
                             (rankingPeriod === 'session' ? (stats?.pointsFor || 0) - (stats?.pointsAgainst || 0) : (player.pointsFor || 0) - (player.pointsAgainst || 0)) > 0 ? 'text-emerald-500' : 
                             (rankingPeriod === 'session' ? (stats?.pointsFor || 0) - (stats?.pointsAgainst || 0) : (player.pointsFor || 0) - (player.pointsAgainst || 0)) < 0 ? 'text-rose-500' : 'text-white/40'
                           }`}>
                             {(rankingPeriod === 'session' ? (stats?.pointsFor || 0) - (stats?.pointsAgainst || 0) : (player.pointsFor || 0) - (player.pointsAgainst || 0)) > 0 ? '+' : ''}
                             {rankingPeriod === 'session' ? (stats?.pointsFor || 0) - (stats?.pointsAgainst || 0) : (player.pointsFor || 0) - (player.pointsAgainst || 0)}
                           </td>
-                          <td className="px-6 py-4 text-center">
-                            <span className={`inline-flex items-center gap-1.5 text-[10px] font-black px-2 py-1 rounded-lg ${winRate >= 50 ? 'bg-brand-primary/10 text-brand-primary' : 'bg-white/10 text-white/40'}`}>
+                          <td className="px-6 py-4 text-center font-mono">
+                            <span className={`inline-flex items-center gap-1.5 text-[10px] font-black px-2 py-1 rounded-lg font-mono ${winRate >= 50 ? 'bg-brand-primary/10 text-brand-primary' : 'bg-white/10 text-white/40'}`}>
                               <CalendarCheck className="w-3 h-3" />
                               {winRate}%
                             </span>
@@ -2989,7 +3152,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
                                 const weight = matchesPlayed / (matchesPlayed + K);
                                 
                                 const effValueRaw = rankingPeriod === 'session' 
-                                  ? ((stats.matchEloGain !== undefined ? stats.matchEloGain : (stats.eloGain || 0)) / (stats.duration / 60 || 1))
+                                  ? ((stats?.matchEloGain !== undefined ? stats.matchEloGain : (stats?.eloGain || 0)) / ((stats?.duration || 1) / 60))
                                   : ((player.elo - 1200) / ((topStats.totalDurations[player.id] || 1) / 60));
                                 
                                 const weightedEff = effValueRaw * weight;
@@ -3114,8 +3277,6 @@ export const RankingView: React.FC<RankingViewProps> = ({
                             </div>
                           </td>
 
-
-
                         <td className="px-6 py-4 text-right">
                           <div className="flex flex-col items-end">
                             {rankingPeriod === 'session' ? (
@@ -3124,7 +3285,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
                                   {(stats?.eloGain || 0) >= 0 ? '+' : ''}{stats?.eloGain || 0}
                                 </span>
                                 <span className="text-[8px] font-bold text-white/40 uppercase">
-                                  ELO Sessão
+                                  ELO Dia
                                 </span>
                                 <div className="flex flex-col items-end gap-0.5 mt-1 text-[8px] font-semibold text-white/50 leading-tight">
                                   <span className="whitespace-nowrap font-mono">
@@ -3155,10 +3316,11 @@ export const RankingView: React.FC<RankingViewProps> = ({
                             )}
                           </div>
                         </td>
-                      </tr>
+                      </motion.tr>
                     );
                   })
                 })()}
+                </AnimatePresence>
                 {(() => {
                   const filteredActive = [...players].filter(p => {
                     const stats = topStats.dailyStats[p.id];

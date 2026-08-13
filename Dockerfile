@@ -2,11 +2,11 @@
 FROM node:20 AS builder
 WORKDIR /app
 
-# Copy package.json and lockfile or package-lock if exists
+# Copy package.json and lockfile
 COPY package*.json ./
 
-# Install ALL dependencies with legacy-peer-deps to avoid strict React 19 peer conflict errors
-RUN npm install --legacy-peer-deps
+# Install ALL dependencies
+RUN npm install
 
 # Copy all source files
 COPY . .
@@ -23,7 +23,7 @@ ENV NODE_ENV=production
 COPY package*.json ./
 
 # Install only production dependencies
-RUN npm install --omit=dev --legacy-peer-deps
+RUN npm install --omit=dev
 
 # Copy compiled backend & frontend assets from builder
 COPY --from=builder /app/dist ./dist

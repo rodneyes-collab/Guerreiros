@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { db, doc, onSnapshot, setDoc, updateDoc, writeBatch, collection, serverTimestamp, handleFirestoreError, OperationType, getDocs, query, where, deleteDoc, getFirestoreDateKey, getBrazilDay } from '../../firebase';
+import { db, doc, onSnapshot, setDoc, updateDoc, writeBatch, collection, serverTimestamp, handleFirestoreError, OperationType, getDocs, query, where, deleteDoc, getFirestoreDateKey, getBrazilDay, trackAccess } from '../../firebase';
 import { IntentionsData, Player } from '../../types';
 import { useStore } from '../../store';
 
@@ -65,6 +65,10 @@ export const useIntentions = () => {
         });
       }
       setIsLoaded(true);
+    }, (err) => {
+      console.error('useIntentions: Error in intentions snapshot:', err);
+      handleFirestoreError(err, OperationType.GET, 'metadata/intentions');
+      setIsLoaded(true);
     });
     return () => unsub();
   }, []);
@@ -74,19 +78,17 @@ export const useIntentions = () => {
     if (!isLoaded) return;
     const nextThu = getNextThursday();
     
-    // Only reset if we have a target date and it's different from the next Thursday
-    // AND today is NOT Thursday (to avoid resetting on the day of the game)
-    // Or if the target date is strictly in the past
-    const today = new Date();
-    const todayStr = today.toISOString().split('T')[0];
+    // Only reset if we have a target date and it's strictly in the past (before today's Brazil date)
+    const todayStr = getFirestoreDateKey();
+    const day = getBrazilDay();
     const isPast = intentions.targetDate && intentions.targetDate < todayStr;
-    const isThursday = today.getDay() === 4;
-    const isWednesday = today.getDay() === 3;
+    const isThursday = day === 4;
+    const isWednesday = day === 3;
 
     // Only reset if we have a target date and it's different from the next Thursday
     // AND today is NOT Thursday or Wednesday (to avoid resetting during the game preparation/day)
-    // Or if the target date is strictly in the past
-    if (intentions.targetDate && intentions.targetDate !== nextThu && userRole === 'ADMIN' && (isPast || (!isThursday && !isWednesday))) {
+    // AND the target date is strictly in the past
+    if (intentions.targetDate && intentions.targetDate !== nextThu && userRole === 'ADMIN' && isPast && !isThursday && !isWednesday) {
       try {
         sendingRef.current = {}; // Reset sending ref for new week
         await setDoc(doc(db, 'metadata', 'intentions'), {
@@ -108,6 +110,27 @@ export const useIntentions = () => {
     resetIntentionsIfNeeded();
   }, [intentions.targetDate, resetIntentionsIfNeeded]);
 
+  // Sync intention confirmations into player access records
+  useEffect(() => {
+    if (!isLoaded || !intentions.responses) return;
+    const timestamps = intentions.confirmationTimestamps || {};
+    const responses = intentions.responses;
+
+    Object.entries(responses).forEach(([pId, status]) => {
+      if (status) {
+        const ts = timestamps[pId];
+        const p = players.find(player => player.id === pId);
+        if (p) {
+          const confirmDate = ts ? new Date(ts).toISOString().slice(0, 10) : getFirestoreDateKey();
+          const hasConfirmDate = p.loginHistory?.some(h => new Date(h).toISOString().slice(0, 10) === confirmDate);
+          if (!p.lastLoginAt || !hasConfirmDate) {
+            trackAccess(pId);
+          }
+        }
+      }
+    });
+  }, [isLoaded, intentions.responses, intentions.confirmationTimestamps, players]);
+
   const clearRemindersForPlayer = async (playerId: string, playerUid?: string) => {
     try {
       const q = query(
@@ -124,10 +147,11 @@ export const useIntentions = () => {
     }
   };
 
-  const setIntent = async (playerId: string, status: 'GOING' | 'NOT_GOING' | 'RESET', phoneDigits?: string) => {
+  const setIntent = async (playerId: string, status: 'GOING' | 'NOT_GOING' | 'RESET') => {
     try {
       const currentStore = useStore.getState();
-      const currentAuthUser = currentStore.currentPlayer; // We need uid.
+      const currentAuthUser = currentStore.user;
+      const currentPlayerProfile = currentStore.currentPlayer;
 
       const res = await fetch('/api/presence/set', {
         method: 'POST',
@@ -135,8 +159,8 @@ export const useIntentions = () => {
         body: JSON.stringify({ 
           playerId, 
           status, 
-          phoneDigits,
-          uid: currentAuthUser?.uid || null,
+          uid: currentAuthUser?.uid || currentPlayerProfile?.uid || null,
+          userEmail: currentAuthUser?.email || currentPlayerProfile?.email || null,
           isAdmin: currentStore.userRole === 'ADMIN'
         })
       });
@@ -146,6 +170,10 @@ export const useIntentions = () => {
         const errorMessage = errorData.error || 'Falha ao registrar presença';
         const errorDetails = errorData.details ? ` (${errorData.details})` : '';
         throw new Error(errorMessage + errorDetails);
+      }
+      
+      if (status !== 'RESET') {
+        trackAccess(playerId).catch(console.warn);
       }
       
     } catch (err: any) {
@@ -309,7 +337,8 @@ export const useIntentions = () => {
       text += "Nenhum sócio confirmado ainda.";
     } else {
       goingPlayers.forEach((p, index) => {
-        text += `${index + 1} . ${p.name}\n`;
+        const isGuest = p.status === 'guest';
+        text += `${index + 1} . ${p.name}${isGuest ? ' ( Convidado)' : ''}\n`;
       });
       text += `\nTotal: ${goingPlayers.length} confirmados`;
     }

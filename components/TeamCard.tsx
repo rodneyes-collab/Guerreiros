@@ -3,6 +3,7 @@ import { motion } from 'motion/react';
 import { Player, Team } from '../types';
 import { PlayerRow } from './PlayerRow';
 import { suggestPosition, calculateTeamPositions } from '../utils/teamLogic';
+import { useStore } from '../store';
 import { 
   Swords, 
   Sparkles 
@@ -22,6 +23,8 @@ interface TeamCardProps {
   hoveredPlayerId: string | null;
   setHoveredPlayerId: (id: string | null) => void;
   rivalId: string | null;
+  bottomTwoIds?: Set<string>;
+  icColors?: Record<string, { color: string, title: string }>;
 }
 
 export const TeamCard: React.FC<TeamCardProps> = ({ 
@@ -37,12 +40,58 @@ export const TeamCard: React.FC<TeamCardProps> = ({
   activeSwapId,
   hoveredPlayerId,
   setHoveredPlayerId,
-  rivalId
+  rivalId,
+  bottomTwoIds,
+  icColors
 }) => {
-  const colorClass = color === 'blue' ? 'bg-brand-secondary' : 'bg-brand-primary';
+  const teamGenerationMode = useStore(state => state.teamGenerationMode);
+  const matches = useStore(state => state.matches);
+
+  const getPlayerSynergyInfo = (playerId: string) => {
+    const allTeammates = [team.setter, ...team.players].filter((p): p is Player => p !== null && p.id !== playerId);
+    const highSynergy: { name: string; winRate: number; games: number }[] = [];
+    const lowSynergy: { name: string; winRate: number; games: number }[] = [];
+
+    for (const teammate of allTeammates) {
+      let gamesTogether = 0;
+      let winsTogether = 0;
+      for (const m of matches) {
+        const inTeamA = m.teamA.includes(playerId) && m.teamA.includes(teammate.id);
+        const inTeamB = m.teamB.includes(playerId) && m.teamB.includes(teammate.id);
+        if (inTeamA || inTeamB) {
+          gamesTogether++;
+          if ((inTeamA && m.winner === 'A') || (inTeamB && m.winner === 'B')) {
+            winsTogether++;
+          }
+        }
+      }
+      if (gamesTogether >= 2) {
+        const winRate = winsTogether / gamesTogether;
+        if (winRate >= 0.70) {
+          highSynergy.push({ name: teammate.name, winRate, games: gamesTogether });
+        } else if (winRate <= 0.30) {
+          lowSynergy.push({ name: teammate.name, winRate, games: gamesTogether });
+        }
+      }
+    }
+    return { highSynergy, lowSynergy };
+  };
   const lightColorClass = color === 'blue' ? 'bg-brand-secondary/10 text-brand-secondary' : 'bg-brand-primary/10 text-brand-primary';
   const textColorClass = color === 'blue' ? 'text-brand-primary' : 'text-brand-secondary';
   const iconColorClass = color === 'blue' ? 'text-brand-primary' : 'text-brand-secondary';
+
+  const teamEff = team.totalEfficiency || team.totalElo || 0;
+  const oppEff = opponent ? (opponent.totalEfficiency || opponent.totalElo || 0) : teamEff;
+  const diff = Math.abs(teamEff - oppEff);
+  const avgEff = (teamEff + oppEff) / 2 || 1;
+  const diffRatio = diff / avgEff;
+  const balanceScore = Math.max(0, Math.min(100, Math.round(100 - (diffRatio * 100))));
+
+  let balanceLabel = 'Excelente';
+  if (balanceScore < 60) balanceLabel = 'Desequilibrado';
+  else if (balanceScore < 75) balanceLabel = 'Moderado';
+  else if (balanceScore < 90) balanceLabel = 'Bom';
+  else balanceLabel = 'Excelente';
 
   const getPos = (pid: string) => {
     const sorted = [...attendance].sort((a, b) => (a.arrivalOrder || 0) - (b.arrivalOrder || 0));
@@ -91,9 +140,23 @@ export const TeamCard: React.FC<TeamCardProps> = ({
         <div className="flex justify-between items-center mb-2 sm:mb-3">
           <p className="text-[8px] sm:text-sm font-black uppercase opacity-70 tracking-[0.2em] sm:tracking-[0.3em] text-brand-primary">Eficiência Total</p>
         </div>
-        <div className="flex justify-between items-end">
+        <div className="flex justify-between items-end mb-4">
           <h3 className={`font-black text-4xl sm:text-8xl tracking-tighter uppercase ${title.includes('A') ? 'text-brand-primary' : 'text-white'}`}>{title}</h3>
-          <p className="text-3xl sm:text-6xl font-black tracking-tighter text-brand-primary">{team.totalEfficiency || team.totalElo}</p>
+          <p className="text-3xl sm:text-6xl font-black tracking-tighter text-brand-primary">{teamEff}</p>
+        </div>
+
+        {/* Nota de Balanceamento Estimada */}
+        <div className="pt-3 border-t border-brand-primary/10 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-brand-primary animate-pulse" />
+            <span className="text-[9px] font-black uppercase tracking-widest text-white/70">
+              Balanceamento ({teamGenerationMode === 'TRUESKILL' ? 'TrueSkill' : 'Hab. Puras'}):
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs font-black text-brand-primary font-mono">{balanceScore}/100</span>
+            <span className="text-[8px] font-bold text-white/50 uppercase">({balanceLabel})</span>
+          </div>
         </div>
       </div>
       
@@ -126,6 +189,9 @@ export const TeamCard: React.FC<TeamCardProps> = ({
                   onRemove={onRemove}
                   isRival={rivalId === team.setter.id}
                   isHovered={hoveredPlayerId === team.setter.id}
+                  isBottomTwo={bottomTwoIds?.has(team.setter.id)}
+                  icColorInfo={icColors?.[team.setter.id]}
+                  synergyInfo={getPlayerSynergyInfo(team.setter.id)}
                 />
               </div>
             ) : (
@@ -159,9 +225,12 @@ export const TeamCard: React.FC<TeamCardProps> = ({
                     userRole={userRole}
                     onSwap={onSwap} 
                     onRemove={onRemove}
-                    onPromote={!team.setter ? onPromote : undefined}
+                    onPromote={onPromote}
                     isRival={rivalId === p.id}
                     isHovered={hoveredPlayerId === p.id}
+                    isBottomTwo={bottomTwoIds?.has(p.id)}
+                    icColorInfo={icColors?.[p.id]}
+                    synergyInfo={getPlayerSynergyInfo(p.id)}
                   />
                 </div>
               ))}

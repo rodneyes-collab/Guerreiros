@@ -79,8 +79,8 @@ export const fetchAttendanceHistory = async (month?: string) => {
 };
 
 export const calculateAttendanceStats = (history: Record<string, Player[]>, allPlayers: Player[]) => {
-  const totalSessions = Object.keys(history).length;
-  if (totalSessions === 0) return [];
+  const totalDays = Object.keys(history).length;
+  if (totalDays === 0) return [];
 
   // Create a map of all players to easily look them up by ID
   const playerMap = new Map<string, Player>();
@@ -98,52 +98,21 @@ export const calculateAttendanceStats = (history: Record<string, Player[]>, allP
   });
 
   const stats = Array.from(playerMap.values()).map(player => {
-    let attendedSessions = 0;
-    let eligibleSessionsCount = 0;
+    let attendedDays = 0;
     
-    // Determine player's join/registration time
-    let firstActivityTime = player.createdAt || 0;
-    
-    // Find the date of their first attendance in history as a safeguard
-    let firstAttendedTime = Infinity;
-    Object.entries(history).forEach(([dateStr, dayPlayers]) => {
+    Object.entries(history).forEach(([_, dayPlayers]) => {
       if (dayPlayers.some(p => p.id === player.id)) {
-        const [year, month, day] = dateStr.split('-').map(Number);
-        const sessionTime = new Date(year, month - 1, day, 0, 0, 0).getTime();
-        if (sessionTime < firstAttendedTime) {
-          firstAttendedTime = sessionTime;
-        }
+        attendedDays++;
       }
     });
     
-    if (firstAttendedTime !== Infinity && (firstActivityTime === 0 || firstAttendedTime < firstActivityTime)) {
-      // 1-day buffer before first attendance
-      firstActivityTime = firstAttendedTime - 24 * 60 * 60 * 1000;
-    }
-    
-    Object.entries(history).forEach(([dateStr, dayPlayers]) => {
-      const [year, month, day] = dateStr.split('-').map(Number);
-      const sessionTime = new Date(year, month - 1, day, 23, 59, 59).getTime();
-      
-      const isEligible = firstActivityTime === 0 || sessionTime >= firstActivityTime;
-      
-      if (isEligible) {
-        eligibleSessionsCount++;
-        if (dayPlayers.some(p => p.id === player.id)) {
-          attendedSessions++;
-        }
-      }
-    });
-    
-    // Fallback to global totalSessions if eligibleSessionsCount is 0 to avoid NaNs
-    const playerTotalSessions = eligibleSessionsCount > 0 ? eligibleSessionsCount : totalSessions;
-    const percentage = playerTotalSessions > 0 ? (attendedSessions / playerTotalSessions) * 100 : 0;
+    const percentage = totalDays > 0 ? (attendedDays / totalDays) * 100 : 0;
 
     return {
       playerId: player.id,
       playerName: player.name,
-      attendedSessions,
-      totalSessions: playerTotalSessions,
+      attendedSessions: attendedDays,
+      totalSessions: totalDays,
       percentage: percentage
     };
   });

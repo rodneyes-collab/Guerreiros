@@ -1,13 +1,11 @@
 {
-  "apiUrl": "https://evolution-api-238897290870.us-central1.run.app",
-  "apiKey": "MinhaChaveSuperSecreta2026",
-  "instanceName": "Guerreiros - Bot",
+  "apiUrl": "http://34.133.253.248:8080",
+  "apiKey": "esperanca",
+  "instanceName": "Guerreiros",
   "groupJid": "120363401268459791@g.us",
   "updateIntervalMinutes": 120,
   "lastListSent": 1780317836827,
   "lastConfirmedPlayers": [],
   "botActive": true,
-  "webhookUrl": "https://ais-dev-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app/api/whatsapp/webhook",
-  "isSimulated": false,
-  "simulatedState": "close"
+  "webhookUrl": "https://ais-dev-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app/api/whatsapp/webhook"
 }

@@ -2,9 +2,12 @@ import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { useStore } from '../store';
 import { TeamCard } from './TeamCard';
+import { TeamBalancingSimulatorCard } from '../src/components/TeamBalancingSimulatorCard';
+import { DepartureTimeModal } from './DepartureTimeModal';
 import { formatTime } from '../utils/helpers';
 import { getFirestoreDateKey } from '../firebase';
 import { useNarration } from '../src/hooks/useNarration';
+import { useAIStatus } from '../src/hooks/useAIStatus';
 import { speakNarration } from '../services/geminiService';
 import { playSound } from '../src/utils/audio';
 import { 
@@ -24,6 +27,7 @@ import {
   Megaphone, 
   ArrowLeftRight,
   ShieldCheck,
+  AlertTriangle,
   X,
   XCircle,
   Trash2,
@@ -39,19 +43,23 @@ import {
   TrendingUp,
   Check,
   CheckCircle2,
+  Sliders,
   Mic,
   MicOff,
   ExternalLink,
   Undo,
   RotateCw,
   RotateCcw,
-  Zap
+  Zap,
+  Bot
 } from 'lucide-react';
 
 import { PlayerStatusCard } from '../src/components/PlayerStatusCard';
 import { HelpTooltip } from '../src/components/HelpTooltip';
-import { getPriorityQueue, calculateEffectiveElo, suggestPosition, calculateTeamPositions } from '../utils/teamLogic';
+import { MatchBalanceCharts } from '../src/components/MatchBalanceCharts';
+import { getPriorityQueue, calculateEffectiveElo, suggestPosition, calculateTeamPositions, runAutoCorrectionAgent, calculatePracticalSkillsSum, runCriticalSynergySolverAgent, calculateCompositePerformanceRating } from '../utils/teamLogic';
 import { Player, SystemMetadata } from '../types';
+import { APP_VERSION } from '../constants';
 
 interface MatchViewProps {
   onGenerate: (onlyCurrentPlayers?: boolean) => void;
@@ -60,6 +68,7 @@ interface MatchViewProps {
   onDeleteMatchesByDate: (date: string) => void;
   onFinishMatch: (winner: 'A' | 'B', scoreA?: number, scoreB?: number, stats?: any[]) => void;
   onVerifyRules: () => void;
+  onAutoFixInconsistencies?: () => void;
   onAnalyzeMatch: () => void;
   recalculateDailyStats: () => void;
   isVerifyingRules: boolean;
@@ -71,6 +80,8 @@ interface MatchViewProps {
   onPromoteToSetter: (team: 'A' | 'B', playerId: string) => void;
   systemMetadata: SystemMetadata;
   updateSystemMetadata: (metadata: Partial<SystemMetadata>) => void;
+  updateDepartureTime?: (playerId: string, departureTime: string | null) => Promise<void>;
+  userRole?: string;
 }
 
 export const MatchView: React.FC<MatchViewProps> = ({
@@ -80,6 +91,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
   onDeleteMatchesByDate,
   onFinishMatch,
   onVerifyRules,
+  onAutoFixInconsistencies,
   onAnalyzeMatch,
   recalculateDailyStats,
   isVerifyingRules,
@@ -90,13 +102,16 @@ export const MatchView: React.FC<MatchViewProps> = ({
   onRemovePlayer,
   onPromoteToSetter,
   systemMetadata,
-  updateSystemMetadata
+  updateSystemMetadata,
+  updateDepartureTime: updateDepartureTimeProp,
+  userRole: userRoleProp
 }) => {
   const { announceWinner } = useNarration();
+  const { status: aiStatus } = useAIStatus();
   const { 
     generationResult, 
     attendance: allAttendance, 
-    userRole, 
+    userRole: storeUserRole, 
     matches,
     setGenerationResult,
     setViewMode,
@@ -117,14 +132,25 @@ export const MatchView: React.FC<MatchViewProps> = ({
     swapSelection,
     setSwapSelection,
     isSyncing,
-    showNotification
+    showNotification,
+    teamGenerationMode,
+    setTeamGenerationMode,
+    balancingStrategy,
+    setBalancingStrategy,
+    balancingRatingMode,
+    setBalancingRatingMode,
+    players
   } = useStore();
+  const userRole = userRoleProp || storeUserRole || 'ADMIN';
+  const updateDepartureTime = updateDepartureTimeProp;
   const attendance = React.useMemo(() => allAttendance.filter(p => p.status !== 'inactive'), [allAttendance]);
   const { currentPlayer } = useStore();
 
   const [showAudit, setShowAudit] = useState(false);
   const [showAnalysis, setShowAnalysis] = useState(false);
   const [showActions, setShowActions] = useState(false);
+  const [showSimulatorInMatch, setShowSimulatorInMatch] = useState(false);
+  const [showDepartureModal, setShowDepartureModal] = useState(false);
   const [sessionDurationHours, setSessionDurationHours] = useState(3);
   const [customAvgDuration, setCustomAvgDuration] = useState<number | null>(null);
 
@@ -135,6 +161,54 @@ export const MatchView: React.FC<MatchViewProps> = ({
   const [voiceStatus, setVoiceStatus] = useState<'idle' | 'listening' | 'processing' | 'success' | 'error' | 'permission_denied'>('idle');
   const [voiceParsedScore, setVoiceParsedScore] = useState<{ winner: 'A' | 'B'; loserScore: number } | null>(null);
   const [recognitionInstance, setRecognitionInstance] = useState<any>(null);
+
+  // Animação de Contagem Regressiva Suave para Geração de Times (Busca Local IC)
+  const [isGeneratingCountdown, setIsGeneratingCountdown] = useState(false);
+  const [countdownVal, setCountdownVal] = useState(3);
+  const [countdownProgress, setCountdownProgress] = useState(0);
+  const [countdownStepText, setCountdownStepText] = useState('Analisando Fila...');
+  const [countdownIteration, setCountdownIteration] = useState(0);
+
+  const handleTriggerGenerate = (onlyCurrent?: boolean) => {
+    setIsGeneratingCountdown(true);
+    setCountdownVal(3);
+    setCountdownProgress(0);
+    setCountdownIteration(0);
+    setCountdownStepText('⚡ Selecionando os 12 Sócios da Fila...');
+
+    const duration = 2800; // ms
+    const intervalTime = 30; // ms
+    let elapsed = 0;
+
+    const timer = setInterval(() => {
+      elapsed += intervalTime;
+      const progress = Math.min(100, Math.floor((elapsed / duration) * 100));
+      setCountdownProgress(progress);
+      setCountdownIteration(Math.floor((progress / 100) * 100));
+
+      if (progress < 30) {
+        setCountdownVal(3);
+        setCountdownStepText('⚡ Fila Inteligente & Regras de Prioridade');
+      } else if (progress < 65) {
+        setCountdownVal(2);
+        setCountdownStepText('🧠 Busca Local IC (100 Iterações) & Sinergia ML');
+      } else if (progress < 95) {
+        setCountdownVal(1);
+        setCountdownStepText('🛡️ Auto-Correção: Bottom 2 & Paridade de Gênero');
+      } else {
+        setCountdownVal(0);
+        setCountdownStepText('🏆 Formação de Elite Concluída!');
+      }
+
+      if (elapsed >= duration) {
+        clearInterval(timer);
+        onGenerate(onlyCurrent);
+        setTimeout(() => {
+          setIsGeneratingCountdown(false);
+        }, 300);
+      }
+    }, intervalTime);
+  };
 
   // Sintetizador local simples para feedback de áudio em tempo real (Web Audio API)
   const playBeep = (freq = 600, duration = 0.15) => {
@@ -431,6 +505,73 @@ export const MatchView: React.FC<MatchViewProps> = ({
   
   const settersCapacity = currentSettersCount || 2;
   const lineCapacity = currentLineCount || 10;
+
+  const lowSynergyAlerts = React.useMemo(() => {
+    if (!generationResult) return [];
+    const teamAPlayers = [generationResult.teamA.setter, ...generationResult.teamA.players].filter(Boolean) as Player[];
+    const teamBPlayers = [generationResult.teamB.setter, ...generationResult.teamB.players].filter(Boolean) as Player[];
+
+    const alerts: { team: 'A' | 'B'; p1: Player; p2: Player; winRate: number; games: number }[] = [];
+
+    const checkTeamSynergies = (players: Player[], teamName: 'A' | 'B') => {
+      for (let i = 0; i < players.length; i++) {
+        for (let j = i + 1; j < players.length; j++) {
+          const p1 = players[i];
+          const p2 = players[j];
+          let games = 0;
+          let wins = 0;
+          for (const m of matches) {
+            const inA = m.teamA.includes(p1.id) && m.teamA.includes(p2.id);
+            const inB = m.teamB.includes(p1.id) && m.teamB.includes(p2.id);
+            if (inA || inB) {
+              games++;
+              if ((inA && m.winner === 'A') || (inB && m.winner === 'B')) {
+                wins++;
+              }
+            }
+          }
+          if (games >= 2) {
+            const winRate = wins / games;
+            if (winRate <= 0.30) {
+              alerts.push({ team: teamName, p1, p2, winRate, games });
+            }
+          }
+        }
+      }
+    };
+
+    checkTeamSynergies(teamAPlayers, 'A');
+    checkTeamSynergies(teamBPlayers, 'B');
+    return alerts;
+  }, [generationResult, matches]);
+
+  const [isSolvingSynergy, setIsSolvingSynergy] = useState(false);
+
+  const handleRunSynergyAgent = () => {
+    if (!generationResult) return;
+    setIsSolvingSynergy(true);
+    setTimeout(() => {
+      try {
+        const { updatedResult, resolvedPairsCount } = runCriticalSynergySolverAgent(
+          generationResult,
+          matches,
+          teamGenerationMode === 'TRUESKILL',
+          balancingStrategy,
+          balancingRatingMode
+        );
+        setGenerationResult(updatedResult);
+        showNotification(
+          `Guerreiros Intelligence: Agente de Sinergia realizou simulações e otimizou a formação! (${resolvedPairsCount} par(es) dissolvido(s))`,
+          'success'
+        );
+      } catch (err) {
+        console.error('Erro ao executar o agente de solução de sinergia:', err);
+        showNotification('Erro ao executar otimização de sinergia dos times.', 'error');
+      } finally {
+        setIsSolvingSynergy(false);
+      }
+    }, 120);
+  };
 
   const getPlayerPrediction = (player: any) => {
     let matchesToWait = 0;
@@ -1210,23 +1351,17 @@ export const MatchView: React.FC<MatchViewProps> = ({
     const endTotalMins = targetEndHour * 60 + targetEndMin;
     const currentTotalMins = currentHours * 60 + currentMinutes;
 
-    let totalMinutes = 180; // Padrão: 3 horas
-    let remainingMinutes = 180;
-    let isLive = false;
+    let remainingMinutes = endTotalMins - currentTotalMins;
+    if (remainingMinutes < 0) remainingMinutes = 0;
 
-    // Se estiver no horário aproximado do evento (por exemplo, 18h às 22h05)
-    if (currentHours >= 18 && (currentHours < 22 || (currentHours === 22 && currentMinutes <= 5))) {
-      remainingMinutes = Math.max(0, endTotalMins - currentTotalMins);
-      const playedCount = todayMatches.length + (generationResult ? 1 : 0);
-      const playedMins = playedCount * estimatedAvgMins;
-      totalMinutes = playedMins + remainingMinutes;
-      isLive = true;
-    }
+    const playedCount = todayMatches.length + (generationResult ? 1 : 0);
+    const playedMins = playedCount * estimatedAvgMins;
+    const totalMinutes = playedMins + remainingMinutes;
 
     return {
-      totalMinutes: Math.max(60, totalMinutes),
+      totalMinutes: Math.max(1, totalMinutes),
       remainingMinutes,
-      isLive,
+      isLive: true,
       endTimeStr: "22:00"
     };
   }, [todayMatches, generationResult, estimatedAvgMins]);
@@ -1248,28 +1383,76 @@ export const MatchView: React.FC<MatchViewProps> = ({
   const suggestedPositionsA = generationResult ? calculateTeamPositions(generationResult.teamA, generationResult.teamB) : {};
   const suggestedPositionsB = generationResult ? calculateTeamPositions(generationResult.teamB, generationResult.teamA) : {};
 
-  // Find ranked players (Strongest and Weakest Two for Bottom 4 display per team)
-  const getRankedPlayerIds = (team: any) => {
-    if (!team) return { strongestTwo: [], weakestTwo: [] };
-    // Only line players (non-setters) are considered for the Bottom 4 indicators!
-    const players = (team.players || []).filter(Boolean);
-    if (players.length === 0) return { strongestTwo: [], weakestTwo: [] };
+  // Função para retornar a cor do LED (5 níveis de IC) para todos os jogadores da partida baseada estritamente no IC
+  const getPlayerIcColor = (playerId: string) => {
+    if (!generationResult) return { color: 'bg-white/20', title: 'N/A' };
+    const allPlayers = [
+      generationResult.teamA?.setter,
+      ...(generationResult.teamA?.players || []),
+      generationResult.teamB?.setter,
+      ...(generationResult.teamB?.players || [])
+    ].filter(Boolean) as Player[];
+
+    const player = allPlayers.find(p => p.id === playerId);
+    if (!player) return { color: 'bg-white/20', title: 'N/A' };
+
+    const ic = calculateCompositePerformanceRating(player);
     
-    // Sort descending by Effective Elo
-    const sorted = [...players].sort((a,b) => calculateEffectiveElo(b) - calculateEffectiveElo(a));
-    
-    const strongestTwo = sorted.slice(0, Math.min(2, sorted.length)).map(p => p.id);
-    const candidatesForWeakest = sorted.filter(p => !strongestTwo.includes(p.id));
-    const weakestTwo = candidatesForWeakest.slice(Math.max(0, candidatesForWeakest.length - 2)).map(p => p.id);
-    
-    return {
-      strongestTwo,
-      weakestTwo
+    // Ordena todos os atletas em quadra por IC (do maior para o menor)
+    const sortedByIc = [...allPlayers].sort((a, b) => calculateCompositePerformanceRating(b) - calculateCompositePerformanceRating(a));
+    const rankIndex = sortedByIc.findIndex(p => p.id === playerId);
+    const totalOnCourt = sortedByIc.length;
+
+    // Sinalização por LED baseada na classificação de IC da partida:
+    // Nível 1 (Verde) -> Top 2 de IC da Partida
+    if (rankIndex <= 1 || ic >= 55) {
+      return { 
+        color: 'bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.9)] animate-pulse', 
+        title: `Nível 1 (Verde) - Top IC (Rank #${rankIndex + 1} | IC ${ic})` 
+      };
+    }
+    // Nível 2 (Azul) -> Alto IC
+    if (rankIndex <= Math.floor(totalOnCourt * 0.35) || ic >= 42) {
+      return { 
+        color: 'bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.9)] animate-pulse', 
+        title: `Nível 2 (Azul) - Alto IC (Rank #${rankIndex + 1} | IC ${ic})` 
+      };
+    }
+    // Nível 5 (Vermelho) -> Bottom 2 de IC da Partida (Menores ICs)
+    if (rankIndex >= totalOnCourt - 2 || ic < 18) {
+      return { 
+        color: 'bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.9)] animate-pulse', 
+        title: `Nível 5 (Vermelho) - Bottom 2 IC (Rank #${rankIndex + 1} | IC ${ic})` 
+      };
+    }
+    // Nível 4 (Laranja) -> IC Baixo
+    if (rankIndex >= totalOnCourt - 4 || ic < 30) {
+      return { 
+        color: 'bg-orange-500 shadow-[0_0_10px_rgba(249,115,22,0.9)] animate-pulse', 
+        title: `Nível 4 (Laranja) - IC Baixo (Rank #${rankIndex + 1} | IC ${ic})` 
+      };
+    }
+    // Nível 3 (Amarelo) -> IC Médio
+    return { 
+      color: 'bg-yellow-400 shadow-[0_0_10px_rgba(250,204,21,0.9)] animate-pulse', 
+      title: `Nível 3 (Amarelo) - IC Médio (Rank #${rankIndex + 1} | IC ${ic})` 
     };
   };
 
-  const rankedA = generationResult ? getRankedPlayerIds(generationResult.teamA) : { strongestTwo: [], weakestTwo: [] };
-  const rankedB = generationResult ? getRankedPlayerIds(generationResult.teamB) : { strongestTwo: [], weakestTwo: [] };
+  const icColorsMap = React.useMemo(() => {
+    const map: Record<string, { color: string, title: string }> = {};
+    if (!generationResult) return map;
+    const allPlayers = [
+      generationResult.teamA?.setter,
+      ...(generationResult.teamA?.players || []),
+      generationResult.teamB?.setter,
+      ...(generationResult.teamB?.players || [])
+    ].filter(Boolean) as Player[];
+    allPlayers.forEach(p => {
+      map[p.id] = getPlayerIcColor(p.id);
+    });
+    return map;
+  }, [generationResult]);
 
   // Helpers para o Rival Técnico (Jogador Equivalente)
   const getRivalId = (playerId: string | null, isA: boolean) => {
@@ -1400,21 +1583,140 @@ export const MatchView: React.FC<MatchViewProps> = ({
           <div className="flex flex-col gap-6 w-full max-w-sm">
             {userRole === 'ADMIN' ? (
               <>
-                <div className="bg-brand-secondary/40 border border-brand-primary/20 p-4 rounded-2xl flex items-center justify-between">
-                  <div>
-                    <h4 className="text-xs font-black text-white uppercase tracking-widest">Algoritmo de Balanceamento</h4>
-                    <p className="text-[10px] text-brand-primary/70 tracking-wider uppercase font-black">Sistema de Eficiência Técnica</p>
+                <div className="bg-brand-secondary/40 border border-brand-primary/20 p-4 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-xs font-black text-white uppercase tracking-widest">Algoritmo de Balanceamento</h4>
+                      <p className="text-[10px] text-brand-primary/70 tracking-wider uppercase font-black">
+                        {teamGenerationMode === 'TRUESKILL' ? 'Sorteio com TrueSkill' : 'Sorteio por Habilidades Puras'}
+                      </p>
+                    </div>
+                    <div className="bg-brand-primary/10 p-2 rounded-xl">
+                      <Scale className="w-5 h-5 text-brand-primary" />
+                    </div>
                   </div>
-                  <div className="bg-brand-primary/10 p-2 rounded-xl">
-                    <Scale className="w-5 h-5 text-brand-primary" />
+                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-white/10">
+                    <button
+                      type="button"
+                      onClick={() => setTeamGenerationMode('PURE_SKILLS')}
+                      className={`py-2 px-3 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all ${
+                        teamGenerationMode === 'PURE_SKILLS'
+                          ? 'bg-brand-primary text-brand-secondary shadow-lg shadow-brand-primary/20'
+                          : 'bg-black/50 text-white/60 hover:text-white border border-white/10'
+                      }`}
+                    >
+                      Habilidades Puras
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTeamGenerationMode('TRUESKILL')}
+                      className={`py-2 px-3 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all ${
+                        teamGenerationMode === 'TRUESKILL'
+                          ? 'bg-brand-primary text-brand-secondary shadow-lg shadow-brand-primary/20'
+                          : 'bg-black/50 text-white/60 hover:text-white border border-white/10'
+                      }`}
+                    >
+                      TrueSkill
+                    </button>
+                  </div>
+                </div>
+
+                {/* Base de Cálculo de Eficiência (Híbrido vs IC Puro) */}
+                <div className="bg-brand-secondary/40 border border-brand-primary/20 p-4 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-xs font-black text-white uppercase tracking-widest">Base de Cálculo do Sorteio</h4>
+                      <p className="text-[10px] text-brand-primary/70 tracking-wider uppercase font-black">
+                        {balancingRatingMode === 'IC_ONLY' ? 'Sorteio por IC Puro (100% Técnico)' : 'Sorteio Híbrido (50% ELO + 50% IC)'}
+                      </p>
+                    </div>
+                    <div className="bg-brand-primary/10 p-2 rounded-xl">
+                      <BarChart3 className="w-5 h-5 text-brand-primary" />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-white/10">
+                    <button
+                      type="button"
+                      onClick={() => setBalancingRatingMode('IC_ONLY')}
+                      className={`py-2 px-3 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all ${
+                        balancingRatingMode === 'IC_ONLY'
+                          ? 'bg-brand-primary text-brand-secondary shadow-lg shadow-brand-primary/20'
+                          : 'bg-black/50 text-white/60 hover:text-white border border-white/10'
+                      }`}
+                    >
+                      IC Puro
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBalancingRatingMode('HYBRID')}
+                      className={`py-2 px-3 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all ${
+                        balancingRatingMode === 'HYBRID'
+                          ? 'bg-brand-primary text-brand-secondary shadow-lg shadow-brand-primary/20'
+                          : 'bg-black/50 text-white/60 hover:text-white border border-white/10'
+                      }`}
+                    >
+                      Híbrido
+                    </button>
+                  </div>
+                </div>
+
+                <div className="bg-brand-secondary/40 border border-brand-primary/20 p-4 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-xs font-black text-white uppercase tracking-widest">Estratégia de Balanceamento</h4>
+                      <p className="text-[10px] text-brand-primary/70 tracking-wider uppercase font-black">
+                        {balancingStrategy === 'BOTH' ? 'Híbrido (Bottom 2 + Sinergia)' : balancingStrategy === 'BOTTOM_TWO' ? 'Separar Bottom 2' : 'Foco em Sinergia'}
+                      </p>
+                    </div>
+                    <div className="bg-brand-primary/10 p-2 rounded-xl">
+                      <Zap className="w-5 h-5 text-brand-primary" />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1.5 pt-2 border-t border-white/10">
+                    <button
+                      type="button"
+                      onClick={() => setBalancingStrategy('BOTH')}
+                      className={`py-2 px-1.5 rounded-xl text-[8.5px] font-black uppercase tracking-wider transition-all text-center ${
+                        balancingStrategy === 'BOTH'
+                          ? 'bg-brand-primary text-brand-secondary shadow-lg shadow-brand-primary/20'
+                          : 'bg-black/50 text-white/60 hover:text-white border border-white/10'
+                      }`}
+                      title="Separa os 2 menos experientes em times opostos E otimiza a sinergia total"
+                    >
+                      Ambos
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBalancingStrategy('BOTTOM_TWO')}
+                      className={`py-2 px-1.5 rounded-xl text-[8.5px] font-black uppercase tracking-wider transition-all text-center ${
+                        balancingStrategy === 'BOTTOM_TWO'
+                          ? 'bg-brand-primary text-brand-secondary shadow-lg shadow-brand-primary/20'
+                          : 'bg-black/50 text-white/60 hover:text-white border border-white/10'
+                      }`}
+                      title="Garante estritamente os 2 menos experientes em equipes opostas"
+                    >
+                      Bottom 2
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBalancingStrategy('SYNERGY')}
+                      className={`py-2 px-1.5 rounded-xl text-[8.5px] font-black uppercase tracking-wider transition-all text-center ${
+                        balancingStrategy === 'SYNERGY'
+                          ? 'bg-brand-primary text-brand-secondary shadow-lg shadow-brand-primary/20'
+                          : 'bg-black/50 text-white/60 hover:text-white border border-white/10'
+                      }`}
+                      title="Prioriza otimizar pares com baixa sinergia sem trava rígida de Bottom 2"
+                    >
+                      Sinergia
+                    </button>
                   </div>
                 </div>
                     <button 
-                      onClick={() => onGenerate()} 
-                      disabled={attendance.length < 12 || isSyncing}
+                      onClick={() => handleTriggerGenerate()} 
+                      disabled={attendance.length < 12 || isSyncing || isGeneratingCountdown}
                       className="w-full bg-brand-primary hover:bg-brand-primary/90 disabled:bg-brand-secondary disabled:text-white/40 text-brand-secondary font-black py-6 rounded-3xl shadow-2xl shadow-brand-primary/20 transition-all flex items-center justify-center gap-4 uppercase tracking-[0.2em] text-sm hover:scale-105 active:scale-95 border border-brand-primary/40 disabled:border-brand-primary/40"
                     >
-                      {isSyncing ? 'Preparando...' : 'Escalar Elite'} <ArrowRight className="w-5 h-5" />
+                      {isSyncing || isGeneratingCountdown ? 'Otimizando IC...' : 'Escalar Elite'} <ArrowRight className="w-5 h-5" />
                     </button>
               </>
             ) : (
@@ -1423,6 +1725,39 @@ export const MatchView: React.FC<MatchViewProps> = ({
               </div>
             )}
           </div>
+
+          {/* Botão e Card do Simulador de Estratégias / Previsão / Saída Antecipada */}
+          {attendance.length >= 12 && (
+            <div className="w-full max-w-4xl my-6 flex flex-col items-center gap-4">
+              <div className="flex flex-wrap items-center justify-center gap-3 w-full sm:w-auto">
+                {userRole === 'ADMIN' && (
+                  <button
+                    type="button"
+                    onClick={() => setShowDepartureModal(true)}
+                    className="px-6 py-3.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-2xl font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 active:scale-95 cursor-pointer shadow-lg hover:border-amber-500/50"
+                  >
+                    <Clock className="w-4 h-4 text-amber-400" />
+                    <span>Horários de Saída</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setShowSimulatorInMatch(!showSimulatorInMatch)}
+                  className="px-6 py-3.5 bg-brand-primary/10 hover:bg-brand-primary/20 text-brand-primary border border-brand-primary/30 rounded-2xl font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 active:scale-95 cursor-pointer shadow-lg hover:border-brand-primary/50"
+                >
+                  <Sliders className="w-4 h-4" />
+                  <span>{showSimulatorInMatch ? 'Ocultar Simulador de Balanceamento' : '⚡ Simulador de Estratégias & Previsão da Próxima Escalação'}</span>
+                </button>
+              </div>
+
+              {showSimulatorInMatch && (
+                <div className="w-full mt-4 animate-in fade-in zoom-in-95 duration-300">
+                  <TeamBalancingSimulatorCard onApplyToMatch={() => setShowSimulatorInMatch(false)} />
+                </div>
+              )}
+            </div>
+          )}
 
           {systemMetadata.showEliteQueue && attendance.length >= 12 && priorityPlayers.length > 0 && (
             <div className="w-full max-w-4xl bg-brand-secondary/30 border border-white/5 border-l-[8px] border-l-brand-primary rounded-[3rem] p-10 animate-in fade-in slide-in-from-bottom-8 duration-1000 shadow-inner">
@@ -1453,13 +1788,19 @@ export const MatchView: React.FC<MatchViewProps> = ({
                         (p.consecutiveBenched || 0) >= 2 ? 'text-red-500' : 'text-white'
                       }`}>
                         {p.name}
-                        <span className="text-[9px] opacity-40 font-black">
-                          {Math.round(calculateEffectiveElo(p))}
+                        <span className="text-[9px] opacity-40 font-black" title={`Índice Composto (Técnica + WinRate): ${calculateCompositePerformanceRating(p).toFixed(1)}`}>
+                          IC {calculateCompositePerformanceRating(p).toFixed(1)}
                         </span>
                         {p.isOfficialSetter && (
                           <span className="w-2 h-2 rounded-full bg-brand-primary shadow-[0_0_8px_rgba(245,196,41,0.8)] animate-pulse" title="Levantador Oficial" />
                         )}
                       </span>
+                      {p.departureTime && (
+                        <span className="inline-flex items-center gap-1 text-[8px] font-black text-amber-300 bg-amber-500/20 border border-amber-500/40 px-1.5 py-0.5 rounded mt-1 shadow-sm" title={`Horário de saída antecipada agendado para ${p.departureTime}`}>
+                          <Clock className="w-2.5 h-2.5 text-amber-400 animate-pulse" />
+                          Out: {p.departureTime}
+                        </span>
+                      )}
                       <span className={`text-[9px] font-black uppercase mt-1.5 tracking-widest ${
                         (p.consecutiveBenched || 0) >= 2 ? 'text-red-400' : 'text-white/60'
                       }`}>
@@ -1567,18 +1908,42 @@ export const MatchView: React.FC<MatchViewProps> = ({
                     <button 
                       onClick={onAnnounce} 
                       disabled={isNarrating}
-                      className={`flex items-center gap-3 text-[10px] font-black uppercase px-8 py-4 rounded-2xl shadow-2xl transition-all ${isNarrating ? 'bg-brand-primary/50 text-brand-secondary animate-pulse' : 'bg-brand-primary text-brand-secondary hover:scale-105 border border-brand-primary/30'}`}
+                      className={`flex items-center gap-3 text-[10px] font-black uppercase px-8 py-4 rounded-2xl shadow-2xl transition-all ${isNarrating ? 'bg-brand-primary/50 text-brand-secondary animate-pulse' : 'bg-brand-primary text-brand-secondary hover:scale-105 border border-brand-primary/30'} ${!aiStatus.isAvailable ? 'grayscale opacity-70' : ''}`}
                     >
-                      {isNarrating ? <Volume2 className="w-4 h-4 animate-bounce" /> : <Megaphone className="w-4 h-4" />}
-                      {isNarrating ? 'Anunciando...' : 'Anunciar Times'}
+                      {isNarrating ? (
+                        <Volume2 className="w-4 h-4 animate-bounce" />
+                      ) : !aiStatus.isAvailable ? (
+                        <VolumeX className="w-4 h-4 text-brand-secondary" />
+                      ) : (
+                        <Megaphone className="w-4 h-4" />
+                      )}
+                      {isNarrating ? 'Anunciando...' : !aiStatus.isAvailable ? 'IA Limitada' : 'Anunciar Times'}
                     </button>
 
                     <button 
-                      onClick={() => onGenerate(true)} 
-                      disabled={isSyncing}
-                      className={`text-[10px] font-black uppercase border border-brand-primary/40 px-8 py-4 rounded-2xl shadow-2xl transition-all ${isSyncing ? 'bg-brand-primary/10 text-white/40 border-white/5' : 'bg-black text-white hover:bg-white/5'}`}
+                      onClick={() => handleTriggerGenerate(true)} 
+                      disabled={isSyncing || isGeneratingCountdown}
+                      className={`text-[10px] font-black uppercase border border-brand-primary/40 px-8 py-4 rounded-2xl shadow-2xl transition-all ${isSyncing || isGeneratingCountdown ? 'bg-brand-primary/10 text-white/40 border-white/5' : 'bg-black text-white hover:bg-white/5'}`}
                     >
-                      {isSyncing ? 'Preparando...' : 'Nova Escalação'}
+                      {isSyncing || isGeneratingCountdown ? 'Otimizando IC...' : 'Nova Escalação'}
+                    </button>
+
+                    <button 
+                      onClick={() => setShowDepartureModal(true)}
+                      className="flex items-center gap-3 text-[10px] font-black uppercase px-6 py-4 rounded-2xl border border-amber-500/40 bg-black text-amber-300 hover:bg-amber-500/10 transition-all shadow-lg cursor-pointer"
+                      title="Visualizar e editar horários de saída antecipada dos sócios"
+                    >
+                      <Clock className="w-4 h-4 text-amber-400" />
+                      <span>Horários de Saída</span>
+                    </button>
+
+                    <button 
+                      onClick={() => setShowSimulatorInMatch(!showSimulatorInMatch)}
+                      className={`flex items-center gap-3 text-[10px] font-black uppercase px-6 py-4 rounded-2xl border transition-all shadow-lg cursor-pointer ${showSimulatorInMatch ? 'bg-brand-primary text-brand-secondary border-brand-primary/30' : 'bg-black border-brand-primary/40 text-brand-primary hover:bg-white/5'}`}
+                      title="Simular e pré-visualizar os times para a próxima partida"
+                    >
+                      <Sliders className={`w-4 h-4 ${showSimulatorInMatch ? 'text-brand-secondary' : 'text-brand-primary'}`} />
+                      <span>{showSimulatorInMatch ? 'Ocultar Simulador' : '⚡ Simular Próxima Partida'}</span>
                     </button>
 
                     <button 
@@ -1595,6 +1960,13 @@ export const MatchView: React.FC<MatchViewProps> = ({
             )}
           </div>
 
+          {/* Simulador da Próxima Partida em Andamento */}
+          {userRole === 'ADMIN' && showSimulatorInMatch && (
+            <div className="mb-8 animate-in fade-in zoom-in-95 duration-300">
+              <TeamBalancingSimulatorCard onApplyToMatch={() => setShowSimulatorInMatch(false)} />
+            </div>
+          )}
+
           {/* Análise IA */}
           {userRole === 'ADMIN' && showAnalysis && (analysis || isAnalyzing) && (
             <div className="bg-brand-primary/5 rounded-[2.5rem] p-10 mb-10 border border-white/5 border-l-[8px] border-l-brand-primary shadow-2xl relative overflow-hidden group animate-in slide-in-from-top-6 duration-700">
@@ -1608,7 +1980,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
                 </div>
                 <div>
                   <h4 className="text-xs font-black uppercase tracking-[0.3em] text-white">Análise Técnica de Elite</h4>
-                  <p className="text-[10px] font-black text-white uppercase tracking-[0.2em] mt-1">Guerreiros Intelligence v3.0</p>
+                  <p className="text-[10px] font-black text-white uppercase tracking-[0.2em] mt-1">Guerreiros Intelligence v{APP_VERSION}{systemMetadata?.versionNumber ? ` (${systemMetadata.versionNumber})` : ''}</p>
                 </div>
               </div>
 
@@ -1641,7 +2013,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
                   </div>
                   <div>
                     <h4 className={`text-xs font-black uppercase tracking-[0.3em] ${ruleVerification?.includes('⚠️') || ruleVerification?.includes('ALERTA') ? 'text-red-300' : 'text-white'}`}>Relatório de Integridade</h4>
-                    <p className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em] mt-1">Guerreiros Intelligence v3.0</p>
+                    <p className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em] mt-1">Guerreiros Intelligence v{APP_VERSION}{systemMetadata?.versionNumber ? ` (${systemMetadata.versionNumber})` : ''}</p>
                   </div>
                 </div>
                 <div className={`flex items-center gap-3 px-5 py-2 border rounded-2xl ${ruleVerification?.includes('⚠️') || ruleVerification?.includes('ALERTA') ? 'bg-red-500/10 border-red-500/20' : 'bg-brand-primary/10 border-brand-primary/40'}`}>
@@ -2058,14 +2430,35 @@ export const MatchView: React.FC<MatchViewProps> = ({
             );
           })()}
 
+          {/* Recharts Radar e Bar Chart de Balanço de Poder e ELO */}
+          {generationResult && showTelemetry && (
+            <MatchBalanceCharts generationResult={generationResult} />
+          )}
+
           {/* Resumo dos Times Otimizado */}
           <div className="bg-black backdrop-blur-md rounded-2xl sm:rounded-[2.5rem] p-4 sm:p-8 mb-8 border border-white/5 border-l-[6px] border-l-brand-primary flex flex-col gap-8 animate-in fade-in duration-700 shadow-2xl">
             {/* Header Times */}
-            <div className="flex items-center justify-between mb-2">
-               <h3 className="text-[10px] sm:text-xs font-black text-white uppercase tracking-[0.3em]">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/10 pb-3 mb-2">
+               <h3 className="text-[10px] sm:text-xs font-black text-white uppercase tracking-[0.3em] flex items-center gap-2">
                  Escalação por <span className="text-brand-primary">Eficiência Técnica</span>
                  <span className="text-white/40 text-[9px] font-medium ml-2">({generationResult?.combinationsCount || 0} simulações)</span>
                </h3>
+               {(() => {
+                 if (!generationResult) return null;
+                 const sumA = [generationResult.teamA?.setter, ...(generationResult.teamA?.players || [])].filter(Boolean).reduce((acc, p) => acc + calculateCompositePerformanceRating(p), 0);
+                 const sumB = [generationResult.teamB?.setter, ...(generationResult.teamB?.players || [])].filter(Boolean).reduce((acc, p) => acc + calculateCompositePerformanceRating(p), 0);
+                 const mean = (sumA + sumB) / 2;
+                 const stdDev = Math.abs(sumA - sumB) / 2;
+                 const stdDevPercent = mean > 0 ? (stdDev / mean) * 100 : 0;
+                 return (
+                   <div className="flex items-center gap-2">
+                     <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-wider px-3 py-1 rounded-full bg-brand-primary/10 border border-brand-primary/40 text-brand-primary font-mono flex items-center gap-1.5" title={`Desvio Padrão do IC entre as equipes (±${stdDev.toFixed(1)} IC | Média: ${mean.toFixed(1)})`}>
+                       <span>DESVIO PADRÃO:</span>
+                       <span className="text-white font-bold">{stdDevPercent.toFixed(1)}%</span>
+                     </span>
+                   </div>
+                 );
+               })()}
             </div>
 
             {/* Time A */}
@@ -2075,7 +2468,9 @@ export const MatchView: React.FC<MatchViewProps> = ({
                   <div className="w-2.5 h-2.5 rounded-full bg-brand-primary shadow-[0_0_10px_rgba(245,196,41,0.6)] animate-pulse" />
                   <span className="text-xs sm:text-sm font-black text-brand-primary uppercase tracking-widest">Equipe A</span>
                 </div>
-                <span className="text-[10px] sm:text-xs font-black text-brand-primary uppercase tracking-widest italic bg-brand-primary/10 px-3 py-1 rounded-full border border-brand-primary/40">EFIC: {generationResult?.teamA?.totalEfficiency || generationResult?.teamA?.totalElo || 0}</span>
+                <span className="text-[10px] sm:text-xs font-black text-brand-primary uppercase tracking-widest italic bg-brand-primary/10 px-3 py-1 rounded-full border border-brand-primary/40">
+                  SOMA IC: {[generationResult?.teamA?.setter, ...(generationResult?.teamA?.players || [])].filter(Boolean).reduce((sum, p) => sum + calculateCompositePerformanceRating(p), 0).toFixed(1)}
+                </span>
               </div>
               
               <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-x-6 gap-y-4 py-2">
@@ -2112,21 +2507,14 @@ export const MatchView: React.FC<MatchViewProps> = ({
                         }`}
                       >
                         {p?.name}
-                        {p?.id !== generationResult.teamA.setter?.id && rankedA.strongestTwo.includes(p?.id || '') && (
-                          <div className="inline-block relative ml-2 align-middle -translate-y-[2px]" title="B4: Top 2 da Equipe (Extremo Superior)">
-                            <div className="select-none w-2 h-2 sm:w-2.5 sm:h-2.5 bg-green-500 rounded-full animate-pulse shadow-[0_0_10px_rgba(34,197,94,0.9)]" />
-                          </div>
-                        )}
-                        {p?.id !== generationResult.teamA.setter?.id && rankedA.weakestTwo.includes(p?.id || '') && (
-                          <div className="inline-block relative ml-2 align-middle -translate-y-[2px]" title="B4: Bottom 2 da Equipe (Extremo Inferior)">
-                            <div className="w-2 h-2 sm:w-2.5 sm:h-2.5 bg-red-500 rounded-full animate-pulse shadow-[0_0_10px_rgba(239,68,68,0.9)]" />
-                          </div>
-                        )}
-                        {p?.id !== generationResult.teamA.setter?.id && !rankedA.strongestTwo.includes(p?.id || '') && !rankedA.weakestTwo.includes(p?.id || '') && (
-                          <div className="inline-block relative ml-2 align-middle -translate-y-[2px]" title="Core/Intermediário (Equilíbrio Técnico)">
-                            <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-white/20 rounded-full" />
-                          </div>
-                        )}
+                        {(() => {
+                          const icInfo = getPlayerIcColor(p?.id || '');
+                          return (
+                            <div className="inline-block relative ml-2 align-middle -translate-y-[2px]" title={icInfo.title}>
+                              <div className={`w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full ${icInfo.color}`} />
+                            </div>
+                          );
+                        })()}
                         <span className={`text-[11px] sm:text-[14px] font-black px-2.5 py-1 rounded border ml-2 transition-all ${
                           isHovered 
                             ? 'bg-brand-primary text-black border-brand-primary scale-110 shadow-lg' 
@@ -2136,8 +2524,8 @@ export const MatchView: React.FC<MatchViewProps> = ({
                         }`}>
                           P{suggestedPositionsA[p?.id || '']}
                         </span>
-                        <span className="text-[9px] sm:text-[11px] font-black opacity-40 ml-1.5 sm:ml-2 tracking-widest">
-                          {Math.round(calculateEffectiveElo(p))}
+                        <span className="text-[9px] sm:text-[11px] font-black opacity-40 ml-1.5 sm:ml-2 tracking-widest" title={`Índice Composto (Técnica + WinRate): ${calculateCompositePerformanceRating(p).toFixed(1)}`}>
+                          IC {calculateCompositePerformanceRating(p).toFixed(1)}
                         </span>
                         <span className={`absolute -bottom-0.5 left-0 h-0.5 bg-brand-primary transition-all duration-500 ${isHovered || isRival ? 'w-full' : 'w-0 group-hover/player:w-full'}`} />
                       </motion.span>
@@ -2157,7 +2545,9 @@ export const MatchView: React.FC<MatchViewProps> = ({
                   <div className="w-2.5 h-2.5 rounded-full bg-white shadow-[0_0_10px_rgba(255,255,255,0.6)] animate-pulse" />
                   <span className="text-xs sm:text-sm font-black text-white uppercase tracking-widest">Equipe B</span>
                 </div>
-                <span className="text-[10px] sm:text-xs font-black text-white/80 uppercase tracking-widest italic bg-white/5 px-3 py-1 rounded-full border border-brand-primary/40">EFIC: {generationResult?.teamB?.totalEfficiency || generationResult?.teamB?.totalElo || 0}</span>
+                <span className="text-[10px] sm:text-xs font-black text-white/80 uppercase tracking-widest italic bg-white/5 px-3 py-1 rounded-full border border-brand-primary/40">
+                  SOMA IC: {[generationResult?.teamB?.setter, ...(generationResult?.teamB?.players || [])].filter(Boolean).reduce((sum, p) => sum + calculateCompositePerformanceRating(p), 0).toFixed(1)}
+                </span>
               </div>
 
               <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-x-6 gap-y-4 py-2">
@@ -2194,21 +2584,14 @@ export const MatchView: React.FC<MatchViewProps> = ({
                         }`}
                       >
                         {p?.name}
-                        {p?.id !== generationResult.teamB.setter?.id && rankedB.strongestTwo.includes(p?.id || '') && (
-                          <div className="inline-block relative ml-2 align-middle -translate-y-[2px]" title="B4: Top 2 da Equipe (Extremo Superior)">
-                            <div className="w-2 h-2 sm:w-2.5 sm:h-2.5 bg-green-500 rounded-full animate-pulse shadow-[0_0_10px_rgba(34,197,94,0.9)]" />
-                          </div>
-                        )}
-                        {p?.id !== generationResult.teamB.setter?.id && rankedB.weakestTwo.includes(p?.id || '') && (
-                          <div className="inline-block relative ml-2 align-middle -translate-y-[2px]" title="B4: Bottom 2 da Equipe (Extremo Inferior)">
-                            <div className="w-2 h-2 sm:w-2.5 sm:h-2.5 bg-red-500 rounded-full animate-pulse shadow-[0_0_10px_rgba(239,68,68,0.9)]" />
-                          </div>
-                        )}
-                        {p?.id !== generationResult.teamB.setter?.id && !rankedB.strongestTwo.includes(p?.id || '') && !rankedB.weakestTwo.includes(p?.id || '') && (
-                          <div className="inline-block relative ml-2 align-middle -translate-y-[2px]" title="Core/Intermediário (Equilíbrio Técnico)">
-                            <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-white/20 rounded-full" />
-                          </div>
-                        )}
+                        {(() => {
+                          const icInfo = getPlayerIcColor(p?.id || '');
+                          return (
+                            <div className="inline-block relative ml-2 align-middle -translate-y-[2px]" title={icInfo.title}>
+                              <div className={`w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full ${icInfo.color}`} />
+                            </div>
+                          );
+                        })()}
                         <span className={`text-[11px] sm:text-[14px] font-black px-2.5 py-1 rounded border ml-2 transition-all ${
                           isHovered 
                             ? 'bg-white text-black border-white scale-110 shadow-lg' 
@@ -2218,8 +2601,8 @@ export const MatchView: React.FC<MatchViewProps> = ({
                         }`}>
                           P{suggestedPositionsB[p?.id || '']}
                         </span>
-                        <span className="text-[9px] sm:text-[11px] font-black opacity-40 ml-1.5 sm:ml-2 tracking-widest">
-                          {Math.round(calculateEffectiveElo(p))}
+                        <span className="text-[9px] sm:text-[11px] font-black opacity-40 ml-1.5 sm:ml-2 tracking-widest" title={`Índice Composto (Técnica + WinRate): ${calculateCompositePerformanceRating(p).toFixed(1)}`}>
+                          IC {calculateCompositePerformanceRating(p).toFixed(1)}
                         </span>
                         <span className={`absolute -bottom-0.5 left-0 h-0.5 bg-white transition-all duration-500 ${isHovered || isRival ? 'w-full' : 'w-0 group-hover/player:w-full'}`} />
                       </motion.span>
@@ -2840,7 +3223,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
                       </div>
 
                       <div className="text-[8px] font-extrabold text-white/35 uppercase tracking-wider leading-none text-center mb-1">
-                        Média de <strong className="text-white font-black">{avgMatchesPerPlayer} {avgMatchesPerPlayer === 1 ? 'partida' : 'partidas'}</strong> inteiras na sessão.
+                        Média de <strong className="text-white font-black">{avgMatchesPerPlayer} {avgMatchesPerPlayer === 1 ? 'partida' : 'partidas'}</strong> inteiras no dia.
                       </div>
                     </div>
                   )}
@@ -2848,7 +3231,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
 
                 {showCourtForecastContent && (
                   <div className="space-y-2.5 animate-in fade-in slide-in-from-top-2 duration-300">
-                    <p className="text-[8px] font-black uppercase tracking-[0.1em] text-white/30 border-b border-white/5 pb-1 leading-none">Métricas da Sessão</p>
+                    <p className="text-[8px] font-black uppercase tracking-[0.1em] text-white/30 border-b border-white/5 pb-1 leading-none">Métricas do Dia</p>
                     <div className="grid grid-cols-2 gap-2">
                       <div className="bg-brand-secondary/15 border border-white/5 p-2 rounded-lg">
                         <p className="text-[7px] font-bold uppercase tracking-widest text-white/30 leading-none">Duração Média</p>
@@ -2863,7 +3246,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
                       <div className="bg-brand-secondary/15 border border-white/5 p-2 rounded-lg">
                         <p className="text-[7px] font-bold uppercase tracking-widest text-white/30 leading-none">Total Estimado</p>
                         <p className="text-xs font-black text-white mt-1 font-mono leading-none">{totalExpectedMatches} Jogos</p>
-                        <span className="text-[6.5px] text-white/35 font-bold uppercase tracking-wider block mt-1 leading-none">Na sessão</span>
+                        <span className="text-[6.5px] text-white/35 font-bold uppercase tracking-wider block mt-1 leading-none">No dia</span>
                       </div>
                       <div className="bg-brand-secondary/15 border border-white/5 p-2 rounded-lg">
                         <p className="text-[7px] font-bold uppercase tracking-widest text-white/30 leading-none">Tempo Restante</p>
@@ -2876,7 +3259,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
 
                     {dynamicSession.isLive && (
                       <div className="bg-brand-primary/5 border border-brand-primary/25 rounded-lg p-1.5 text-[7.5px] text-brand-primary font-black uppercase tracking-widest text-center mt-1 animate-pulse">
-                        Sessão em andamento • {todayMatches.length} finalizados
+                        Dia em andamento • {todayMatches.length} finalizados
                       </div>
                     )}
                   </div>
@@ -2884,36 +3267,6 @@ export const MatchView: React.FC<MatchViewProps> = ({
               </div>
             </div>
           )}
-
-          {/* Regras de Prioridade (Auditado) */}
-          <div className="md:col-span-2 bg-black rounded-[2rem] border border-white/5 p-4 shadow-2xl mb-6">
-              <div className="flex justify-between items-center mb-3">
-                <h3 className="text-[9px] font-black text-white uppercase tracking-[0.1em] flex items-center gap-2">
-                  <CheckCircle2 className="w-3 h-3 text-brand-primary" />
-                  Regras de Prioridade Auditadas (Guerreiros Intelligence)
-                </h3>
-                <button
-                  type="button"
-                  onClick={() => setShowRulesContent(!showRulesContent)}
-                  className="px-2.5 py-1 rounded-xl bg-white/5 hover:bg-white/10 text-[8px] font-black uppercase text-brand-primary border border-brand-primary/20 transition-all active:scale-95 shrink-0"
-                >
-                  {showRulesContent ? 'Ocultar' : 'Exibir'}
-                </button>
-              </div>
-              
-              {showRulesContent && (
-                <div className="grid md:grid-cols-2 gap-3 animate-in fade-in slide-in-from-top-2 duration-300">
-                    <div className="bg-brand-secondary/10 p-3 rounded-lg border border-brand-primary/10">
-                        <p className="text-[8px] font-bold text-brand-primary uppercase mb-1">Nível 1 & 2</p>
-                        <p className="text-[8px] text-white/50 leading-relaxed">• Quem NÃO participou da última partida.<br/>• Quem participou de MENOS partidas hoje.</p>
-                    </div>
-                    <div className="bg-brand-secondary/10 p-3 rounded-lg border border-brand-primary/10">
-                        <p className="text-[8px] font-bold text-brand-primary uppercase mb-1">Nível 3 & 4</p>
-                        <p className="text-[8px] text-white/50 leading-relaxed">• Quem está sentado há mais tempo.<br/>• Ordem de Chegada (Critério de desempate).</p>
-                    </div>
-                </div>
-              )}
-          </div>
 
           {/* Lista de Espera */}
           {showWaitlist && (
@@ -2968,6 +3321,12 @@ export const MatchView: React.FC<MatchViewProps> = ({
                             className={`text-sm sm:text-2xl font-black flex items-center gap-2 tracking-tight leading-none truncate ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}
                           >
                             {player.name}
+                            {player.departureTime && (
+                              <span className="inline-flex items-center gap-1 text-[8px] sm:text-[10px] font-black text-amber-300 bg-amber-500/20 border border-amber-500/40 px-1.5 py-0.5 rounded shadow-sm" title={`Horário de saída antecipada agendado para ${player.departureTime}`}>
+                                <Clock className="w-2.5 h-2.5 text-amber-400 animate-pulse" />
+                                Out: {player.departureTime}
+                              </span>
+                            )}
                             {player.timestamp && (
                               <span className="text-[10px] text-white/30 font-medium lowercase tracking-normal">
                                 {new Date(player.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
@@ -3028,6 +3387,47 @@ export const MatchView: React.FC<MatchViewProps> = ({
             </div>
           )}
 
+          {userRole === 'ADMIN' && lowSynergyAlerts.length > 0 && (
+            <div className="bg-rose-500/10 border border-rose-500/30 rounded-[2.5rem] p-6 mb-8 text-white relative overflow-hidden shadow-2xl animate-in fade-in duration-500">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-5 pb-4 border-b border-rose-500/20">
+                <div className="flex items-center gap-4">
+                  <div className="p-3 bg-rose-500/20 rounded-2xl border border-rose-500/40 text-rose-400">
+                    <AlertTriangle className="w-6 h-6 animate-pulse" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-black uppercase tracking-[0.25em] text-rose-300">Alerta de Sinergia Crítica Detectada</h4>
+                    <p className="text-[10px] font-black text-rose-400/80 uppercase tracking-widest mt-0.5">Pares com histórico desfavorável agrupados na mesma equipe</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleRunSynergyAgent}
+                  disabled={isSolvingSynergy}
+                  className="bg-brand-primary hover:bg-brand-primary/90 text-brand-secondary px-5 py-3 rounded-2xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2.5 shadow-xl hover:scale-105 active:scale-95 transition-all shrink-0 border border-brand-primary/40 disabled:opacity-50"
+                >
+                  <Bot className={`w-4 h-4 ${isSolvingSynergy ? 'animate-spin' : 'animate-bounce'}`} />
+                  <span>{isSolvingSynergy ? 'Executando 50 Simulações...' : 'Invocar Agente de Solução de Sinergia'}</span>
+                </button>
+              </div>
+              <div className="space-y-3">
+                {lowSynergyAlerts.map((alert, idx) => (
+                  <div key={`alert-${idx}`} className="bg-black/60 border border-rose-500/20 p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs font-black bg-rose-500/20 text-rose-300 px-2.5 py-1 rounded-lg">Time {alert.team}</span>
+                      <span className="text-sm font-black text-white uppercase tracking-tight">
+                        {alert.p1.name} & {alert.p2.name}
+                      </span>
+                      <span className="text-xs font-bold text-rose-400">({Math.round(alert.winRate * 100)}% vitórias em {alert.games} jogos)</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-[10px] font-black text-white/50 uppercase tracking-widest">Ação do Agente: Troca focada de par problemático</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {showTeamCards && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 mb-10">
               <TeamCard 
@@ -3044,6 +3444,8 @@ export const MatchView: React.FC<MatchViewProps> = ({
                 hoveredPlayerId={hoveredPlayerId}
                 setHoveredPlayerId={setHoveredPlayerId}
                 rivalId={rivalId}
+                bottomTwoIds={new Set(generationResult.bottomTwoIds || [])}
+                icColors={icColorsMap}
               />
               <TeamCard 
                 title="Time B" 
@@ -3059,6 +3461,8 @@ export const MatchView: React.FC<MatchViewProps> = ({
                 hoveredPlayerId={hoveredPlayerId}
                 setHoveredPlayerId={setHoveredPlayerId}
                 rivalId={rivalId}
+                bottomTwoIds={new Set(generationResult.bottomTwoIds || [])}
+                icColors={icColorsMap}
               />
             </div>
           )}
@@ -3073,7 +3477,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
                     <BarChart3 className="w-6 h-6 text-brand-primary" />
                   </div>
                   <div>
-                    <h3 className="text-xs font-black text-white uppercase tracking-[0.3em]">Performance da Sessão</h3>
+                    <h3 className="text-xs font-black text-white uppercase tracking-[0.3em]">Performance do Dia</h3>
                     <p className="text-[10px] font-black text-white uppercase tracking-[0.2em] mt-1">Histórico de Batalhas do Dia</p>
                   </div>
                 </div>
@@ -3182,7 +3586,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
                 <div className="absolute inset-0 bg-gradient-to-r from-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
                 <RefreshCw className="w-6 h-6 text-white group-hover:rotate-180 transition-transform duration-1000 relative z-10" />
                 <div className="text-left relative z-10">
-                  <p className="text-[10px] font-black uppercase tracking-[0.3em] text-white/80 leading-none mb-2">Encerrar Sessão</p>
+                  <p className="text-[10px] font-black uppercase tracking-[0.3em] text-white/80 leading-none mb-2">Encerrar Dia</p>
                   <p className="text-base font-black uppercase tracking-tight leading-none">Finalizar Dia de Jogos</p>
                 </div>
               </button>
@@ -3572,6 +3976,91 @@ export const MatchView: React.FC<MatchViewProps> = ({
               </div>
             </div>
           )}
+
+          {/* Overlay de Contagem Regressiva e Otimização de Busca Local IC */}
+          {isGeneratingCountdown && (
+            <div className="fixed inset-0 z-50 bg-black/95 backdrop-blur-2xl flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-300">
+              <div className="relative flex items-center justify-center mb-8">
+                {/* Pulse Glow & Radar Scan Rings */}
+                <div className="absolute w-52 h-52 sm:w-60 sm:h-60 rounded-full border-2 border-brand-primary/30 animate-ping opacity-20" />
+                <div className="absolute w-44 h-44 sm:w-52 sm:h-52 rounded-full border border-brand-primary/30 [animation:glow-pulse_2s_infinite]" />
+                
+                {/* SVG Radial Progress Circle */}
+                <svg className="w-40 h-40 sm:w-48 sm:h-48 transform -rotate-90">
+                  <circle
+                    cx="50%"
+                    cy="50%"
+                    r="42%"
+                    className="stroke-white/10"
+                    strokeWidth="6"
+                    fill="transparent"
+                  />
+                  <circle
+                    cx="50%"
+                    cy="50%"
+                    r="42%"
+                    className="stroke-brand-primary transition-all duration-75 ease-out"
+                    strokeWidth="6"
+                    strokeDasharray={280}
+                    strokeDashoffset={280 - (280 * countdownProgress) / 100}
+                    strokeLinecap="round"
+                    fill="transparent"
+                  />
+                </svg>
+
+                {/* Central Countdown Counter */}
+                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                  {countdownVal > 0 ? (
+                    <span
+                      key={countdownVal}
+                      className="text-6xl sm:text-7xl font-black text-brand-primary font-mono tracking-tighter drop-shadow-[0_0_25px_rgba(245,196,41,0.9)] [animation:countdown-number_0.9s_ease-in-out_infinite]"
+                    >
+                      {countdownVal}
+                    </span>
+                  ) : (
+                    <Check className="w-16 h-16 text-brand-primary animate-in zoom-in-50 duration-300 drop-shadow-[0_0_25px_rgba(245,196,41,0.9)]" />
+                  )}
+                  <span className="text-[10px] font-black text-white/60 uppercase tracking-[0.2em] mt-1 font-mono">
+                    {countdownProgress}%
+                  </span>
+                </div>
+              </div>
+
+              {/* Dynamic Text & Step Description */}
+              <div className="max-w-md w-full space-y-4">
+                <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-brand-primary/10 border border-brand-primary/30 text-brand-primary text-[10px] font-black uppercase tracking-widest animate-pulse">
+                  <Zap className="w-3.5 h-3.5 animate-bounce" />
+                  <span>Guerreiros Intelligence IC Engine</span>
+                </div>
+
+                <h3 className="text-base sm:text-lg font-black text-white uppercase tracking-tight font-f1 transition-all">
+                  {countdownStepText}
+                </h3>
+
+                <p className="text-xs text-white/50 font-mono">
+                  Iteração <span className="text-brand-primary font-bold">{countdownIteration}</span>/100 • Minimizando Desvio Padrão do IC
+                </p>
+
+                {/* Progress Bar */}
+                <div className="w-full bg-white/10 rounded-full h-2.5 overflow-hidden border border-white/10 p-0.5">
+                  <div
+                    className="bg-gradient-to-r from-amber-400 via-brand-primary to-yellow-300 h-full rounded-full transition-all duration-75 shadow-[0_0_12px_rgba(245,196,41,0.8)]"
+                    style={{ width: `${countdownProgress}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+          {/* Modal de Horários de Saída Antecipada */}
+          <DepartureTimeModal
+            isOpen={showDepartureModal}
+            onClose={() => setShowDepartureModal(false)}
+            generationResult={generationResult}
+            attendance={attendance}
+            players={players}
+            updateDepartureTime={updateDepartureTime}
+            showNotification={showNotification}
+          />
         </>
       )}
     </div>

@@ -93,7 +93,14 @@ export const useFirestoreSync = () => {
           if (doc.id === 'synergy') setSynergy(doc.data() || {});
           if (doc.id === 'negative_synergy') setNegativeSynergy(doc.data() || {});
           if (doc.id === 'rivalry') setRivalry(doc.data() || {});
-          if (doc.id === 'system') setSystemMetadata(doc.data() || {});
+          if (doc.id === 'system') {
+            const data = doc.data() || {};
+            setSystemMetadata({
+              monthlyFee: 50,
+              lastResetDate: new Date().toISOString().split('T')[0],
+              ...data
+            });
+          }
         });
 
         // 2. Load players
@@ -157,8 +164,8 @@ export const useFirestoreSync = () => {
 
   // Real-time Sync (Players, Attendance, Pending Requests, Matches)
   useEffect(() => {
-    const isPublicMode = window.location.search.includes('public=true');
-    if (!user && !isPublicMode) return;
+    const dateKey = getFirestoreDateKey();
+    console.info('Firestore Sync: Starting listeners for date:', dateKey, 'User:', user?.email, 'Role:', userRole, 'Trigger:', syncTrigger);
     
     let unsubscribePlayers: (() => void) | undefined;
     let unsubscribeAttendance: (() => void) | undefined;
@@ -176,9 +183,6 @@ export const useFirestoreSync = () => {
     let unsubscribeActiveTournament: (() => void) | undefined;
     let unsubscribePayments: (() => void) | undefined;
     let unsubscribeExpenses: (() => void) | undefined;
-
-    const dateKey = getFirestoreDateKey();
-    console.info('Firestore Sync: Starting listeners for date:', dateKey, 'User:', user?.email, 'Role:', userRole, 'Trigger:', syncTrigger);
     
     // Update dateKey in store for debugging
     useStore.setState({ dateKey });
@@ -223,15 +227,10 @@ export const useFirestoreSync = () => {
               };
 
               // 2. Deduplication Logic (Email or UID)
-              // If we have an email or UID, check if we've seen it.
-              // We prioritize the most "complete" or latest record if possible, 
-              // but for now, simple "first seen wins" prevents state explosion.
               if (player.email && seenEmails.has(player.email)) {
-                console.warn(`Firestore Sync: Duplicate player found by email (${player.email}). Skipping ID: ${id}`);
                 return;
               }
               if (player.uid && seenUids.has(player.uid)) {
-                console.warn(`Firestore Sync: Duplicate player found by UID (${player.uid}). Skipping ID: ${id}`);
                 return;
               }
 
@@ -262,7 +261,6 @@ export const useFirestoreSync = () => {
         }
       }, (err) => {
         console.error('Firestore Sync Error (System Metadata):', err);
-        handleFirestoreError(err, OperationType.GET, 'metadata/system');
       });
 
       unsubscribeCurrentMatch = onSnapshot(doc(db, 'metadata', 'currentMatch'), (snapshot) => {
@@ -273,7 +271,6 @@ export const useFirestoreSync = () => {
         }
       }, (err) => {
         console.error('Firestore Sync Error (Current Match):', err);
-        handleFirestoreError(err, OperationType.GET, 'metadata/currentMatch');
       });
 
       unsubscribeUsage = onSnapshot(doc(db, 'metadata', 'usage'), (snapshot) => {
@@ -282,7 +279,6 @@ export const useFirestoreSync = () => {
         }
       }, (err) => {
         console.error('Firestore Sync Error (Usage):', err);
-        handleFirestoreError(err, OperationType.GET, 'metadata/usage');
       });
 
       const monthKey = dateKey.slice(0, 7);
@@ -292,7 +288,6 @@ export const useFirestoreSync = () => {
         }
       }, (err) => {
         console.error('Firestore Sync Error (Monthly Usage):', err);
-        handleFirestoreError(err, OperationType.GET, 'metadata/usage_' + monthKey);
       });
 
       // Attendance Sync
@@ -301,8 +296,7 @@ export const useFirestoreSync = () => {
         snapshot.forEach((doc) => list.push({ ...doc.data(), id: doc.id } as Player));
         setAttendance(list.sort((a, b) => (a.arrivalOrder || 0) - (b.arrivalOrder || 0)));
       }, (err) => {
-        console.error('Firestore Sync Error (Attendance):', err);
-        handleFirestoreError(err, OperationType.LIST, 'attendance/' + dateKey + '/players');
+        console.error(`Firestore Sync Error (Attendance ${dateKey}):`, err);
       });
 
       // Matches Sync (Limit to last 60 days to save Firestore reads)
@@ -314,7 +308,6 @@ export const useFirestoreSync = () => {
         setMatches(list.sort((a, b) => a.timestamp - b.timestamp));
       }, (err) => {
         console.error('Firestore Sync Error (Matches):', err);
-        handleFirestoreError(err, OperationType.LIST, 'matches');
       });
 
       // Pre-Confirmations Sync
@@ -323,8 +316,7 @@ export const useFirestoreSync = () => {
         snapshot.forEach((doc) => list.push({ ...doc.data(), id: doc.id } as Player));
         setPreConfirmations(list);
       }, (err) => {
-        console.error('Firestore Sync Error (PreConfirmations):', err);
-        handleFirestoreError(err, OperationType.LIST, 'preConfirmations/' + dateKey + '/players');
+        console.error(`Firestore Sync Error (PreConfirmations ${dateKey}):`, err);
       });
 
       // Synergy Sync
@@ -332,21 +324,18 @@ export const useFirestoreSync = () => {
         if (snapshot.exists()) setSynergy(snapshot.data());
       }, (err) => {
         console.error('Firestore Sync Error (Synergy):', err);
-        handleFirestoreError(err, OperationType.GET, 'metadata/synergy');
       });
 
       unsubscribeNegativeSynergy = onSnapshot(doc(db, 'metadata', 'negative_synergy'), (snapshot) => {
         if (snapshot.exists()) setNegativeSynergy(snapshot.data());
       }, (err) => {
         console.error('Firestore Sync Error (NegativeSynergy):', err);
-        handleFirestoreError(err, OperationType.GET, 'metadata/negative_synergy');
       });
 
       unsubscribeRivalry = onSnapshot(doc(db, 'metadata', 'rivalry'), (snapshot) => {
         if (snapshot.exists()) setRivalry(snapshot.data());
       }, (err) => {
         console.error('Firestore Sync Error (Rivalry):', err);
-        handleFirestoreError(err, OperationType.GET, 'metadata/rivalry');
       });
 
       // Tournaments Sync
@@ -356,7 +345,6 @@ export const useFirestoreSync = () => {
         setTournaments(list.sort((a, b) => b.date.localeCompare(a.date)));
       }, (err) => {
         console.error('Firestore Sync Error (Tournaments):', err);
-        handleFirestoreError(err, OperationType.LIST, 'tournaments');
       });
 
       unsubscribeActiveTournament = onSnapshot(doc(db, 'metadata', 'activeTournament'), (snapshot) => {
@@ -367,40 +355,32 @@ export const useFirestoreSync = () => {
         }
       }, (err) => {
         console.error('Firestore Sync Error (Active Tournament):', err);
-        handleFirestoreError(err, OperationType.GET, 'metadata/activeTournament');
       });
 
-      // Admin-only Listeners - ONLY if confirmed authenticated and admin
-      console.log('useFirestoreSync: Admin check - userRole:', userRole, 'auth.currentUser:', auth.currentUser?.email);
+      // Admin-only Listeners
       if (userRole === 'ADMIN' && auth.currentUser) {
-        console.info('Firestore Sync: Starting Admin Listeners');
         unsubscribePending = onSnapshot(collection(db, 'pendingRequests'), (snapshot) => {
           const list: any[] = [];
           snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
           setPendingRequests(list);
         }, (err) => {
-          console.error('Firestore Sync Error (Pending):', err);
-          handleFirestoreError(err, OperationType.GET, 'pendingRequests');
+          console.error('Firestore Sync Error (Pending Requests):', err);
         });
 
-        // Payments Sync - Only for admins, members use query in MyPaymentsView
         unsubscribePayments = onSnapshot(collection(db, 'payments'), (snapshot) => {
           const list: Payment[] = [];
           snapshot.forEach((doc) => list.push({ ...doc.data(), id: doc.id } as Payment));
           setPayments(list);
         }, (err) => {
           console.error('Firestore Sync Error (Payments):', err);
-          handleFirestoreError(err, OperationType.GET, 'payments_admin');
         });
 
-        // Expenses Sync - Analytics/Financeiro is for admins
         unsubscribeExpenses = onSnapshot(collection(db, 'expenses'), (snapshot) => {
           const list: Expense[] = [];
           snapshot.forEach((doc) => list.push({ ...doc.data(), id: doc.id } as any));
           useStore.setState({ expenses: list });
         }, (err) => {
           console.error('Firestore Sync Error (Expenses):', err);
-          handleFirestoreError(err, OperationType.GET, 'expenses');
         });
       }
     } catch (e) {

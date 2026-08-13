@@ -1,7 +1,9 @@
 import express from "express";
+import http from "http";
 import cors from "cors";
 import path from "path";
 import fs from "fs";
+import { APP_VERSION } from "./constants";
 import { getRegistrationOptions, verifyRegistration, getAuthenticationOptions, verifyAuthentication } from "./src/services/webauthn";
 
 // Cache for GCP clients to prevent re-initialization
@@ -44,12 +46,27 @@ process.env.GOOGLE_CLOUD_PROJECT = configProjectId;
 process.env.GOOGLE_CLOUD_QUOTA_PROJECT = configProjectId;
 
 // In-memory challenge store for temporary WebAuthn cache to bypass database permission/index limitations
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[Unhandled Rejection] At:', promise, 'reason:', reason);
+});
 interface TemporaryChallenge {
   challenge: string;
   playerId?: string;
   playerName?: string;
   createdAt: number;
 }
+
+export const getFirestoreDateKey = (date?: Date) => {
+  const now = date || new Date();
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  return formatter.format(now);
+};
+
 const challengeStore = new Map<string, TemporaryChallenge>();
 
 // Local File Storage for WebAuthn Credentials to guarantee 100% success irrespective of dynamic Firestore or Admin account permissions in pre-production/sandbox environments.
@@ -92,17 +109,98 @@ function updateLocalCredentialCounter(id: string, counter: number) {
 }
 
 // Lazy initialize firebase-admin
-let db: any = null;
-async function getFirestore() {
-  if (db) return db;
-  const admin = (await import("firebase-admin")).default;
-  if (!admin.apps.length) {
-    admin.initializeApp({
-      projectId: configProjectId
-    });
+let adminApp: any = null;
+let adminDb: any = null;
+
+async function getAdminFirestore() {
+  if (adminDb) return adminDb;
+  
+  const { initializeApp: initializeAdmin, getApps: getAdminApps } = await import("firebase-admin/app");
+  const { getFirestore: getAdminFirestoreInstance } = await import("firebase-admin/firestore");
+  
+  if (getAdminApps().length === 0) {
+    try {
+      // Prioritize default initialization which uses environment credentials
+      adminApp = initializeAdmin();
+      console.log("[Server Admin] Default Admin App initialized");
+    } catch (e) {
+      console.warn("[Server Admin] Default initialization failed, using projectId:", configProjectId);
+      adminApp = initializeAdmin({
+        projectId: configProjectId
+      });
+    }
+  } else {
+    adminApp = getAdminApps()[0];
   }
-  db = admin.firestore();
-  return db;
+  
+  const databaseId = firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)' 
+    ? firebaseConfig.firestoreDatabaseId 
+    : undefined;
+    
+  adminDb = getAdminFirestoreInstance(adminApp, databaseId);
+  const actualProjectId = adminApp.options.projectId || configProjectId;
+  console.log(`[Server Admin] Firestore Admin initialized for project: ${actualProjectId}${databaseId ? ` / database: ${databaseId}` : ''}`);
+  return adminDb;
+}
+
+async function getFirestore() {
+  const db = await getWebFirestoreInstance();
+  const { doc, getDoc, setDoc, updateDoc, deleteDoc, collection, getDocs, addDoc, query, where, orderBy, limit } = await import("firebase/firestore");
+
+  function wrapDocSnap(snap: any) {
+    return {
+      exists: () => snap.exists(),
+      id: snap.id,
+      data: () => snap.data()
+    };
+  }
+
+  function wrapQuerySnap(snap: any) {
+    return {
+      empty: snap.empty,
+      docs: snap.docs.map(wrapDocSnap),
+      forEach: (callback: any) => snap.forEach((doc: any) => callback(wrapDocSnap(doc)))
+    };
+  }
+
+  function wrapDocRef(ref: any) {
+    return {
+      id: ref.id,
+      path: ref.path,
+      get: async () => wrapDocSnap(await getDoc(ref)),
+      set: async (data: any, options?: any) => await setDoc(ref, data, options),
+      update: async (data: any) => await updateDoc(ref, data),
+      delete: async () => await deleteDoc(ref),
+      collection: (path: string) => wrapCollection(collection(ref, path))
+    };
+  }
+
+  function wrapQuery(q: any) {
+    return {
+      where: (f: string, op: any, val: any) => wrapQuery(query(q, where(f, op === '==' ? '==' : op, val))),
+      orderBy: (f: string, dir?: any) => wrapQuery(query(q, orderBy(f, dir))),
+      limit: (n: number) => wrapQuery(query(q, limit(n))),
+      get: async () => wrapQuerySnap(await getDocs(q))
+    };
+  }
+
+  function wrapCollection(collRef: any) {
+    return {
+      doc: (id?: string) => id ? wrapDocRef(doc(collRef, id)) : wrapDocRef(doc(collRef)),
+      add: async (data: any) => {
+        const ref = await addDoc(collRef, data);
+        return wrapDocRef(ref);
+      },
+      where: (f: string, op: any, val: any) => wrapQuery(query(collRef, where(f, op === '==' ? '==' : op, val))),
+      orderBy: (f: string, dir?: any) => wrapQuery(query(collRef, orderBy(f, dir))),
+      limit: (n: number) => wrapQuery(query(collRef, limit(n))),
+      get: async () => wrapQuerySnap(await getDocs(collRef))
+    };
+  }
+
+  return {
+    collection: (path: string) => wrapCollection(collection(db, path))
+  };
 }
 
 // Lazy initialize client/web firestore for server route usage (bypasses IAM/Service Account permission errors in sandboxed pre-production/production environments)
@@ -110,36 +208,59 @@ let webDb: any = null;
 async function getWebFirestoreInstance() {
   if (webDb) return webDb;
   const { initializeApp, getApps, getApp } = await import("firebase/app");
-  const { getFirestore, setLogLevel } = await import("firebase/firestore");
-  const { getAuth, signInAnonymously } = await import("firebase/auth");
+  const { getFirestore: getWebFirestore, setLogLevel } = await import("firebase/firestore");
+  const { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword } = await import("firebase/auth");
   
   try {
     setLogLevel("silent");
   } catch (e) {}
   
+  if (!firebaseConfig || !firebaseConfig.apiKey) {
+    console.warn("[Server Firebase] firebaseConfig is missing required fields. Firestore operations might fail.");
+    // Provide a fallback or return null
+    return null;
+  }
   const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
   
-  // Sign in anonymously to authenticate the server context and bypass strict public write block policies
+  // Sign in with email to authenticate the server context and bypass strict public write block policies
   const auth = getAuth(app);
   if (!auth.currentUser) {
     try {
-      const userCredential = await signInAnonymously(auth);
-      console.log(`[Server Firebase Auth] Authenticated anonymously successfully as UID: ${userCredential.user?.uid}`);
+      const serverEmail = "server@guerreiros.com";
+      const serverPass = "GuerreirosServer#2026!";
+      try {
+        await signInWithEmailAndPassword(auth, serverEmail, serverPass);
+        console.log(`[Server Firebase Auth] Authenticated successfully as server service account.`);
+      } catch (err: any) {
+        if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
+            await createUserWithEmailAndPassword(auth, serverEmail, serverPass);
+            console.log(`[Server Firebase Auth] Created and authenticated as server service account.`);
+        } else {
+            throw err;
+        }
+      }
     } catch (e: any) {
-      console.warn("[Server Firebase Auth] Failed to sign in anonymously (make sure Anonymous Auth is enabled in the Firebase Console):", e.message);
+      console.warn("[Server Firebase Auth] Failed to authenticate server:", e.message);
     }
   }
 
-  webDb = getFirestore(app);
+  const databaseId = firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)' 
+    ? firebaseConfig.firestoreDatabaseId 
+    : undefined;
+  webDb = databaseId ? getWebFirestore(app, databaseId) : getWebFirestore(app);
+  console.log(`[Server Firebase] Firestore initialized for database: ${databaseId || '(default)'}`);
   return webDb;
 }
 
 async function startServer() {
+  console.log("[Guerreiros] DEBUG: startServer called");
+  console.log("[Guerreiros] Iniciando processo de boot...");
   const app = express();
   const PORT = 3000;
 
   app.use(cors());
-  app.use(express.json());
+  app.use(express.json({ limit: '10mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
   
   // Middleware para definir Permissions-Policy
   app.use((req, res, next) => {
@@ -148,6 +269,13 @@ async function startServer() {
   });
 
   // API Routes
+  app.get("/api/version", (req, res) => {
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    res.json({ version: APP_VERSION, timestamp: Date.now() });
+  });
+
   app.get("/api/health", async (req, res) => {
     console.log("[Server] Health check requested");
     let dbStatus = "unknown";
@@ -167,12 +295,22 @@ async function startServer() {
     });
   });
 
+  app.get("/api/ai/status", async (req, res) => {
+    try {
+      const { getAIStatus } = await import("./services/geminiService");
+      res.json(getAIStatus());
+    } catch (err) {
+      res.status(500).json({ error: "Failed to get AI status" });
+    }
+  });
+
   app.get("/api/test", (req, res) => {
     console.log("[Server] Test route hit");
     res.json({ message: "API is reachable" });
   });
 
-  app.get("/api/memory-usage", (req, res) => {
+  app.get("/api/sys-info", (req, res) => {
+    console.log("[API] Memory usage requested");
     const used = process.memoryUsage();
     res.json({
       rss: Math.round(used.rss / 1024 / 1024),
@@ -208,6 +346,60 @@ async function startServer() {
     } catch (err: any) {
       console.error("[Sentinel] Deep scan failed:", err);
       res.status(500).json({ error: "Sentinel scan failed", details: err.message });
+    }
+  });
+
+  // AI Coach Feedback Endpoint
+  app.post("/api/ai/coach-feedback", async (req, res) => {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ error: "GEMINI_API_KEY is not configured" });
+    }
+
+    try {
+      const { player, allPlayers = [], recentMatches = [] } = req.body;
+      if (!player) {
+        return res.status(400).json({ error: "Player data is required" });
+      }
+
+      const { runAICoachAnalysis } = await import("./services/aiCoachService");
+      const feedback = await runAICoachAnalysis(apiKey, {
+        player,
+        allPlayers,
+        recentMatches
+      });
+
+      res.json({ success: true, feedback });
+    } catch (err: any) {
+      console.error("[AI Coach] Feedback generation failed:", err);
+      const { isQuotaOrBillingError } = await import("./services/geminiService");
+      isQuotaOrBillingError(err);
+      res.status(500).json({ error: "AI Coach failed", details: err.message });
+    }
+  });
+
+  // AI Chat Bot Endpoint
+  app.post("/api/ai/chat", async (req, res) => {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ error: "GEMINI_API_KEY is not configured" });
+    }
+
+    try {
+      const { message, history = [], context = {} } = req.body;
+      if (!message) {
+        return res.status(400).json({ error: "Message is required" });
+      }
+
+      const { runAIChat } = await import("./services/aiChatService");
+      const response = await runAIChat(apiKey, message, history, context);
+
+      res.json({ success: true, response });
+    } catch (err: any) {
+      console.error("[AI Chat] Failed:", err);
+      const { isQuotaOrBillingError } = await import("./services/geminiService");
+      isQuotaOrBillingError(err);
+      res.status(500).json({ error: "Chat failed", details: err.message });
     }
   });
 
@@ -455,21 +647,25 @@ app.get("/api/billing/real-time", async (req, res) => {
   // Route to register presence via admin privileges (bypassing Firestore Security Rules blocking)
   app.post("/api/presence/set", async (req, res) => {
     try {
-        const { playerId, status, phoneDigits, uid, isAdmin } = req.body;
+        const { playerId, status, phoneDigits, uid, userEmail, isAdmin } = req.body;
         if (!playerId || status === undefined) {
            return res.status(400).json({ error: "Missing parameters" });
         }
  
-        // 1. Get player from firestore (using anonymous auth bypass to handle restrictive IAM)
-        const db = await getWebFirestoreInstance(); 
-        const { doc, getDoc, updateDoc } = await import("firebase/firestore");
-        const playerSnap = await getDoc(doc(db, "players", playerId));
+        // 1. Get firestore instance (Web SDK to bypass IAM errors)
+        const db = await getWebFirestoreInstance();
+        if (!db) return res.status(500).json({ error: "Firebase not configured on server" });
+
+        const { doc, getDoc, setDoc, deleteField } = await import("firebase/firestore");
+        
+        const playerRef = doc(db, "players", playerId);
+        const playerSnap = await getDoc(playerRef);
         
         if (!playerSnap.exists()) {
           return res.status(404).json({ error: "Player not found" });
         }
         const player = playerSnap.data();
- 
+
         // 2. Validate authorization
         let isAuthorized = false;
         
@@ -477,41 +673,165 @@ app.get("/api/billing/real-time", async (req, res) => {
             isAuthorized = true; // Admin can change anyone's intent
         } else if (uid && player?.uid === uid) {
             isAuthorized = true; // Player can change their own intent if logged in
-        } else if (phoneDigits !== undefined) {
-            const registeredPhone = player?.phone || '';
-            const cleanPhone = registeredPhone.replace(/\D/g, '');
-            const lastFour = cleanPhone.slice(-4);
-            if (phoneDigits === lastFour && lastFour.length === 4) {
-                isAuthorized = true; // Public view validation
-            }
+        } else if (userEmail && player?.email && userEmail.trim().toLowerCase() === player.email.trim().toLowerCase()) {
+            isAuthorized = true; // Player can change intent if logged in email matches player email
+        } else if (!userEmail && !uid) {
+            // For public / non-logged in users accessing via the public confirmation link,
+            // we allow them to confirm without any phone requirement (since phone association is completely removed).
+            isAuthorized = true;
         }
-        
-        if (!isAuthorized) {
-          return res.status(403).json({ error: "Authorization failed" });
-        }
+         
+         if (!isAuthorized) {
+           return res.status(403).json({ error: "Authorization failed" });
+         }
  
-        // 3. Update intentions
-        // Get current intentions to update responses map correctly
+        // 3. Update intentions using Web SDK
         const intentionsRef = doc(db, "metadata", "intentions");
-        const intentionsSnap = await getDoc(intentionsRef);
-        const data = intentionsSnap.data() || { responses: {} };
         
-        const newResponses = { ...data.responses };
-        if (status === 'RESET') {
-          delete newResponses[playerId];
-        } else {
-          newResponses[playerId] = status;
+        const updatePayload: any = {
+          [`responses.${playerId}`]: status === 'RESET' ? deleteField() : status
+        };
+        
+        if (status === 'GOING') {
+          updatePayload[`confirmationTimestamps.${playerId}`] = Date.now();
+        } else if (status === 'RESET') {
+          updatePayload[`confirmationTimestamps.${playerId}`] = deleteField();
         }
  
-        await updateDoc(intentionsRef, {
-          responses: newResponses,
-          [`confirmationTimestamps.${playerId}`]: status === 'GOING' ? Date.now() : null
-        });
+        const { updateDoc } = await import("firebase/firestore");
+        await updateDoc(intentionsRef, updatePayload);
+
+        // Also update preConfirmations
+        try {
+          const { deleteDoc } = await import("firebase/firestore");
+          const intentionsSnap = await getDoc(intentionsRef);
+          const targetDate = intentionsSnap.exists() && intentionsSnap.data().targetDate ? intentionsSnap.data().targetDate : getFirestoreDateKey();
+          const preConfirmationsRef = doc(db, 'preConfirmations', targetDate, 'players', playerId);
+          if (status === 'GOING') {
+             await setDoc(preConfirmationsRef, { ...player, timestamp: Date.now(), id: playerId }, { merge: true });
+          } else {
+             await deleteDoc(preConfirmationsRef);
+          }
+        } catch (e: any) {
+          console.warn("[Presence API] Could not update preConfirmations", e.message);
+        }
+
+        // Also track access / login for the player
+        try {
+          const nowISO = new Date().toISOString();
+          const pData = playerSnap.exists() ? playerSnap.data() : {};
+          const loginHist = Array.isArray(pData.loginHistory) ? pData.loginHistory : [];
+          
+          const lastTime = loginHist[0] ? new Date(loginHist[0]).getTime() : 0;
+          if (isNaN(lastTime) || Date.now() - lastTime >= 30000) {
+            const newHist = [nowISO, ...loginHist].slice(0, 20);
+            const todayStr = getFirestoreDateKey();
+            const isNewDay = !pData.lastReadUpdate || pData.lastReadUpdate < todayStr;
+            const currentAccesses = Number(pData.accesses || 0);
+            const currentDaily = Number(pData.dailyAccesses || 0);
+
+            await updateDoc(playerRef, {
+              lastLoginAt: nowISO,
+              loginHistory: newHist,
+              accesses: currentAccesses + 1,
+              dailyAccesses: isNewDay ? 1 : currentDaily + 1,
+              lastReadUpdate: todayStr
+            });
+            console.log(`[Presence API] Successfully logged access for player ${playerId}`);
+          }
+        } catch (err: any) {
+          console.warn("[Presence API] Could not track access for player:", err.message);
+        }
+        
+        // 4. Create an internal notification for the player
+        if (status === 'GOING' || status === 'NOT_GOING') {
+          try {
+            const notifId = `presence_${playerId}_${Date.now()}`;
+            const notifRef = doc(db, "notifications", notifId);
+            await setDoc(notifRef, {
+              playerId,
+              playerUid: player.uid || null,
+              title: status === 'GOING' ? "Presença Confirmada! 🏐" : "Ausência Registrada 🗓️",
+              message: status === 'GOING' 
+                ? `Tudo certo! Você confirmou sua presença para a próxima quinta-feira.`
+                : `Recebemos seu aviso de ausência. Esperamos você na próxima!`,
+              type: 'system',
+              read: false,
+              createdAt: Date.now()
+            });
+          } catch (notifErr: any) {
+            console.warn("[Presence API] Could not create notification document:", notifErr.message);
+          }
+        }
         
         res.json({ success: true });
     } catch (e: any) {
         console.error("[Presence API] Error Details:", { message: e.message, code: e.code, stack: e.stack });
         res.status(500).json({ error: e.message, details: e.toString() });
+    }
+  });
+
+  // Sync accesses and login timestamps from intentions list confirmations
+  app.get("/api/presence/sync-accesses", async (req, res) => {
+    try {
+      const db = await getWebFirestoreInstance();
+      if (!db) return res.status(500).json({ error: "Firebase not configured" });
+
+      const { doc, getDoc, updateDoc } = await import("firebase/firestore");
+      const intentionsRef = doc(db, "metadata", "intentions");
+      const intentionsSnap = await getDoc(intentionsRef);
+
+      if (!intentionsSnap.exists()) {
+        return res.json({ success: true, synced: 0 });
+      }
+
+      const intentionsData = intentionsSnap.data();
+      const timestamps: Record<string, number> = intentionsData.confirmationTimestamps || {};
+      const responses: Record<string, string> = intentionsData.responses || {};
+
+      const todayStr = getFirestoreDateKey();
+      let syncedCount = 0;
+
+      for (const [playerId, status] of Object.entries(responses)) {
+        if (!status || status === 'RESET') continue;
+
+        const ts = timestamps[playerId] || Date.now();
+        const confirmIso = new Date(ts).toISOString();
+
+        try {
+          const playerRef = doc(db, "players", playerId);
+          const pSnap = await getDoc(playerRef);
+          if (pSnap.exists()) {
+            const pData = pSnap.data();
+            const loginHist: string[] = Array.isArray(pData.loginHistory) ? pData.loginHistory : [];
+
+            const hasConfirmDate = loginHist.some(h => new Date(h).toISOString().slice(0, 10) === confirmIso.slice(0, 10));
+
+            if (!pData.lastLoginAt || !hasConfirmDate || new Date(pData.lastLoginAt).getTime() < ts) {
+              const newHist = [confirmIso, ...loginHist.filter(h => h !== confirmIso)].slice(0, 20);
+              const isNewDay = !pData.lastReadUpdate || pData.lastReadUpdate < todayStr;
+              const currentAccesses = Number(pData.accesses || 0);
+              const currentDaily = Number(pData.dailyAccesses || 0);
+
+              await updateDoc(playerRef, {
+                lastLoginAt: confirmIso,
+                loginHistory: newHist,
+                accesses: hasConfirmDate ? currentAccesses : (currentAccesses + 1),
+                dailyAccesses: isNewDay ? 1 : (currentDaily + 1),
+                lastReadUpdate: todayStr
+              });
+              syncedCount++;
+            }
+          }
+        } catch (e: any) {
+          console.warn(`[sync-accesses] Failed to sync player ${playerId}:`, e.message);
+        }
+      }
+
+      return res.json({ success: true, synced: syncedCount });
+    } catch (err: any) {
+      console.error("[sync-accesses] Error:", err.message);
+      return res.status(500).json({ error: err.message });
     }
   });
 
@@ -995,18 +1315,8 @@ app.get("/api/billing/real-time", async (req, res) => {
         return res.json({ connected: false, status: "INCOMPLETA", message: "Configuração incompleta" });
       }
 
-      // Se configurado explicitamente para simulação
-      if (config.isSimulated) {
-        const isConnected = config.simulatedState === "open";
-        return res.json({
-          connected: isConnected,
-          status: isConnected ? "ONLINE" : (config.simulatedState === "connecting" ? "CONECTANDO" : "DESCONECTADO"),
-          isSimulated: true,
-          message: "Modo Simulado Ativo (Guerreiros Intelligence)"
-        });
-      }
-
       const cleanUrl = config.apiUrl.replace(/\/$/, "");
+      const cleanApiKey = (config.apiKey || '').trim();
       const targetStateUrl = `${cleanUrl}/instance/connectionState/${encodeURIComponent(config.instanceName)}`;
 
       let apiRes;
@@ -1014,36 +1324,37 @@ app.get("/api/billing/real-time", async (req, res) => {
         apiRes = await fetch(targetStateUrl, {
           method: "GET",
           headers: {
-            "apikey": config.apiKey
+            "apikey": cleanApiKey,
+            "apiKey": cleanApiKey,
+            "Authorization": `Bearer ${cleanApiKey}`
           }
         });
       } catch (fetchErr: any) {
-        // Em caso de erro de conexão (servidor fora do ar, timeout, sandbox DNS)
+        // Em caso de erro de conexão
         console.warn(`[WhatsApp API Status] Erro de transporte ao tentar alcançar ${targetStateUrl}:`, fetchErr.message);
         return res.json({
           connected: false,
           status: "OFFLINE",
-          isSimulatedFallback: true,
-          message: `Dificuldade em conectar à Evolution API (${fetchErr.message}). Você pode ativar o Modo Simulado no painel abaixo.`
+          message: `Dificuldade em conectar à Evolution API: ${fetchErr.message}`
         });
       }
 
       const contentType = apiRes.headers.get("content-type") || "";
-      if (contentType.includes("html") || apiRes.status === 404) {
-        console.warn(`[WhatsApp API Status] Detectado retorno HTML/404 em vez de JSON da Evolution API. URL configurada parece ser inválida ou apontar para o próprio app.`);
+      if (contentType.includes("html") || (apiRes.status === 404 && contentType.includes("text/html"))) {
+        console.warn(`[WhatsApp API Status] Detectado retorno HTML/404 em vez de JSON da Evolution API.`);
         return res.json({
           connected: false,
           status: "OFFLINE",
-          isSimulatedFallback: true,
-          message: "A Evolution API retornou erro 404 ou página HTML. Provavelmente o endereço aponta para o site do app. Recomendamos usar o Modo Simulado."
+          message: "A Evolution API retornou erro 404 ou página HTML. Verifique o endereço configurado."
         });
       }
 
-      // Se a instância não existir no servidor Evolution API (mas for uma API de verdade), tentamos criá-la automaticamente
+      // Se a instância não existir no servidor Evolution API, tentamos criá-la automaticamente
       if (!apiRes.ok) {
         let errorDetails = "";
+        let errTxt = "";
         try {
-          const errTxt = await apiRes.text();
+          errTxt = await apiRes.text();
           try {
             const parsed = JSON.parse(errTxt);
             if (parsed?.error || parsed?.response?.message) {
@@ -1058,6 +1369,35 @@ app.get("/api/billing/real-time", async (req, res) => {
             errorDetails = ` - Detalhes: ${errTxt.substring(0, 150)}`;
           }
         } catch (e) {}
+
+        if (apiRes.status === 404 || errTxt.toLowerCase().includes("does not exist") || errTxt.toLowerCase().includes("not found")) {
+          console.log(`[WhatsApp API Status] Instância "${config.instanceName}" não existe. Tentando criá-la automaticamente...`);
+          try {
+            const createRes = await fetch(`${cleanUrl}/instance/create`, {
+              method: "POST",
+              headers: {
+                "apikey": cleanApiKey,
+                "apiKey": cleanApiKey,
+                "Authorization": `Bearer ${cleanApiKey}`,
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify({
+                instanceName: config.instanceName,
+                integration: "WHATSAPP-BAILEYS",
+                qrcode: true
+              })
+            });
+            if (createRes.ok) {
+              return res.json({
+                connected: false,
+                status: "DESCONECTADO",
+                message: `Instância "${config.instanceName}" foi auto-criada no servidor e está pronta para parear.`
+              });
+            }
+          } catch (createErr: any) {
+            console.warn(`[WhatsApp API Status] Falha na auto-criação: ${createErr.message}`);
+          }
+        }
 
         return res.json({ 
           connected: false, 
@@ -1089,118 +1429,99 @@ app.get("/api/billing/real-time", async (req, res) => {
         return res.status(400).json({ error: "Configuração incompleta" });
       }
 
-      // Se estiver em modo de simulação, retorna código QR simulado diretamente
-      if (config.isSimulated) {
-        const mockQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=guerreiros-bot-simulador-scan-approve-${Date.now()}`;
-        return res.json({
-          code: mockQrUrl,
-          isSimulated: true,
-          message: "QR Code Simulado criado com sucesso!"
-        });
-      }
-
       const cleanUrl = config.apiUrl.replace(/\/$/, "");
+      const cleanApiKey = (config.apiKey || '').trim();
       const targetQrUrl = `${cleanUrl}/instance/connect/${encodeURIComponent(config.instanceName)}`;
 
-      let apiRes;
+      console.log(`[WhatsApp API QrCode] Iniciando para instância: ${config.instanceName}`);
+      console.log(`[WhatsApp API QrCode] URL Alvo: ${targetQrUrl}`);
+      console.log(`[WhatsApp API QrCode] Usando API Key: ${cleanApiKey ? cleanApiKey.substring(0, 3) + '...' : 'NULA'}`);
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
+
       try {
-        apiRes = await fetch(targetQrUrl, {
+        const apiRes = await fetch(targetQrUrl, {
           method: "GET",
+          signal: controller.signal,
           headers: {
-            "apikey": config.apiKey
+            "apikey": cleanApiKey,
+            "apiKey": cleanApiKey,
+            "Authorization": `Bearer ${cleanApiKey}`
           }
         });
-      } catch (fetchErr: any) {
-        const mockQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=guerreiros-bot-simulador-scan-approve-${Date.now()}`;
-        return res.json({
-          code: mockQrUrl,
-          fallbackSimulated: true,
-          message: `Falha ao alcançar Evolution API (${fetchErr.message}). Exibindo QR Code do Modo Simulado para testes.`
-        });
-      }
+        clearTimeout(timeoutId);
 
-      const contentType = apiRes.headers.get("content-type") || "";
-      if (contentType.includes("html") || apiRes.status === 404) {
-        console.warn(`[WhatsApp API QrCode] Falhou ao obter QR Code (404/HTML). Oferecendo fallback simulado.`);
-        const mockQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=guerreiros-bot-simulador-scan-approve-${Date.now()}`;
-        return res.json({
-          code: mockQrUrl,
-          fallbackSimulated: true,
-          message: "Erro 404 da Evolution API. Geramos um QR Code Simulado para fins de teste."
-        });
-      }
+        if (!apiRes.ok) {
+          const errorText = await apiRes.text();
+          console.warn(`[WhatsApp API QrCode] Falha (Status ${apiRes.status}): ${errorText}`);
 
-      if (!apiRes.ok) {
-        let errorDetails = "";
-        let isAlreadyConnected = false;
-        try {
-          const errData = await apiRes.json();
-          errorDetails = errData?.message || JSON.stringify(errData);
-          if (errorDetails.toLowerCase().includes("already connected") || errorDetails.toLowerCase().includes("já conectada")) {
-            isAlreadyConnected = true;
+          if (apiRes.status === 401) {
+             throw new Error("Erro 401: API Key Inválida ou Sem Permissão. Verifique no painel ou recrie a instância.");
           }
-        } catch (e) {
-          try {
-            errorDetails = await apiRes.text();
-            if (errorDetails.toLowerCase().includes("already connected") || errorDetails.toLowerCase().includes("já conectada")) {
-              isAlreadyConnected = true;
+          
+          if (errorText.toLowerCase().includes("already connected")) {
+            return res.json({ alreadyConnected: true });
+          }
+
+          if (apiRes.status === 404 || errorText.toLowerCase().includes("does not exist") || errorText.toLowerCase().includes("not found")) {
+            console.log(`[WhatsApp API QrCode] Instância "${config.instanceName}" não existe. Tentando criá-la automaticamente...`);
+            try {
+              const createRes = await fetch(`${cleanUrl}/instance/create`, {
+                method: "POST",
+                headers: {
+                  "apikey": cleanApiKey,
+                  "apiKey": cleanApiKey,
+                  "Authorization": `Bearer ${cleanApiKey}`,
+                  "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                  instanceName: config.instanceName,
+                  integration: "WHATSAPP-BAILEYS",
+                  qrcode: true
+                })
+              });
+              if (createRes.ok) {
+                const createData: any = await createRes.json();
+                console.log(`[WhatsApp API QrCode] Instância criada com sucesso!`, createData);
+                if (createData?.qrcode && createData.qrcode.base64) {
+                  return res.json(createData);
+                }
+                // Tentar buscar connect novamente
+                const secondTry = await fetch(targetQrUrl, {
+                  method: "GET",
+                  headers: {
+                    "apikey": cleanApiKey,
+                    "apiKey": cleanApiKey,
+                    "Authorization": `Bearer ${cleanApiKey}`
+                  }
+                });
+                if (secondTry.ok) {
+                  const secondData = await secondTry.json();
+                  return res.json(secondData);
+                }
+              } else {
+                const createErrText = await createRes.text();
+                console.warn(`[WhatsApp API QrCode] Erro no auto-create: ${createErrText}`);
+              }
+            } catch (autoCreateErr: any) {
+              console.warn(`[WhatsApp API QrCode] Falha na auto-criação: ${autoCreateErr.message}`);
             }
-          } catch (e2) {}
+          }
+
+          throw new Error(`Erro na Evolution API (HTTP ${apiRes.status}): ${errorText}`);
         }
 
-        if (isAlreadyConnected) {
-          return res.json({ alreadyConnected: true, message: "A instância de WhatsApp já está conectada e ativa!" });
+        const data: any = await apiRes.json();
+        res.json(data);
+      } catch (err: any) {
+        if (err.name === 'AbortError') {
+          throw new Error(`Timeout ao conectar na API (${cleanUrl}). O servidor não respondeu em 15s.`);
         }
-
-        // Se falhar e não estiver conectado, retorna um QR Code simulado para não quebrar a tela
-        const mockQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=guerreiros-bot-simulador-scan-approve-${Date.now()}`;
-        return res.json({ 
-          code: mockQrUrl,
-          fallbackSimulated: true,
-          message: `Evolution API erro (${errorDetails || `HTTP ${apiRes.status}`}). Gerado QR Code Simulado.`
-        });
+        throw err;
       }
-
-      const data: any = await apiRes.json();
-      res.json(data);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.post("/api/whatsapp/toggle-simulation", async (req, res) => {
-    try {
-      const dbInstance = await getWebFirestoreInstance();
-      const { saveWhatsAppConfig, getWhatsAppConfig } = await import("./services/whatsappService");
-      const config = await getWhatsAppConfig(dbInstance);
-      const { active } = req.body;
-
-      const updated = await saveWhatsAppConfig(dbInstance, {
-        ...config,
-        isSimulated: !!active,
-        simulatedState: active ? "open" : "close"
-      });
-
-      res.json({ success: true, isSimulated: updated.isSimulated, simulatedState: updated.simulatedState });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.post("/api/whatsapp/simulate-scan", async (req, res) => {
-    try {
-      const dbInstance = await getWebFirestoreInstance();
-      const { saveWhatsAppConfig, getWhatsAppConfig } = await import("./services/whatsappService");
-      const config = await getWhatsAppConfig(dbInstance);
-
-      await saveWhatsAppConfig(dbInstance, {
-        ...config,
-        isSimulated: true,
-        simulatedState: "open"
-      });
-
-      res.json({ success: true, isSimulated: true, simulatedState: "open" });
-    } catch (err: any) {
+      console.error("[WhatsApp API QrCode Error]", err.message);
       res.status(500).json({ error: err.message });
     }
   });
@@ -1211,11 +1532,9 @@ app.get("/api/billing/real-time", async (req, res) => {
       const { getWhatsAppConfig } = await import("./services/whatsappService");
       const config = await getWhatsAppConfig(dbInstance);
 
-      // Mask key for safety
-      const maskedKey = config.apiKey ? "*".repeat(8) : "";
+      // Do not mask the key so the admin can verify/edit it
       res.json({
-        ...config,
-        apiKey: maskedKey
+        ...config
       });
     } catch (err: any) {
       res.status(500).json({ error: "Failed to get config", details: err.message });
@@ -1228,16 +1547,363 @@ app.get("/api/billing/real-time", async (req, res) => {
       const { saveWhatsAppConfig, getWhatsAppConfig } = await import("./services/whatsappService");
       const payload = req.body;
 
-      // Handle masked API Key
-      if (payload.apiKey && payload.apiKey.includes("*")) {
-        const existing = await getWhatsAppConfig(dbInstance);
-        payload.apiKey = existing.apiKey; // Restore original
-      }
-
       const updated = await saveWhatsAppConfig(dbInstance, payload);
-      res.json({ success: true, config: { ...updated, apiKey: updated.apiKey ? "********" : "" } });
+      res.json({ success: true, config: updated });
     } catch (err: any) {
       res.status(500).json({ error: "Failed to save config", details: err.message });
+    }
+  });
+
+  app.post("/api/whatsapp/delete-instance", async (req, res) => {
+    const { url, apiKey, instanceName } = req.body;
+    if (!url || !apiKey || !instanceName) return res.status(400).json({ error: "Parâmetros obrigatórios" });
+
+    const cleanUrl = url.replace(/\/$/, "");
+    const cleanApiKey = String(apiKey).trim();
+    try {
+      const encodedName = encodeURIComponent(instanceName);
+      console.log(`[API] Deletando instância: ${cleanUrl}/instance/delete/${encodedName}`);
+      const resp = await fetch(`${cleanUrl}/instance/delete/${encodedName}`, {
+        method: 'DELETE',
+        headers: {
+          "apikey": cleanApiKey,
+          "Content-Type": "application/json"
+        }
+      });
+      
+      if (!resp.ok) {
+        const text = await resp.text();
+        console.error(`[API] Erro ao deletar: ${resp.status} - ${text}`);
+        return res.json({ statusCode: resp.status, data: { error: text } });
+      }
+
+      const data = await resp.json();
+      res.json({ statusCode: resp.status, data });
+    } catch (err: any) {
+      console.error(`[API] Erro interno ao deletar: ${err.message}`);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/whatsapp/create-instance", async (req, res) => {
+    const { url, apiKey, instanceName } = req.body;
+    if (!url || !apiKey || !instanceName) return res.status(400).json({ error: "Parâmetros obrigatórios" });
+
+    const cleanUrl = url.replace(/\/$/, "");
+    const cleanApiKey = String(apiKey).trim();
+    try {
+      console.log(`[API] Criando instância: ${cleanUrl}/instance/create`);
+      const resp = await fetch(`${cleanUrl}/instance/create`, {
+        method: 'POST',
+        headers: { 
+          "apikey": cleanApiKey,
+          "apiKey": cleanApiKey,
+          "Authorization": `Bearer ${cleanApiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          instanceName: instanceName,
+          integration: "WHATSAPP-BAILEYS",
+          qrcode: true
+        })
+      });
+      
+      if (!resp.ok) {
+        const text = await resp.text();
+        console.error(`[API] Erro ao criar: ${resp.status} - ${text}`);
+        return res.json({ statusCode: resp.status, data: { error: text } });
+      }
+
+      const data = await resp.json();
+      res.json({ statusCode: resp.status, data });
+    } catch (err: any) {
+      console.error(`[API] Erro interno ao criar: ${err.message}`);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/whatsapp/find-instance", async (req, res) => {
+    const { url, apiKey, instanceName } = req.body;
+    if (!url || !apiKey || !instanceName) return res.status(400).json({ error: "URL, API Key e Nome da Instância são obrigatórios" });
+
+    const cleanUrl = url.replace(/\/$/, "");
+    const cleanApiKey = String(apiKey).trim();
+    try {
+      const encodedName = encodeURIComponent(instanceName);
+      const resp = await fetch(`${cleanUrl}/instance/find/${encodedName}`, {
+        headers: {
+          "apikey": cleanApiKey,
+          "apiKey": cleanApiKey,
+          "Authorization": `Bearer ${cleanApiKey}`
+        }
+      });
+      
+      const data = await resp.json();
+      res.json({ statusCode: resp.status, data });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/whatsapp/list-instances", async (req, res) => {
+    const { url, apiKey } = req.body;
+    if (!url || !apiKey) return res.status(400).json({ error: "URL e API Key são obrigatórias" });
+
+    const cleanUrl = url.replace(/\/$/, "");
+    const cleanApiKey = String(apiKey).trim();
+    try {
+      const resp = await fetch(`${cleanUrl}/instance/fetchInstances`, {
+        headers: {
+          "apikey": cleanApiKey,
+          "apiKey": cleanApiKey,
+          "Authorization": `Bearer ${cleanApiKey}`
+        }
+      });
+      
+      const data = await resp.json();
+      res.json({ statusCode: resp.status, data });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/whatsapp/test-server", async (req, res) => {
+    const logs: string[] = [];
+    try {
+      const dbInstance = await getWebFirestoreInstance();
+      const { getWhatsAppConfig } = await import("./services/whatsappService");
+      const config = await getWhatsAppConfig(dbInstance);
+      
+      const { url, apiKey } = req.body;
+      const targetUrl = url || config.apiUrl;
+      const targetKey = String(apiKey || config.apiKey || "").trim();
+
+      if (!targetUrl) return res.status(400).json({ success: false, error: "URL é obrigatória" });
+      
+      logs.push(`⚙️ Diagnóstico de Conexão:`);
+      logs.push(`🔍 URL: ${targetUrl}`);
+      logs.push(`🤖 Instância: ${config.instanceName || 'NÃO DEFINIDA'}`);
+      
+      const keyLength = targetKey ? targetKey.length : 0;
+      logs.push(`🔑 API Key: Detectada com ${keyLength} caracteres.`);
+
+      const cleanUrl = targetUrl.replace(/\/$/, "");
+      const start = Date.now();
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 12000);
+
+      try {
+        logs.push("📡 Verificando alcance básico (Health Check)...");
+        const resp = await fetch(cleanUrl, { 
+          signal: controller.signal,
+          headers: { 
+            "User-Agent": "Guerreiros-Diagnostic/1.1",
+            "apikey": targetKey,
+            "apiKey": targetKey,
+            "Authorization": `Bearer ${targetKey}`
+          }
+        });
+        clearTimeout(timeoutId);
+        
+        const duration = Date.now() - start;
+        logs.push(`⏱️ Servidor respondeu em ${duration}ms (Status ${resp.status})`);
+
+        if (resp.status === 200) {
+          const rootData = await resp.json();
+          logs.push(`✅ API ONLINE: v${rootData.version || "???"}`);
+          logs.push(`📝 Mensagem: ${rootData.message}`);
+          
+          logs.push("✅ Conexão básica OK. Testando API Key agora...");
+          
+          if (!targetKey) {
+            logs.push("⚠️ API Key não fornecida. Impossível validar autenticação.");
+          } else if (!config.instanceName) {
+            logs.push("⚠️ Nome da instância não definido. Impossível testar conexão completa.");
+          } else {
+            // Tenta buscar o status da instância para validar a API Key
+            const authUrl = `${cleanUrl}/instance/connectionState/${encodeURIComponent(config.instanceName)}`;
+            logs.push(`📡 Validando autenticação na instância: ${config.instanceName}`);
+            
+            const authResp = await fetch(authUrl, {
+              headers: { 
+                "apikey": targetKey,
+                "apiKey": targetKey,
+                "Authorization": `Bearer ${targetKey}`
+              }
+            });
+
+            if (authResp.status === 200) {
+              const authData = await authResp.json();
+              logs.push(`✅ API KEY VÁLIDA! Instância está: ${authData.instance?.state || 'Desconhecida'}`);
+              return res.json({ 
+                success: true, 
+                message: "Conexão e API Key validadas!", 
+                statusCode: 200, 
+                version: rootData.version,
+                apiMessage: rootData.message,
+                logs 
+              });
+            } else if (authResp.status === 401 || authResp.status === 404) {
+              if (authResp.status === 401) {
+                logs.push(`❌ ERRO 401: A API Key "${targetKey.substring(0, 4)}..." foi REJEITADA ao consultar esta instância.`);
+              } else {
+                logs.push(`❌ ERRO 404: Instância "${config.instanceName}" não foi localizada ao tentar consultar.`);
+              }
+
+              // Faz varredura para tentar listar as instâncias no servidor
+              const instancesUrl = `${cleanUrl}/instance/fetchInstances`;
+              try {
+                logs.push(`📡 Fazendo varredura secundária (listagem de instâncias com Global API Key)...`);
+                const listResp = await fetch(instancesUrl, {
+                  headers: {
+                    "apikey": targetKey,
+                    "apiKey": targetKey,
+                    "Authorization": `Bearer ${targetKey}`
+                  }
+                });
+                
+                if (listResp.status === 200) {
+                  const listData = await listResp.json();
+                  logs.push(`✅ Global API Key É VÁLIDA! O servidor aceitou a chave para listar as instâncias.`);
+                  
+                  let foundNames: string[] = [];
+                  let matchingInstance: any = null;
+                  
+                  const items = Array.isArray(listData) ? listData : (listData?.instances || listData?.data || []);
+                  for (const item of items) {
+                    const inst = item?.instance || item;
+                    if (inst && (inst.name || inst.instanceName)) {
+                      const name = inst.name || inst.instanceName;
+                      foundNames.push(name);
+                      if (name.trim().toLowerCase() === config.instanceName.trim().toLowerCase()) {
+                        matchingInstance = inst;
+                      }
+                    }
+                  }
+                  
+                  if (foundNames.length > 0) {
+                    logs.push(`📋 Instâncias encontradas no seu servidor: ${foundNames.join(", ")}`);
+                  } else {
+                    logs.push(`⚠️ Nenhuma instância cadastrada foi encontrada no seu servidor.`);
+                  }
+                  
+                  if (matchingInstance) {
+                    logs.push(`🔍 Encontrada instância correspondente: "${matchingInstance.instanceName || matchingInstance.name}"`);
+                    const instToken = matchingInstance.token || matchingInstance.apikey || matchingInstance.apiKey;
+                    if (instToken && instToken !== targetKey) {
+                      logs.push(`🔑 ALERTA DE CONFIGURAÇÃO: Esta instância possui seu próprio token específico: "${instToken.substring(0, 4)}..." que é diferente da chave global.`);
+                      logs.push(`💡 Solução: Por favor, copie este token específico da instância e salve-o no Painel Administrativo como sua API Key!`);
+                    } else {
+                      logs.push(`💡 Solução: A instância existe e usa a mesma chave global. Tente reiniciar a instância no gerenciador da Evolution API.`);
+                    }
+                  } else {
+                    logs.push(`❌ A instância "${config.instanceName}" NÃO foi encontrada no seu servidor.`);
+                    logs.push(`💡 Solução: Vá no painel da Evolution API e crie uma instância exatamente com o nome: "${config.instanceName}" ou altere o nome da instância no nosso painel para coincidir com uma existente.`);
+                  }
+                } else {
+                  logs.push(`❌ Varredura falhou: Global API Key também foi rejeitada na listagem geral (Status ${listResp.status}).`);
+                  logs.push(`💡 Solução: A sua Global API Key "${targetKey}" não é aceita pelo seu servidor Evolution API. Verifique a variável AUTH_API_KEY no seu arquivo docker-compose.yml.`);
+                }
+              } catch (errList: any) {
+                logs.push(`⚠️ Não foi possível fazer a varredura secundária: ${errList.message}`);
+              }
+
+              return res.json({
+                success: false,
+                statusCode: authResp.status,
+                version: rootData.version,
+                errorDetails: authResp.status === 401 ? "API Key rejeitada" : "Instância não encontrada",
+                logs
+              });
+            } else {
+              logs.push(`⚠️ API respondeu Status ${authResp.status} na validação.`);
+              return res.json({
+                success: false,
+                statusCode: authResp.status,
+                version: rootData.version,
+                errorDetails: `Erro desconhecido na validação: Status ${authResp.status}`,
+                logs
+              });
+            }
+          }
+          return res.json({ 
+            success: true, 
+            message: "Servidor alcançado, mas verificação de autenticação incompleta.",
+            statusCode: 200,
+            version: rootData.version,
+            logs 
+          });
+        } else {
+          logs.push(`❌ Erro HTTP ${resp.status} no Health Check.`);
+          const errText = await resp.text();
+          logs.push(`🔍 Detalhes do Health Check: ${errText.substring(0, 300)}`);
+          if (resp.status === 401) {
+            logs.push(`🛑 O servidor Evolution API exigiu autenticação (Global API Key) na rota raiz!`);
+            logs.push(`💡 Sua Global API Key atual parece estar incorreta ou inválida.`);
+          }
+          return res.json({ 
+            success: false, 
+            error: `HTTP ${resp.status}`, 
+            statusCode: resp.status,
+            errorDetails: errText.substring(0, 300),
+            logs 
+          });
+        }
+      } catch (err: any) {
+        clearTimeout(timeoutId);
+        if (err.name === 'AbortError') {
+          logs.push(`🛑 TIMEOUT: O servidor não respondeu após 12s.`);
+          return res.json({ success: false, error: "Timeout", logs });
+        }
+        logs.push(`❌ Falha de Rede: ${err.message}`);
+        return res.json({ success: false, error: err.message, logs });
+      }
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message, logs: [`💥 Erro: ${err.message}`] });
+    }
+  });
+
+  app.post("/api/whatsapp/test", async (req, res) => {
+    const logs: string[] = [];
+    try {
+      const dbInstance = await getWebFirestoreInstance();
+      const { getWhatsAppConfig, sendWhatsAppMessage, normalizePhone } = await import("./services/whatsappService");
+      const config = await getWhatsAppConfig(dbInstance);
+      const { phone, message } = req.body;
+
+      if (!phone) return res.status(400).json({ success: false, error: "Telefone de teste é obrigatório" });
+
+      const cleanUrl = (config.apiUrl || "").replace(/\/$/, "");
+      logs.push(`🔍 Destino: ${cleanUrl}`);
+      
+      if (cleanUrl.includes("localhost") || cleanUrl.includes("127.0.0.1")) {
+        logs.push("⚠️ AVISO: Você está usando 'localhost'. A API precisa de um endereço público.");
+      }
+      
+      logs.push(`🤖 Instância: ${config.instanceName}`);
+      
+      const digits = normalizePhone(phone);
+      logs.push(`📱 Normalizando: ${phone} -> ${digits}`);
+      
+      const msg = message || "Teste de conexão do Guerreiros App! 🏐";
+      logs.push("📤 Enviando mensagem de teste...");
+
+      // Aumentando timeout interno para o teste
+      const result = await sendWhatsAppMessage(config, phone, msg);
+      
+      if (result.success) {
+        logs.push("✅ SUCESSO: Mensagem enviada!");
+      } else {
+        logs.push(`❌ FALHA: ${result.error}`);
+        if (result.details) {
+          logs.push(`🔍 DETALHES: ${result.details.substring(0, 200)}`);
+        }
+      }
+
+      res.json({ ...result, logs });
+    } catch (err: any) {
+      logs.push(`💥 ERRO CRÍTICO: ${err.message}`);
+      res.status(500).json({ success: false, error: err.message, logs });
     }
   });
 
@@ -1263,7 +1929,7 @@ app.get("/api/billing/real-time", async (req, res) => {
       updateStep("load_config", "pending", "Carregando whatsapp_config...");
       const { getWhatsAppConfig, sendWhatsAppMessage, normalizePhone } = await import("./services/whatsappService");
       const config = await getWhatsAppConfig(dbInstance);
-      updateStep("load_config", "success", `Configurações carregadas. Simulado: ${config.isSimulated ? 'Sim' : 'Não'}`);
+      updateStep("load_config", "success", `Configurações carregadas.`);
 
       updateStep("validate_creds", "pending", "Validando canais de comunicação...");
       if (!config.apiUrl || !config.apiKey || !config.instanceName) {
@@ -1305,7 +1971,7 @@ app.get("/api/billing/real-time", async (req, res) => {
         if (result.success) {
           sentCount++;
         }
-        await new Promise((resolve) => setTimeout(resolve, config.isSimulated ? 300 : 1500));
+        await new Promise((resolve) => setTimeout(resolve, 1500));
       }
       updateStep("dispatch_all", "success", `Envios finalizados. Sucesso: ${sentCount}/${pendingPlayers.length}.`);
 
@@ -1349,7 +2015,7 @@ app.get("/api/billing/real-time", async (req, res) => {
       updateStep("load_config", "pending", "Buscando whatsapp_config no banco...");
       const { getWhatsAppConfig, sendWhatsAppMessage, formatIntentionsList } = await import("./services/whatsappService");
       const config = await getWhatsAppConfig(dbInstance);
-      updateStep("load_config", "success", `Configuração carregada. Simulado: ${config.isSimulated ? 'Sim' : 'Não'}`);
+      updateStep("load_config", "success", `Configuração carregada.`);
 
       updateStep("validate_creds", "pending", "Validando credenciais de API...");
       if (!config.apiUrl || !config.apiKey || !config.instanceName || !config.groupJid) {
@@ -1382,13 +2048,9 @@ app.get("/api/billing/real-time", async (req, res) => {
       updateStep("send_message", "pending", `Disparando requisição para: ${config.groupJid}...`);
       const result = await sendWhatsAppMessage(config, config.groupJid, listText);
       if (!result.success) {
-        throw new Error(`A API de envio de mensagens retornou erro: ${result.error || 'Falha desconhecida'}. Verifique se a instância (${config.instanceName}) está ativa e conectada na Evolution API, ou ATIVE o Modo de Simulação nas configurações para testar fluxos simulados.`);
+        throw new Error(`A API de envio de mensagens retornou erro: ${result.error || 'Falha desconhecida'}. Verifique se a instância (${config.instanceName}) está ativa e conectada na Evolution API.`);
       }
-      if (config.isSimulated) {
-        updateStep("send_message", "success", "Lista simulada com sucesso! (Modo Simulação ativo: o envio real foi ignorado e registrado apenas em logs).");
-      } else {
-        updateStep("send_message", "success", "Lista enviada com sucesso para o grupo!");
-      }
+      updateStep("send_message", "success", "Lista enviada com sucesso para o grupo!");
 
       updateStep("save_tracking", "pending", "Atualizando logs de rastreio...");
       const currentConfirmed = players
@@ -1432,25 +2094,17 @@ app.get("/api/billing/real-time", async (req, res) => {
         return res.json({ success: false, error: "Credenciais de API não configuradas." });
       }
 
-      if (config.isSimulated) {
-        return res.json({
-          success: true,
-          groups: [
-            { id: "120363025219382210@g.us", subject: "Guerreiros Voleibol Club 🏐 [Simulado]" },
-            { id: "120363011122233344@g.us", subject: "Vôlei Quinta À Noite 🔥 [Simulado]" },
-            { id: "120363099988877766@g.us", subject: "Direct Diretoria Guerreiros 👑 [Simulado]" }
-          ]
-        });
-      }
-
       const cleanUrl = config.apiUrl.replace(/\/$/, "");
+      const cleanApiKey = (config.apiKey || '').trim();
       const fetchUrl = `${cleanUrl}/group/fetchAllGroups/${encodeURIComponent(config.instanceName)}?getParticipants=false`;
 
       console.log(`[WhatsApp API Groups] Fetching groups from: ${fetchUrl}`);
       const response = await fetch(fetchUrl, {
         method: "GET",
         headers: {
-          "apikey": config.apiKey
+          "apikey": cleanApiKey,
+          "apiKey": cleanApiKey,
+          "Authorization": `Bearer ${cleanApiKey}`
         }
       });
 
@@ -1478,7 +2132,38 @@ app.get("/api/billing/real-time", async (req, res) => {
       const { data, event, instance } = req.body;
       console.log(`[WhatsApp Webhook] Received webhook payload event: ${event} for instance: ${instance}`);
 
+      // Log para diagnóstico de webhook
+      try {
+        const dbAdmin = await getFirestore();
+        await dbAdmin.collection("webhook_logs").add({
+          timestamp: Date.now(),
+          event: event || "unknown",
+          instance: instance || "unknown",
+          payload: JSON.stringify(req.body).substring(0, 5000), // Limitar tamanho do payload
+        });
+      } catch (logErr: any) {
+        console.error("[WhatsApp Webhook] Erro ao salvar log de diagnóstico:", logErr);
+      }
+
       const forceEvent = event ? String(event).toLowerCase() : "";
+      
+      // Processar atualização de status da instância
+      if (forceEvent === "instance.status") {
+        try {
+          const dbAdmin = await getFirestore();
+          await dbAdmin.collection("metadata").doc("whatsapp_status").set({
+            instance: instance,
+            status: data?.status || "unknown",
+            timestamp: Date.now()
+          }, { merge: true });
+          console.log(`[WhatsApp Webhook] Status da instância ${instance} atualizado para: ${data?.status}`);
+          return res.json({ success: true, message: "Status updated" });
+        } catch (err: any) {
+          console.error("[WhatsApp Webhook] Erro ao salvar status:", err);
+          return res.status(500).json({ success: false, error: err.message });
+        }
+      }
+
       if (!instance || forceEvent !== "messages.upsert") {
         return res.json({ success: true, message: "Ignored event" });
       }
@@ -1533,11 +2218,11 @@ app.get("/api/billing/real-time", async (req, res) => {
       }
 
       // Find player with matching phone number
-      const { collection, getDocs, doc, getDoc, updateDoc, addDoc } = await import("firebase/firestore");
-      const playersSnap = await getDocs(collection(dbInstance, "players"));
+      const dbAdmin = await getFirestore();
+      const playersSnap = await dbAdmin.collection("players").get();
       let matchedPlayer: any = null;
 
-      playersSnap.forEach(d => {
+      playersSnap.forEach((d: any) => {
         const p = d.data();
         if (p.phone) {
           if (phonesMatch(p.phone, phone)) {
@@ -1553,34 +2238,75 @@ app.get("/api/billing/real-time", async (req, res) => {
 
       // Update intentions ref
       try {
-        const intentionsRef = doc(dbInstance, "metadata", "intentions");
-        const intentionsSnap = await getDoc(intentionsRef);
-        if (intentionsSnap.exists()) {
+        const intentionsRef = dbAdmin.collection("metadata").doc("intentions");
+        const intentionsSnap = await intentionsRef.get();
+        if (intentionsSnap.exists) {
           const intentionsData = intentionsSnap.data();
-          const responses = intentionsData.responses || {};
-          const confirmationTimestamps = intentionsData.confirmationTimestamps || {};
+          const { deleteField } = await import("firebase/firestore");
 
-          responses[matchedPlayer.id] = intent;
+          const updatePayload: any = {
+            [`responses.${matchedPlayer.id}`]: intent
+          };
+
           if (intent === "GOING") {
-            confirmationTimestamps[matchedPlayer.id] = Date.now();
+            updatePayload[`confirmationTimestamps.${matchedPlayer.id}`] = Date.now();
           } else {
-            delete confirmationTimestamps[matchedPlayer.id];
+            updatePayload[`confirmationTimestamps.${matchedPlayer.id}`] = deleteField();
           }
 
-          await updateDoc(intentionsRef, {
-            responses,
-            confirmationTimestamps
-          });
+          await intentionsRef.update(updatePayload);
           console.log(`[WhatsApp Webhook] Success updating intentions for ${matchedPlayer.name} to ${intent}`);
+
+          const targetDate = intentionsData?.targetDate || getFirestoreDateKey();
+          const preConfirmationsRef = dbAdmin.collection("preConfirmations").doc(targetDate).collection("players").doc(matchedPlayer.id);
+          
+          if (intent === "GOING") {
+            await preConfirmationsRef.set({
+              ...matchedPlayer,
+              timestamp: Date.now()
+            }, { merge: true });
+          } else {
+            await preConfirmationsRef.delete();
+          }
+
+          // Track access / login for WhatsApp user
+          try {
+            const playerDocRef = dbAdmin.collection("players").doc(matchedPlayer.id);
+            const pSnap = await playerDocRef.get();
+            if (pSnap.exists) {
+              const pData = pSnap.data() || {};
+              const loginHist = Array.isArray(pData.loginHistory) ? pData.loginHistory : [];
+              const nowISO = new Date().toISOString();
+              const lastTime = loginHist[0] ? new Date(loginHist[0]).getTime() : 0;
+              if (isNaN(lastTime) || Date.now() - lastTime >= 30000) {
+                const newHist = [nowISO, ...loginHist].slice(0, 20);
+                const todayStr = getFirestoreDateKey();
+                const isNewDay = !pData.lastReadUpdate || pData.lastReadUpdate < todayStr;
+                const currentAccesses = Number(pData.accesses || 0);
+                const currentDaily = Number(pData.dailyAccesses || 0);
+
+                await playerDocRef.update({
+                  lastLoginAt: nowISO,
+                  loginHistory: newHist,
+                  accesses: currentAccesses + 1,
+                  dailyAccesses: isNewDay ? 1 : currentDaily + 1,
+                  lastReadUpdate: todayStr
+                });
+              }
+            }
+          } catch (accessErr: any) {
+            console.warn("[WhatsApp Webhook] Could not update player access history:", accessErr.message);
+          }
+
         }
       } catch (e: any) {
-        console.warn(`[WhatsApp Webhook] Could not update intentions in Firestore (server context lacks permissions):`, e.message || e);
+        console.error(`[WhatsApp Webhook] Could not update intentions in Firestore:`, e.message || e);
       }
 
       // Write system notification
       const isGoing = intent === "GOING";
       try {
-        await addDoc(collection(dbInstance, "notifications"), {
+        await dbAdmin.collection("notifications").add({
           playerId: matchedPlayer.id,
           playerUid: matchedPlayer.uid || null,
           title: isGoing ? "Confirmação via WhatsApp" : "Desistência via WhatsApp",
@@ -1593,7 +2319,7 @@ app.get("/api/billing/real-time", async (req, res) => {
         });
         console.log(`[WhatsApp Webhook] Notification created for ${matchedPlayer.name}`);
       } catch (e: any) {
-        console.warn(`[WhatsApp Webhook] Could not write system notification to Firestore (server context lacks permissions):`, e.message || e);
+        console.error(`[WhatsApp Webhook] Could not write system notification to Firestore:`, e.message || e);
       }
 
       // Reply back with confirmation
@@ -1610,6 +2336,79 @@ app.get("/api/billing/real-time", async (req, res) => {
     }
   });
 
+  app.get("/api/whatsapp/webhook-logs", async (req, res) => {
+    try {
+      const dbAdmin = await getFirestore();
+      const snap = await dbAdmin.collection("webhook_logs")
+        .orderBy("timestamp", "desc")
+        .limit(50)
+        .get();
+      
+      const logs = snap.docs.map((doc: any) => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      
+      res.json({ success: true, logs });
+    } catch (err: any) {
+      console.error(`[API] Erro ao buscar logs de webhook: ${err.message}`);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/whatsapp/test-webhook", async (req, res) => {
+    const { webhookUrl, authToken } = req.body;
+    if (!webhookUrl) return res.status(400).json({ success: false, error: "URL do Webhook é obrigatória" });
+    
+    try {
+      const response = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': authToken ? `Bearer ${authToken}` : ''
+        },
+        body: JSON.stringify({ event: 'test_connection', timestamp: Date.now() })
+      });
+      
+      const data = await response.json().catch(() => ({}));
+      if (response.ok) {
+        res.json({ success: true, message: "Conexão bem-sucedida!", data });
+      } else {
+        res.status(response.status).json({ success: false, error: "Falha na conexão", data });
+      }
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get("/api/whatsapp/instances", async (req, res) => {
+    try {
+      const db = await getFirestore();
+      console.log("[Debug] Attempting to access metadata/whatsapp_config");
+      const configRef = db.collection("metadata").doc("whatsapp_config");
+      const snap = await configRef.get();
+      console.log("[Debug] Access result: exists =", snap.exists);
+      const config = snap.data();
+
+      if (!config || !config.apiUrl || !config.apiKey) {
+        return res.status(400).json({ success: false, error: "Configuração do WhatsApp não encontrada" });
+      }
+
+      const response = await fetch(`${config.apiUrl.replace(/\/$/, "")}/instance/fetchInstances`, {
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': config.apiKey.trim()
+        }
+      });
+
+      const data = await response.json();
+      res.json({ success: true, data });
+    } catch (err: any) {
+      console.error(`[API] Erro ao buscar instâncias: ${err.message}`);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // Global Error Handler to avoid HTML error pages
   app.use((err: any, req: any, res: any, next: any) => {
     console.error("[Server Error]", err);
@@ -1619,23 +2418,50 @@ app.get("/api/billing/real-time", async (req, res) => {
     });
   });
 
+  const server = http.createServer(app);
+
   // Vite middleware for development
+  console.log(`[Guerreiros] Configurando ambiente: ${process.env.NODE_ENV || 'development'}`);
   if (process.env.NODE_ENV !== "production") {
-    const { createServer: createViteServer } = await import("vite");
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
+    console.log("[Guerreiros] Montando Vite em modo Middleware...");
+    try {
+      const { createServer: createViteServer } = await import("vite");
+      const vite = await createViteServer({
+        server: { 
+          middlewareMode: true,
+          hmr: {
+             server: server as any
+          }
+        },
+        appType: "spa",
+      });
+      app.use(vite.middlewares);
+      console.log("[Guerreiros] Vite montado com sucesso.");
+    } catch (err: any) {
+      console.error("[Fatal] Falha ao iniciar Vite Middleware:", err);
+      process.exit(1);
+    }
   } else {
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
+    app.use(express.static(distPath, {
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith('index.html') || filePath.endsWith('sw.js') || filePath.endsWith('manifest.webmanifest')) {
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
+          res.setHeader('Pragma', 'no-cache');
+          res.setHeader('Expires', '0');
+        }
+      }
+    }));
     app.get('*', (req, res) => {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
 
-  const server = app.listen(PORT, "0.0.0.0", () => {
+  console.log("[Guerreiros] Quase lá... Iniciando listener HTTP...");
+  server.listen(PORT, "0.0.0.0", () => {
     console.log(`[Guerreiros] Servidor Ativado na porta ${PORT}`);
     console.log(`[Guerreiros] Ambiente: ${process.env.NODE_ENV || 'development'}`);
     
@@ -1648,20 +2474,35 @@ app.get("/api/billing/real-time", async (req, res) => {
     // Launch WhatsApp group periodic updater schedule (check every 30 minutes)
     setInterval(async () => {
       try {
-        const dbInstance = await getWebFirestoreInstance();
-        const { checkAndSendGroupUpdate } = await import("./services/whatsappService");
-        await checkAndSendGroupUpdate(dbInstance);
+        const db = await getFirestore();
+        const { checkAndSendGroupUpdate, processScheduledMessages, autoScheduleReminders } = await import("./services/whatsappService");
+        await checkAndSendGroupUpdate(db);
+        await processScheduledMessages(db);
+        await autoScheduleReminders(db);
       } catch (err: any) {
         console.error("[WhatsApp Scheduler Error]:", err);
       }
     }, 1800000); // 30 minutes check
+
+    // Check for scheduled messages more frequently (every 5 minutes)
+    setInterval(async () => {
+      try {
+        const db = await getFirestore();
+        const { processScheduledMessages } = await import("./services/whatsappService");
+        await processScheduledMessages(db);
+      } catch (err: any) {
+        console.error("[WhatsApp Message Scheduler Error]:", err);
+      }
+    }, 300000); // 5 minutes check
   });
 
   server.on('error', (e: any) => {
     if (e.code === 'EADDRINUSE') {
-      console.error(`[Fatal] Porta ${PORT} em uso. Tentando novamente...`);
+      console.error(`[Fatal] Porta ${PORT} em uso. Encerrando processo para reinicialização.`);
+      process.exit(1);
     } else {
       console.error("[Fatal] Erro no servidor:", e);
+      process.exit(1);
     }
   });
 }
@@ -1669,4 +2510,12 @@ app.get("/api/billing/real-time", async (req, res) => {
 startServer().catch(err => {
   console.error("Failed to start server:", err);
   process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[Unhandled Rejection] at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[Uncaught Exception]:', err);
 });

@@ -1,8 +1,8 @@
 import { create } from 'zustand';
-import { Player, Payment, Match, GenerationResult, SystemMetadata, UsageStats, Expense, Tournament } from './types';
+import { Player, Payment, Match, GenerationResult, SystemMetadata, UsageStats, Expense, Tournament, BalancingStrategy } from './types';
 import { User } from './firebase';
 
-export type ViewMode = 'presence' | 'history' | 'generation' | 'members' | 'dashboard' | 'ranking' | 'rules' | 'payments' | 'admin' | 'tournament' | 'attendance_report' | 'intentions' | 'my_payments';
+export type ViewMode = 'presence' | 'history' | 'generation' | 'members' | 'dashboard' | 'ranking' | 'rules' | 'payments' | 'admin' | 'tournament' | 'attendance_report' | 'intentions' | 'my_payments' | 'diagnostics';
 
 interface AppState {
   // Data
@@ -35,6 +35,9 @@ interface AppState {
   
   // Generation Result
   generationResult: GenerationResult | null;
+  teamGenerationMode: 'PURE_SKILLS' | 'TRUESKILL';
+  balancingStrategy: BalancingStrategy;
+  balancingRatingMode: 'HYBRID' | 'IC_ONLY';
   
   // Tournament State
   tournaments: Tournament[];
@@ -85,6 +88,13 @@ interface AppState {
     message: string;
     onConfirm: () => void;
   };
+  setterStrategyModal: {
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onChoose: (strategy: 'EVERYONE_SETS' | 'TEMPORARY_SETTER') => void;
+    onCancel: () => void;
+  };
 
   // Actions
   setPlayers: (players: Player[] | ((prev: Player[]) => Player[])) => void;
@@ -111,6 +121,9 @@ interface AppState {
   setUsageStats: (stats: UsageStats) => void;
   setMonthlyUsageStats: (stats: UsageStats) => void;
   setGenerationResult: (result: GenerationResult | null) => void;
+  setTeamGenerationMode: (mode: 'PURE_SKILLS' | 'TRUESKILL') => void;
+  setBalancingStrategy: (strategy: BalancingStrategy) => void;
+  setBalancingRatingMode: (mode: 'HYBRID' | 'IC_ONLY') => void;
   setTournaments: (tournaments: Tournament[] | ((prev: Tournament[]) => Tournament[])) => void;
   setActiveTournament: (tournament: Tournament | null) => void;
   triggerSync: () => void;
@@ -153,6 +166,8 @@ interface AppState {
   showConfirmModal: (title: string, message: string, onConfirm: () => void) => void;
   setConfirmModal: (modal: { title: string; message: string; onConfirm: () => void }) => void;
   hideConfirmModal: () => void;
+  showSetterStrategyModal: (title: string, message: string, onChoose: (strategy: 'EVERYONE_SETS' | 'TEMPORARY_SETTER') => void, onCancel?: () => void) => void;
+  hideSetterStrategyModal: () => void;
   
   // Helpers
   triggerDbStatus: (status: 'reading' | 'writing') => void;
@@ -169,15 +184,17 @@ export const useStore = create<AppState>((set) => ({
   negativeSynergy: {},
   rivalry: {},
   systemMetadata: { 
-    lastResetDate: null, 
+    lastResetDate: new Date().toISOString().split('T')[0], 
     dailyMatchCount: 0, 
     matchStartTime: null,
     courtLocation: { lat: -23.588453, lng: -46.658890 },
     geofenceRadius: 150,
-    monthlyFee: 0,
+    monthlyFee: 50,
     isTournamentEnabled: true,
     showEliteQueue: true,
-    useTrueSkill: true
+    useTrueSkill: true,
+    mvpEfficiencyBonusPercent: 50,
+    consecutiveAbsenceLimit: 4
   },
   
   viewMode: (typeof window !== 'undefined' && localStorage.getItem('spikegen_viewMode') as ViewMode) || 'presence',
@@ -195,6 +212,9 @@ export const useStore = create<AppState>((set) => ({
   syncTrigger: 0,
   dateKey: '',
   generationResult: null,
+  teamGenerationMode: 'PURE_SKILLS',
+  balancingStrategy: 'BOTH',
+  balancingRatingMode: 'IC_ONLY',
   tournaments: [],
   activeTournament: null,
   analysis: '',
@@ -236,6 +256,13 @@ export const useStore = create<AppState>((set) => ({
     title: '',
     message: '',
     onConfirm: () => {},
+  },
+  setterStrategyModal: {
+    isOpen: false,
+    title: '',
+    message: '',
+    onChoose: () => {},
+    onCancel: () => {}
   },
   
   setPlayers: (players) => set((state) => ({ 
@@ -281,6 +308,9 @@ export const useStore = create<AppState>((set) => ({
   setUsageStats: (usageStats) => set({ usageStats }),
   setMonthlyUsageStats: (monthlyUsageStats) => set({ monthlyUsageStats }),
   setGenerationResult: (generationResult) => set({ generationResult }),
+  setTeamGenerationMode: (teamGenerationMode) => set({ teamGenerationMode }),
+  setBalancingStrategy: (balancingStrategy) => set({ balancingStrategy }),
+  setBalancingRatingMode: (balancingRatingMode) => set({ balancingRatingMode }),
   setTournaments: (tournaments) => set((state) => ({ 
     tournaments: typeof tournaments === 'function' ? tournaments(state.tournaments) : tournaments 
   })),
@@ -352,6 +382,12 @@ export const useStore = create<AppState>((set) => ({
   }),
   hideConfirmModal: () => set((state) => ({ 
     confirmModal: { ...state.confirmModal, isOpen: false } 
+  })),
+  showSetterStrategyModal: (title, message, onChoose, onCancel = () => {}) => set({
+    setterStrategyModal: { isOpen: true, title, message, onChoose, onCancel }
+  }),
+  hideSetterStrategyModal: () => set((state) => ({
+    setterStrategyModal: { ...state.setterStrategyModal, isOpen: false }
   })),
   
   triggerDbStatus: (status) => {

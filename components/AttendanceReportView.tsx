@@ -20,8 +20,8 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 
 export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void }> = ({ setViewMode }) => {
-  const { players: allPlayers, userRole, showConfirmModal, showNotification } = useStore();
-  const players = useMemo(() => allPlayers.filter(p => (p.status === 'active' || !p.status || p.status === '') && !p.isDM), [allPlayers]);
+  const { players: allPlayers, userRole, showConfirmModal, showNotification, matches } = useStore();
+  const players = useMemo(() => allPlayers.filter(p => (p.status === 'active' || p.status === 'guest' || !p.status || p.status === '') && !p.isDM), [allPlayers]);
   const [history, setHistory] = useState<Record<string, Player[]>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [filterMonth, setFilterMonth] = useState(getFirestoreDateKey().slice(0, 7));
@@ -47,11 +47,23 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
     loadHistory();
   }, [filterMonth]);
 
+  // Filter history to only include dates that have matches played on them (dias de jogo)
+  const validHistory = useMemo(() => {
+    const matchDates = new Set(matches.map(m => m.date));
+    const result: Record<string, Player[]> = {};
+    Object.entries(history).forEach(([date, dayPlayers]) => {
+      if (matchDates.has(date)) {
+        result[date] = dayPlayers;
+      }
+    });
+    return result;
+  }, [history, matches]);
+
   const stats = useMemo(() => {
     // If filterDate is set, we only show stats for that specific day
-    let filteredHistory = filterDate && history[filterDate] 
-      ? { [filterDate]: history[filterDate] } 
-      : history;
+    let filteredHistory = filterDate && validHistory[filterDate] 
+      ? { [filterDate]: validHistory[filterDate] } 
+      : validHistory;
     
     // If selectedPlayerId is set, we only care about that player's presence
     const baseStats = calculateAttendanceStats(filteredHistory, players);
@@ -61,14 +73,14 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
     }
     
     return baseStats;
-  }, [history, players, filterDate, selectedPlayerId]);
+  }, [validHistory, players, filterDate, selectedPlayerId]);
 
   const filteredStats = useMemo(() => {
     return stats.filter(s => s.playerName.toLowerCase().includes(searchTerm.toLowerCase()));
   }, [stats, searchTerm]);
 
   const sessionSummary = useMemo(() => {
-    return Object.entries(history)
+    return Object.entries(validHistory)
       .map(([date, dayPlayers]) => ({
         date,
         count: dayPlayers.length,
@@ -77,7 +89,7 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
       }))
       .filter(s => s.hasSelectedPlayer)
       .sort((a, b) => b.date.localeCompare(a.date));
-  }, [history, selectedPlayerId]);
+  }, [validHistory, selectedPlayerId]);
 
   const uniqueMonths = useMemo(() => {
     // Generate last 12 months
@@ -234,7 +246,7 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
                   : 'text-white/40 hover:text-white'
               }`}
             >
-              Por Sessão
+              Por Dia
             </button>
           </div>
 
@@ -263,8 +275,8 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
               <thead className="bg-white/5 border-b border-brand-primary/40">
                 <tr>
                   <th className="px-8 py-5 text-[10px] font-black text-white/40 uppercase tracking-widest">Sócio</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-white/40 uppercase tracking-widest text-center">Presenças</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-white/40 uppercase tracking-widest text-center">Total Sessões</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-white/40 uppercase tracking-widest text-center">Dias Presente</th>
+                  <th className="px-8 py-5 text-[10px] font-black text-white/40 uppercase tracking-widest text-center">Dias Total</th>
                   <th className="px-8 py-5 text-[10px] font-black text-white/40 uppercase tracking-widest text-center">Frequência (%)</th>
                   <th className="px-8 py-5 text-[10px] font-black text-white/40 uppercase tracking-widest text-right">Status</th>
                 </tr>
@@ -347,7 +359,7 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
               <h4 className="text-2xl font-black text-white uppercase tracking-tighter mb-1">
                 {new Date(session.date + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })}
               </h4>
-              <p className="text-xs font-bold text-white/40 uppercase tracking-widest mb-6">Sessão de Jogo</p>
+              <p className="text-xs font-bold text-white/40 uppercase tracking-widest mb-6">Dia de Jogo</p>
               
               <div className="flex items-center justify-between pt-6 border-t border-brand-primary/40">
                 <div className="flex items-center gap-2">
@@ -369,7 +381,7 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
           {sessionSummary.length === 0 && (
             <div className="col-span-full py-20 text-center bg-black rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-2xl">
               <Calendar className="w-12 h-12 text-white/10 mx-auto mb-4" />
-              <p className="text-sm font-bold text-white/40 uppercase tracking-widest">Nenhuma sessão registrada neste período</p>
+              <p className="text-sm font-bold text-white/40 uppercase tracking-widest">Nenhum dia registrado neste período</p>
             </div>
           )}
         </div>

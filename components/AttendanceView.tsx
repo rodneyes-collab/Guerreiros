@@ -15,10 +15,13 @@ import {
   Zap,
   Star,
   Shield,
-  BarChart3
+  BarChart3,
+  Clock,
+  LogOut
 } from 'lucide-react';
 
-import { getPriorityQueue, calculateEffectiveElo } from '../utils/teamLogic';
+import { getPriorityQueue, calculateEffectiveElo, calculatePredictedMatches } from '../utils/teamLogic';
+import { SESSION_START_TIME, SESSION_END_TIME, AVG_MATCH_DURATION_MINS } from '../constants';
 import { HelpTooltip } from '../src/components/HelpTooltip';
 import { Tooltip } from '../src/components/Tooltip';
 
@@ -26,6 +29,8 @@ interface AttendanceViewProps {
   clearAttendance: () => void;
   resetDailyMatches: () => void;
   removeAttendance: (id: string) => void;
+  updateDepartureTime?: (id: string, time: string | null) => Promise<void>;
+  updateArrivalTime?: (id: string, time: string | null) => Promise<void>;
   registerAttendance: (player: Player) => void;
   availablePlayers: Player[];
   refreshPlayers: () => Promise<void>;
@@ -42,6 +47,8 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
   clearAttendance,
   resetDailyMatches,
   removeAttendance,
+  updateDepartureTime,
+  updateArrivalTime,
   registerAttendance,
   availablePlayers,
   refreshPlayers,
@@ -52,9 +59,45 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
   userRole,
   setViewMode
 }) => {
-  const { attendance: allAttendance, preConfirmations: allPreConfirmations, isSyncing } = useStore();
+  const { attendance: allAttendance, preConfirmations: allPreConfirmations, isSyncing, matches } = useStore();
 
-  const attendance = React.useMemo(() => allAttendance.filter(p => (!p.status || p.status === 'active') && !p.isDM), [allAttendance]);
+  const { avgMatchDuration, todayMatchesCount, firstMatchStartTimeStr } = React.useMemo(() => {
+    const today = new Date().toISOString().split('T')[0];
+    const todayMatches = matches.filter(m => m.date === today && m.duration > 60);
+    const count = todayMatches.length;
+    
+    let firstStartTime: string | undefined = undefined;
+    if (count > 0) {
+      const sortedMatches = [...todayMatches].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+      const firstMatch = sortedMatches[0];
+      if (firstMatch.startTime) {
+        const d = new Date(firstMatch.startTime);
+        firstStartTime = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      } else if (firstMatch.timestamp) {
+        const d = new Date(firstMatch.timestamp);
+        firstStartTime = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      }
+    } else {
+      const activeGen = useStore.getState().generationResult;
+      if (activeGen?.timestamp) {
+        const d = new Date(activeGen.timestamp);
+        firstStartTime = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      }
+    }
+
+    if (count === 0 && !firstStartTime) return { avgMatchDuration: AVG_MATCH_DURATION_MINS, todayMatchesCount: 0, firstMatchStartTimeStr: undefined };
+    
+    const totalDurationSecs = todayMatches.reduce((acc, m) => acc + (m.duration || 0), 0);
+    const avgMins = count > 0 ? Math.round(totalDurationSecs / count / 60) : AVG_MATCH_DURATION_MINS;
+    
+    return { 
+      avgMatchDuration: avgMins >= 8 ? avgMins : AVG_MATCH_DURATION_MINS,
+      todayMatchesCount: count,
+      firstMatchStartTimeStr: firstStartTime
+    };
+  }, [matches]);
+
+  const attendance = React.useMemo(() => allAttendance.filter(p => (!p.status || p.status === 'active' || p.status === 'guest') && !p.isDM), [allAttendance]);
 
   const displayedAttendance = React.useMemo(() => {
     return [...attendance].sort((a, b) => {
@@ -73,7 +116,11 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
     }
   };
 
-  const preConfirmations = React.useMemo(() => allPreConfirmations.filter(p => (!p.status || p.status === 'active') && !p.isDM), [allPreConfirmations]);
+  const preConfirmations = React.useMemo(() => allPreConfirmations.filter(p => (!p.status || p.status === 'active' || p.status === 'guest') && !p.isDM), [allPreConfirmations]);
+  const [editingDeparture, setEditingDeparture] = React.useState<string | null>(null);
+  const [editingArrival, setEditingArrival] = React.useState<string | null>(null);
+  const [tempDepartureTime, setTempDepartureTime] = React.useState("");
+  const [tempArrivalTime, setTempArrivalTime] = React.useState("");
   const [startY, setStartY] = React.useState(0);
   const [pullDistance, setPullDistance] = React.useState(0);
   const [isPulling, setIsPulling] = React.useState(false);
@@ -147,10 +194,10 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                     Lista de Presença
                     <HelpTooltip 
                       title="Lista de Presença" 
-                      content="Jogadores que confirmaram presença no dia do jogo. Apenas administradores podem adicionar ou remover jogadores manualmente aqui."
+                      content="Jogadores que estão na quadra para o jogo. Apenas administradores podem adicionar ou remover jogadores manualmente aqui."
                     />
                   </h2>
-                  <p className="text-[10px] text-brand-primary font-black uppercase tracking-widest mt-1.5">{attendance.length} Guerreiros Confirmados</p>
+                  <p className="text-[10px] text-brand-primary font-black uppercase tracking-widest mt-1.5">{attendance.length} Guerreiros Escalados</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <Tooltip content="Ver Relatório de Presença">
@@ -204,35 +251,145 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                       const isCurrentlyBenched = generationResult?.remainingPlayers?.some(rp => rp.id === player.id);
                       const displayBenchedCount = (player.consecutiveBenched || 0) + (isCurrentlyBenched ? 1 : 0);
                       
+                      const now = new Date();
+                      const currentTimeStr = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
+                      const predicted = calculatePredictedMatches(
+                        currentTimeStr,
+                        SESSION_END_TIME,
+                        avgMatchDuration,
+                        attendance.length,
+                        player.departureTime || undefined,
+                        todayMatchesCount,
+                        player.arrivalTime || undefined,
+                        firstMatchStartTimeStr || SESSION_START_TIME,
+                        player.dailyMatches || 0
+                      );
+                      
+                      console.log(`Debug: Player ${player.name}, totalPlayers: ${attendance.length}, predicted: ${predicted}`);
+
+                      const hasSpecialSchedule = player.departureTime || player.arrivalTime;
+
                       return (
-                        <div key={player.id || `attendance-${idx}`} className="flex flex-col p-2 rounded-xl border transition-all group shadow-sm hover:shadow-xl bg-brand-light border-brand-primary/20 hover:border-brand-primary/50 gap-1.5 relative overflow-hidden">
+                        <div key={player.id || `attendance-${idx}`} className={`flex flex-col p-2 rounded-xl border transition-all group shadow-sm hover:shadow-xl bg-brand-light ${hasSpecialSchedule ? 'border-brand-primary/60 bg-brand-primary/5' : 'border-brand-primary/20'} hover:border-brand-primary/50 gap-1.5 relative`}>
+                          {hasSpecialSchedule && (
+                            <div className="absolute top-0 right-0 w-16 h-16 -mr-8 -mt-8 bg-brand-primary/5 rounded-full blur-xl group-hover:bg-brand-primary/10 transition-all"></div>
+                          )}
                           <div className="flex items-center justify-between">
                             <span className="text-[8px] font-black italic text-brand-primary/40">
                               #{(player.arrivalOrder && player.arrivalOrder < 999) ? player.arrivalOrder : idx + 1}
                             </span>
-                            {userRole === 'ADMIN' && (
-                              <button 
-                                onClick={() => removeAttendance(player.id)} 
-                                disabled={isSyncing}
-                                className={`p-1 rounded-lg transition-all ${isSyncing ? 'text-white/5' : 'text-white/20 hover:text-red-400 hover:bg-red-500/10'}`}
-                              >
-                                <X className="w-4 h-4" />
-                              </button>
-                            )}
+                            <div className="flex items-center gap-1">
+                              {(userRole === 'ADMIN' || currentPlayer?.id === player.id) && (
+                                <div className="flex items-center gap-1">
+                                  <button 
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setEditingArrival(player.id);
+                                      setTempArrivalTime(player.arrivalTime || SESSION_START_TIME);
+                                      setEditingDeparture(null);
+                                    }}
+                                    className={`p-1 rounded-lg transition-all z-20 ${player.arrivalTime ? 'text-brand-primary bg-brand-primary/10' : 'text-white/20 hover:text-brand-primary hover:bg-brand-primary/10'}`}
+                                    title="Definir Horário de Chegada"
+                                  >
+                                    <Clock className="w-3 h-3 rotate-180 text-white" strokeWidth={3} />
+                                  </button>
+                                  <button 
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setEditingDeparture(player.id);
+                                      setTempDepartureTime(player.departureTime || SESSION_END_TIME);
+                                      setEditingArrival(null);
+                                    }}
+                                    className={`p-1 rounded-lg transition-all z-20 ${player.departureTime ? 'text-brand-primary bg-brand-primary/10' : 'text-white/20 hover:text-brand-primary hover:bg-brand-primary/10'}`}
+                                    title="Definir Horário de Saída"
+                                  >
+                                    <Clock className="w-3 h-3 text-white" strokeWidth={3} />
+                                  </button>
+                                </div>
+                              )}
+                              {userRole === 'ADMIN' && (
+                                <button 
+                                  onClick={() => removeAttendance(player.id)} 
+                                  disabled={isSyncing}
+                                  className={`p-1 rounded-lg transition-all ${isSyncing ? 'text-white/5' : 'text-white/20 hover:text-red-400 hover:bg-red-500/10'}`}
+                                >
+                                  <X className="w-4 h-4 text-white" strokeWidth={3} />
+                                </button>
+                              )}
+                            </div>
                           </div>
                           
                           <div className="min-w-0">
                              <p className={`text-[12px] font-black uppercase leading-none tracking-tighter ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
                                {capitalizeName(displayName)}
                              </p>
-                             <div className="flex items-center gap-1 mt-1 flex-wrap">
-                               <span className="text-[8px] font-black text-brand-primary/60 italic tracking-tighter uppercase shrink-0">
-                                 ELO {Math.round(calculateEffectiveElo(fullPlayer || player))}
-                               </span>
-                               {displayBenchedCount > 0 && (
-                                 <div className="px-1.5 py-0.5 rounded-full bg-brand-primary text-black text-[8px] font-black shrink-0">{displayBenchedCount}B</div>
-                               )}
-                             </div>
+                             
+                             {editingDeparture === player.id || editingArrival === player.id ? (
+                               <div className="flex items-center gap-1 my-1 animate-in fade-in slide-in-from-top-1 z-30 bg-black/95 p-1.5 rounded-lg border border-brand-primary/40 shadow-2xl">
+                                 <input 
+                                   type="time"
+                                   value={editingDeparture === player.id ? tempDepartureTime : tempArrivalTime}
+                                   onChange={(e) => editingDeparture === player.id ? setTempDepartureTime(e.target.value) : setTempArrivalTime(e.target.value)}
+                                   className="bg-black border border-brand-primary/40 rounded px-1 py-0.5 text-[10px] text-brand-primary font-black w-20 focus:outline-none focus:border-brand-primary"
+                                   autoFocus
+                                 />
+                                 <button 
+                                   onClick={async (e) => {
+                                     e.stopPropagation();
+                                     if (editingDeparture === player.id && updateDepartureTime) {
+                                       await updateDepartureTime(player.id, tempDepartureTime || null);
+                                     } else if (editingArrival === player.id && updateArrivalTime) {
+                                       await updateArrivalTime(player.id, tempArrivalTime || null);
+                                     }
+                                     setEditingDeparture(null);
+                                     setEditingArrival(null);
+                                   }}
+                                   className="p-1 bg-brand-primary text-black rounded hover:bg-white transition-colors"
+                                 >
+                                   <CheckCircle2 className="w-3 h-3" />
+                                 </button>
+                                 <button 
+                                   onClick={(e) => {
+                                     e.stopPropagation();
+                                     setEditingDeparture(null);
+                                     setEditingArrival(null);
+                                   }}
+                                   className="p-1 bg-white/10 text-white rounded hover:bg-white/20 transition-colors"
+                                 >
+                                   <X className="w-3 h-3 text-white" strokeWidth={3} />
+                                 </button>
+                               </div>
+                             ) : (
+                               <div className="flex items-center gap-1 mt-1 flex-wrap">
+                                 <span className="text-[8px] font-black text-brand-primary/60 italic tracking-tighter uppercase shrink-0">
+                                   ELO {Math.round(calculateEffectiveElo(fullPlayer || player))}
+                                 </span>
+                                 {displayBenchedCount > 0 && (
+                                   <div className="px-1.5 py-0.5 rounded-full bg-brand-primary text-black text-[8px] font-black shrink-0">{displayBenchedCount}B</div>
+                                 )}
+                                                      {player.arrivalTime && (
+                                   <div className="flex items-center gap-1 bg-brand-primary/40 px-2 py-1 rounded border border-brand-primary/60 shadow-md">
+                                     <Zap className="w-3.5 h-3.5 text-white" strokeWidth={3} />
+                                     <span className="text-[12px] font-black text-white uppercase tracking-tight">In: {player.arrivalTime}</span>
+                                   </div>
+                                 )}
+ 
+                                 {player.departureTime && (
+                                   <div className="flex items-center gap-1 bg-brand-primary/40 px-2 py-1 rounded border border-brand-primary/60 shadow-md">
+                                     <LogOut className="w-3.5 h-3.5 text-white" strokeWidth={3} />
+                                     <span className="text-[12px] font-black text-white uppercase tracking-tight">Out: {player.departureTime}</span>
+                                   </div>
+                                 )}
+                                 
+                                 {predicted !== 99 && (
+                                   <div className="flex items-center gap-0.5 bg-white/5 px-1 py-0.5 rounded border border-white/10">
+                                     <BarChart3 className="w-2.5 h-2.5 text-white" strokeWidth={3} />
+                                     <span className="text-[7px] font-black text-white uppercase">Prev: {predicted}j</span>
+                                   </div>
+                                 )}
+                               </div>
+                             )}
                           </div>
                         </div>
                       );
@@ -268,6 +425,11 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                   <div className="col-span-full py-32 text-center bg-white/5 rounded-[2.5rem] border-2 border-dashed border-brand-primary/40 space-y-6">
                     <Users className="w-20 h-20 text-white/20 mx-auto" />
                     <p className="text-white/40 text-sm font-black uppercase tracking-[0.3em] max-w-md mx-auto leading-relaxed">Apenas o comando administrativo pode realizar convocações diretas.</p>
+                  </div>
+                ) : (availablePlayers || []).length === 0 ? (
+                  <div className="col-span-full py-32 text-center space-y-4">
+                    <div className="w-10 h-10 border-4 border-brand-primary border-t-transparent rounded-full animate-spin mx-auto"></div>
+                    <p className="text-white/60 text-lg font-black uppercase tracking-tighter italic">Carregando sócios...</p>
                   </div>
                 ) : (availablePlayers || [])
                   .filter(p => !attendance.some(a => a.id === p.id))

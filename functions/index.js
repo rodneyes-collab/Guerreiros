@@ -199,7 +199,7 @@ exports.intentionsAutomation = functions.pubsub.schedule('0 * * * *').timeZone('
   const intentionsSnap = await intentionsRef.get();
   if (!intentionsSnap.exists) return null;
 
-  const intentions = intentionsSnap.data() as any;
+  const intentions = intentionsSnap.data() || {};
   if (!intentions.automationEnabled) return null;
 
   if (intentions.remindersSent && intentions.remindersSent[reminderKey]) return null;
@@ -218,7 +218,7 @@ exports.intentionsAutomation = functions.pubsub.schedule('0 * * * *').timeZone('
   const playersSnap = await db.collection('players').where('status', '==', 'active').get();
   const attendanceSnap = await db.collection('attendance').doc(dateKey).collection('players').get();
   
-  const players = playersSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+  const players = playersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
   const attendanceIds = new Set(attendanceSnap.docs.map(d => d.id));
   const responses = intentions.responses || {};
 
@@ -258,11 +258,11 @@ exports.birthdayAutomation = functions.pubsub.schedule('0 9 * * *').timeZone('Am
   const metadataDoc = await db.collection('metadata').doc('system').get();
   const metadata = metadataDoc.data();
   if (metadata?.enableAutoBirthdays === false) return null;
-  const activeBirthdaysIndex: string[] = metadata?.activeBirthdaysIndex || [];
+  const activeBirthdaysIndex = metadata?.activeBirthdaysIndex || [];
   if (!activeBirthdaysIndex.includes(todayKey)) return null;
 
   const playersSnap = await db.collection('players').where('status', '==', 'active').get();
-  const players = playersSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+  const players = playersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
   const birthdayBoys = players.filter(p => {
     if (!p.birthDate) return false;
     const parts = p.birthDate.split('-');

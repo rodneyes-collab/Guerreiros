@@ -60,6 +60,8 @@ export interface Player {
   totalWrites?: number; // USO TOTAL/MENSAL
   accesses?: number; // TOTAL de acessos/sessões do sócio
   dailyAccesses?: number; // ACESSOS DIÁRIOS do sócio
+  lastLoginAt?: string; // Data/hora do último login
+  loginHistory?: string[]; // Histórico dos últimos 10 logins (ISO strings)
   lastReadUpdate?: string; // Data da última atualização de leitura
   fcmToken?: string; // Token para Push Notifications
   pushEnabled?: boolean; // Se o sócio deseja receber notificações push
@@ -74,6 +76,8 @@ export interface Player {
   };
   isExempt?: boolean; // Novo campo para sócios isentos
   auditLog?: AuditLog[]; // Auditoria de dados
+  departureTime?: string; // Horário de saída especial (ex: "21:00")
+  arrivalTime?: string; // Horário de chegada especial (ex: "19:00")
   trueSkill?: {
     mu: number;
     sigma: number;
@@ -85,6 +89,7 @@ export interface Player {
 export interface AppNotification {
   id: string;
   playerId: string;
+  playerUid?: string; // UID for faster querying and security rules
   title: string;
   message: string;
   createdAt: number;
@@ -93,6 +98,8 @@ export interface AppNotification {
 }
 
 export type MatchMode = 'QUICK' | 'SCORE' | 'SEQUENTIAL';
+
+export type BalancingStrategy = 'BOTTOM_TWO' | 'SYNERGY' | 'BOTH';
 
 export type IntentStatus = 'GOING' | 'NOT_GOING' | 'UNDECIDED';
 
@@ -139,6 +146,7 @@ export interface SystemMetadata {
   showTelemetry?: boolean;
   showCourtForecast?: boolean;
   enableAutoBirthdays?: boolean;
+  enableAutoMonthBirthdays?: boolean;
   useTrueSkill?: boolean;
   courtLocation?: { lat: number; lng: number };
   geofenceRadius?: number;
@@ -146,6 +154,10 @@ export interface SystemMetadata {
   isTournamentEnabled?: boolean;
   showEliteQueue?: boolean;
   matchNotificationsGlobalEnabled?: boolean;
+  mvpEfficiencyBonusPercent?: number;
+  consecutiveAbsenceLimit?: number;
+  appVersion?: string;
+  versionNumber?: number;
 }
 
 export enum PaymentStatus {
@@ -182,6 +194,28 @@ export interface Team {
   totalEfficiency?: number;
 }
 
+export interface AutoCorrectionRuleCheck {
+  ruleId: 'BOTTOM2' | 'TOP2' | 'GENDER' | 'GUESTS' | 'SETTER' | 'TEAM_SIZE' | 'SETTER_CAPACITY' | 'SYNERGY';
+  ruleName: string;
+  description: string;
+  passed: boolean;
+}
+
+export interface AutoCorrectionFixLog {
+  category: 'BOTTOM2' | 'TOP2' | 'GENDER' | 'GUESTS' | 'SETTER' | 'TEAM_SIZE' | 'SETTER_CAPACITY' | 'SYNERGY';
+  title: string;
+  description: string;
+  playerA?: string;
+  playerB?: string;
+}
+
+export interface AutoCorrectionAudit {
+  isVerified: boolean;
+  checkedAt: number;
+  checkedRules: AutoCorrectionRuleCheck[];
+  fixesApplied: AutoCorrectionFixLog[];
+}
+
 export interface GenerationResult {
   teamA: Team;
   teamB: Team;
@@ -191,6 +225,7 @@ export interface GenerationResult {
   topTwoIds?: string[];
   timestamp?: number;
   combinationsCount?: number;
+  autoCorrectionAudit?: AutoCorrectionAudit;
   trueskill?: {
     teamA: Team;
     teamB: Team;
@@ -265,4 +300,41 @@ export interface UsageStats {
   officialValue?: number;
   lastGcpSync?: string;
   lastUpdate: string;
+}
+
+export type DbAnomalyType = 'DUPLICATE_PLAYER' | 'CORRUPTED_MATCH' | 'INVALID_ELO' | 'DATE_DISCREPANCY' | 'ORPHAN_REFERENCE';
+
+export interface DbAnomalyItem {
+  id: string;
+  type: DbAnomalyType;
+  title: string;
+  description: string;
+  severity: 'HIGH' | 'MEDIUM' | 'LOW';
+  entityId: string;
+  entityName?: string;
+  targetIdToMerge?: string;
+  suggestedAction: string;
+  payload?: any;
+}
+
+export interface DbAutoCorrectionSummary {
+  timestamp: number;
+  dateStr: string;
+  anomaliesDetected: DbAnomalyItem[];
+  duplicatePlayersMerged: number;
+  matchesRepaired: number;
+  eloStatsNormalized: number;
+  logs: string[];
+  status: 'SUCCESS' | 'PARTIAL' | 'CLEAN';
+}
+
+export interface ScheduledMessage {
+  id: string;
+  type: 'GAME_REMINDER' | 'PAYMENT_REMINDER' | 'CUSTOM';
+  scheduledAt: number;
+  status: 'PENDING' | 'SENT' | 'FAILED';
+  target: 'GROUP' | 'INDIVIDUAL';
+  content: string;
+  error?: string;
+  createdAt: number;
 }

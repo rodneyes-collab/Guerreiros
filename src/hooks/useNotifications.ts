@@ -50,6 +50,11 @@ export const useNotifications = () => {
       notifs.sort((a, b) => b.createdAt - a.createdAt);
 
       setNotifications(notifs.slice(0, 50));
+    }, (err) => {
+      console.error('useNotifications: Error in snapshot for playerUid:', auth.currentUser?.uid, err);
+      if (err.message.includes('permission')) {
+        console.warn('useNotifications: Permission denied. This usually means playerUid in document does not match auth.uid, or isAdmin check failed.');
+      }
     });
     return () => unsub();
   }, [currentPlayer]);

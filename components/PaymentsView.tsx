@@ -44,7 +44,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
   updateMonthlyFee
 }) => {
   const { payments, expenses, userRole, systemMetadata, players: allPlayers } = useStore();
-  const players = React.useMemo(() => allPlayers.filter(p => (p.status === 'active' || !p.status || p.status === '') && !p.isDM), [allPlayers]);
+  const players = React.useMemo(() => allPlayers.filter(p => (p.status === 'active' || p.status === 'guest' || !p.status || p.status === '') && !p.isDM), [allPlayers]);
   const [activeTab, setActiveTab] = useState<'RECEIPTS' | 'EXPENSES' | 'COMPLIANCE' | 'STATEMENT'>('RECEIPTS');
   const [filterMonth, setFilterMonth] = useState('');
   const [filterDate, setFilterDate] = useState('');

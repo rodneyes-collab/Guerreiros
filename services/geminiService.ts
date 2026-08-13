@@ -7,17 +7,36 @@ const CACHE_KEY = 'spikegen_ai_cache_v2';
 const MAX_CACHE_ITEMS = 20; // Reduzido para maior segurança
 const MAX_CACHE_SIZE_BYTES = 1.0 * 1024 * 1024; // 1MB (limite conservador)
 
-const isQuotaOrBillingError = (error: any): boolean => {
+// State to track AI health
+let aiHealth = {
+  isAvailable: true,
+  lastQuotaError: 0,
+  errorMessage: ''
+};
+
+export const isQuotaOrBillingError = (error: any): boolean => {
   const msg = (error?.message || "").toLowerCase();
-  return (
-    msg.includes("429") ||
-    msg.includes("403") ||
-    msg.includes("spending cap") ||
-    msg.includes("quota") ||
-    msg.includes("billing") ||
-    msg.includes("resource_exhausted") ||
-    msg.includes("exceeded")
-  );
+  const isQuota = msg.includes("429") || msg.includes("quota") || msg.includes("resource_exhausted") || msg.includes("exceeded");
+  const isBilling = msg.includes("403") || msg.includes("spending cap") || msg.includes("billing");
+  
+  if (isQuota || isBilling) {
+    aiHealth = {
+      isAvailable: false,
+      lastQuotaError: Date.now(),
+      errorMessage: isQuota ? 'Cota de IA excedida. Tente novamente em alguns minutos.' : 'Erro de permissão ou faturamento na IA.'
+    };
+    console.warn(`[AI Status Update] AI marked as unavailable: ${aiHealth.errorMessage}`);
+  }
+  
+  return isQuota || isBilling;
+};
+
+export const getAIStatus = () => {
+  // Reset availability after 10 minutes if it was a quota error
+  if (!aiHealth.isAvailable && Date.now() - aiHealth.lastQuotaError > 600000) {
+    aiHealth.isAvailable = true;
+  }
+  return aiHealth;
 };
 
 /**
@@ -177,7 +196,14 @@ const getAI = (isTTS = false) => {
     ? (process.env.API_KEY || process.env.GEMINI_API_KEY) 
     : process.env.GEMINI_API_KEY;
     
-  return new GoogleGenAI({ apiKey: key || "" });
+  return new GoogleGenAI({ 
+    apiKey: key || "",
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
+      }
+    }
+  });
 };
 
 /**
@@ -339,34 +365,36 @@ export const generateDailySummaryNarration = async (stats: {
   rankingChanges?: string[];
   date?: string;
   avgMatchTime?: number;
+  summaryType?: 'session' | 'career';
 }): Promise<string> => {
-  const cacheKey = `summary_v6_${stats.mvp}_${stats.bestSetter}_${stats.dailyKing}_${stats.matchesCount}_${stats.rankingChanges?.join(',')}_${stats.date}_${stats.avgMatchTime}`;
+  const cacheKey = `summary_v7_${stats.summaryType}_${stats.mvp}_${stats.bestSetter}_${stats.dailyKing}_${stats.matchesCount}_${stats.rankingChanges?.join(',')}_${stats.date}_${stats.avgMatchTime}`;
   if (analysisCache[cacheKey]) return analysisCache[cacheKey];
 
   const ai = getAI();
   const rankingInfo = stats.rankingChanges && stats.rankingChanges.length > 0
-    ? `\n- Mudanças no Ranking Geral: ${stats.rankingChanges.join(', ')}`
+    ? `\n- Mudanças no Ranking: ${stats.rankingChanges.join(', ')}`
     : '';
 
+  const isCareer = stats.summaryType === 'career';
+  const typeLabel = isCareer ? 'GERAL ACUMULADO (CARREIRA)' : 'DO DIA (SESSÃO)';
+
   const prompt = `Você é um narrador esportivo brasileiro carismático e enérgico do Guerreiros Volleyball.
-    Resumo do Dia:
-    - Data: ${stats.date || new Date().toLocaleDateString('pt-BR')}
+    TIPO DE RESUMO: ${typeLabel}
+    Resumo dos Dados:
+    - Data/Período: ${stats.date || new Date().toLocaleDateString('pt-BR')}
     - Partidas: ${stats.matchesCount || 0}
     - Tempo médio das partidas: ${stats.avgMatchTime || 'não disponível'} minutos
     - MVP (Maior Pontuador/Destaque): ${stats.mvp || 'N/A'}
     - Melhor Levantador(a): ${stats.bestSetter || 'N/A'}
-    - Rei/Rainha do Dia (Maior Ganho ELO): ${stats.dailyKing || 'N/A'}${rankingInfo}
+    - Rei/Rainha (Maior Ganho ELO): ${stats.dailyKing || 'N/A'}${rankingInfo}
     
-    TAREFA: Gere um roteiro de locução curto (max 4 frases) que soe NATURAL e FLUIDO, como se estivesse comentando ao vivo.
-    MUITO IMPORTANTE: A PRIMEIRA FRASE DEVE SER EXATAMENTE: "Resumo da partida do dia ${stats.date || new Date().toLocaleDateString('pt-BR')}:".
+    TAREFA: Gere um roteiro de locução curto (max 5 frases) que soe NATURAL e FLUIDO, como se estivesse comentando ao vivo.
+    MUITO IMPORTANTE: A PRIMEIRA FRASE DEVE SER EXATAMENTE: "Resumo ${isCareer ? 'do Ranking Geral' : 'da rodada'} do Guerreiros Volleyball:".
     
     INSTRUÇÕES GERAIS:
-    1. Gênero: Analise o NOME e identifique o gênero para adaptar:
-       - Levantador/Levantadora.
-       - Rei/Rainha do Dia.
-       Se não tiver certeza, use as formas neutras como "Levantador(a)" ou "Rei/Rainha".
-    2. Nomes e Placares: Mencione os jogadores e suas conquistas. Se houver placares elásticos (ex: 15x0 ou 15x5), chame de "atropelo" ou "domínio absoluto". Se for 15x14, destaque como "jogo de nervos" ou "vitória na raça".
-    3. Estilo: Use pontuação para pausas naturais. Use gírias de vôlei como "ace", "bola de cheque", "mão de pau". NÃO faça listas.
+    1. Gênero: Analise o NOME e identifique o gênero para adaptar (Levantador/Levantadora, Rei/Rainha).
+    2. Contexto: Se for resumo de CARREIRA, fale sobre a trajetória e as mudanças históricas no ranking. Se for SESSÃO, foque no que aconteceu hoje.
+    3. Estilo: Use pontuação para pausas naturais. Use gírias de vôlei. NÃO faça listas.
     4. Termos: Use "Equipe" em vez de "Time".
     5. Fechamento: Finalize dizendo "Guerreiros Volleyball: onde o racha é de outro nível!".`;
 
@@ -389,49 +417,10 @@ export const generateDailySummaryNarration = async (stats: {
  * Generates a team announcement audio directly from teams to reduce latency.
  */
 export const generateTeamAnnouncementAudio = async (teamA: Team, teamB: Team): Promise<string | null> => {
-  const teamANames = [teamA.setter?.name, ...teamA.players.map(p => p.name)].filter(Boolean).join(', ');
-  const teamBNames = [teamB.setter?.name, ...teamB.players.map(p => p.name)].filter(Boolean).join(', ');
-  
-  const cacheKey = `teams_audio_v1_${teamANames}_vs_${teamBNames}`;
-  if (analysisCache[cacheKey]) return analysisCache[cacheKey];
-
-  const ai = getAI(true);
-  const prompt = `Você é um locutor esportivo brasileiro carismático e empolgado.
-    
-    TAREFA: Narre a escalação das duas equipes abaixo de forma NATURAL, FLUIDA e RÁPIDA. 
-    
-    Equipe A: ${teamANames}
-    Equipe B: ${teamBNames}
-    
-    Instruções:
-    - Comece direto com a Equipe A.
-    - Use entonação de rádio esportivo. 
-    - Fale de forma direta e enérgica.
-    - Use "Equipe" em vez de "Time".`;
-
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3.1-flash-tts-preview",
-      contents: [{ parts: [{ text: prompt }] }],
-      config: {
-        responseModalities: [Modality.AUDIO],
-        speechConfig: {
-          voiceConfig: { 
-            prebuiltVoiceConfig: { voiceName: 'Zephyr' } 
-          },
-        },
-      },
-    });
-    
-    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-    const result = base64Audio ? pcmToWavUrl(base64Audio) : null;
-    
-    return result;
+    const script = await generateNarrationScript(teamA, teamB);
+    return getNarrationAudio(script);
   } catch (error: any) {
-    if (isQuotaOrBillingError(error)) {
-      console.warn("AI Audio Quota or Permission Reached (429/403/RESOURCE_EXHAUSTED). Falling back.");
-      return null;
-    }
     console.error("Error generating team announcement audio:", error);
     return null;
   }
@@ -451,82 +440,10 @@ export const generateDailySummaryAudio = async (stats: {
   avgMatchTime?: number;
   summaryType?: 'session' | 'career';
 }): Promise<string | null> => {
-  const cacheKey = `summary_audio_v11_${stats.summaryType}_${stats.mvp}_${stats.bestSetter}_${stats.dailyKing}_${stats.matchesCount}_${stats.rankingChanges?.join(',')}_${stats.date}_${stats.avgMatchTime}`;
-  if (analysisCache[cacheKey]) return analysisCache[cacheKey];
-
-  const ai = getAI(true);
-  const rankingInfo = stats.rankingChanges && stats.rankingChanges.length > 0
-    ? `\n- Performance dos Jogadores: ${stats.rankingChanges.join('; ')}`
-    : '';
-
-  const isCareer = stats.summaryType === 'career';
-  const typeLabel = isCareer ? 'GERAL ACUMULADO' : 'DA SESSÃO';
-  
-  const prompt = `Você é um narrador esportivo brasileiro carismático e enérgico do Guerreiros Volleyball.
-    TIPO DE RESUMO: ${typeLabel}
-    
-    DADOS:
-    - Data/Período: ${stats.date || 'Geral'}
-    - Partidas Realizadas: ${stats.matchesCount || 0}
-    - Tempo médio de jogo: ${stats.avgMatchTime || '0'} minutos
-    - Craque da Rodada (MVP): ${stats.mvp || 'N/A'}
-    - Melhore Levantador(a): ${stats.bestSetter || 'N/A'}
-    - Rei/Rainha da Quadra: ${stats.dailyKing || 'N/A'}
-    ${stats.sessionLeaderboard ? `- Top 5 Atual: ${stats.sessionLeaderboard.slice(0, 5).map((p: any, i: number) => `${i+1}º ${p.name}`).join(', ')}` : ''}
-    ${rankingInfo}
-    
-    TAREFA: Narre os resultados de forma NATURAL, ENTUSIASTA e IMPACTANTE.
-    
-    REGRAS CRÍTICAS DE NARRAÇÃO:
-    1. A PRIMEIRA FRASE DEVE SER: "Resumo ${isCareer ? 'do Ranking Geral' : 'da rodada'} do Guerreiros Volleyball:".
-    2. DATA: Sempre narre a data fornecida no formato "dia [dia] de [mês]" (ex: "dia 28 de maio"). Se a data for "Global" ou "Geral", diga "de todo o histórico".
-    3. VALORES: NUNCA mencione números de pontos ELO. Fale sobre ganhos, perdas, subidas e descidas no ranking. SEMPRE use o termo "posições" (ex: "subiu duas posições") e NUNCA use termos como "degraus".
-    4. JOGADORES: Mencione o MVP, Melhor Levantador e Rei/Rainha. Em seguida, introduza a próxima parte dizendo claramente: "Agora, vamos ao Ranking Acumulado, com as subidas e descidas de posições:". Então, narre de forma dinâmica a performance e mudanças de TODOS os jogadores listados em "Performance dos Jogadores". Não ignore ninguém!
-    5. ESTILO: Use entonação de locutor de vôlei. Termine com: "Guerreiros Volleyball: onde o racha é de outro nível!".`;
-
   try {
-    // Retry logic for transient errors
-    let response;
-    let retries = 2;
-    while (retries >= 0) {
-      try {
-        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('AI Request timeout')), 25000));
-        const callPromise = ai.models.generateContent({
-          model: "gemini-3.1-flash-tts-preview",
-          contents: [{ parts: [{ text: prompt }] }],
-          config: {
-            responseModalities: [Modality.AUDIO],
-            speechConfig: {
-              voiceConfig: { 
-                prebuiltVoiceConfig: { voiceName: 'Zephyr' } 
-              },
-            },
-          },
-        });
-        
-        response = await Promise.race([callPromise, timeoutPromise]) as any;
-        break;
-      } catch (error: any) {
-        if (retries > 0 && (error.message?.includes('500') || error.message?.includes('429') || error.message?.includes('timeout'))) {
-          retries--;
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          continue;
-        }
-        throw error;
-      }
-    }
-    
-    if (!response) throw new Error("AI TTS failed after retries");
-
-    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-    const result = base64Audio ? pcmToWavUrl(base64Audio) : null;
-    
-    return result;
+    const script = await generateDailySummaryNarration(stats);
+    return getNarrationAudio(script);
   } catch (error: any) {
-    if (isQuotaOrBillingError(error) || error?.message?.includes('500') || error?.message?.includes('timeout')) {
-      console.warn("AI Summary Audio transient error or Quota/Permission Reached (429/403/RESOURCE_EXHAUSTED). Falling back.");
-      return null;
-    }
     console.error("Error generating summary audio:", error);
     return null;
   }
@@ -537,22 +454,19 @@ export const generateDailySummaryAudio = async (stats: {
  */
 export const getNarrationAudio = async (text: string): Promise<string | null> => {
   // Cache baseado no hash do texto (primeiros 100 caracteres)
-  const cacheKey = `tts_${btoa(unescape(encodeURIComponent(text.substring(0, 100))))}`;
+  const cacheKey = `tts_v3_${btoa(unescape(encodeURIComponent(text.substring(0, 100))))}`;
   if (analysisCache[cacheKey]) return analysisCache[cacheKey];
 
   const ai = getAI(true);
   try {
-    // Prefixo mais simples que o modelo entende como instrução de estilo sem ler literalmente
-    const styledText = `Com empolgação de locutor esportivo: ${text}`;
-    
+    const promptText = `Narre o seguinte texto com empolgação e naturalidade de locutor esportivo, gerando apenas áudio: ${text}`;
     const response = await ai.models.generateContent({
       model: "gemini-3.1-flash-tts-preview",
-      contents: [{ parts: [{ text: styledText }] }],
+      contents: [{ parts: [{ text: promptText }] }],
       config: {
         responseModalities: [Modality.AUDIO],
         speechConfig: {
           voiceConfig: { 
-            // 'Zephyr' é naturalmente mais rápido e enérgico
             prebuiltVoiceConfig: { voiceName: 'Zephyr' } 
           },
         },
@@ -560,6 +474,11 @@ export const getNarrationAudio = async (text: string): Promise<string | null> =>
     });
     const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
     const result = base64Audio ? pcmToWavUrl(base64Audio) : null;
+    
+    if (result) {
+      analysisCache[cacheKey] = result;
+      saveCache(analysisCache);
+    }
     
     return result;
   } catch (error: any) {

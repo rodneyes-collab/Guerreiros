@@ -1,5 +1,6 @@
 import React from 'react';
 import confetti from 'canvas-confetti';
+import { motion, AnimatePresence } from 'motion/react';
 import { useIntentions } from '../src/hooks/useIntentions';
 import { useStore } from '../store';
 import { CalendarCheck, Copy, BellRing, Settings, UserCheck, UserX, Clock, ArrowRight, RotateCcw, Zap, Star, Shield, Trash2, CheckCircle2, AlertTriangle, Flame, AlertCircle, MessageCircle, LogOut } from 'lucide-react';
@@ -21,7 +22,7 @@ interface IntentionsViewProps {
 
 export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, currentPlayer, onMoveToAttendance, showNotification }) => {
   const { intentions, isLoaded, setIntent, resetIntent, clearIntentions, toggleAutomation, sendReminders, copyToWhatsApp, copyReminder } = useIntentions();
-  const { players, attendance, showConfirmModal } = useStore();
+  const { players, attendance, showConfirmModal, isInitialLoading } = useStore();
 
   const getWhatsAppLink = (player: Player) => {
     let clean = (player.phone || '').replace(/\D/g, '');
@@ -34,212 +35,13 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
   };
 
   // --- WhatsApp & Evolution API Integration State ---
-  const [waConfig, setWaConfig] = React.useState({
-    apiUrl: '',
-    apiKey: '',
-    instanceName: '',
-    groupJid: '',
-    updateIntervalMinutes: 120,
-    botActive: false,
-    webhookUrl: ''
-  });
-  const [isWaLoading, setIsWaLoading] = React.useState(true);
-  const [isWaSaving, setIsWaSaving] = React.useState(false);
   const [isPnSending, setIsPnSending] = React.useState(false);
   const [isGroupSending, setIsGroupSending] = React.useState(false);
-  const [showConfig, setShowConfig] = React.useState(false);
+  const [isConfirming, setIsConfirming] = React.useState(false);
+  const [isDeclining, setIsDeclining] = React.useState(false);
+  const [processingId, setProcessingId] = React.useState<string | null>(null);
   const [waSteps, setWaSteps] = React.useState<{ id: string; name: string; status: string; details: string; }[] | null>(null);
   const [waTaskType, setWaTaskType] = React.useState<'group' | 'direct' | null>(null);
-
-  // Bot health check and QR code generator
-  const [realStatus, setRealStatus] = React.useState<string>('CARREGANDO');
-  const [qrCode, setQrCode] = React.useState<string | null>(null);
-  const [loadingQr, setLoadingQr] = React.useState<boolean>(false);
-  const [isSimulated, setIsSimulated] = React.useState<boolean>(false);
-  const [qrIsSimulated, setQrIsSimulated] = React.useState<boolean>(false);
-  const [qrMessage, setQrMessage] = React.useState<string | null>(null);
-  const [fetchedGroups, setFetchedGroups] = React.useState<{ id: string; subject: string; }[] | null>(null);
-  const [loadingGroups, setLoadingGroups] = React.useState<boolean>(false);
-
-  const checkRealStatus = React.useCallback(async () => {
-    setRealStatus('CARREGANDO');
-    try {
-      const res = await fetch('/api/whatsapp/status');
-      const data = await res.json();
-      setRealStatus(data.status || 'OFFLINE');
-      setIsSimulated(!!data.isSimulated);
-      // Synchronize internal config state to prevent stale isSimulated value from rolling back settings on next save
-      setWaConfig(prev => ({
-        ...prev,
-        isSimulated: !!data.isSimulated,
-        simulatedState: data.isSimulated ? (data.status === 'ONLINE' ? 'open' : 'close') : 'close'
-      }));
-      if (data.status === 'ONLINE') {
-        setQrCode(null); // Clear old QR Code if online
-      }
-    } catch (e) {
-      setRealStatus('OFFLINE');
-      setIsSimulated(false);
-    }
-  }, []);
-
-  React.useEffect(() => {
-    if (userRole === 'ADMIN') {
-      fetch('/api/whatsapp/config')
-        .then(async res => {
-          if (!res.ok) {
-            const errBody = await res.json().catch(() => ({}));
-            throw new Error(`Failed to load WhatsApp config: ${res.status} ${res.statusText} ${JSON.stringify(errBody)}`);
-          }
-          return res.json();
-        })
-        .then(data => {
-          setWaConfig(prev => ({
-            ...prev,
-            ...data,
-            webhookUrl: data.webhookUrl || (window.location.origin + '/api/whatsapp/webhook')
-          }));
-          setIsWaLoading(false);
-          checkRealStatus();
-        })
-        .catch(err => {
-          console.error("Failed to load WhatsApp config", err);
-          setIsWaLoading(false);
-          setRealStatus('OFFLINE');
-        });
-    }
-  }, [userRole, checkRealStatus]);
-
-  const handleFetchGroups = async () => {
-    setLoadingGroups(true);
-    setFetchedGroups(null);
-    try {
-      const res = await fetch('/api/whatsapp/groups');
-      const data = await res.json();
-      if (data.success) {
-        setFetchedGroups(data.groups || []);
-        showNotification(`${data.groups?.length || 0} grupos carregados com sucesso! Selecione o grupo correto na lista.`, 'success');
-      } else {
-        showNotification(`Erro ao carregar grupos: ${data.error || 'Verifique se a API e instância estão saudáveis.'}`, 'error');
-      }
-    } catch (err: any) {
-      showNotification(`Erro de conexão: ${err.message}`, 'error');
-    } finally {
-      setLoadingGroups(false);
-    }
-  };
-
-  const handleGenerateQr = async () => {
-    setLoadingQr(true);
-    try {
-      const res = await fetch('/api/whatsapp/qrcode');
-      if (!res.ok) {
-        let msg = 'Falha ao obter QR code da Evolution API';
-        try {
-          const errData = await res.json();
-          if (errData.details) {
-            msg = `Erro na API: ${errData.details}`;
-          } else if (errData.error) {
-            msg = errData.error;
-          }
-        } catch (e) {}
-        throw new Error(msg);
-      }
-      const data = await res.json();
-      if (data.alreadyConnected) {
-        showNotification(data.message || 'WhatsApp já está conectado e pronto!', 'success');
-        setRealStatus('ONLINE');
-        setQrCode(null);
-        setQrIsSimulated(false);
-        setQrMessage(null);
-        return;
-      }
-
-      // Extração inteligente e extremamente robusta do QR Code
-      let qr = '';
-      if (typeof data === 'string') {
-        qr = data;
-      } else if (data) {
-        // 1. Se base64 estivar direto no retorno
-        if (typeof data.base64 === 'string') {
-          qr = data.base64;
-        } 
-        // 2. Se base64 estiver aninhado em data.qrcode
-        else if (data.qrcode && typeof data.qrcode.base64 === 'string') {
-          qr = data.qrcode.base64;
-        }
-        // 3. Se qrcode for uma string direta
-        else if (typeof data.qrcode === 'string') {
-          qr = data.qrcode;
-        }
-        // 4. Se a string de conexão estiver em data.qrcode.code
-        else if (data.qrcode && typeof data.qrcode.code === 'string') {
-          const codeStr = data.qrcode.code;
-          if (codeStr.startsWith('data:image') || codeStr.startsWith('http://') || codeStr.startsWith('https://')) {
-            qr = codeStr;
-          } else {
-            qr = `https://api.qrserver.com/v1/create-qr-code/?size=350x350&margin=10&data=${encodeURIComponent(codeStr)}`;
-          }
-        }
-        // 5. Se estiver no campo data.code diretamente
-        else if (typeof data.code === 'string') {
-          if (data.code.startsWith('data:image') || data.code.startsWith('http://') || data.code.startsWith('https://')) {
-            qr = data.code;
-          } else if (data.code.length > 500 && !data.code.includes('@')) {
-            qr = data.code;
-          } else {
-            qr = `https://api.qrserver.com/v1/create-qr-code/?size=350x350&margin=10&data=${encodeURIComponent(data.code)}`;
-          }
-        }
-      }
-
-      if (qr) {
-        if (!qr.startsWith('data:image') && !qr.startsWith('http://') && !qr.startsWith('https://')) {
-          if (qr.includes('base64,')) {
-            qr = qr;
-          } else {
-            qr = `data:image/png;base64,${qr}`;
-          }
-        }
-        setQrCode(qr);
-        setQrIsSimulated(!!data.isSimulated || !!data.fallbackSimulated);
-        setQrMessage(data.message || null);
-        
-        if (data.isSimulated || data.fallbackSimulated) {
-          showNotification('QR Code de Simulação Gerado. Verifique os avisos na tela!', 'info');
-        } else {
-          showNotification('QR Code gerado com sucesso! Escaneie com seu celular no WhatsApp.', 'success');
-        }
-      } else {
-        showNotification('Não foi possível obter o QR code. Verifique a URL de API e se a instância está ativa.', 'error');
-      }
-    } catch (err: any) {
-      showNotification(`Erro: ${err.message}`, 'error');
-    } finally {
-      setLoadingQr(false);
-    }
-  };
-
-  const handleSaveWaConfig = async () => {
-    setIsWaSaving(true);
-    try {
-      const res = await fetch('/api/whatsapp/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(waConfig)
-      });
-      const data = await res.json();
-      if (data.success) {
-        showNotification('Configurações salvas e webhook atualizado com sucesso na Evolution API!', 'success');
-      } else {
-        showNotification('Falha ao salvar configurações do WhatsApp', 'error');
-      }
-    } catch (err: any) {
-      showNotification(`Erro ao salvar: ${err.message}`, 'error');
-    } finally {
-      setIsWaSaving(false);
-    }
-  };
 
   const handleSendWaPrompts = async () => {
     setIsPnSending(true);
@@ -335,19 +137,87 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
     }
   };
 
-  const handleConfirm = () => {
-    if (currentPlayer) {
-      setIntent(currentPlayer.id, 'GOING');
-      const firstName = currentPlayer.name.split(' ')[0];
-      showNotification(`Bora pra cima, ${firstName}! Sua presença foi confirmada com sucesso! 🏐🔥`, 'success');
-      celebratePresence();
+  const [showSuccessOverlay, setShowSuccessOverlay] = React.useState(false);
+
+  const handleConfirm = async () => {
+    if (currentPlayer && !isConfirming && !isDeclining) {
+      setIsConfirming(true);
+      setProcessingId(currentPlayer.id);
+      try {
+        await setIntent(currentPlayer.id, 'GOING');
+        const firstName = currentPlayer.name.split(' ')[0];
+        showNotification(`Bora pra cima, ${firstName}! Sua presença foi confirmada com sucesso! 🏐🔥`, 'success');
+        celebratePresence();
+        setShowSuccessOverlay(true);
+        setTimeout(() => setShowSuccessOverlay(false), 3000);
+      } catch (err: any) {
+        showNotification(err.message || 'Erro ao confirmar presença. Tente novamente.', 'error');
+      } finally {
+        setIsConfirming(false);
+        setProcessingId(null);
+      }
     }
   };
 
-  const handleDecline = () => {
-    if (currentPlayer) {
-      setIntent(currentPlayer.id, 'NOT_GOING');
-      showNotification('Entendido. Sentiremos sua falta nessa quinta!', 'info');
+  const handleConfirmPlayer = async (p: Player) => {
+    if (isConfirming || isDeclining || processingId) return;
+    setProcessingId(p.id);
+    try {
+      setIsConfirming(true);
+      await setIntent(p.id, 'GOING');
+      showNotification(`Presença de ${capitalizeName(p.name)} confirmada com sucesso! 🏐🔥`, 'success');
+      celebratePresence();
+    } catch (err: any) {
+      console.error(err);
+      showNotification(err.message || 'Erro ao registrar presença.', 'error');
+    } finally {
+      setIsConfirming(false);
+      setProcessingId(null);
+    }
+  };
+
+  const handleConfirmIntent = async (pId: string, status: 'GOING' | 'NOT_GOING') => {
+    if (processingId) return;
+    setProcessingId(pId);
+    try {
+      await setIntent(pId, status);
+      showNotification(status === 'GOING' ? 'Presença confirmada!' : 'Ausência registrada.', 'success');
+      if (status === 'GOING') celebratePresence();
+    } catch (err: any) {
+      showNotification(err.message || 'Erro ao atualizar.', 'error');
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const handleDecline = async () => {
+    if (currentPlayer && !isConfirming && !isDeclining) {
+      setIsDeclining(true);
+      setProcessingId(currentPlayer.id);
+      try {
+        await setIntent(currentPlayer.id, 'NOT_GOING');
+        showNotification('Entendido. Sentiremos sua falta nessa quinta!', 'info');
+        setShowSuccessOverlay(true);
+        setTimeout(() => setShowSuccessOverlay(false), 3000);
+      } catch (err: any) {
+        showNotification(err.message || 'Erro ao informar ausência. Tente novamente.', 'error');
+      } finally {
+        setIsDeclining(false);
+        setProcessingId(null);
+      }
+    }
+  };
+
+  const handleResetIntent = async (playerId: string) => {
+    if (processingId) return;
+    setProcessingId(playerId);
+    try {
+      await resetIntent(playerId);
+      showNotification('Ação processada com sucesso.', 'info');
+    } catch (err: any) {
+      showNotification('Erro ao processar alteração.', 'error');
+    } finally {
+      setProcessingId(null);
     }
   };
 
@@ -453,24 +323,26 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
 
   const [searchTerm, setSearchTerm] = React.useState('');
 
-  if (!isLoaded) {
+  if (!isLoaded || isInitialLoading || (players.length === 0 && Object.keys(intentions?.responses || {}).length > 0)) {
     return (
       <div className="flex flex-col items-center justify-center py-20 space-y-4">
         <div className="w-12 h-12 border-4 border-brand-primary border-t-transparent rounded-full animate-spin"></div>
-        <p className="text-white font-black uppercase tracking-widest text-xs animate-pulse">Carregando Lista...</p>
+        <p className="text-white font-black uppercase tracking-widest text-xs animate-pulse">Carregando Lista de Sócios...</p>
       </div>
     );
   }
 
+  const isActiveStatus = (p: Player) => (p.status === 'active' || p.status === 'guest' || !p.status || p.status === '') && !p.isDM && p.status !== 'dm';
+
   const goingPlayers = players
-    .filter(p => intentions.responses[p.id] === 'GOING' && p.status === 'active' && !p.isDM)
+    .filter(p => intentions.responses[p.id] === 'GOING')
     .sort((a, b) => {
       const timeA = intentions.confirmationTimestamps?.[a.id] || 0;
       const timeB = intentions.confirmationTimestamps?.[b.id] || 0;
       return timeA - timeB;
     });
-  const notGoingPlayers = players.filter(p => intentions.responses[p.id] === 'NOT_GOING' && p.status === 'active' && !p.isDM);
-  const undecidedPlayers = players.filter(p => !intentions.responses[p.id] && p.status === 'active' && !p.isDM);
+  const notGoingPlayers = players.filter(p => intentions.responses[p.id] === 'NOT_GOING');
+  const undecidedPlayers = players.filter(p => !intentions.responses[p.id] && isActiveStatus(p));
 
   const waitlistPlayers = players
     .filter(p => p.status === 'waitlist')
@@ -500,25 +372,64 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
   const formattedDate = displayDate.split('-').reverse().slice(0, 2).join('/');
 
   return (
-    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-8 duration-700">
+    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-8 duration-700 relative">
       
+      {/* Success Animation Overlay */}
+      {showSuccessOverlay && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
+          <div className="bg-brand-primary p-8 sm:p-12 rounded-[3rem] border-8 border-black shadow-[0_0_100px_rgba(245,196,41,0.5)] text-center animate-in zoom-in duration-500 max-w-sm w-full">
+            <div className="w-24 h-24 bg-black rounded-full flex items-center justify-center mx-auto mb-6 shadow-2xl">
+              {isGoing ? (
+                <UserCheck className="w-12 h-12 text-brand-primary" />
+              ) : (
+                <UserX className="w-12 h-12 text-red-500" />
+              )}
+            </div>
+            <h3 className="text-3xl font-black uppercase tracking-tighter text-black mb-2">
+              {isGoing ? 'Confirmado!' : 'Registrado!'}
+            </h3>
+            <p className="text-black/80 font-black uppercase tracking-widest text-[10px]">
+              {isGoing ? 'Bora pro jogo, Guerreiro!' : 'Até a próxima partida!'}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Header - Accent Border */}
       <div className="bg-black rounded-[2rem] sm:rounded-[3rem] border border-white/5 border-l-[8px] border-l-brand-primary p-6 sm:p-12 relative overflow-hidden">
         <div className="absolute top-0 right-0 w-64 h-64 bg-brand-primary/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
         <div className="relative z-10 flex flex-col items-stretch sm:items-center sm:flex-row justify-between gap-8">
-          <div className="text-left">
+          <div className="text-left flex-1">
             {currentPlayer && (
-              <div className="mb-4 inline-flex items-center gap-2 px-3 py-1.5 bg-brand-primary/10 border border-brand-primary/20 rounded-full">
-                <span className="text-[10px] font-black text-brand-primary uppercase tracking-widest">
-                  Boas Vindas, {capitalizeName(currentPlayer.name)}!
-                </span>
-                {(isGoing || isNotGoing) && (
-                  <>
-                    <span className="w-1 h-1 bg-brand-primary/50 rounded-full" />
-                    <span className="text-[10px] font-black text-white/70 uppercase tracking-widest">
-                      {isGoing ? 'Você confirmou presença' : 'Você informou ausência'}
+              <div className="mb-6">
+                {(isGoing || isNotGoing) ? (
+                  <div className={`flex items-center gap-4 p-5 rounded-3xl border-2 animate-in zoom-in duration-500 ${
+                    isGoing 
+                      ? 'bg-brand-primary/10 border-brand-primary/40 text-brand-primary' 
+                      : 'bg-red-500/10 border-red-500/40 text-red-500'
+                  }`}>
+                    <div className={`p-3 rounded-2xl ${isGoing ? 'bg-brand-primary text-black' : 'bg-red-500 text-white'}`}>
+                      {isGoing ? <UserCheck className="w-6 h-6" /> : <UserX className="w-6 h-6" />}
+                    </div>
+                    <div>
+                      <p className="text-xs font-black uppercase tracking-[0.2em] mb-0.5">Status da sua Presença</p>
+                      <p className="text-xl font-black uppercase tracking-tight text-white">
+                        {isGoing ? 'Confirmado para o Jogo!' : 'Ausente nesta Quinta'}
+                      </p>
+                      <button 
+                        onClick={() => handleResetIntent(currentPlayer.id)}
+                        className="mt-2 text-[10px] font-black uppercase tracking-widest underline opacity-60 hover:opacity-100 transition-opacity"
+                      >
+                        Clique aqui para alterar sua resposta
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-brand-primary/10 border border-brand-primary/20 rounded-full">
+                    <span className="text-[10px] font-black text-brand-primary uppercase tracking-widest">
+                      Boas Vindas, {capitalizeName(currentPlayer.name)}!
                     </span>
-                  </>
+                  </div>
                 )}
               </div>
             )}
@@ -541,42 +452,52 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
           
           {/* Player Actions */}
           {currentPlayer && !isGoing && !isNotGoing && (
-            <div className="flex flex-col xs:flex-row items-stretch gap-4 bg-brand-secondary/30 p-5 rounded-[2rem] border border-brand-primary/20 w-full sm:w-auto">
-              <button
-                onClick={handleConfirm}
-                className={`flex-1 xs:flex-none flex items-center justify-center gap-3 px-8 py-5 rounded-2xl font-black uppercase tracking-[0.1em] text-xs sm:text-sm transition-all shadow-xl active:scale-95 ${
-                  isGoing 
-                    ? 'bg-white text-black ring-4 ring-white/20 scale-105' 
-                    : isNotGoing 
-                      ? 'bg-white/5 text-white/40 border border-white/10 opacity-60' 
-                      : 'bg-white text-black hover:bg-white/90 shadow-lg'
-                }`}
-              >
-                <UserCheck className="w-5 h-5" />
-                Vou Jogar
-              </button>
-              <button
-                onClick={handleDecline}
-                className={`flex-1 xs:flex-none flex items-center justify-center gap-3 px-8 py-5 rounded-2xl font-black uppercase tracking-[0.1em] text-xs sm:text-sm transition-all shadow-xl active:scale-95 ${
-                  isNotGoing 
-                    ? 'bg-brand-primary text-black ring-4 ring-brand-primary/20 scale-105' 
-                    : isGoing 
-                      ? 'bg-brand-primary/10 text-brand-primary/60 border border-brand-primary/20 opacity-60' 
-                      : 'bg-brand-primary text-black hover:bg-brand-primary/90 shadow-lg'
-                }`}
-              >
-                <UserX className="w-5 h-5" />
-                Não Vou
-              </button>
-            </div>
+              <div className="flex flex-col sm:flex-row items-stretch gap-4 bg-brand-secondary/30 p-4 sm:p-6 rounded-[2rem] border border-brand-primary/20 w-full lg:w-auto">
+                <button
+                  onClick={handleConfirm}
+                  disabled={isConfirming || isDeclining}
+                  className={`flex-1 lg:flex-none flex flex-col items-center justify-center gap-1.5 px-8 py-6 rounded-3xl font-black uppercase tracking-[0.15em] text-sm transition-all shadow-xl active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed border-2 border-black ${
+                    isGoing 
+                      ? 'bg-brand-primary text-black ring-4 ring-brand-primary/20' 
+                      : 'bg-brand-primary text-black hover:bg-brand-primary/90 shadow-[0_0_30px_rgba(245,196,41,0.2)]'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    {isConfirming ? (
+                      <div className="w-6 h-6 border-3 border-black border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <UserCheck className="w-7 h-7" />
+                    )}
+                    <span className="text-xl">Vou Jogar!</span>
+                  </div>
+                  <span className="text-[9px] opacity-70 font-bold">Confirmar Presença</span>
+                </button>
+                <button
+                  onClick={handleDecline}
+                  disabled={isConfirming || isDeclining}
+                  className={`flex-1 lg:flex-none flex flex-col items-center justify-center gap-1.5 px-8 py-6 rounded-3xl font-black uppercase tracking-[0.15em] text-sm transition-all shadow-xl active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed border-2 border-black ${
+                    isNotGoing 
+                      ? 'bg-white text-black ring-4 ring-white/20' 
+                      : 'bg-white text-black hover:bg-gray-100 shadow-[0_0_30px_rgba(255,255,255,0.1)]'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    {isDeclining ? (
+                      <div className="w-6 h-6 border-3 border-black border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <UserX className="w-7 h-7 text-red-600" />
+                    )}
+                    <span className="text-xl">Não Vou</span>
+                  </div>
+                  <span className="text-[9px] opacity-70 font-bold">Informar Ausência</span>
+                </button>
+              </div>
           )}
         </div>
       </div>
 
-      {(!currentPlayer || isGoing || isNotGoing || userRole === 'ADMIN') ? (
-        <>
-          {/* Admin Controls - Strictly for ADMIN role */}
-          {userRole === 'ADMIN' && (
+      {/* Admin Controls - Strictly for ADMIN role */}
+      {userRole === 'ADMIN' && (
             <div className="bg-black rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary p-6 sm:p-8">
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-3">
@@ -720,438 +641,27 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
             </div>
           </div>
 
-          {/* WhatsApp / Evolution API Management Panel */}
+          {/* WhatsApp / Evolution API Action Buttons */}
           <div className="mt-8 pt-6 border-t border-white/5 space-y-6">
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={() => setShowConfig(!showConfig)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  setShowConfig(!showConfig);
-                }
-              }}
-              className="w-full py-4 px-6 bg-brand-primary/5 hover:bg-brand-primary/10 border border-brand-primary/30 rounded-2xl flex items-center justify-between text-left transition-all relative overflow-hidden cursor-pointer select-none"
-            >
-              <div className="absolute top-0 right-0 p-2 flex items-center gap-2">
+             <div className="flex flex-col md:flex-row gap-4">
                 <button
-                  type="button"
-                  title="Atualizar Conexão"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    checkRealStatus();
-                  }}
-                  className="p-1 text-white/40 hover:text-white hover:bg-white/10 rounded-lg transition-all"
+                  onClick={handleSendWaPrompts}
+                  disabled={isPnSending}
+                  className="flex-1 py-4 px-6 rounded-2xl font-black uppercase tracking-widest text-[10px] bg-white/5 hover:bg-white/10 text-white border border-brand-primary/40 transition-all disabled:opacity-50"
                 >
-                  <RotateCcw className="w-3.5 h-3.5" />
+                  {isPnSending ? 'Disparando...' : 'Perguntar Prontidão p/ Sócio (Direct)'}
                 </button>
-                <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[8px] font-black tracking-tighter border ${
-                  realStatus === 'ONLINE' ? 'bg-green-500/20 text-green-400 border-green-500/30' :
-                  realStatus === 'CONECTANDO' ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' :
-                  realStatus === 'DESCONECTADO' ? 'bg-amber-500/20 text-amber-400 border-amber-500/30' :
-                  realStatus === 'CARREGANDO' ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30 animate-pulse' :
-                  'bg-red-500/20 text-red-500 border-red-500/30'
-                }`}>
-                  <span className={`w-1.5 h-1.5 rounded-full ${realStatus === 'ONLINE' ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></span>
-                  BOT {realStatus}
-                </span>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-green-500/10 text-green-400 rounded-xl">
-                  <CalendarCheck className="w-5 h-5" />
-                </div>
-                <div>
-                  <h4 className="text-sm font-black text-white uppercase tracking-wider">Guerreiros WhatsApp Bot</h4>
-                  <p className="text-[10px] text-white/40">Automação inteligente integrada ao <span className="text-brand-primary font-bold">Evolution API</span>.</p>
-                </div>
-              </div>
-              <span className="text-[10px] font-black uppercase text-brand-primary bg-brand-primary/10 px-3 py-1.5 rounded-full border border-brand-primary/20">
-                {showConfig ? 'Fechar Painel' : 'Configurar Agente'}
-              </span>
-            </div>
 
-            {showConfig && (
-              <div className="bg-brand-secondary/30 rounded-2xl p-6 border border-white/5 space-y-6 animate-in fade-in slide-in-from-top-4 duration-300">
-                {isWaLoading ? (
-                  <div className="flex items-center justify-center py-6">
-                    <div className="w-6 h-6 border-2 border-brand-primary border-t-transparent rounded-full animate-spin"></div>
-                  </div>
-                ) : (
-                  <div className="space-y-6">
-                    <div className="bg-brand-primary/5 p-4 rounded-xl border border-brand-primary/20">
-                      <div className="flex items-center gap-2 mb-1">
-                        <Shield className="w-3 h-3 text-brand-primary" />
-                        <span className="text-[10px] font-black text-brand-primary uppercase tracking-widest">Hospedagem Google Cloud Active</span>
-                      </div>
-                      <p className="text-[10px] text-white/50 leading-relaxed">
-                        Este serviço utiliza instâncias do <span className="text-white font-bold">Google Cloud Run</span> para processar as mensagens do WhatsApp em tempo real. Certifique-se de que sua instância da Evolution API esteja acessível via internet.
-                      </p>
-                    </div>
+                <button
+                  onClick={handleSendWaGroup}
+                  disabled={isGroupSending}
+                  className="flex-1 py-4 px-6 rounded-2xl font-black uppercase tracking-widest text-[10px] bg-green-500/10 text-green-400 hover:bg-green-500 hover:text-black border border-green-500/40 transition-all disabled:opacity-50"
+                >
+                  {isGroupSending ? 'Enviando...' : 'Enviar Lista Atual p/ Grupo'}
+                </button>
+             </div>
 
-                     {/* Real-time integration check with QR Code option */}
-                    {realStatus === 'ONLINE' ? (
-                      <div className="bg-green-500/5 border border-green-500/20 rounded-xl p-4 flex items-center gap-3">
-                        <CheckCircle2 className="w-5 h-5 text-green-400 shrink-0" />
-                        <div>
-                          <h5 className="text-xs font-black text-green-400 uppercase tracking-wide">Interface Conectada</h5>
-                          <p className="text-[10px] text-white/50 leading-relaxed">A comunicação com a Evolution API está em perfeitas condições. Respostas via WhatsApp serão computadas instantaneamente.</p>
-                        </div>
-                      </div>
-                    ) : realStatus === 'DESCONECTADO' || realStatus === 'OFFLINE' ? (
-                      <div className="space-y-4">
-                        <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-5 flex flex-col md:flex-row items-center justify-between gap-4">
-                          <div className="space-y-1 text-center md:text-left">
-                            <div className="flex items-center gap-1.5 justify-center md:justify-start">
-                              <AlertTriangle className="w-4 h-4 text-amber-500 animate-bounce" />
-                              <h5 className="text-xs font-black uppercase text-amber-500">Aparelho Desconectado</h5>
-                            </div>
-                            <p className="text-[10px] text-white/50">O bot de automação está configurado, mas precisará ser pareado ao WhatsApp do clube para funcionar.</p>
-                          </div>
-                          <div className="flex gap-2 w-full md:w-auto shrink-0">
-                            <button
-                              type="button"
-                              onClick={checkRealStatus}
-                              className="flex-1 md:flex-initial py-2.5 px-4 bg-white/5 border border-white/10 text-white rounded-lg text-[10px] font-black uppercase tracking-wider hover:bg-white/10 active:scale-95 transition-all text-center"
-                            >
-                              Verificar
-                            </button>
-                            <button
-                              type="button"
-                              onClick={handleGenerateQr}
-                              disabled={loadingQr}
-                              className="flex-1 md:flex-initial py-2.5 px-5 bg-brand-primary text-black rounded-lg text-[10px] font-black uppercase tracking-wider hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 text-center"
-                            >
-                              {loadingQr ? 'Carregando...' : 'Gerar QR Code'}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ) : realStatus === 'INCOMPLETA' ? (
-                      <div className="bg-slate-500/5 border border-white/5 rounded-xl p-4 flex items-center gap-3">
-                        <AlertCircle className="w-5 h-5 text-slate-400 shrink-0" />
-                        <div>
-                          <h5 className="text-xs font-black text-slate-400 uppercase tracking-wide">Configuração Incompleta</h5>
-                          <p className="text-[10px] text-white/40 leading-relaxed">Insira a URL correspondente, o token da chave API e o nome da instância abaixo para ativar o pareamento.</p>
-                        </div>
-                      </div>
-                    ) : null}
-
-                    {/* Painel do Modo Simulado Inteligente */}
-                    <div className="bg-brand-primary/5 border border-brand-primary/10 rounded-xl p-5 relative overflow-hidden">
-                      <div className="absolute top-0 right-0 bg-brand-primary text-black font-black uppercase text-[8px] px-2.5 py-1 rounded-bl-lg tracking-widest">
-                        TEST SUITE
-                      </div>
-                      <h5 className="text-xs font-black text-brand-primary uppercase tracking-wider flex items-center gap-1.5">
-                        ⚡ MODO DE SIMULAÇÃO GUERREIROS
-                      </h5>
-                      <p className="text-[10px] text-white/60 mt-1 leading-relaxed">
-                        Se a sua URL da Evolution API estiver incorreta, apontando para o próprio site (404) ou se você apenas deseja ver o robô funcionando em tempo real, ative o Modo Simulado. O aplicativo irá simular os disparos de mensagens diretas de prontidão e responderá (SIM/NÃO) como se fossem os sócios interagindo em tempo real!
-                      </p>
-                      <div className="mt-4 flex flex-wrap items-center justify-between gap-4 border-t border-white/5 pt-3">
-                        <span className="text-[9px] font-mono">
-                          Status:{' '}
-                          {isSimulated ? (
-                            <span className="text-brand-primary font-black animate-pulse">ATIVO (SIMULADOR)</span>
-                          ) : (
-                            <span className="text-white/40">INATIVO</span>
-                          )}
-                        </span>
-                        {isSimulated ? (
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              try {
-                                const sRes = await fetch('/api/whatsapp/toggle-simulation', {
-                                  method: 'POST',
-                                  headers: { 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ active: false })
-                                });
-                                const sData = await sRes.json();
-                                if (sData.success) {
-                                  showNotification('Modo Simulado Desativado com Sucesso!', 'success');
-                                  setIsSimulated(false);
-                                  setWaConfig(prev => ({ ...prev, isSimulated: false, simulatedState: 'close' }));
-                                  checkRealStatus();
-                                } else {
-                                  showNotification('Falha ao desativar simulação.', 'error');
-                                }
-                              } catch (err: any) {
-                                showNotification('Erro: ' + err.message, 'error');
-                              }
-                            }}
-                            className="py-2.5 px-5 rounded-lg text-[9px] font-black uppercase bg-black hover:bg-white/5 text-brand-primary border border-brand-primary/40 hover:scale-[1.02] active:scale-95 transition-all"
-                          >
-                            Desativar Simulação
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              try {
-                                const sRes = await fetch('/api/whatsapp/simulate-scan', { method: 'POST' });
-                                const sData = await sRes.json();
-                                if (sData.success) {
-                                  showNotification('Modo Simulado Ativado com Sucesso! Bot virtual está ONLINE.', 'success');
-                                  checkRealStatus();
-                                } else {
-                                  showNotification('Falha ao ativar simulação.', 'error');
-                                }
-                              } catch (err: any) {
-                                showNotification('Erro: ' + err.message, 'error');
-                              }
-                            }}
-                            className="py-2.5 px-5 rounded-lg text-[9px] font-black uppercase bg-brand-primary text-black hover:scale-[1.02] active:scale-95 transition-all"
-                          >
-                            Conectar Bot via Simulação
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* QR Code Presentation Box */}
-                    {qrCode && (
-                      <div className="bg-white/5 border border-white/10 rounded-xl p-6 flex flex-col items-center justify-center space-y-4 animate-in zoom-in-95 duration-500 relative overflow-hidden">
-                        {qrIsSimulated && (
-                          <div className="absolute top-0 inset-x-0 bg-brand-primary text-black font-black uppercase text-[8px] py-1 text-center tracking-widest animate-pulse">
-                            MODO SIMULAÇÃO ATIVO
-                          </div>
-                        )}
-
-                        <h5 className="text-xs font-black uppercase text-brand-primary mt-2">
-                          {qrIsSimulated ? '⚡ QR Code de Testes (Simulado)' : 'Escaneie o QR Code'}
-                        </h5>
-
-                        <div className="p-4 bg-white rounded-2xl shadow-xl border border-white/20 flex items-center justify-center relative">
-                          <img 
-                            src={qrCode} 
-                            alt="WhatsApp QR Code" 
-                            className="w-[280px] h-[280px] md:w-[320px] md:h-[320px] max-w-full object-contain" 
-                            style={{ imageRendering: 'pixelated' }}
-                            referrerPolicy="no-referrer" 
-                          />
-                          {qrIsSimulated && (
-                            <div className="absolute inset-2 bg-black/90 flex flex-col items-center justify-center p-4 text-center rounded-xl border border-brand-primary/20">
-                              <span className="text-brand-primary font-black text-sm uppercase tracking-wider mb-2 animate-bounce">⚡ MOCK BOT ATIVO</span>
-                              <p className="text-[10px] text-white font-medium max-w-[220px] leading-relaxed">
-                                Este QR Code é fictício/simulado para testes do clube.
-                              </p>
-                              <p className="text-[9px] text-white/60 max-w-[220px] mt-1.5 leading-normal">
-                                NÃO o escaneie com seu celular real, ou receberá "QR Code inválido" no WhatsApp!
-                              </p>
-                            </div>
-                          )}
-                        </div>
-
-                        {qrIsSimulated ? (
-                          <div className="space-y-4 text-center max-w-[380px] w-full">
-                            <div className="text-[10px] text-brand-primary font-black uppercase bg-brand-primary/5 border border-brand-primary/10 rounded-xl p-3 leading-relaxed">
-                              {qrMessage || "A Evolution API do WhatsApp está offline ou configurada incorretamente (recebeu erro 404). Nós geramos esse QR Code simulado para que você possa conectar o bot virtual de testes."}
-                            </div>
-                            
-                            <button
-                              type="button"
-                              onClick={async () => {
-                                try {
-                                  const sRes = await fetch('/api/whatsapp/simulate-scan', { method: 'POST' });
-                                  const sData = await sRes.json();
-                                  if (sData.success) {
-                                    showNotification('Bot Virtual Conectado com Sucesso! O status mudou para ONLINE.', 'success');
-                                    setQrCode(null);
-                                    setQrIsSimulated(false);
-                                    setQrMessage(null);
-                                    checkRealStatus();
-                                  } else {
-                                    showNotification('Falha ao simular conexão.', 'error');
-                                  }
-                                } catch (err: any) {
-                                  showNotification('Erro: ' + err.message, 'error');
-                                }
-                              }}
-                              className="w-full py-3 px-5 rounded-xl text-[10px] font-black uppercase bg-brand-primary text-black hover:scale-[1.02] active:scale-95 transition-all text-center"
-                            >
-                              Simular Aprovação (Conectar Bot Virtual)
-                            </button>
-                          </div>
-                        ) : (
-                          <p className="text-[10px] text-white/50 text-center max-w-[280px]">
-                            Abra o WhatsApp no celular, vá em <span className="text-white font-bold">Aparelhos Conectados</span> {'>'} <span className="text-white font-bold">Conectar Aparelho</span> e aponte para a tela.
-                          </p>
-                        )}
-
-                        <button
-                          onClick={() => {
-                            setQrCode(null);
-                            setQrIsSimulated(false);
-                            setQrMessage(null);
-                          }}
-                          className="text-[9px] font-black uppercase text-red-500 hover:underline pt-2"
-                        >
-                          Ocultar QR Code
-                        </button>
-                      </div>
-                    )}
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div className="space-y-2">
-                        <label className="text-[10px] font-black text-white/40 uppercase tracking-widest ml-1">Evolution API URL</label>
-                        <input
-                          type="url"
-                          placeholder="Ex: https://api.suadominio.com"
-                          value={waConfig.apiUrl || ''}
-                          onChange={e => setWaConfig({ ...waConfig, apiUrl: e.target.value })}
-                          className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl focus:border-brand-primary outline-none text-white text-xs font-bold transition-all"
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <label className="text-[10px] font-black text-white/40 uppercase tracking-widest ml-1">Evolution API Token / ApiKey</label>
-                        <input
-                          type="password"
-                          placeholder="Ex: apikey_token_here"
-                          value={waConfig.apiKey || ''}
-                          onChange={e => setWaConfig({ ...waConfig, apiKey: e.target.value })}
-                          className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl focus:border-brand-primary outline-none text-white text-xs font-bold transition-all"
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <label className="text-[10px] font-black text-white/40 uppercase tracking-widest ml-1">Nome da Instância</label>
-                        <input
-                          type="text"
-                          placeholder="Ex: santo-volei"
-                          value={waConfig.instanceName || ''}
-                          onChange={e => setWaConfig({ ...waConfig, instanceName: e.target.value })}
-                          className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl focus:border-brand-primary outline-none text-white text-xs font-bold transition-all"
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <label className="text-[10px] font-black text-white/40 uppercase tracking-widest ml-1">WhatsApp JID do Grupo</label>
-                        <div className="relative">
-                          <input
-                            type="text"
-                            placeholder="Ex: 120363025219382210@g.us"
-                            value={waConfig.groupJid || ''}
-                            onChange={e => setWaConfig({ ...waConfig, groupJid: e.target.value })}
-                            className="w-full pl-4 pr-32 py-3 bg-white/5 border border-white/10 rounded-xl focus:border-brand-primary outline-none text-white text-xs font-bold transition-all font-mono"
-                          />
-                          <button
-                            type="button"
-                            disabled={loadingGroups}
-                            onClick={handleFetchGroups}
-                            className="absolute right-2 top-1.5 bottom-1.5 px-3 rounded-lg text-[9px] font-black uppercase tracking-wider bg-brand-primary text-black hover:scale-[1.02] active:scale-95 transition-all flex items-center gap-1 disabled:opacity-50"
-                          >
-                            {loadingGroups ? (
-                              <>
-                                <span className="animate-spin inline-block w-2 bg-black border border-t-transparent rounded-full" />
-                                Carregando...
-                              </>
-                            ) : (
-                              "Listar Grupos"
-                            )}
-                          </button>
-                        </div>
-
-                        {fetchedGroups && (
-                          <div className="mt-2.5 p-3 rounded-xl bg-black border border-brand-primary/20 space-y-2 max-h-[180px] overflow-y-auto">
-                            <p className="text-[9px] font-black uppercase text-brand-primary tracking-wider">
-                              Selecione o Grupo do Clube:
-                            </p>
-                            {fetchedGroups.length === 0 ? (
-                              <p className="text-[10px] text-white/50 italic py-1">Nenhum grupo encontrado na conta conectada.</p>
-                            ) : (
-                              <div className="grid grid-cols-1 gap-1.5">
-                                {fetchedGroups.map((group) => (
-                                  <button
-                                    key={group.id}
-                                    type="button"
-                                    onClick={() => {
-                                      setWaConfig(prev => ({ ...prev, groupJid: group.id }));
-                                      setFetchedGroups(null);
-                                      showNotification(`Grupo JID selecionado: ${group.subject}`, 'success');
-                                    }}
-                                    className={`w-full text-left p-2 rounded-lg text-[10px] font-mono hover:bg-white/5 border transition-all ${
-                                      waConfig.groupJid === group.id
-                                        ? 'border-brand-primary text-brand-primary bg-brand-primary/5'
-                                        : 'border-white/5 text-white/80 hover:border-white/10'
-                                    }`}
-                                  >
-                                    <div className="font-sans font-bold text-white text-xs truncate">{group.subject}</div>
-                                    <div className="text-[9px] text-white/40 truncate mt-0.5">{group.id}</div>
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="bg-black/40 p-4 rounded-xl border border-white/5 space-y-4">
-                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                        <div>
-                          <p className="text-xs font-bold text-slate-300">Target Webhook URL</p>
-                          <p className="text-[10px] text-slate-500">Copie e registre no Evolution se a ativação automatica falhar.</p>
-                          <code className="block mt-2 bg-brand-secondary/80 p-2.5 rounded text-[10px] font-mono text-brand-primary select-all break-all border border-white/5">
-                            {waConfig.webhookUrl}
-                          </code>
-                        </div>
-                        <button
-                          onClick={() => {
-                            navigator.clipboard.writeText(waConfig.webhookUrl);
-                            showNotification('Webhook URL copiado com sucesso!', 'success');
-                          }}
-                          className="md:self-end shrink-0 py-2.5 px-4 rounded-xl font-black uppercase text-[9px] bg-white/10 hover:bg-white/20 text-white transition-all border border-white/15"
-                        >
-                          Copiar URL
-                        </button>
-                      </div>
-
-                      <div className="flex items-center gap-3 pt-2">
-                        <input
-                          type="checkbox"
-                          id="botActive"
-                          checked={waConfig.botActive || false}
-                          onChange={e => setWaConfig({ ...waConfig, botActive: e.target.checked })}
-                          className="rounded border-white/20 bg-white/5 text-brand-primary focus:ring-transparent h-4 w-4"
-                        />
-                        <label htmlFor="botActive" className="text-xs font-black uppercase tracking-wider text-slate-300 cursor-pointer">
-                          Ativar Agente de Resposta Automática (SIM/NÃO via Direct)
-                        </label>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-3 pt-2">
-                      <button
-                        onClick={async () => {
-                          await handleSaveWaConfig();
-                          checkRealStatus();
-                        }}
-                        disabled={isWaSaving}
-                        className="flex-1 min-w-[200px] py-3 px-6 rounded-xl font-black uppercase tracking-widest text-[10px] bg-brand-primary text-black hover:scale-[1.02] shadow-xl shadow-brand-primary/10 transition-all disabled:opacity-50"
-                      >
-                        {isWaSaving ? 'Salvando...' : 'Salvar & Sincronizar Instância'}
-                      </button>
-
-                      <button
-                        onClick={handleSendWaPrompts}
-                        disabled={isPnSending}
-                        className="flex-1 min-w-[200px] py-3 px-6 rounded-xl font-black uppercase tracking-widest text-[10px] bg-white/5 hover:bg-white/10 text-white border border-brand-primary/40 transition-all disabled:opacity-50"
-                      >
-                        {isPnSending ? 'Disparando...' : 'Perguntar Prontidão p/ Sócio (Direct)'}
-                      </button>
-
-                      <button
-                        onClick={handleSendWaGroup}
-                        disabled={isGroupSending}
-                        className="flex-1 min-w-[200px] py-3 px-6 rounded-xl font-black uppercase tracking-widest text-[10px] bg-green-500/20 text-green-400 hover:bg-green-500 hover:text-black transition-all disabled:opacity-50"
-                      >
-                        {isGroupSending ? 'Enviando...' : 'Enviar Lista Atual p/ Grupo'}
-                      </button>
-                    </div>
-
-                    {/* Monitoramento de Envio por Etapas com Pequenos LEDs */}
+             {/* Monitoramento de Envio por Etapas com Pequenos LEDs */}
                     {waSteps && (
                       <div className="mt-6 p-5 rounded-2xl border border-white/10 bg-white/[0.02] animate-in fade-in slide-in-from-top-4 duration-300">
                         <div className="flex items-center justify-between mb-4 pb-2 border-b border-white/5">
@@ -1220,10 +730,6 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
                         </div>
                       </div>
                     )}
-                  </div>
-                )}
-              </div>
-            )}
           </div>
         </div>
       )}
@@ -1240,38 +746,79 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
             <span className="bg-brand-primary text-black text-xs font-black px-3 py-1 rounded-full">{goingPlayers.length}</span>
           </div>
           
-                  <div className="grid grid-cols-2 gap-2 mt-4 pr-1">
-                    {goingPlayers.map((p, i) => {
-                      const isCheckedIn = (attendance || []).some(a => a.id === p.id);
-                      return (
-                        <div key={p.id} className="flex items-center justify-between bg-brand-primary/5 p-3 rounded-2xl border border-brand-primary/20 hover:border-brand-primary/40 transition-colors gap-2 min-w-0">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <span className="text-brand-primary font-black text-xs w-4 shrink-0">{i + 1}.</span>
-                            <span className="text-white text-[12px] font-black uppercase tracking-tighter leading-tight">
-                              {capitalizeName(p.name)}
-                            </span>
-                          </div>
-                          {isCheckedIn && (
-                            <div title="Na Quadra" className="p-2 text-green-400 bg-green-500/10 rounded-lg shrink-0">
-                              <UserCheck className="w-4 h-4" />
-                            </div>
-                          )}
-                          {!isCheckedIn && (currentPlayer?.id === p.id || userRole === 'ADMIN') && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                resetIntent(p.id);
-                              }}
-                              className={`p-2.5 rounded-xl transition-all shadow-lg shrink-0 ${currentPlayer?.id === p.id ? 'bg-red-500 text-white shadow-red-500/20' : 'bg-brand-primary text-black shadow-brand-primary/20 hover:scale-105 active:scale-95'}`}
-                              title={currentPlayer?.id === p.id ? "Sair da Lista" : "Remover"}
-                            >
-                              {currentPlayer?.id === p.id ? <LogOut className="w-4 h-4" /> : <RotateCcw className="w-4 h-4" />}
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
+          <div className="grid grid-cols-1 gap-2 mt-4 pr-1">
+            <AnimatePresence mode="popLayout">
+              {goingPlayers.map((p, i) => {
+                const isCheckedIn = (attendance || []).some(a => a.id === p.id);
+                const canReset = !isCheckedIn && (currentPlayer?.id === p.id || userRole === 'ADMIN');
+                return (
+                  <motion.div 
+                    layout
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.9 }}
+                    transition={{ duration: 0.2 }}
+                    key={p.id} 
+                    onClick={() => {
+                      if (canReset && !processingId) {
+                        handleResetIntent(p.id);
+                      }
+                    }}
+                    className={`flex items-center justify-between bg-brand-primary/5 p-4 rounded-2xl border border-brand-primary/20 hover:border-brand-primary/50 transition-all duration-300 gap-2 min-w-0 group/player hover:scale-[1.02] active:scale-[0.98] ${canReset ? 'cursor-pointer hover:bg-brand-primary/10 hover:shadow-[0_0_20px_rgba(245,196,41,0.15)]' : 'opacity-85'} ${(processingId && processingId !== p.id) ? 'opacity-40 grayscale pointer-events-none' : ''}`}
+                    title={canReset ? (currentPlayer?.id === p.id ? "Clique para sair da lista" : "Clique para remover presença") : undefined}
+                  >
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <span className="text-brand-primary font-black text-xs w-5 shrink-0">{i + 1}.</span>
+                      <span className="text-white text-[13px] font-black uppercase tracking-tighter leading-tight relative py-0.5 flex items-center gap-1.5 min-w-0 flex-wrap">
+                        <span className="break-words font-black">{capitalizeName(p.name)}</span>
+                        {p.status === 'guest' && (
+                          <span className="text-[8px] font-black uppercase tracking-wider text-brand-primary bg-brand-primary/10 border border-brand-primary/30 px-1.5 py-0.5 rounded leading-none shrink-0">
+                            Convidado
+                          </span>
+                        )}
+                        <span className="absolute -bottom-0.5 left-0 h-0.5 bg-brand-primary transition-all duration-300 w-0 group-hover/player:w-full group-active/player:w-full" />
+                      </span>
+                    </div>
+                    {isCheckedIn && (
+                      <div title="Na Quadra" className="p-2 text-green-400 bg-green-500/10 rounded-lg shrink-0">
+                        <UserCheck className="w-4 h-4" />
+                      </div>
+                    )}
+                    {userRole === 'ADMIN' && !isCheckedIn && (
+                      <button
+                        disabled={!!processingId}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onMoveToAttendance(p.id);
+                        }}
+                        className="p-2.5 bg-brand-primary text-black rounded-xl hover:scale-110 active:scale-90 transition-all shadow-lg shadow-brand-primary/20 shrink-0"
+                        title="Mover para Quadra"
+                      >
+                        <UserCheck className="w-4 h-4" />
+                      </button>
+                    )}
+                    {((!isCheckedIn && currentPlayer?.id === p.id) || userRole === 'ADMIN') && (
+                      <button
+                        disabled={!!processingId}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleResetIntent(p.id);
+                        }}
+                        className={`p-2.5 rounded-xl transition-all shadow-lg shrink-0 disabled:opacity-50 ${currentPlayer?.id === p.id ? 'bg-red-500 text-white shadow-red-500/20' : 'bg-brand-primary text-black shadow-brand-primary/20 hover:scale-110 active:scale-90'}`}
+                        title={currentPlayer?.id === p.id ? "Sair da Lista" : "Remover da Lista"}
+                      >
+                        {processingId === p.id ? (
+                          <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          <Trash2 className="w-4 h-4" />
+                        )}
+                      </button>
+                    )}
+                  </motion.div>
+                );
+              })}
+            </AnimatePresence>
+          </div>
         </div>
 
         {/* Undecided */}
@@ -1284,27 +831,73 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
             <span className="bg-white/10 text-slate-400 text-xs font-black px-3 py-1 rounded-full">{undecidedPlayers.length}</span>
           </div>
           
-                  <div className="grid grid-cols-2 gap-2 mt-4 overflow-y-auto max-h-[400px] pr-1 custom-scrollbar">
-                    {filteredUndecided.map((p, i) => (
-                      <div key={p.id} className="flex items-center justify-between bg-slate-500/5 p-3 rounded-2xl border border-white/5 hover:border-slate-500/40 transition-colors gap-2 min-w-0">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className="text-slate-500 font-black text-xs w-4 shrink-0">{i + 1}.</span>
-                          <span className="text-white text-[12px] font-black uppercase tracking-tighter leading-tight">
-                            {capitalizeName(p.name)}
+          <div className="grid grid-cols-1 gap-2 mt-4 overflow-y-auto max-h-[500px] pr-1 custom-scrollbar">
+            <AnimatePresence mode="popLayout">
+              {filteredUndecided.map((p, i) => {
+                const canConfirm = userRole === 'ADMIN' || currentPlayer?.id === p.id || !currentPlayer;
+                return (
+                  <motion.div 
+                    layout
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.9 }}
+                    transition={{ duration: 0.2 }}
+                    key={p.id} 
+                    onClick={() => {
+                      if (canConfirm && !processingId) {
+                        handleConfirmPlayer(p);
+                      }
+                    }}
+                    className={`flex items-center justify-between bg-slate-500/5 p-4 rounded-2xl border border-white/5 hover:border-brand-primary/40 transition-all duration-300 gap-2 min-w-0 group/player hover:scale-[1.02] active:scale-[0.98] ${canConfirm ? 'cursor-pointer hover:bg-brand-primary/10 hover:border-brand-primary/30 hover:shadow-[0_0_20px_rgba(245,196,41,0.15)]' : 'opacity-85'} ${(processingId && processingId !== p.id) ? 'opacity-40 grayscale pointer-events-none' : ''}`}
+                    title={canConfirm ? "Clique para confirmar presença" : undefined}
+                  >
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <span className="text-slate-500 font-black text-xs w-5 shrink-0">{i + 1}.</span>
+                      <span className="text-white text-[13px] font-black uppercase tracking-tighter leading-tight relative py-0.5 flex items-center gap-1.5 min-w-0 flex-wrap">
+                        <span className="break-words font-black">{capitalizeName(p.name)}</span>
+                        {p.status === 'guest' && (
+                          <span className="text-[8px] font-black uppercase tracking-wider text-brand-primary bg-brand-primary/10 border border-brand-primary/30 px-1.5 py-0.5 rounded leading-none shrink-0">
+                            Convidado
                           </span>
-                        </div>
-                        {userRole === 'ADMIN' && (
-                          <button
-                            onClick={() => setIntent(p.id, 'GOING')}
-                            className="p-2.5 bg-brand-primary text-black rounded-xl hover:scale-105 active:scale-95 transition-all shadow-lg shadow-brand-primary/20 shrink-0"
-                            title="Confirmar"
-                          >
-                            <UserCheck className="w-4 h-4" />
-                          </button>
                         )}
+                        <span className="absolute -bottom-0.5 left-0 h-0.5 bg-brand-primary transition-all duration-300 w-0 group-hover/player:w-full group-active/player:w-full" />
+                      </span>
+                    </div>
+                    {canConfirm && (
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          disabled={!!processingId}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleConfirmPlayer(p);
+                          }}
+                          className="p-3 bg-brand-primary text-black rounded-xl hover:scale-110 active:scale-90 transition-all shadow-lg shadow-brand-primary/20 shrink-0 disabled:opacity-50 border-2 border-black"
+                          title="Vou Jogar!"
+                        >
+                          {processingId === p.id ? (
+                            <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                          ) : (
+                            <UserCheck className="w-5 h-5" />
+                          )}
+                        </button>
+                        <button
+                          disabled={!!processingId}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleConfirmIntent(p.id, 'NOT_GOING');
+                          }}
+                          className="p-3 bg-red-500/20 text-red-500 border border-red-500/40 rounded-xl hover:bg-red-500 hover:text-white transition-all shadow-lg shrink-0 disabled:opacity-50"
+                          title="Não Vou"
+                        >
+                          <UserX className="w-5 h-5" />
+                        </button>
                       </div>
-                    ))}
-                  </div>
+                    )}
+                  </motion.div>
+                );
+              })}
+            </AnimatePresence>
+          </div>
         </div>
 
         {/* Not Going */}
@@ -1317,38 +910,68 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
             <span className="bg-red-500/20 text-red-500 text-xs font-black px-3 py-1 rounded-full">{notGoingPlayers.length}</span>
           </div>
           
-                  <div className="grid grid-cols-2 gap-2 mt-4 overflow-y-auto max-h-[400px] pr-1 custom-scrollbar">
-                    {notGoingPlayers.length === 0 ? (
-                      <div className="col-span-full py-8 text-center bg-white/5 rounded-2xl border border-dashed border-white/10">
-                        <p className="text-slate-500 text-sm font-medium italic">Nenhuma ausência registrada.</p>
-                      </div>
-                    ) : (
-                      notGoingPlayers.map((p, i) => (
-                        <div key={p.id} className="flex items-center justify-between bg-red-500/5 p-3 rounded-2xl border border-red-500/20 hover:border-red-500/40 transition-colors gap-2 min-w-0">
-                          <div className="flex items-center gap-2 opacity-50 min-w-0">
-                            <span className="text-red-500/50 font-black text-xs w-4 shrink-0">{i + 1}.</span>
-                            <span className="text-white text-[12px] font-black uppercase tracking-tighter leading-tight">
-                              {capitalizeName(p.name)}
+          <div className="grid grid-cols-1 gap-2 mt-4 overflow-y-auto max-h-[500px] pr-1 custom-scrollbar">
+            {notGoingPlayers.length === 0 ? (
+              <div className="col-span-full py-8 text-center bg-white/5 rounded-2xl border border-dashed border-white/10">
+                <p className="text-slate-500 text-sm font-medium italic">Nenhuma ausência registrada.</p>
+              </div>
+            ) : (
+              <AnimatePresence mode="popLayout">
+                {notGoingPlayers.map((p, i) => {
+                  const canReset = currentPlayer?.id === p.id || userRole === 'ADMIN';
+                  return (
+                    <motion.div 
+                      layout
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.9 }}
+                      transition={{ duration: 0.2 }}
+                      key={p.id} 
+                      onClick={() => {
+                        if (canReset && !processingId) {
+                          handleResetIntent(p.id);
+                        }
+                      }}
+                      className={`flex items-center justify-between bg-red-500/5 p-4 rounded-2xl border border-red-500/20 hover:border-red-500/50 transition-all duration-300 gap-2 min-w-0 group/player hover:scale-[1.02] active:scale-[0.98] ${canReset ? 'cursor-pointer hover:bg-red-500/10 hover:border-red-500/30 hover:shadow-[0_0_20px_rgba(239,68,68,0.15)]' : 'opacity-85'} ${(processingId && processingId !== p.id) ? 'opacity-40 grayscale pointer-events-none' : ''}`}
+                      title={canReset ? "Clique para voltar para a lista de indecisos" : undefined}
+                    >
+                      <div className="flex items-center gap-2 opacity-50 min-w-0 flex-1">
+                        <span className="text-red-500/50 font-black text-xs w-5 shrink-0">{i + 1}.</span>
+                        <span className="text-white text-[13px] font-black uppercase tracking-tighter leading-tight relative py-0.5 flex items-center gap-1.5 min-w-0 flex-wrap">
+                          <span className="break-words font-black">{capitalizeName(p.name)}</span>
+                          {p.status === 'guest' && (
+                            <span className="text-[8px] font-black uppercase tracking-wider text-red-500 bg-red-500/10 border border-red-500/30 px-1.5 py-0.5 rounded leading-none shrink-0">
+                              Convidado
                             </span>
-                          </div>
-                          <div className="flex items-center gap-1 shrink-0">
-                            {(currentPlayer?.id === p.id || userRole === 'ADMIN') && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  resetIntent(p.id);
-                                }}
-                                className={`p-2.5 rounded-xl transition-all shadow-lg shrink-0 ${currentPlayer?.id === p.id ? 'bg-red-500 text-white shadow-red-500/20' : 'bg-brand-primary text-black shadow-brand-primary/20 hover:scale-105 active:scale-95'}`}
-                                title={currentPlayer?.id === p.id ? "Voltar para a Lista" : "Remover"}
-                              >
-                                {currentPlayer?.id === p.id ? <LogOut className="w-4 h-4" /> : <RotateCcw className="w-4 h-4" />}
-                              </button>
+                          )}
+                          <span className="absolute -bottom-0.5 left-0 h-0.5 bg-red-500 transition-all duration-300 w-0 group-hover/player:w-full group-active/player:w-full" />
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {canReset && (
+                          <button
+                            disabled={!!processingId}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleResetIntent(p.id);
+                            }}
+                            className={`p-2.5 rounded-xl transition-all shadow-lg shrink-0 disabled:opacity-50 ${currentPlayer?.id === p.id ? 'bg-red-500 text-white shadow-red-500/20' : 'bg-brand-primary text-black shadow-brand-primary/20 hover:scale-110 active:scale-90'}`}
+                            title={currentPlayer?.id === p.id ? "Voltar para a Lista" : "Remover da Lista"}
+                          >
+                            {processingId === p.id ? (
+                              <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                            ) : (
+                              <Trash2 className="w-4 h-4" />
                             )}
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
+                          </button>
+                        )}
+                      </div>
+                    </motion.div>
+                  );
+                })}
+              </AnimatePresence>
+            )}
+          </div>
         </div>
       </div>
 
@@ -1382,16 +1005,6 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
           
           <p className="mt-6 text-[10px] font-bold text-slate-500 uppercase tracking-widest text-center">
             A lista de espera segue a ordem de cadastro. Quando um sócio ativo sair, o primeiro da lista entra automaticamente.
-          </p>
-        </div>
-      )}
-        </>
-      ) : (
-        <div className="flex flex-col items-center justify-center p-12 bg-black rounded-[2rem] border border-brand-primary/20 text-center animate-in fade-in zoom-in-95">
-          <CalendarCheck className="w-16 h-16 text-brand-primary/50 mb-6" />
-          <h3 className="text-xl font-black text-white uppercase tracking-tight mb-2">Confirme sua intenção</h3>
-          <p className="text-sm text-slate-400">
-            Você precisa confirmar presença ou ausência nos botões acima para visualizar a lista completa de intenções dos outros sócios.
           </p>
         </div>
       )}

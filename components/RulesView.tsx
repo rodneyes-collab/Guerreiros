@@ -9,7 +9,11 @@ import {
   Target,
   CreditCard,
   Users,
-  Dribbble
+  Dribbble,
+  Sparkles,
+  TrendingUp,
+  Zap,
+  Clock
 } from 'lucide-react';
 
 export const RulesView: React.FC = () => {
@@ -47,16 +51,16 @@ export const RulesView: React.FC = () => {
                 desc: "O sistema calcula a probabilidade de vitória com base no equilíbrio dos dois times. Vitórias padrão somam cerca de 25 pontos, e derrotas retiram cerca de 20. Além disso, existe o BÔNUS DE PLACAR: vitórias dominantes (ex: 15x05) rendem bônus extras de ELO, enquanto derrotas apertadas (ex: 15x14) minimizam a perda de pontos." 
               },
               { 
-                title: "ELO Global vs. Eficiência Técnica", 
-                desc: "O ELO GLOBAL é sua carreira de longo prazo. A EFICIÊNCIA TÉCNICA é a métrica 'real' usada no sorteio: ela soma sua Consistência Técnica + Habilidades Práticas (Ataque, Defesa, etc.) + Bônus de Impacto. Isso garante que o sorteio seja puramente baseado na qualidade técnica atual." 
+                title: "ELO Global vs. Rating Híbrido de Equilíbrio", 
+                desc: "O ELO GLOBAL é sua pontuação acumulada de carreira, refletindo suas vitórias, derrotas e Bônus Diário de Presença. Já no SORTEIO DAS PARTIDAS, o sistema utiliza o RATING HÍBRIDO (Média Ponderada: 50% ELO Puro sem o bônus de presença + 50% Índice Composto de Habilidades Práticas e Win Rate). Isso garante que quem é assíduo ganha pontos no Ranking de Carreira sem inflar desproporcionalmente o nível técnico na montagem das equipes." 
               },
               { 
                 title: "Formação do Ranking", 
                 desc: "O ranking de sócios é atualizado após cada partida. Ele combina sua pontuação ELO, sua porcentagem de vitórias e seu desempenho no dia (MVP). Estar no topo significa ser o jogador mais consistente e decisivo do clube." 
               },
               {
-                title: "Fidelidade e Presença",
-                desc: "A cada sessão em que o sócio estiver presente (registrar pelo menos uma partida no dia), ele recebe um bônus imediato e retroativo de +50 pontos ELO, que são somados na construção do ranking de toda a sua história no clube."
+                title: "Bônus Diário de Presença (Fidelidade)",
+                desc: "A cada dia de jogo em que o sócio tiver sua presença confirmada na lista (check-in), ele recebe imediatamente um acréscimo de +50 pontos ELO na sua carreira. O bônus é concedido de forma instantânea para valorizar a assiduidade e pontualidade."
               }
             ].map((item, i) => (
               <div key={i} className="flex gap-6 group">
@@ -67,6 +71,152 @@ export const RulesView: React.FC = () => {
                 </div>
               </div>
             ))}
+
+            <div className="mt-8 p-6 bg-brand-primary/5 rounded-[2rem] border border-brand-primary/20 flex gap-4 items-start animate-in fade-in slide-in-from-top-2 duration-500">
+              <div className="w-12 h-12 bg-brand-primary/10 rounded-2xl flex items-center justify-center border border-brand-primary/40 shrink-0">
+                <Sparkles className="w-6 h-6 text-brand-primary animate-pulse" />
+              </div>
+              <div className="space-y-1">
+                <h5 className="text-sm font-black uppercase tracking-wider text-brand-primary">🔥 Super Bônus Diário de Presença</h5>
+                <p className="text-xs text-white/80 leading-relaxed font-bold">
+                  Valorizamos a sua fidelidade! Ao confirmar a presença (check-in) na lista de hoje, você ganha instantaneamente um acréscimo de <span className="text-brand-primary font-black">+50 pontos ELO</span> direto no seu perfil. Esse bônus é acumulativo ao longo do campeonato e ajuda você a conquistar novas patentes e subir no ranking!
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* CÁLCULO DO RANKING E DESEMPATES */}
+        <section className="bg-black backdrop-blur-xl p-8 md:p-10 rounded-[3rem] border border-brand-primary/30 border-l-[8px] border-l-brand-primary shadow-2xl space-y-8 relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-brand-primary/5 rounded-full blur-3xl pointer-events-none" />
+          
+          <div className="flex items-center gap-4 text-brand-primary">
+            <div className="w-12 h-12 bg-brand-primary/10 rounded-2xl flex items-center justify-center border border-brand-primary/40">
+              <Info className="w-6 h-6 text-brand-primary" />
+            </div>
+            <div>
+              <span className="text-[10px] font-black uppercase tracking-widest text-brand-primary">Guerreiros Intelligence</span>
+              <h3 className="text-2xl font-black uppercase tracking-tight text-white">Como o Ranking e Desempates são Calculados?</h3>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+              {/* Cartão 1: Vitórias e Derrotas */}
+              <div className="bg-white/5 border border-white/5 p-4 rounded-2xl flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <TrendingUp className="w-4 h-4 text-emerald-500" />
+                    <h5 className="text-[10px] font-black text-white uppercase tracking-widest">Saldo de Partidas (ELO)</h5>
+                  </div>
+                  <p className="text-xs text-white/60 leading-relaxed">
+                    Sua performance em quadra define os pontos de partidas:
+                  </p>
+                  <ul className="text-xs text-white/50 space-y-1 mt-2 list-disc pl-4">
+                    <li>Cada Vitória: <strong className="text-emerald-500 font-bold">+20 pontos</strong></li>
+                    <li>Cada Derrota: <strong className="text-rose-500 font-bold">-20 pontos</strong></li>
+                  </ul>
+                </div>
+                <div className="text-[9px] font-mono text-white/30 uppercase mt-4">Performance</div>
+              </div>
+
+              {/* Cartão 2: Bônus de Fidelidade */}
+              <div className="bg-white/5 border border-white/5 p-4 rounded-2xl flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Zap className="w-4 h-4 text-brand-primary" />
+                    <h5 className="text-[10px] font-black text-white uppercase tracking-widest">Bônus de Participação</h5>
+                  </div>
+                  <p className="text-xs text-white/60 leading-relaxed">
+                    Todos os guerreiros que jogam no dia garantem um bônus fixo de presença:
+                  </p>
+                  <p className="text-sm font-black text-brand-primary uppercase mt-3">
+                    +50 pontos de fidelidade
+                  </p>
+                </div>
+                <div className="text-[9px] font-mono text-white/30 uppercase mt-4">Presença</div>
+              </div>
+
+              {/* Cartão 3: Fórmula */}
+              <div className="bg-white/5 border border-white/5 p-4 rounded-2xl flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Target className="w-4 h-4 text-brand-primary" />
+                    <h5 className="text-[10px] font-black text-white uppercase tracking-widest">A Fórmula de Pontos</h5>
+                  </div>
+                  <p className="text-xs text-white/60 leading-relaxed">
+                    A soma do desempenho em quadra com o bônus fixo diário:
+                  </p>
+                  <div className="bg-black/60 border border-white/5 p-2 rounded-xl mt-3 text-center font-mono text-xs text-brand-primary font-black">
+                    Pontos = (V * 20) + (D * -20) + 50
+                  </div>
+                </div>
+                <div className="text-[9px] font-mono text-white/30 uppercase mt-4">Fórmula Oficial</div>
+              </div>
+
+              {/* Cartão 4: Critério de Desempate (Soberano) */}
+              <div className="bg-white/5 border border-brand-primary/30 p-4 rounded-2xl flex flex-col justify-between relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-12 h-12 bg-brand-primary/10 rounded-full blur-xl pointer-events-none" />
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Clock className="w-4 h-4 text-brand-primary" />
+                    <h5 className="text-[10px] font-black text-brand-primary uppercase tracking-widest">Critério de Desempate</h5>
+                  </div>
+                  <p className="text-xs text-white/60 leading-relaxed">
+                    Se dois jogadores empatarem em ELO, o critério de desempate absoluto é o:
+                  </p>
+                  <p className="text-xs font-black text-white uppercase mt-2">
+                    Menor Tempo em Quadra
+                  </p>
+                  <p className="text-xs text-white/40 mt-1 leading-normal">
+                    Quem precisou de menos minutos em quadra para atingir a mesma pontuação assume a posição superior no Ranking.
+                  </p>
+                </div>
+                <div className="text-[9px] font-mono text-brand-primary uppercase mt-4">Desempate Soberano</div>
+              </div>
+            </div>
+
+            {/* Seção Prática e Exemplos Clarificadores */}
+            <div className="bg-white/5 border border-white/5 p-5 rounded-2xl space-y-4">
+              <h5 className="text-xs font-black text-brand-primary uppercase tracking-wider">
+                Caso Prático: Por que desempenhos diferentes geram pontuações diferentes?
+              </h5>
+              <p className="text-xs text-white/70 leading-relaxed">
+                Como o bônus de presença (+50) é fixo para todos os participantes do dia, a pontuação final de cada jogador reflete diretamente seu aproveitamento real. Jogadores com aproveitamentos diferentes **não** devem empatar na pontuação de partidas:
+              </p>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                <div className="bg-black/40 border border-white/10 p-4 rounded-xl">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-xs font-black text-white uppercase">Beth (3 Vitórias, 3 Derrotas)</span>
+                    <span className="text-xs font-black text-brand-primary font-mono">+50 pts</span>
+                  </div>
+                  <p className="text-xs text-white/50 leading-relaxed">
+                    Beth jogou 6 partidas equilibradas. Suas vitórias e derrotas se anulam mutuamente no ELO das partidas:
+                  </p>
+                  <div className="text-xs font-mono text-white/40 mt-2 bg-black/40 p-2 rounded border border-white/5">
+                    Partidas: (3 * 20) + (3 * -20) = 60 - 60 = 0 pts
+                    <br />
+                    Total: 0 (Partidas) + 50 (Bônus) = <strong className="text-brand-primary">50 pontos</strong>
+                  </div>
+                </div>
+
+                <div className="bg-black/40 border border-white/10 p-4 rounded-xl">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-xs font-black text-white uppercase">Ana Maria (5 Vitórias, 1 Derrota)</span>
+                    <span className="text-xs font-black text-brand-primary font-mono">+130 pts</span>
+                  </div>
+                  <p className="text-xs text-white/50 leading-relaxed">
+                    Ana Maria teve grande eficiência, sofrendo apenas uma derrota no dia. Seu saldo líquido de partidas é altamente positivo:
+                  </p>
+                  <div className="text-xs font-mono text-white/40 mt-2 bg-black/40 p-2 rounded border border-white/5">
+                    Partidas: (5 * 20) + (1 * -20) = 100 - 20 = +80 pts
+                    <br />
+                    Total: 80 (Partidas) + 50 (Bônus) = <strong className="text-brand-primary">130 pontos</strong>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -84,7 +234,7 @@ export const RulesView: React.FC = () => {
 
           <div className="grid gap-8">
             {[
-              { title: "Abertura da Lista", desc: "A lista de presença é aberta pelo administrador quando chegarem pelo menos 12 jogadores ou às 20:00 em ponto." },
+              { title: "Abertura da Lista", desc: "A lista de presença é aberta pelo administrador quando chegarem pelo menos 12 jogadores ou às 18:30 em ponto." },
               { title: "Fila de Espera", desc: "Quem chegar depois do início do primeiro jogo entra no fim da fila. O sistema sempre prioriza quem ainda não jogou no dia para entrar na próxima partida." }
             ].map((item, i) => (
               <div key={i} className="flex gap-6 group">
@@ -109,12 +259,13 @@ export const RulesView: React.FC = () => {
           <div className="grid gap-8">
             {[
               { title: "1. Fila de Prioridade (Quem Joga)", desc: "O sistema seleciona 12 jogadores seguidores estes critérios: 1º Prioridade absoluta para quem NÃO participou do jogo anterior; 2º Jogadores com menor número de partidas no dia; 3º Ordem na fila de espera." },
-              { title: "2. Regra dos Levantadores", desc: "Cada jogo deve ter 2 levantadores oficiais (um por time). Se houver apenas um levantador disponível nos 12 selecionados, o sistema o fixa em um time e equilibra o outro com o jogador de maior 'Poder Técnico' disponível." },
+              { title: "2. Regra dos Levantadores e Condições Mínimas", desc: "Para que as partidas sejam geradas, o grupo de 12 jogadores selecionados deve satisfazer uma das três composições: (a) 2 levantadores oficiais e 10 de linha; (b) 0 levantadores e 12 de linha; ou (c) 1 levantador oficial e 11 de linha. Nos casos (b) e (c), o sistema abrirá uma consulta perguntando se todos jogarão levantando em rodagem livre de levantamento, ou se o app escolherá levantadores temporários (fixando os de melhor habilidade para equilibrar)." },
               { title: "3. Distribuição Snake (ABBA)", desc: "Os jogadores são ordenados pelo Elo e distribuídos no padrão A-BB-AA: O mais forte de todos vai para o Time A, o 2º e 3º para o Time B, o 4º e 5º para o Time A, e assim por diante. Isso garante que a 'elite' do dia seja dividida entre os dois lados." },
               { title: "4. Separação e Equilíbrio de Gênero", desc: "Antes do sorteio, o sistema separa homens e mulheres em grupos distintos. Ele distribui primeiro os homens usando o padrão Snake e depois as mulheres, garantindo que se houver 4 mulheres, cada time tenha exatamente 2, mantendo a paridade absoluta." },
               { title: "5. Otimização Multi-Camadas", desc: "Após a distribuição inicial, o sistema simula milhares de trocas para minimizar diferenças em: 1º Elo Total; 2º Destaques (Top 4); 3º Base (os 4 menos experientes); 4º Simetria Técnica entre as equipes." },
-              { title: "6. Eficiência Técnica e Habilidades", desc: "O balanceamento usa a 'Eficiência Técnica', que dá um peso muito maior às suas habilidades práticas (Ataque, Saque, etc.) e consistência (TrueSkill), garantindo que o sorteio seja justo e puramente técnico." },
-              { title: "7. Registro de Placar e Bônus", desc: "As partidas são disputadas até 15 pontos. Vitórias dominantes (ex: 15x05) rendem bônus extras de ELO, enquanto derrotas por 14 pontos minimizam a perda de pontos, reconhecendo o alto nível de competitividade." }
+              { title: "6. Rating Híbrido de Equilíbrio (50/50)", desc: "O balanceamento utiliza uma média ponderada composta por: 50% de ELO Puro (descontado do Bônus Diário de Fidelidade) e 50% de Índice Composto de Desempenho (60% Habilidades Práticas de Ataque, Levantamento, Defesa e Saque + 40% Taxa Real de Vitória). Isso garante partidas perfeitamente paritárias e altamente competitivas." },
+              { title: "7. Registro de Placar e Bônus", desc: "As partidas são disputadas até 15 pontos. Vitórias dominantes (ex: 15x05) rendem bônus extras de ELO, enquanto derrotas por 14 pontos minimizam a perda de pontos, reconhecendo o alto nível de competitividade." },
+              { title: "8. Análise de Sinergia por ML", desc: "A IA do aplicativo avalia todo o histórico de partidas (com foco nos últimos 15 dias). Se dois jogadores perdem com frequência quando jogam juntos, a IA penaliza essa combinação para testar formações mais vitoriosas. Se ganham juntos, a sinergia positiva é premiada, tornando os jogos mais competitivos." }
             ].map((item, i) => (
               <div key={i} className="flex gap-6 group">
                 <span className="text-4xl font-black text-white/20 group-hover:text-brand-primary/50 transition-colors italic">{String(i+7).padStart(2, '0')}</span>

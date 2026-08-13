@@ -36,7 +36,7 @@ export const GlobalStats: React.FC<DashboardViewProps> = ({
   selectedDailyDate
 }) => {
   const players = useMemo(() => 
-    allPlayers.filter(p => (p.status === 'active' || !p.status || p.status === '') && !p.isDM),
+    allPlayers.filter(p => (p.status === 'active' || p.status === 'guest' || !p.status || p.status === '') && !p.isDM),
     [allPlayers]
   );
 

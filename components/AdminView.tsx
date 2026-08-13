@@ -42,7 +42,8 @@ import {
   Edit2,
   Star,
   Fingerprint,
-  ScanFace
+  ScanFace,
+  Radio
 } from 'lucide-react';
 import { 
   AreaChart, 
@@ -61,7 +62,10 @@ import {
 import { db, doc, updateDoc, setDoc, deleteDoc, onSnapshot, writeBatch, collection, serverTimestamp, getDocs, query, where, orderBy, limit, getFirestoreDateKey } from '../firebase';
 import firebaseConfig from '../firebase-applet-config.json';
 import { Player } from '../types';
+import { APP_VERSION } from '../constants';
 import { generateUUID } from '../utils/helpers';
+import { ServiceWorkerDiagnostics } from '../src/components/ServiceWorkerDiagnostics';
+import { DbAutoCorrectionPanel } from './DbAutoCorrectionPanel';
 import Markdown from 'react-markdown';
 import { Logo } from '../src/components/Logo';
 import { motion, AnimatePresence } from 'motion/react';
@@ -70,8 +74,13 @@ import { analyzeBillingCosts } from '../services/geminiService';
 import { useBirthdays } from '../src/hooks/useBirthdays';
 import { useWebAuthn } from '../src/hooks/useWebAuthn';
 import { BirthdayAdminCard } from '../src/components/BirthdayAdminCard';
+import { WhatsAppAdminPanel } from './WhatsAppAdminPanel';
+import { EvolutionConfigPanel } from './EvolutionConfigPanel';
+import { WebhookAdminPanel } from './WebhookAdminPanel';
 import { BeaconManager } from './BeaconManager';
+import { SensorCalibrationCard } from './SensorCalibrationCard';
 import { HelpTooltip } from '../src/components/HelpTooltip';
+import { TeamBalancingSimulatorCard } from '../src/components/TeamBalancingSimulatorCard';
 
 import { getLevelSuggestions, LevelSuggestion } from '../utils/levelAuditUtils';
 
@@ -80,10 +89,11 @@ const MemoryMonitorCard = () => {
     useEffect(() => {
         const fetchMem = async () => {
             try {
-                const r = await fetch('/api/memory-usage');
+                const r = await fetch('/api/sys-info');
+                if (!r.ok) throw new Error(`HTTP error! status: ${r.status}`);
                 setMem(await r.json());
             } catch (e) {
-                console.error("Erro ao buscar memória:", e);
+                console.error("Erro ao buscar sys-info:", e);
             }
         };
         fetchMem();
@@ -149,7 +159,7 @@ interface AdminViewProps {
   savePlayer: (player: Player) => Promise<void>;
 }
 
-type AdminTab = 'dashboard' | 'members' | 'maintenance' | 'sentinel' | 'tournaments' | 'system' | 'notifications' | 'audit' | 'security';
+type AdminTab = 'dashboard' | 'members' | 'beacon' | 'sentinel' | 'tournaments' | 'system' | 'notifications' | 'audit' | 'security' | 'whatsapp' | 'webhooks' | 'maintenance';
 
 export const AdminView: React.FC<AdminViewProps> = ({
   resetDailyStats,
@@ -194,7 +204,8 @@ export const AdminView: React.FC<AdminViewProps> = ({
     user,
     currentPlayer,
     setSelectedRankingPlayerId,
-    setViewMode
+    setViewMode,
+    attendance
   } = useStore();
   
   const { register } = useWebAuthn();
@@ -214,6 +225,50 @@ export const AdminView: React.FC<AdminViewProps> = ({
   }, [user]);
 
   const { todayBirthdays, sendBirthdayPush } = useBirthdays();
+
+  const activePlayersForEvasion = useMemo(() => {
+    return players.filter(p => (p.status === 'active' || p.status === 'guest' || !p.status || p.status === '') && !p.isDM);
+  }, [players]);
+
+  const gameDatesForEvasion = useMemo(() => {
+    const dates = Array.from(new Set(matches.map(m => m.date)));
+    return dates.sort((a, b) => b.localeCompare(a)); // Newest to oldest
+  }, [matches]);
+
+  const playersAtRisk = useMemo(() => {
+    const limit = systemMetadata?.consecutiveAbsenceLimit ?? 4;
+    if (gameDatesForEvasion.length < limit) return [];
+    
+    const today = getFirestoreDateKey();
+    const isPresentTodayMap = new Map();
+    if (attendance) {
+      attendance.forEach(p => {
+        if (p.id) isPresentTodayMap.set(p.id, true);
+      });
+    }
+
+    return activePlayersForEvasion.map(player => {
+      let consecutiveMissed = 0;
+      for (const date of gameDatesForEvasion) {
+        // Did the player play on this date?
+        const played = matches.some(m => m.date === date && (m.teamA.includes(player.id) || m.teamB.includes(player.id)));
+        
+        // Did they check in today (if date is today)?
+        const present = (date === today && isPresentTodayMap.has(player.id)) || played;
+
+        if (present) {
+          break; // Streak broken!
+        }
+        consecutiveMissed++;
+      }
+      return {
+        player,
+        consecutiveMissed
+      };
+    })
+    .filter(item => item.consecutiveMissed >= limit) // >= limit missed days
+    .sort((a, b) => b.consecutiveMissed - a.consecutiveMissed);
+  }, [activePlayersForEvasion, gameDatesForEvasion, matches, attendance, systemMetadata?.consecutiveAbsenceLimit]);
 
   const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
   const [billingAnalysis, setBillingAnalysis] = useState<string | null>(null);
@@ -849,13 +904,16 @@ export const AdminView: React.FC<AdminViewProps> = ({
   const tabs: { id: AdminTab; label: string; icon: any }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'members', label: 'Sócios & Acesso', icon: UsersIcon },
+    { id: 'beacon', label: 'Antena & Beacon', icon: Radio },
     { id: 'sentinel', label: 'Agente Sentinela', icon: Bot },
+    { id: 'whatsapp', label: 'WhatsApp', icon: MessageSquare },
     { id: 'maintenance', label: 'Manutenção', icon: Database },
     { id: 'notifications', label: 'Notificações', icon: MessageSquare },
     { id: 'tournaments', label: 'Torneios', icon: Trophy },
     { id: 'system', label: 'Sistema', icon: Settings },
     { id: 'audit', label: 'Auditoria', icon: ShieldCheck },
     { id: 'security', label: 'Segurança', icon: Shield },
+    { id: 'webhooks', label: 'Webhooks', icon: ExternalLink },
   ];
 
   return (
@@ -872,7 +930,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                 content="Área restrita para gestão do aplicativo. Aqui você pode aprovar novos sócios, editar perfis, resetar dados, criar torneios e configurar regras do sistema."
               />
             </h2>
-            <p className="text-xs font-bold text-white uppercase tracking-[0.2em] mt-1">Guerreiros Intelligence v3.0</p>
+            <p className="text-xs font-bold text-white uppercase tracking-[0.2em] mt-1">Guerreiros Intelligence v{APP_VERSION}{systemMetadata?.versionNumber ? ` (${systemMetadata.versionNumber})` : ''}</p>
           </div>
         </div>
         
@@ -918,6 +976,99 @@ export const AdminView: React.FC<AdminViewProps> = ({
                 <div className="lg:col-span-2 space-y-8">
                   {/* Monitor de Memória */}
                   <MemoryMonitorCard />
+
+                  {/* Simulador de Estratégias de Balanceamento (IC) */}
+                  <TeamBalancingSimulatorCard />
+
+                  {/* Alerta de Evasão (Ausentes há +4 Dias de Jogos) */}
+                  {playersAtRisk.length > 0 && (
+                    <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-brand-primary/40 shadow-2xl shadow-brand-primary/5 space-y-6">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                          <div className="w-10 h-10 bg-brand-primary/10 rounded-xl flex items-center justify-center border border-brand-primary/40 animate-pulse">
+                            <AlertTriangle className="w-5 h-5 text-brand-primary" />
+                          </div>
+                          <div>
+                            <h3 className="text-xl font-black uppercase tracking-tight text-white flex items-center gap-2">
+                              Alerta de Evasão <span className="text-brand-primary text-sm font-black font-mono">({playersAtRisk.length})</span>
+                            </h3>
+                            <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Sócios ativos ausentes há {systemMetadata?.consecutiveAbsenceLimit ?? 4} ou mais dias consecutivos</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-4">
+                        {playersAtRisk.map(({ player, consecutiveMissed }) => {
+                          const limit = systemMetadata?.consecutiveAbsenceLimit ?? 4;
+                          // Determine danger level/color
+                          let riskBadgeColor = 'border-amber-500/30 text-amber-500 bg-amber-500/5';
+                          let riskLabel = 'Risco Moderado';
+                          if (consecutiveMissed >= limit + 2) {
+                            riskBadgeColor = 'border-rose-500/30 text-rose-500 bg-rose-500/5';
+                            riskLabel = 'Risco Crítico';
+                          } else if (consecutiveMissed >= limit + 1) {
+                            riskBadgeColor = 'border-orange-500/30 text-orange-500 bg-orange-500/5';
+                            riskLabel = 'Risco Alto';
+                          }
+
+                          // WhatsApp Message
+                          const getRiskWhatsAppLink = (p: Player, days: number) => {
+                            let clean = (p.phone || '').replace(/\D/g, '');
+                            if (!clean) return '';
+                            if (clean.length === 10 || clean.length === 11) {
+                              clean = '55' + clean;
+                            }
+                            const msg = `Olá, *${p.name}*! Tudo bem? Sentimos sua falta nos últimos ${days} dias de jogos do Guerreiros 🏐 Sentimos falta do seu jogo e da resenha! Está tudo bem? Esperamos você de volta nos próximos jogos! 🔥`;
+                            return `https://api.whatsapp.com/send?phone=${clean}&text=${encodeURIComponent(msg)}`;
+                          };
+
+                          const waUrl = getRiskWhatsAppLink(player, consecutiveMissed);
+
+                          return (
+                            <div 
+                              key={player.id} 
+                              className="bg-brand-primary/5 rounded-2xl p-5 flex flex-col md:flex-row items-center justify-between gap-4 border border-white/5 hover:border-brand-primary/20 transition-all"
+                            >
+                              <div className="flex items-center gap-4 min-w-0 flex-1">
+                                <div className="w-10 h-10 rounded-full bg-brand-secondary flex items-center justify-center text-brand-primary font-black text-sm border border-brand-primary/40 shrink-0">
+                                  {player.name.charAt(0)}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <p className="text-sm font-black uppercase tracking-tight text-white leading-none">{player.name}</p>
+                                    <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest border ${riskBadgeColor}`}>
+                                      {riskLabel}
+                                    </span>
+                                  </div>
+                                  <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest mt-1.5 flex items-center gap-1">
+                                    <Clock className="w-3.5 h-3.5 text-brand-primary/40" />
+                                    Ausente há <span className="text-brand-primary font-mono">{consecutiveMissed}</span> dias de jogos consecutivos
+                                  </p>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2 w-full md:w-auto shrink-0">
+                                {player.phone ? (
+                                  <a 
+                                    href={waUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="w-full md:w-auto flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white rounded-xl font-black uppercase tracking-widest text-[9px] transition-all border border-emerald-500/20"
+                                  >
+                                    <MessageSquare className="w-3.5 h-3.5" /> Contactar via WhatsApp
+                                  </a>
+                                ) : (
+                                  <span className="text-[9px] font-bold text-white/20 uppercase tracking-widest px-3 py-2 bg-white/5 rounded-xl border border-white/5">
+                                    Sem celular cadastrado
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  )}
 
                   {/* Aniversariantes do Dia */}
                   {todayBirthdays.length > 0 && (
@@ -994,7 +1145,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                       <div className="w-10 h-10 bg-brand-primary/10 rounded-xl flex items-center justify-center border border-brand-primary/40">
                         <Activity className="w-5 h-5 text-brand-primary" />
                       </div>
-                      <h3 className="text-xl font-black uppercase tracking-tight text-white">Status da Sessão</h3>
+                      <h3 className="text-xl font-black uppercase tracking-tight text-white">Status do Dia</h3>
                     </div>
 
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -1471,7 +1622,22 @@ export const AdminView: React.FC<AdminViewProps> = ({
 
             {activeTab === 'maintenance' && (
               <div className="space-y-8">
-                {/* Agente IA */}
+                {/* Simulador de Balanceamento de Times (IC) */}
+                <TeamBalancingSimulatorCard />
+
+                {/* Diagnóstico Service Worker */}
+                <ServiceWorkerDiagnostics />
+
+                {/* Agente IA de Autocorreção */}
+                <DbAutoCorrectionPanel 
+                  players={players}
+                  matches={matches}
+                  systemMetadata={systemMetadata}
+                  showNotification={showNotification}
+                  onDataCorrected={triggerSync}
+                />
+
+                {/* Relatório Adicional de Integridade */}
                 <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-sm text-white space-y-8 relative overflow-hidden">
                   <div className="absolute top-0 right-0 w-64 h-64 bg-brand-primary/5 rounded-full blur-3xl -mr-32 -mt-32"></div>
                   
@@ -1603,7 +1769,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                         icon: RefreshCw 
                       },
                       { 
-                        label: "Finalizar Sessão", 
+                        label: "Finalizar Dia", 
                         desc: "Zera estatísticas diárias e arquiva jogos.", 
                         action: resetDailyStats, 
                         icon: History 
@@ -1924,11 +2090,68 @@ export const AdminView: React.FC<AdminViewProps> = ({
               </section>
             )}
 
-            {activeTab === 'system' && (
-              <div className="space-y-8">
-                {/* Detecção e Configuração do Beacon Físico da Quadra */}
-                <BeaconManager />
+            {activeTab === 'whatsapp' && (
+            <div className="space-y-8">
+              <section className="bg-brand-light backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-xl">
+                <div className="flex items-center gap-4 mb-8">
+                  <div className="w-12 h-12 bg-brand-primary/10 rounded-2xl flex items-center justify-center border border-brand-primary/20">
+                    <MessageSquare className="w-6 h-6 text-brand-primary" />
+                  </div>
+                  <div>
+                    <h3 className="text-2xl font-black uppercase tracking-tight text-white">Configuração WhatsApp</h3>
+                    <p className="text-xs font-bold text-white/40 uppercase tracking-widest mt-1">Gerencie a conexão e os disparos do Guerreiros Bot</p>
+                  </div>
+                </div>
+                <WhatsAppAdminPanel />
+                
+                <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-xl mt-8">
+                  <div className="flex items-center gap-4 mb-8">
+                    <div className="w-12 h-12 bg-brand-primary/10 rounded-2xl flex items-center justify-center border border-brand-primary/20">
+                      <Shield className="w-6 h-6 text-brand-primary" />
+                    </div>
+                    <div>
+                      <h3 className="text-2xl font-black uppercase tracking-tight text-white">Evolution API Settings</h3>
+                      <p className="text-xs font-bold text-white/40 uppercase tracking-widest mt-1">Configure o Endpoint e API Key da Evolution API</p>
+                    </div>
+                  </div>
+                  <EvolutionConfigPanel />
+                </section>
+              </section>
+            </div>
+          )}
 
+          {activeTab === 'webhooks' && (
+            <div className="space-y-8">
+              <section className="bg-brand-light backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-xl">
+                <div className="flex items-center gap-4 mb-8">
+                  <div className="w-12 h-12 bg-brand-primary/10 rounded-2xl flex items-center justify-center border border-brand-primary/20">
+                    <ExternalLink className="w-6 h-6 text-brand-primary" />
+                  </div>
+                  <div>
+                    <h3 className="text-2xl font-black uppercase tracking-tight text-white">Configuração de Webhooks</h3>
+                    <p className="text-xs font-bold text-white/40 uppercase tracking-widest mt-1">Gerencie os endpoints de webhook e autenticação</p>
+                  </div>
+                </div>
+                <WebhookAdminPanel />
+              </section>
+            </div>
+          )}
+
+          {activeTab === 'beacon' && (
+            <div className="space-y-8">
+              {/* Detecção e Configuração do Beacon Físico da Quadra */}
+              <BeaconManager />
+
+              {/* Calibração Inteligente de Sensor do Beacon */}
+              <SensorCalibrationCard 
+                systemMetadata={systemMetadata} 
+                updateSystemMetadata={updateSystemMetadata} 
+              />
+            </div>
+          )}
+
+          {activeTab === 'system' && (
+              <div className="space-y-8">
                 {/* Configurações de Algoritmo */}
                 <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary space-y-8">
                   <div className="flex items-center gap-4 text-white">
@@ -1966,6 +2189,131 @@ export const AdminView: React.FC<AdminViewProps> = ({
                         )}
                       </button>
                     </div>
+
+                    <div className="flex flex-col justify-between p-6 bg-white/5 border border-white/5 rounded-2xl space-y-4">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <h4 className="font-black text-white uppercase text-[10px] tracking-widest">Bônus de Eficiência MVP</h4>
+                          <p className="text-white/30 text-[9px] font-medium">Bônus sobre a taxa de vitórias diária (padrão: 50%)</p>
+                        </div>
+                        <div className="bg-brand-primary text-black px-2 py-1 rounded-lg text-[10px] font-black uppercase font-mono">
+                          {systemMetadata.mvpEfficiencyBonusPercent ?? 50}%
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const current = systemMetadata.mvpEfficiencyBonusPercent ?? 50;
+                            const next = Math.max(0, current - 5);
+                            updateSystemMetadata({ mvpEfficiencyBonusPercent: next });
+                            showNotification(`Bônus MVP atualizado para ${next}%.`, 'success');
+                          }}
+                          className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-white font-black text-lg transition-all flex items-center justify-center border border-white/10 hover:border-brand-primary/40 animate-none select-none"
+                        >
+                          -
+                        </button>
+                        <div className="flex-1 relative bg-black/40 border border-white/10 rounded-xl px-4 py-2 flex items-center justify-between">
+                          <input
+                            type="number"
+                            min="0"
+                            max="500"
+                            step="5"
+                            value={systemMetadata.mvpEfficiencyBonusPercent ?? 50}
+                            onChange={(e) => {
+                              const val = parseInt(e.target.value);
+                              if (!isNaN(val)) {
+                                updateSystemMetadata({ mvpEfficiencyBonusPercent: Math.max(0, Math.min(500, val)) });
+                              }
+                            }}
+                            className="w-full bg-transparent border-none text-xs font-black text-white focus:outline-none text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                          />
+                          <span className="absolute right-4 text-[9px] font-black text-white/30 uppercase">Percentual</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const current = systemMetadata.mvpEfficiencyBonusPercent ?? 50;
+                            const next = Math.min(500, current + 5);
+                            updateSystemMetadata({ mvpEfficiencyBonusPercent: next });
+                            showNotification(`Bônus MVP atualizado para ${next}%.`, 'success');
+                          }}
+                          className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-white font-black text-lg transition-all flex items-center justify-center border border-white/10 hover:border-brand-primary/40 animate-none select-none"
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                {/* Configurações de Presença e Evasão */}
+                <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary space-y-8">
+                  <div className="flex items-center gap-4 text-white">
+                    <div className="w-10 h-10 bg-white/5 rounded-xl flex items-center justify-center border border-brand-primary/40">
+                      <AlertTriangle className="w-5 h-5 text-brand-primary" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-black uppercase tracking-tight text-white">Regras de Presença & Evasão</h3>
+                      <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Defina o limite de dias para os alertas de ausência</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="flex flex-col justify-between p-6 bg-white/5 border border-white/5 rounded-2xl space-y-4">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <h4 className="font-black text-white uppercase text-[10px] tracking-widest">Alerta de Evasão (Ausência Consecutiva)</h4>
+                          <p className="text-white/30 text-[9px] font-medium">Quantidade máxima de dias de jogo consecutivos que um jogador pode faltar antes de exibir o alerta de evasão nos cartões de Sócios e painel de controle.</p>
+                        </div>
+                        <div className="bg-brand-primary text-black px-2 py-1 rounded-lg text-[10px] font-black uppercase font-mono shrink-0">
+                          {systemMetadata.consecutiveAbsenceLimit ?? 4} Dias
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const current = systemMetadata.consecutiveAbsenceLimit ?? 4;
+                            const next = Math.max(1, current - 1);
+                            updateSystemMetadata({ consecutiveAbsenceLimit: next });
+                            showNotification(`Limite de ausência atualizado para ${next} dias.`, 'success');
+                          }}
+                          className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-white font-black text-lg transition-all flex items-center justify-center border border-white/10 hover:border-brand-primary/40 animate-none select-none"
+                        >
+                          -
+                        </button>
+                        <div className="flex-1 relative bg-black/40 border border-white/10 rounded-xl px-4 py-2 flex items-center justify-between">
+                          <input
+                            type="number"
+                            min="1"
+                            max="30"
+                            step="1"
+                            value={systemMetadata.consecutiveAbsenceLimit ?? 4}
+                            onChange={(e) => {
+                              const val = parseInt(e.target.value);
+                              if (!isNaN(val)) {
+                                updateSystemMetadata({ consecutiveAbsenceLimit: Math.max(1, Math.min(30, val)) });
+                              }
+                            }}
+                            className="w-full bg-transparent border-none text-xs font-black text-white focus:outline-none text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                          />
+                          <span className="absolute right-4 text-[9px] font-black text-white/30 uppercase">Dias</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const current = systemMetadata.consecutiveAbsenceLimit ?? 4;
+                            const next = Math.min(30, current + 1);
+                            updateSystemMetadata({ consecutiveAbsenceLimit: next });
+                            showNotification(`Limite de ausência atualizado para ${next} dias.`, 'success');
+                          }}
+                          className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-white font-black text-lg transition-all flex items-center justify-center border border-white/10 hover:border-brand-primary/40 animate-none select-none"
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </section>
 
@@ -2002,22 +2350,22 @@ export const AdminView: React.FC<AdminViewProps> = ({
                   </div>
                 </section>
 
-                {/* Automations Config */}
+                {/* Configurações de Notificação de Aniversariantes */}
                 <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary space-y-8">
                   <div className="flex items-center gap-4 text-white">
                     <div className="w-10 h-10 bg-white/5 rounded-xl flex items-center justify-center border border-brand-primary/40">
-                      <Settings className="w-5 h-5 text-brand-primary" />
+                      <BellRing className="w-5 h-5 text-brand-primary" />
                     </div>
                     <div>
-                      <h3 className="text-xl font-black uppercase tracking-tight text-white">Automações Diárias</h3>
-                      <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Serviço de Background (CRON)</p>
+                      <h3 className="text-xl font-black uppercase tracking-tight text-white">Notificação de Aniversariantes</h3>
+                      <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Configuração de avisos mensais e diários</p>
                     </div>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="flex items-center justify-between p-6 bg-white/5 border border-white/5 rounded-2xl">
                       <div>
-                        <h4 className="font-black text-white uppercase text-[10px] tracking-widest">Mensagens de Aniversário</h4>
+                        <h4 className="font-black text-white uppercase text-[10px] tracking-widest">Mensagens de Aniversário (Diário)</h4>
                         <p className="text-white/30 text-[9px] font-medium">Verificação todo dia as 09:00 AM</p>
                       </div>
                       <button 
@@ -2036,6 +2384,31 @@ export const AdminView: React.FC<AdminViewProps> = ({
                           <><Check className="w-3.5 h-3.5" /> ON</>
                         ) : (
                           <><X className="w-3.5 h-3.5" /> OFF</>
+                        )}
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between p-6 bg-white/5 border border-white/5 rounded-2xl">
+                      <div>
+                        <h4 className="font-black text-white uppercase text-[10px] tracking-widest">Aviso do Mês (WhatsApp)</h4>
+                        <p className="text-white/30 text-[9px] font-medium">Envio da lista do mês via WhatsApp vs Mostrar apenas no App</p>
+                      </div>
+                      <button 
+                        onClick={() => {
+                          const newValue = systemMetadata.enableAutoMonthBirthdays === false ? true : false;
+                          updateSystemMetadata({ enableAutoMonthBirthdays: newValue });
+                          showNotification(`Aviso mensal via WhatsApp ${newValue ? 'Habilitado' : 'Desabilitado'}.`, 'info');
+                        }}
+                        className={`min-w-[80px] px-4 py-2 rounded-xl font-black uppercase tracking-widest text-[9px] transition-all flex justify-center items-center gap-2 ${
+                          systemMetadata.enableAutoMonthBirthdays !== false
+                            ? 'bg-brand-primary text-brand-secondary shadow-[0_0_15px_rgba(255,215,0,0.3)]' 
+                            : 'bg-white/5 text-white/40 border border-brand-primary/40 hover:bg-white/10'
+                        }`}
+                      >
+                        {systemMetadata.enableAutoMonthBirthdays !== false ? (
+                          <><Check className="w-3.5 h-3.5" /> AUTO (WHATSAPP)</>
+                        ) : (
+                          <><X className="w-3.5 h-3.5" /> APENAS APP</>
                         )}
                       </button>
                     </div>

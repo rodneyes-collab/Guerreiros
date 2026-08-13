@@ -1,7 +1,7 @@
 import React from 'react';
 import { useStore } from '../store';
 import { Player, Gender } from '../types';
-import { translateGender, capitalizeName } from '../utils/helpers';
+import { translateGender, capitalizeName, formatPhoneNumber } from '../utils/helpers';
 import { getPlayerTier } from '../utils/tierUtils';
 import { Tooltip } from '../src/components/Tooltip';
 import { 
@@ -20,12 +20,18 @@ import {
   TrendingDown,
   TrendingUp,
   Minus,
-  Trophy
+  Trophy,
+  AlertTriangle,
+  Clock,
+  Phone,
+  X,
+  History
 } from 'lucide-react';
 import { EvasionIcon } from './EvasionIcon';
 import { calculateEvasionLevel } from '../utils/evasion';
 import { calculateTrueSkillUpdate } from '../src/utils/trueSkill';
 import { getFirestoreDateKey } from '../firebase';
+import { useIntentions } from '../src/hooks/useIntentions';
 
 interface MembersViewProps {
   clearAllPlayers: () => void;
@@ -46,7 +52,102 @@ export const MembersView: React.FC<MembersViewProps> = ({
   repairDatabase,
   savePlayer
 }) => {
-  const { players, userRole, isSyncing, showConfirmModal, matches } = useStore();
+  const { players, userRole, isSyncing, showConfirmModal, matches, attendance, systemMetadata } = useStore();
+  const { intentions } = useIntentions();
+
+  const getPlayerHistoryList = React.useCallback((p: Player) => {
+    const list: Array<{ time: string; label: string }> = [];
+    const seenTimes = new Set<number>();
+
+    const addTime = (rawTime: string | number, label: string) => {
+      try {
+        const dateObj = new Date(rawTime);
+        const timeMs = dateObj.getTime();
+        if (isNaN(timeMs)) return;
+
+        // Deduplicate timestamps within 1 minute of each other
+        const isDup = Array.from(seenTimes).some(ts => Math.abs(ts - timeMs) < 60000);
+        if (!isDup) {
+          seenTimes.add(timeMs);
+          list.push({ time: dateObj.toISOString(), label });
+        }
+      } catch (e) {}
+    };
+
+    if (p.loginHistory && Array.isArray(p.loginHistory)) {
+      p.loginHistory.forEach(h => {
+        if (h) addTime(h, 'Acesso');
+      });
+    }
+
+    if (p.lastLoginAt) {
+      addTime(p.lastLoginAt, 'Último Login');
+    }
+
+    const intentionTs = intentions?.confirmationTimestamps?.[p.id];
+    if (intentionTs) {
+      const isGoing = intentions?.responses?.[p.id] === 'GOING';
+      const label = isGoing ? 'Confirmou na Lista' : 'Lista de Intenções';
+      addTime(intentionTs, label);
+    }
+
+    list.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
+    return list;
+  }, [intentions]);
+
+  React.useEffect(() => {
+    fetch('/api/presence/sync-accesses')
+      .then(r => r.json())
+      .then(res => {
+        if (res?.synced > 0) {
+          refreshPlayers();
+        }
+      })
+      .catch(console.warn);
+  }, [refreshPlayers]);
+
+  const gameDatesForEvasion = React.useMemo(() => {
+    if (!matches) return [];
+    const dates = Array.from(new Set(matches.map(m => m.date)));
+    return dates.sort((a, b) => b.localeCompare(a)); // Newest to oldest
+  }, [matches]);
+
+  const evasionMap = React.useMemo(() => {
+    const map = new Map<string, number>();
+    const limit = systemMetadata?.consecutiveAbsenceLimit ?? 4;
+    if (!players || gameDatesForEvasion.length < limit) return map;
+
+    const today = getFirestoreDateKey();
+    const isPresentTodayMap = new Map();
+    if (attendance) {
+      attendance.forEach(p => {
+        if (p.id) isPresentTodayMap.set(p.id, true);
+      });
+    }
+
+    players.forEach(player => {
+      // Track consecutive missed games for active players
+      const isActive = (player.status === 'active' || !player.status || player.status === '') && !player.isDM;
+      if (!isActive) return;
+
+      let consecutiveMissed = 0;
+      for (const date of gameDatesForEvasion) {
+        // Did the player play on this date?
+        const played = matches.some(m => m.date === date && (m.teamA.includes(player.id) || m.teamB.includes(player.id)));
+        
+        // Did they check in today (if date is today)?
+        const present = (date === today && isPresentTodayMap.has(player.id)) || played;
+
+        if (present) {
+          break; // Streak broken!
+        }
+        consecutiveMissed++;
+      }
+      map.set(player.id, consecutiveMissed);
+    });
+
+    return map;
+  }, [players, gameDatesForEvasion, matches, attendance, systemMetadata?.consecutiveAbsenceLimit]);
   
   const traditionalEloRankings = React.useMemo(() => {
     if (!matches || matches.length === 0 || !players) return {};
@@ -171,6 +272,46 @@ export const MembersView: React.FC<MembersViewProps> = ({
     key: 'name',
     direction: 'asc'
   });
+  const [showBirthdayModal, setShowBirthdayModal] = React.useState(false);
+  const [selectedMonth, setSelectedMonth] = React.useState<string>((new Date().getMonth() + 1).toString().padStart(2, '0'));
+  const [selectedPlayerHistory, setSelectedPlayerHistory] = React.useState<Player | null>(null);
+
+  const generateBirthdayList = () => {
+    const activeMembers = players.filter(p => (p.status === 'active' || !p.status || p.status === ''));
+    
+    const birthdayMembers = activeMembers.filter(p => {
+      if (!p.birthDate) return false;
+      const parts = p.birthDate.split('-');
+      if (parts.length < 2) return false;
+      return parts[1] === selectedMonth;
+    }).sort((a, b) => {
+      const dayA = a.birthDate!.split('-')[2];
+      const dayB = b.birthDate!.split('-')[2];
+      return parseInt(dayA) - parseInt(dayB);
+    });
+
+    const monthNames = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+    const monthName = monthNames[parseInt(selectedMonth) - 1];
+
+    let text = `🎂 *ANIVERSARIANTES DE ${monthName.toUpperCase()}* 🎂\n\n`;
+    
+    if (birthdayMembers.length === 0) {
+      text += "Nenhum aniversariante neste mês.\n";
+    } else {
+      birthdayMembers.forEach(p => {
+        const parts = p.birthDate!.split('-');
+        text += `• ${parts[2]}/${parts[1]} - ${capitalizeName(p.name)}\n`;
+      });
+    }
+
+    navigator.clipboard.writeText(text).then(() => {
+      alert("Lista copiada para a área de transferência!");
+      setShowBirthdayModal(false);
+    }).catch(err => {
+      console.error('Falha ao copiar: ', err);
+      alert("Erro ao copiar lista.");
+    });
+  };
 
   const handleSort = (key: keyof Player) => {
     setSortConfig(prev => ({
@@ -206,7 +347,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
   };
 
   const activePlayers = React.useMemo(() => {
-    return players.filter(p => (p.status === 'active' || !p.status || p.status === '') && !p.isDM && p.name.toLowerCase().includes(searchTerm.toLowerCase()));
+    return players.filter(p => (p.status === 'active' || p.status === 'guest' || !p.status || p.status === '') && !p.isDM && p.name.toLowerCase().includes(searchTerm.toLowerCase()));
   }, [players, searchTerm]);
 
   const waitlistPlayers = React.useMemo(() => {
@@ -214,7 +355,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
   }, [players, searchTerm]);
 
   const inactivePlayers = React.useMemo(() => {
-    return players.filter(p => (p.status === 'inactive' || !!p.isDM) && p.name.toLowerCase().includes(searchTerm.toLowerCase()));
+    return players.filter(p => (p.status === 'inactive' || p.status === 'dm' || !!p.isDM) && p.name.toLowerCase().includes(searchTerm.toLowerCase()));
   }, [players, searchTerm]);
 
   const sortedList = (list: Player[]) => {
@@ -243,63 +384,82 @@ export const MembersView: React.FC<MembersViewProps> = ({
           <table className="w-full text-left border-collapse text-xs">
             <thead className="bg-black/40 border-b border-white/5">
               <tr>
-                <th onClick={() => handleSort('name')} className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest cursor-pointer hover:opacity-80 transition-colors">
-                  <div className="flex items-center gap-2">
+                <th onClick={() => handleSort('name')} className="px-2 py-2 text-[9px] font-black text-brand-primary uppercase tracking-widest cursor-pointer hover:opacity-80 transition-colors">
+                  <div className="flex items-center gap-1">
                     Sócio {sortConfig.key === 'name' && <span>{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>}
                   </div>
                 </th>
-                {userRole === 'ADMIN' && <th className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest">Email</th>}
-                <th className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">Nascimento</th>
-                <th className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">
-                  <div className="flex flex-col items-center gap-1">
-                    <Trophy className="w-3.5 h-3.5" />
+                <th className="px-2 py-2 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">
+                  <div className="flex items-center justify-center gap-1">
+                    <Phone className="w-3 h-3" />
+                    <span>Telefone</span>
+                  </div>
+                </th>
+                {userRole === 'ADMIN' && <th className="px-2 py-2 text-[9px] font-black text-brand-primary uppercase tracking-widest">Email</th>}
+                <th className="px-2 py-2 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">Nascimento</th>
+                <th className="px-2 py-2 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">
+                  <div className="flex flex-col items-center gap-0.5">
+                    <Trophy className="w-3 h-3" />
                     <span>Performance</span>
                   </div>
                 </th>
-                <th className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">Gênero</th>
-                <th className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">Nível</th>
-                {userRole === 'ADMIN' && <th className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">Habilidades</th>}
-                <th className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">Posição</th>
-                <th onClick={() => handleSort('elo')} className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center cursor-pointer hover:opacity-80 transition-colors">
-                  <div className="flex flex-col items-center">
-                    <div className="flex items-center gap-1">
-                      ELO {sortConfig.key === 'elo' && <span>{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>}
-                    </div>
-                    <span className="text-[7px] text-white/40">(Posição / Pts)</span>
+                <th className="px-2 py-2 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">Gênero</th>
+                <th className="px-2 py-2 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">Nível</th>
+                <th onClick={() => handleSort('elo')} className="px-2 py-2 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center cursor-pointer hover:opacity-80 transition-colors">
+                  <div className="flex items-center justify-center gap-1">
+                    ELO {sortConfig.key === 'elo' && <span>{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>}
                   </div>
                 </th>
-                <th className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">
-                  <div className="flex flex-col items-center">
-                    <span>Eficiência</span>
-                    <span className="text-[7px] text-white/40">(Posição / Pts)</span>
-                  </div>
+                <th className="px-2 py-2 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">
+                  Eficiência
                 </th>
-                <th className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">Status</th>
-                {userRole === 'ADMIN' && <th className="px-3 py-3 text-[9px] font-black text-brand-primary uppercase tracking-widest text-right">Ações</th>}
+                <th className="px-2 py-2 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">Status</th>
+                {userRole === 'ADMIN' && (
+                  <th className="px-2 py-2 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">
+                    Acessos
+                  </th>
+                )}
+                {userRole === 'ADMIN' && <th className="px-2 py-2 text-[9px] font-black text-brand-primary uppercase tracking-widest text-right">Ações</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5 font-medium">
               {sortedList(list).map(player => (
                 <tr key={player.id} className="hover:bg-white/5 transition-colors group">
-                  <td className="px-3 py-2">
-                    <div className="flex items-center gap-2">
-                      <div className="flex items-center gap-1.5 min-w-0">
+                  <td className="px-2 py-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1 min-w-0">
                         {userRole === 'ADMIN' && <div className="shrink-0">{getImpactIcon(player.impactLevel)}</div>}
                         <div className={`font-bold text-xs break-words whitespace-normal ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
                           {capitalizeName(player.name) || "Sócio sem nome"}
-                          {player.isDM && <span className="ml-2 px-1.5 py-0.5 rounded-full text-[8px] font-black bg-rose-500 text-white">DM</span>}
-                          <span className="ml-2">
+                          {player.isDM && <span className="ml-1 px-1 py-0.2 rounded-full text-[8px] font-black bg-rose-500 text-white">DM</span>}
+                          <span className="ml-1">
                              <EvasionIcon 
                                 level={player.evasionLevel || calculateEvasionLevel(player)} 
                                 customTooltip={`${(player.evasionLevel || calculateEvasionLevel(player)).charAt(0).toUpperCase() + (player.evasionLevel || calculateEvasionLevel(player)).slice(1)} - ${player.wins || 0}V ${player.losses || 0}D`} 
                              />
                           </span>
+                          {(() => {
+                            const missed = evasionMap.get(player.id);
+                            const limit = systemMetadata?.consecutiveAbsenceLimit ?? 4;
+                            if (missed && missed >= limit) {
+                              return (
+                                <span className="ml-1 inline-flex items-center gap-0.5 px-1 py-0.2 rounded bg-amber-500/10 text-amber-500 border border-amber-500/30 text-[8px] font-black animate-pulse" title={`Alerta: Ausente há ${missed} dias de jogos consecutivos!`}>
+                                  <AlertTriangle className="w-2.5 h-2.5" />
+                                  {missed}D
+                                </span>
+                              );
+                            }
+                            return null;
+                          })()}
                         </div>
                       </div>
                     </div>
                   </td>
-                  {userRole === 'ADMIN' && <td className="px-3 py-2 text-[9px] font-bold text-white/50">{player.email || '-'}</td>}
-                  <td className="px-3 py-2 text-center text-[10px]">
+                  <td className="px-2 py-1.5 text-center text-[10px] text-white/80 font-mono whitespace-nowrap">
+                    {formatPhoneNumber(player.phone)}
+                  </td>
+                  {userRole === 'ADMIN' && <td className="px-2 py-1.5 text-[9px] font-bold text-white/50">{player.email || '-'}</td>}
+                  <td className="px-2 py-1.5 text-center text-[10px]">
                     <div className="flex items-center justify-center gap-1">
                       <span className="text-white/60">{formatBirthday(player.birthDate)}</span>
                       {isBirthdayMonth(player.birthDate) && (
@@ -307,122 +467,162 @@ export const MembersView: React.FC<MembersViewProps> = ({
                       )}
                     </div>
                   </td>
-                  <td className="px-3 py-2 text-center">
+                  <td className="px-2 py-1.5 text-center">
                     <div className="flex flex-col items-center">
-                      <div className="flex items-center gap-1.5">
-                        <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-brand-primary text-black text-[8px] font-black" title="Vitórias">
-                          <TrendingUp className="w-3 h-3" />
+                      <div className="flex items-center gap-1">
+                        <span className="flex items-center gap-0.5 px-1 py-0.5 rounded bg-brand-primary text-black text-[8px] font-black" title="Vitórias">
+                          <TrendingUp className="w-2.5 h-2.5" />
                           {player.wins || 0}
                         </span>
-                        <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-white text-black text-[8px] font-black" title="Derrotas">
-                          <TrendingDown className="w-3 h-3" />
+                        <span className="flex items-center gap-0.5 px-1 py-0.5 rounded bg-white text-black text-[8px] font-black" title="Derrotas">
+                          <TrendingDown className="w-2.5 h-2.5" />
                           {player.losses || 0}
                         </span>
                       </div>
                     </div>
                   </td>
-                  <td className="px-3 py-2 text-center text-[10px] text-white/60">{translateGender(player.gender)}</td>
-                  <td className="px-3 py-2 text-center flex flex-col items-center gap-0.5">
+                  <td className="px-2 py-1.5 text-center text-[10px] text-white/60">{translateGender(player.gender)}</td>
+                  <td className="px-2 py-1.5 text-center">
                     <span className={`text-[9px] font-black uppercase tracking-tight ${getPlayerTier(player).color}`}>
                       {getPlayerTier(player).label}
                     </span>
                   </td>
-                  {userRole === 'ADMIN' && (
-                    <td className="px-3 py-2 text-center">
-                      <div className="flex justify-center gap-1">
-                        <span className="text-[8px] font-black px-1 rounded bg-white/5 text-white/40" title="Levantamento">L:{player.skills?.setting || 1}</span>
-                        <span className="text-[8px] font-black px-1 rounded bg-white/5 text-white/40" title="Ataque">A:{player.skills?.attacking || 1}</span>
-                        <span className="text-[8px] font-black px-1 rounded bg-white/5 text-white/40" title="Defesa">D:{player.skills?.defense || 1}</span>
-                        <span className="text-[8px] font-black px-1 rounded bg-white/5 text-white/40" title="Saque">S:{player.skills?.serving || 1}</span>
-                      </div>
-                    </td>
-                  )}
-                  <td className="px-3 py-2 text-center">
-                    {player.isOfficialSetter ? <span className="px-2 py-0.5 rounded-full text-[8px] font-black uppercase bg-brand-primary/20 text-brand-primary border border-brand-primary/40">Levantador</span> : '-'}
-                  </td>
-                  <td className="px-3 py-2 text-center">
+                  <td className="px-2 py-1.5 text-center">
                     {(() => {
                       const tr = traditionalEloRankings[player.id];
                       if (!tr) return <span className="font-black text-white text-xs">{Math.round(player.elo)}</span>;
                       return (
-                        <div className="flex flex-col items-center gap-1">
-                          <div className="flex items-center gap-1.5">
+                        <div className="flex flex-col items-center gap-0.5">
+                          <div className="flex items-center gap-1">
                             <span className="text-[10px] font-black text-white">#{tr.rank}</span>
-                            {tr.type === 'up' && <div className="flex items-center gap-0.5"><TrendingUp className="w-3 h-3 text-emerald-500" /><span className="text-[8px] font-black text-emerald-500">{tr.diff}</span></div>}
-                            {tr.type === 'down' && <div className="flex items-center gap-0.5"><TrendingDown className="w-3 h-3 text-rose-500" /><span className="text-[8px] font-black text-rose-500">{tr.diff}</span></div>}
-                            {tr.type === 'neutral' && <Minus className="w-3 h-3 text-white/40" />}
+                            {tr.type === 'up' && <div className="flex items-center gap-0.5"><TrendingUp className="w-2.5 h-2.5 text-emerald-500" /><span className="text-[8px] font-black text-emerald-500">{tr.diff}</span></div>}
+                            {tr.type === 'down' && <div className="flex items-center gap-0.5"><TrendingDown className="w-2.5 h-2.5 text-rose-500" /><span className="text-[8px] font-black text-rose-500">{tr.diff}</span></div>}
+                            {tr.type === 'neutral' && <Minus className="w-2.5 h-2.5 text-white/40" />}
                           </div>
                           <span className="text-[8px] font-black text-white/40">{Math.round(player.elo)} pts</span>
                         </div>
                       );
                     })()}
                   </td>
-                  <td className="px-3 py-2 text-center">
+                  <td className="px-2 py-1.5 text-center">
                     {(() => {
                       const ts = trueSkillRankings[player.id];
                       if (!ts) return <span className="text-white/20">-</span>;
                       return (
-                        <div className="flex flex-col items-center gap-1">
-                          <div className="flex items-center gap-1.5">
+                        <div className="flex flex-col items-center gap-0.5">
+                          <div className="flex items-center gap-1">
                             <span className="text-[10px] font-black text-white">#{ts.rank}</span>
-                            {ts.type === 'up' && <div className="flex items-center gap-0.5"><TrendingUp className="w-3 h-3 text-emerald-500" /><span className="text-[8px] font-black text-emerald-500">{ts.diff}</span></div>}
-                            {ts.type === 'down' && <div className="flex items-center gap-0.5"><TrendingDown className="w-3 h-3 text-rose-500" /><span className="text-[8px] font-black text-rose-500">{ts.diff}</span></div>}
-                            {ts.type === 'neutral' && <Minus className="w-3 h-3 text-white/40" />}
+                            {ts.type === 'up' && <div className="flex items-center gap-0.5"><TrendingUp className="w-2.5 h-2.5 text-emerald-500" /><span className="text-[8px] font-black text-emerald-500">{ts.diff}</span></div>}
+                            {ts.type === 'down' && <div className="flex items-center gap-0.5"><TrendingDown className="w-2.5 h-2.5 text-rose-500" /><span className="text-[8px] font-black text-rose-500">{ts.diff}</span></div>}
+                            {ts.type === 'neutral' && <Minus className="w-2.5 h-2.5 text-white/40" />}
                           </div>
                           <span className="text-[8px] font-black text-white/40">{Math.round(ts.score)} pts</span>
                         </div>
                       );
                     })()}
                   </td>
-                  <td className="px-3 py-2 text-center">
-                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[8px] font-black uppercase border ${
+                  <td className="px-2 py-1.5 text-center">
+                    <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[8px] font-black uppercase border ${
                       player.status === 'waitlist' ? 'bg-amber-500/10 text-amber-500 border-amber-500/20' :
                       player.status === 'inactive' ? 'bg-white/5 text-white/40 border-white/10' :
+                      player.status === 'guest' ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' :
+                      (player.status === 'dm' || player.isDM) ? 'bg-rose-500/10 text-rose-500 border-rose-500/20' :
                       'bg-emerald-500/10 text-emerald-500 border-emerald-500/20'
                     }`}>
-                      {player.status === 'waitlist' ? 'Fila de Espera' : player.status === 'inactive' ? 'Inativo' : 'Ativo'}
+                      {player.status === 'waitlist' ? 'Fila de Espera' : 
+                       player.status === 'inactive' ? 'Inativo' : 
+                       player.status === 'guest' ? 'Convidado' :
+                       (player.status === 'dm' || player.isDM) ? 'DM' : 'Ativo'}
                     </span>
                   </td>
-                  <td className="px-3 py-2 text-right flex items-center justify-end gap-2">
+                  {userRole === 'ADMIN' && (
+                    <td className="px-2 py-1.5 text-center">
+                      {(() => {
+                        const historyList = getPlayerHistoryList(player);
+                        const totalAccesses = Math.max(player.accesses || 0, historyList.length);
+                        const lastAccess = historyList[0];
+
+                        return (
+                          <Tooltip content={
+                            <div className="space-y-1">
+                              <p className="font-black text-[10px] uppercase border-b border-white/10 pb-1 mb-1">Últimos Acessos (Clique para Ver Tudo)</p>
+                              {historyList.length > 0 ? (
+                                historyList.slice(0, 3).map((item, i) => (
+                                  <p key={i} className="text-[9px] font-mono whitespace-nowrap flex items-center justify-between gap-2">
+                                    <span>{new Date(item.time).toLocaleDateString('pt-BR')} {new Date(item.time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
+                                    <span className="text-[7px] font-black uppercase text-brand-primary/80 bg-brand-primary/10 px-1 rounded">{item.label}</span>
+                                  </p>
+                                ))
+                              ) : (
+                                <p className="text-[9px] text-white/40 italic">Sem histórico</p>
+                              )}
+                              {historyList.length > 3 && (
+                                <p className="text-[8px] text-brand-primary font-black uppercase text-center mt-1">+ Clique para ver mais ({historyList.length})</p>
+                              )}
+                            </div>
+                          }>
+                            <button 
+                              onClick={() => setSelectedPlayerHistory(player)}
+                              className="flex flex-col items-center cursor-pointer hover:bg-white/5 p-1 rounded-lg transition-all group/access"
+                            >
+                              <div className="flex items-center gap-1">
+                                <span className="text-[10px] font-black text-white group-hover/access:text-brand-primary transition-colors">{totalAccesses}</span>
+                                <History className="w-2.5 h-2.5 text-white/20 group-hover/access:text-brand-primary" />
+                              </div>
+                              {lastAccess ? (
+                                <span className="text-[8px] text-white/40 font-mono">
+                                  {new Date(lastAccess.time).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} {new Date(lastAccess.time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                              ) : (
+                                <span className="text-[8px] text-white/20">-</span>
+                              )}
+                            </button>
+                          </Tooltip>
+                        );
+                      })()}
+                    </td>
+                  )}
+                  <td className="px-2 py-1.5 text-right flex items-center justify-end gap-1">
                     <Tooltip content="Ver no Ranking">
                       <button 
                         onClick={() => setViewMode('dashboard')}
-                        className="p-2 text-white bg-white/10 hover:bg-brand-primary hover:text-black rounded-xl transition-all"
+                        className="p-1.5 text-white bg-white/10 hover:bg-brand-primary hover:text-black rounded-lg transition-all"
                       >
-                        <Target className="w-4 h-4" />
+                        <Target className="w-3.5 h-3.5" />
                       </button>
                     </Tooltip>
                     {userRole === 'ADMIN' ? (
                       <>
-                        <Tooltip content={player.status === 'inactive' ? "Ativar Sócio" : "Inativar Sócio"}>
+                        <Tooltip content={(player.status === 'inactive' || player.status === 'dm' || player.isDM) ? "Ativar Sócio" : "Inativar Sócio"}>
                           <button 
                             onClick={() => {
-                              const newStatus = player.status === 'active' ? 'inactive' : 'active';
-                              savePlayer({ ...player, status: newStatus });
+                              const isCurrentlyInactive = player.status === 'inactive' || player.status === 'dm' || player.isDM;
+                              const newStatus = isCurrentlyInactive ? 'active' : 'inactive';
+                              savePlayer({ ...player, status: newStatus, isDM: false });
                             }}
-                            className={`p-2 rounded-xl transition-all ${
-                              player.status === 'inactive' 
+                            className={`p-1.5 rounded-lg transition-all ${
+                              (player.status === 'inactive' || player.status === 'dm' || player.isDM) 
                                 ? 'text-emerald-500 bg-emerald-500/10 hover:bg-emerald-500 hover:text-white' 
                                 : 'text-amber-500 bg-amber-500/10 hover:bg-amber-500 hover:text-white'
                             }`}
                           >
-                            {player.status === 'inactive' ? <UserCheck className="w-4 h-4" /> : <UserX className="w-4 h-4" />}
+                            {(player.status === 'inactive' || player.status === 'dm' || player.isDM) ? <UserCheck className="w-3.5 h-3.5" /> : <UserX className="w-3.5 h-3.5" />}
                           </button>
                         </Tooltip>
                         <Tooltip content="Editar Sócio">
                           <button 
                             onClick={() => { setEditingPlayer(player); setIsFormOpen(true); }} 
-                            className="p-2 text-brand-primary bg-brand-primary/10 hover:bg-brand-primary hover:text-brand-secondary rounded-xl transition-all font-bold border border-brand-primary/20"
+                            className="p-1.5 text-brand-primary bg-brand-primary/10 hover:bg-brand-primary hover:text-brand-secondary rounded-lg transition-all font-bold border border-brand-primary/20"
                           >
-                            <Edit2 className="w-4 h-4" />
+                            <Edit2 className="w-3.5 h-3.5" />
                           </button>
                         </Tooltip>
                         <Tooltip content="Excluir Sócio" position="left">
                           <button 
                             onClick={() => deletePlayer(player.id)} 
-                            className="p-2 text-rose-500 bg-rose-500/10 hover:bg-rose-500 hover:text-white rounded-xl transition-all"
+                            className="p-1.5 text-rose-500 bg-rose-500/10 hover:bg-rose-500 hover:text-white rounded-lg transition-all"
                           >
-                            <Trash2 className="w-4 h-4" />
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </Tooltip>
                       </>
@@ -464,14 +664,40 @@ export const MembersView: React.FC<MembersViewProps> = ({
                           customTooltip={`${(player.evasionLevel || calculateEvasionLevel(player)).charAt(0).toUpperCase() + (player.evasionLevel || calculateEvasionLevel(player)).slice(1)} - ${player.wins || 0}V ${player.losses || 0}D`} 
                         />
                       </span>
+                      {(() => {
+                        const missed = evasionMap.get(player.id);
+                        const limit = systemMetadata?.consecutiveAbsenceLimit ?? 4;
+                        if (missed && missed >= limit) {
+                          return (
+                            <span className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500 border border-amber-500/30 text-[8px] font-black animate-pulse" title={`Alerta: Ausente há ${missed} dias de jogos consecutivos!`}>
+                              <AlertTriangle className="w-2.5 h-2.5" />
+                              {missed}D AUSENTE
+                            </span>
+                          );
+                        }
+                        return null;
+                      })()}
                     </h4>
                   </div>
                   <div className="flex flex-wrap items-center gap-1.5 mt-2">
                     <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest border ${
                       player.status === 'waitlist' ? 'bg-amber-500/10 text-amber-500 border-amber-500/20' :
-                      'bg-white/5 text-white/60 border-white/10'
+                      player.status === 'inactive' ? 'bg-white/5 text-white/40 border-white/10' :
+                      player.status === 'guest' ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' :
+                      (player.status === 'dm' || player.isDM) ? 'bg-rose-500/10 text-rose-500 border-rose-500/20' :
+                      'bg-emerald-500/10 text-emerald-500 border-emerald-500/20'
                     }`}>
-                      {player.status === 'waitlist' ? 'Fila de Espera' : translateGender(player.gender)}
+                      {player.status === 'waitlist' ? 'Fila de Espera' : 
+                       player.status === 'inactive' ? 'Inativo' : 
+                       player.status === 'guest' ? 'Convidado' :
+                       (player.status === 'dm' || player.isDM) ? 'Dep. Médico (DM)' : 'Ativo'}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest bg-white/5 text-white/60 border border-white/10">
+                      {translateGender(player.gender)}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest bg-white/5 text-white/60 border border-white/10 flex items-center gap-1">
+                      <Phone className="w-3 h-3 text-brand-primary" />
+                      {formatPhoneNumber(player.phone)}
                     </span>
                     <span className="px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest bg-white/5 text-white/60 border border-white/10 flex items-center gap-1">
                       <Cake className={`w-4 h-4 ${isBirthdayMonth(player.birthDate) ? 'text-brand-primary animate-pulse' : 'text-white/40'}`} />
@@ -480,6 +706,20 @@ export const MembersView: React.FC<MembersViewProps> = ({
                     <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest bg-white/5 ${getPlayerTier(player).color} border border-white/10`}>
                       {getPlayerTier(player).label}
                     </span>
+                    {userRole === 'ADMIN' && (
+                      <button 
+                        onClick={() => setSelectedPlayerHistory(player)}
+                        className="px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest bg-brand-primary/10 text-brand-primary border border-brand-primary/20 flex items-center gap-1 active:scale-95 transition-transform"
+                      >
+                        <Clock className="w-3 h-3" />
+                        {player.accesses || 0} Acessos
+                        {player.lastLoginAt && (
+                          <span className="text-white/40 ml-1 font-mono">
+                            ({new Date(player.lastLoginAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })})
+                          </span>
+                        )}
+                      </button>
+                    )}
                     <div className="flex items-center gap-1 ml-auto">
                       <span className="px-1.5 py-0.5 rounded bg-brand-primary text-black text-[8px] font-black">{player.wins || 0}V</span>
                       <span className="px-1.5 py-0.5 rounded bg-white text-black text-[8px] font-black">{player.losses || 0}D</span>
@@ -491,31 +731,6 @@ export const MembersView: React.FC<MembersViewProps> = ({
                       </button>
                     </div>
                   </div>
-                  {userRole === 'ADMIN' && (
-                    <div className="flex gap-2 mt-3">
-                      <div className="flex-1 bg-white/5 p-2 rounded-xl border border-white/5">
-                        <p className="text-[7px] font-black text-white/40 uppercase mb-1">Habilidades</p>
-                        <div className="flex justify-between gap-1">
-                          <div className="flex flex-col items-center">
-                            <span className="text-[8px] font-black text-brand-primary uppercase">Lev</span>
-                            <span className="text-[10px] font-black text-white">{player.skills?.setting || 1}</span>
-                          </div>
-                          <div className="flex flex-col items-center">
-                            <span className="text-[8px] font-black text-brand-primary uppercase">Atq</span>
-                            <span className="text-[10px] font-black text-white">{player.skills?.attacking || 1}</span>
-                          </div>
-                          <div className="flex flex-col items-center">
-                            <span className="text-[8px] font-black text-brand-primary uppercase">Def</span>
-                            <span className="text-[10px] font-black text-white">{player.skills?.defense || 1}</span>
-                          </div>
-                          <div className="flex flex-col items-center">
-                            <span className="text-[8px] font-black text-brand-primary uppercase">Saq</span>
-                            <span className="text-[10px] font-black text-white">{player.skills?.serving || 1}</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
                 </div>
               </div>
               <div className="text-right shrink-0">
@@ -614,14 +829,14 @@ export const MembersView: React.FC<MembersViewProps> = ({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
-          <div className="relative flex-1 md:w-64">
-            <Search className="absolute left-3 top-3.5 w-4 h-4 text-white/40" />
+          <div className="relative w-full md:w-72">
+            <Search className="absolute left-3.5 top-[15px] w-4 h-4 text-white/40" />
             <input
               type="text"
               placeholder="Buscar sócio..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full bg-brand-secondary/30 text-white placeholder:text-white/40 border border-white/10 rounded-xl py-3 pl-10 pr-4 text-xs font-bold focus:outline-none focus:border-brand-primary transition-all"
+              className="w-full bg-brand-secondary/30 text-white placeholder:text-white/40 border border-white/10 rounded-xl py-3.5 pl-11 pr-4 text-sm font-bold focus:outline-none focus:border-brand-primary transition-all"
             />
           </div>
           {userRole === 'ADMIN' && repairDatabase && (
@@ -631,6 +846,15 @@ export const MembersView: React.FC<MembersViewProps> = ({
             >
               <RotateCcw className="w-4 h-4" />
               Reparar
+            </button>
+          )}
+          {userRole === 'ADMIN' && (
+            <button 
+              onClick={() => setShowBirthdayModal(true)} 
+              className="md:flex-none bg-brand-primary/10 text-brand-primary px-4 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-brand-primary hover:text-black transition-all border border-brand-primary/20"
+            >
+              <Cake className="w-4 h-4" />
+              Aniversariantes
             </button>
           )}
           {userRole === 'ADMIN' && (
@@ -664,6 +888,146 @@ export const MembersView: React.FC<MembersViewProps> = ({
           renderCards(inactivePlayers, "Sócios Inativos (Visão Admin)", `${inactivePlayers.length} inativos`, "bg-white/40")
         )}
       </div>
+
+      {/* Birthday Modal */}
+      {showBirthdayModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="bg-brand-secondary border border-brand-primary/40 rounded-[2rem] w-full max-w-md p-6 relative">
+            <h3 className="text-xl font-black text-white uppercase mb-6 flex items-center gap-2">
+              <Cake className="w-6 h-6 text-brand-primary" />
+              Aniversariantes
+            </h3>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-black text-white/60 uppercase tracking-widest mb-2">Selecione o Mês</label>
+                <select 
+                  value={selectedMonth}
+                  onChange={(e) => setSelectedMonth(e.target.value)}
+                  className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white font-bold text-sm focus:border-brand-primary focus:outline-none"
+                >
+                  <option value="01">Janeiro</option>
+                  <option value="02">Fevereiro</option>
+                  <option value="03">Março</option>
+                  <option value="04">Abril</option>
+                  <option value="05">Maio</option>
+                  <option value="06">Junho</option>
+                  <option value="07">Julho</option>
+                  <option value="08">Agosto</option>
+                  <option value="09">Setembro</option>
+                  <option value="10">Outubro</option>
+                  <option value="11">Novembro</option>
+                  <option value="12">Dezembro</option>
+                </select>
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button 
+                  onClick={() => setShowBirthdayModal(false)}
+                  className="flex-1 py-3 px-4 rounded-xl border border-white/10 text-white font-bold hover:bg-white/5 transition-all text-sm"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  onClick={generateBirthdayList}
+                  className="flex-1 py-3 px-4 rounded-xl bg-brand-primary text-black font-black uppercase hover:opacity-90 transition-all text-sm"
+                >
+                  Copiar Lista
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Login History Modal */}
+      {selectedPlayerHistory && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[110] flex items-center justify-center p-4">
+          <div className="bg-brand-secondary border border-brand-primary/40 rounded-[2.5rem] w-full max-w-sm overflow-hidden shadow-2xl shadow-brand-primary/10 animate-in zoom-in-95 duration-200">
+            <div className="p-6 pb-4 flex justify-between items-center border-b border-white/5">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-brand-primary/20 flex items-center justify-center border border-brand-primary/40">
+                  <History className="w-5 h-5 text-brand-primary" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-white uppercase tracking-tighter leading-none">
+                    Histórico de Acesso
+                  </h3>
+                  <p className="text-[10px] font-bold text-brand-primary uppercase tracking-widest mt-1">
+                    {capitalizeName(selectedPlayerHistory.name)}
+                  </p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setSelectedPlayerHistory(null)}
+                className="p-2 text-white/40 hover:text-white hover:bg-white/5 rounded-full transition-all"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="p-6 max-h-[60vh] overflow-y-auto custom-scrollbar">
+              {(() => {
+                const historyList = getPlayerHistoryList(selectedPlayerHistory);
+                if (historyList.length === 0) {
+                  return (
+                    <div className="flex flex-col items-center justify-center py-12 text-center">
+                      <Clock className="w-12 h-12 text-white/5 mb-4" />
+                      <p className="text-sm font-bold text-white/40 uppercase tracking-widest">
+                        Nenhum registro encontrado
+                      </p>
+                    </div>
+                  );
+                }
+                return (
+                  <div className="space-y-3">
+                    {historyList.map((item, i) => (
+                      <div key={i} className="flex items-center justify-between p-3 rounded-2xl bg-white/5 border border-white/5 group hover:border-brand-primary/30 transition-all">
+                        <div className="flex items-center gap-3">
+                          <div className="w-1.5 h-1.5 rounded-full bg-brand-primary shadow-[0_0_5px_rgba(245,196,41,0.5)]" />
+                          <div>
+                            <p className="text-[11px] font-black text-white uppercase tracking-tight">
+                              {new Date(item.time).toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' })}
+                            </p>
+                            <p className="text-[9px] font-mono text-white/40">
+                              {new Date(item.time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="px-2 py-0.5 rounded-full bg-brand-primary/10 border border-brand-primary/20 text-brand-primary text-[8px] font-black uppercase tracking-wider">
+                            {item.label}
+                          </span>
+                          {i === 0 && (
+                            <span className="px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-[8px] font-black uppercase tracking-widest">
+                              Mais Recente
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+            </div>
+
+            <div className="p-6 bg-black/40 border-t border-white/5">
+              <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-white/40">
+                <span>Total de Acessos</span>
+                <span className="text-white text-base font-black">
+                  {Math.max(selectedPlayerHistory.accesses || 0, getPlayerHistoryList(selectedPlayerHistory).length)}
+                </span>
+              </div>
+              <button 
+                onClick={() => setSelectedPlayerHistory(null)}
+                className="w-full mt-4 py-3 bg-brand-primary text-black font-black uppercase tracking-widest text-[10px] rounded-xl shadow-lg shadow-brand-primary/10 active:scale-95 transition-all"
+              >
+                Fechar Visualização
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
