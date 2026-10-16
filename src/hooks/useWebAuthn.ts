@@ -19,9 +19,9 @@ export const useWebAuthn = () => {
     setIsLoading(true);
     clearMessages();
     try {
-      // Check for security constraints before starting WebAuthn
+      // Security check for iframe environments (standard for AI Studio)
       if (window.self !== window.top) {
-        throw new Error("O navegador bloqueou biometria devido as restrições de segurança do painel do AI Studio. Por favor, clique na URL de Desenvolvimento (Abrir em nova aba) no topo!");
+        throw new Error("BIOMETRIA_BLOQUEADA_IFRAME");
       }
 
       if (!email || !email.trim()) {
@@ -93,9 +93,11 @@ export const useWebAuthn = () => {
     } catch (e: any) {
       console.error("WebAuthn register error:", e);
       let errMsg = e.message || String(e);
-      if (errMsg.includes("not enabled in this document") || errMsg.includes("feature is not enabled")) {
-        errMsg = "O navegador bloqueou biometria no iframe do AI Studio. Abra o app em uma nova aba usando a URL de Desenvolvimento para usar biometria!";
+      
+      if (errMsg === "BIOMETRIA_BLOQUEADA_IFRAME" || errMsg.includes("not enabled in this document") || errMsg.includes("feature is not enabled")) {
+        errMsg = "O navegador bloqueou a Biometria (Passkeys) dentro do painel do AI Studio por segurança. Clique em 'ABRIR EM NOVA ABA' no topo direito para usar biometria nativa!";
       }
+      
       setError(errMsg);
       return false;
     } finally {
@@ -108,7 +110,7 @@ export const useWebAuthn = () => {
     clearMessages();
     try {
       if (window.self !== window.top) {
-        throw new Error("O navegador bloqueou biometria devido as restrições de segurança do painel do AI Studio. Por favor, clique na URL de Desenvolvimento (Abrir em nova aba) no topo!");
+        throw new Error("BIOMETRIA_BLOQUEADA_IFRAME");
       }
 
       const rpID = window.location.hostname;
@@ -208,9 +210,11 @@ export const useWebAuthn = () => {
     } catch (e: any) {
       console.error("WebAuthn login error:", e);
       let errMsg = e.message || String(e);
-      if (errMsg.includes("not enabled in this document") || errMsg.includes("feature is not enabled")) {
-        errMsg = "O navegador bloqueou biometria no iframe do AI Studio. Abra o app em uma nova aba usando a URL de Desenvolvimento para usar biometria!";
+      
+      if (errMsg === "BIOMETRIA_BLOQUEADA_IFRAME" || errMsg.includes("not enabled in this document") || errMsg.includes("feature is not enabled")) {
+        errMsg = "O navegador bloqueou a Biometria (Passkeys) dentro do painel do AI Studio por segurança. Clique em 'ABRIR EM NOVA ABA' no topo direito para usar biometria nativa!";
       }
+      
       setError(errMsg);
     } finally {
       setIsLoading(false);

@@ -26,13 +26,42 @@ export const HistoryCalendar: React.FC<HistoryCalendarProps> = ({ matches, tourn
   const matchDates = useMemo(() => {
     const dates = new Set<string>();
     matches.forEach(m => {
-      const d = m.date || (m.timestamp ? new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'America/Sao_Paulo',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit'
-      }).format(new Date(m.timestamp)) : '');
+      // Robust standard date key parsing
+      const rawDate = m.date;
+      let d = '';
+      if (rawDate) {
+        if (rawDate.includes('/')) {
+          const parts = rawDate.split('/');
+          if (parts.length === 3) {
+            const day = parts[0].padStart(2, '0');
+            const month = parts[1].padStart(2, '0');
+            const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
+            d = `${year}-${month}-${day}`;
+          }
+        } else if (rawDate.includes('-') && rawDate.split('-')[0].length !== 4) {
+          const parts = rawDate.split('-');
+          if (parts.length === 3) {
+            const day = parts[0].padStart(2, '0');
+            const month = parts[1].padStart(2, '0');
+            const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
+            d = `${year}-${month}-${day}`;
+          }
+        } else {
+          d = rawDate;
+        }
+      }
+      
       if (d) dates.add(d);
+
+      if (m.timestamp) {
+        const tsDate = new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'America/Sao_Paulo',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit'
+        }).format(new Date(m.timestamp));
+        if (tsDate) dates.add(tsDate);
+      }
     });
     return dates;
   }, [matches]);
@@ -55,16 +84,6 @@ export const HistoryCalendar: React.FC<HistoryCalendarProps> = ({ matches, tourn
 
   const monthNames = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
   const weekDays = ["D", "S", "T", "Q", "Q", "S", "S"];
-
-  // Custom court icon
-  const CourtIcon = ({ className }: { className?: string }) => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <rect x="2" y="3" width="20" height="18" rx="2" />
-      <path d="M12 3v18" />
-      <path d="M2 12h20" />
-      <circle cx="12" cy="12" r="3" />
-    </svg>
-  );
 
   return (
     <div className="bg-black rounded-[3rem] border border-white/5 border-l-[8px] border-brand-primary p-6 shadow-2xl overflow-hidden mb-6">
@@ -126,7 +145,7 @@ export const HistoryCalendar: React.FC<HistoryCalendarProps> = ({ matches, tourn
                   <div className="w-1.5 h-1.5 rounded-full bg-brand-primary" />
                 )}
                 {hasTournament && (
-                  <CourtIcon className="w-3 h-3 text-rose-500" />
+                  <Trophy className="w-3 h-3 text-rose-500" />
                 )}
               </div>
             </button>
@@ -144,7 +163,7 @@ export const HistoryCalendar: React.FC<HistoryCalendarProps> = ({ matches, tourn
           <span className="text-[10px] font-black text-white/40 uppercase tracking-widest">Tem Partidas</span>
         </div>
         <div className="flex items-center gap-2">
-          <CourtIcon className="w-3 h-3 text-rose-500" />
+          <Trophy className="w-3 h-3 text-rose-500" />
           <span className="text-[10px] font-black text-white/40 uppercase tracking-widest">Torneio / Evento Especial</span>
         </div>
       </div>

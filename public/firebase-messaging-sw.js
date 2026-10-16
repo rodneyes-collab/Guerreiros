@@ -22,8 +22,8 @@ messaging.onBackgroundMessage((payload) => {
   
   const notificationOptions = {
     body: payload.notification?.body || 'Nova mensagem',
-    icon: '/pwa-192x192.png',
-    badge: '/pwa-192x192.png', // Small icon for the status bar
+    icon: '/logo.png',
+    badge: '/logo.png', // Small icon for the status bar
     vibrate: [200, 100, 200, 100, 200, 100, 200],
     tag: payload.notification?.tag || payload.data?.type || 'app-notification-' + Date.now(),
     renotify: true,
@@ -36,5 +36,25 @@ messaging.onBackgroundMessage((payload) => {
     self.navigator.setAppBadge(); // Shows generic dot
   }
 
-  self.registration.showNotification(notificationTitle, notificationOptions);
+  return self.registration.showNotification(notificationTitle, notificationOptions);
+});
+
+// Handle notification click to open or focus the app
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+
+  // Try to find an existing window and focus it
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if (client.url === '/' && 'focus' in client) {
+          return client.focus();
+        }
+      }
+      // If no window is open, open a new one
+      if (clients.openWindow) {
+        return clients.openWindow('/');
+      }
+    })
+  );
 });

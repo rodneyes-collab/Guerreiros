@@ -1,18 +1,49 @@
 import { Player } from '../types';
 
 /**
- * Calculates a player's MVP Efficiency score (Option 4).
+ * Obtém a soma das habilidades técnicas do sócio (1 a 5 cada, totalizando de 4 a 20).
+ */
+export const getPlayerSkillsSum = (player: Player | null): number => {
+  if (!player || !player.skills) return 4;
+  const s = player.skills as any;
+  const attacking = Number(s.attacking ?? s.attack ?? 1);
+  const defense = Number(s.defense ?? 1);
+  const setting = Number(s.setting ?? s.setter ?? 1);
+  const serving = Number(s.serving ?? s.serve ?? 1);
+  return attacking + defense + setting + serving;
+};
+
+/**
+ * Calcula o Índice Composto (IC): 80% Habilidades Práticas + 20% Win Rate real.
+ */
+export const calculatePlayerCompositeIndex = (
+  player: Player | null,
+  winRate: number
+): number => {
+  if (!player) return 0;
+  const skillsSum = getPlayerSkillsSum(player);
+  const techScore = (skillsSum / 20) * 100;
+  const wrPercent = winRate <= 1.0 ? winRate * 100 : winRate;
+  return (techScore * 0.8) + (wrPercent * 0.2);
+};
+
+/**
+ * Calcula o Score Oficial de MVP (Opção B-1: Desempenho Técnico + Bônus de Volume).
  * 
- * This score is purely based on actual match performance (Win Rate, Impact, Point Diff, and Volume)
- * rather than hardcoded technical skill inputs.
+ * Fórmula:
+ * Pilar Desempenho = IC (60% Tech + 40% Win Rate) + (Saldo Médio de Pontos * 1.5)
+ * Pilar Volume:
+ *   - Acumulado (Carreira): até 15 pts com teto de 45 partidas (min(15, (partidas / 45) * 15))
+ *   - Diário (Sessão): +2.0 pts por partida disputada na data
  * 
- * @param player The player object
- * @param winRate The win rate (0.0 to 1.0)
- * @param matches Total matches played in the period
- * @param eloGain Total ELO gained/lost in the period
- * @param pointsFor Total points scored by their team
- * @param pointsAgainst Total points scored against their team
- * @returns A composite score 
+ * @param player Objeto do sócio
+ * @param winRate Aproveitamento no período (0.0 a 1.0)
+ * @param matches Total de partidas disputadas no período
+ * @param eloGain Variação de ELO no período (mantido por retrocompatibilidade)
+ * @param pointsFor Pontos pró marcados
+ * @param pointsAgainst Pontos sofridos
+ * @param isDaily Se o cálculo é referente à sessão diária
+ * @returns Score B-1 ponderado
  */
 export const calculateMvpEfficiencyScore = (
   player: Player | null,
@@ -20,25 +51,23 @@ export const calculateMvpEfficiencyScore = (
   matches: number,
   eloGain: number,
   pointsFor: number,
-  pointsAgainst: number
+  pointsAgainst: number,
+  isDaily: boolean = false
 ): number => {
   if (!player || matches === 0) return 0;
-  
-  // 1. Base Score: Win Rate (0 to 100)
-  const winRateScore = winRate * 100;
-  
-  // 2. Impact: ELO gained per match (Weight: x3)
-  // E.g., +5 ELO/match = +15 to score
-  const impactPerMatch = eloGain / matches;
-  const impactScore = impactPerMatch * 3;
-  
-  // 3. Dominance: Point Differential per match (Weight: x2)
-  // E.g., +3 points diff/match = +6 to score
-  const pointDiffPerMatch = (pointsFor - pointsAgainst) / matches;
-  const pointDiffScore = pointDiffPerMatch * 2;
-  
-  // 4. Volume: Small consistency bonus for playing more matches (+0.5 per match, capped at 15 matches)
-  const volumeBonus = Math.min(matches, 15) * 0.5;
-  
-  return winRateScore + impactScore + pointDiffScore + volumeBonus;
+
+  // 1. Índice Composto (60% Habilidades + 40% Win Rate do período)
+  const ic = calculatePlayerCompositeIndex(player, winRate);
+
+  // 2. Saldo Médio de Pontos por Partida (Multiplicador 1.5 de domínio)
+  const saldoMedio = (pointsFor - pointsAgainst) / matches;
+  const pilarDesempenho = ic + (saldoMedio * 1.5);
+
+  // 3. Pilar de Volume
+  const pilarVolume = isDaily
+    ? matches * 2.0
+    : Math.min(15, (matches / 45) * 15);
+
+  return Number((pilarDesempenho + pilarVolume).toFixed(2));
 };
+

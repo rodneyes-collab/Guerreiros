@@ -1,6 +1,7 @@
 
 import { GoogleGenAI, Modality, ThinkingLevel } from "@google/genai";
 import { Team, Player, GenerationResult, Match } from "../types";
+import { calculateCompositePerformanceRating } from "../utils/teamLogic";
 
 // Cache persistente para evitar chamadas repetidas à IA com os mesmos dados
 const CACHE_KEY = 'spikegen_ai_cache_v2';
@@ -219,7 +220,7 @@ export const analyzeMatch = async (result: GenerationResult, attendance: Player[
 
   const ai = getAI();
   
-  const formatPlayer = (p: Player) => `${p.name} (ELO:${p.elo}, Impacto:${p.impactLevel || 1})`;
+  const formatPlayer = (p: Player) => `${p.name} (IC:${calculateCompositePerformanceRating(p).toFixed(1)}, Impacto:${p.impactLevel || 1})`;
   const playersA = [teamA.setter, ...teamA.players].filter((p): p is Player => p !== null).map(formatPlayer).join(', ');
   const playersB = [teamB.setter, ...teamB.players].filter((p): p is Player => p !== null).map(formatPlayer).join(', ');
   
@@ -233,18 +234,18 @@ export const analyzeMatch = async (result: GenerationResult, attendance: Player[
 
   const prompt = `Analise Técnica de Partida (Guerreiros Volleyball):
     
-    TIME A (Média ELO: ${Math.round(teamA.totalElo / (teamA.players.length + (teamA.setter ? 1 : 0)))}):
+    TIME A (Média IC: ${(teamA.totalIC / (teamA.players.length + (teamA.setter ? 1 : 0))).toFixed(1)}):
     Jogadores: ${playersA}
     
-    TIME B (Média ELO: ${Math.round(teamB.totalElo / (teamB.players.length + (teamB.setter ? 1 : 0)))}):
+    TIME B (Média IC: ${(teamB.totalIC / (teamB.players.length + (teamB.setter ? 1 : 0))).toFixed(1)}):
     Jogadores: ${playersB}
 
     AJUSTES DE BALANCEAMENTO FEITOS:
     ${swapInfo}
     
     TAREFA:
-    1. Analise o equilíbrio das equipes (ELO e Nível de Impacto).
-    2. Explique como as trocas feitas ajudaram a equilibrar os times (foram necessárias para otimizar ELO ou Nível de Impacto?).
+    1. Analise o equilíbrio das equipes (Índice Composto - IC e Nível de Impacto).
+    2. Explique como as trocas feitas ajudaram a equilibrar os times (foram necessárias para otimizar o IC ou Nível de Impacto?).
     3. Determine a probabilidade de vitória para cada time (%).
     
     ESTILO: Analítico, direto e profissional. Max 100 palavras.`;
@@ -262,7 +263,7 @@ export const analyzeMatch = async (result: GenerationResult, attendance: Player[
   } catch (error: any) {
     if (isQuotaOrBillingError(error)) {
       console.warn("AI Analysis Quota/Billing/Permission Reached (429/403/RESOURCE_EXHAUSTED). Falling back.");
-      return "Análise temporariamente indisponível. O sistema realizou o balanceamento baseado em ELO e Níveis de Impacto técnico individual (Saque/Ataque/Defesa).";
+      return "Análise temporariamente indisponível. O sistema realizou o balanceamento baseado no IC e Níveis de Impacto técnico individual (Saque/Ataque/Defesa).";
     }
     console.error("Erro na análise técnica:", error);
     return "Falha na análise técnica.";
@@ -319,8 +320,8 @@ export const verifyRules = async (
     
     DADOS ATUAIS:
     - Presentes: ${attendanceList.map(p => `${p.name}(G:${p.gender === 'MALE' ? 'M' : 'F'}, ELO:${p.elo}, Impacto:${p.impactLevel || 1}, Jogos:${p.dailyMatches}, Ultima:${p.playedLastMatch ? 'Sim' : 'Não'}, Lev:${p.isOfficialSetter ? 'Sim' : 'Não'})`).join(', ')}
-    - Time A: ${result.teamA.setter?.name || 'Sem Lev'}, ${result.teamA.players.map(p => p.name).join(', ')} (Total ELO:${result.teamA.totalElo})
-    - Time B: ${result.teamB.setter?.name || 'Sem Lev'}, ${result.teamB.players.map(p => p.name).join(', ')} (Total ELO:${result.teamB.totalElo})
+    - Time A: ${result.teamA.setter?.name || 'Sem Lev'}, ${result.teamA.players.map(p => p.name).join(', ')} (Total ELO:${result.teamA.totalIC})
+    - Time B: ${result.teamB.setter?.name || 'Sem Lev'}, ${result.teamB.players.map(p => p.name).join(', ')} (Total ELO:${result.teamB.totalIC})
     - Espera: ${result.remainingPlayers.map(p => `${p.name}(Impacto:${p.impactLevel || 1}, Jogos:${p.dailyMatches})`).join(', ')}
     - ${lastMatchInfo}
     - Trocas de Refinamento (Impacto + ELO): ${swapsInfo}

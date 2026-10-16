@@ -3,9 +3,10 @@
   "appId": "1:238897290870:web:d2226b2375996408254957",
   "apiKey": "AIzaSyAFHrfcQKfl1MMEH97JFujGvZ4ngvsCVys",
   "authDomain": "volleyclub-manager.firebaseapp.com",
-  "firestoreDatabaseId": "(default)",
+  "firestoreDatabaseId": "ai-studio-guerreirosvolley-1630a408-19c0-4eed-9c72-a386f6308fe2",
   "storageBucket": "volleyclub-manager.firebasestorage.app",
   "messagingSenderId": "238897290870",
   "measurementId": "G-824QZ3P2T7",
+  "oAuthClientId": "238897290870-nkij4hrn31kd3j14boc5al685kf6vb80.apps.googleusercontent.com",
   "recaptchaSiteKey": ""
 }

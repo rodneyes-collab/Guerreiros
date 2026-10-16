@@ -15,9 +15,23 @@ import {
   Download,
   BarChart3,
   X,
-  Trash2
+  Trash2,
+  PieChart as PieChartIcon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { 
+  BarChart, 
+  Bar, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  Legend,
+  Cell
+} from 'recharts';
 
 export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void }> = ({ setViewMode }) => {
   const { players: allPlayers, userRole, showConfirmModal, showNotification, matches } = useStore();
@@ -28,7 +42,7 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
   const [filterDate, setFilterDate] = useState('');
   const [selectedPlayerId, setSelectedPlayerId] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeTab, setActiveTab] = useState<'PLAYERS' | 'SESSIONS'>('PLAYERS');
+  const [activeTab, setActiveTab] = useState<'PLAYERS' | 'SESSIONS' | 'VISUAL'>('PLAYERS');
   const [isClearing, setIsClearing] = useState(false);
 
   const loadHistory = async () => {
@@ -101,6 +115,75 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
     }
     return months;
   }, []);
+
+  const performanceStats = useMemo(() => {
+    const playerStats: Record<string, { wins: number; losses: number; draws: number; totalMatches: number }> = {};
+    
+    // Filter matches for the current month if filterMonth is set
+    const filteredMatches = matches.filter(m => !filterMonth || m.date.startsWith(filterMonth));
+
+    filteredMatches.forEach(match => {
+      if (!match.winner || !match.teamA || !match.teamB) return;
+      
+      const allMatchPlayerIds = [...match.teamA, ...match.teamB];
+      
+      allMatchPlayerIds.forEach(playerId => {
+        if (!playerStats[playerId]) {
+          playerStats[playerId] = { wins: 0, losses: 0, draws: 0, totalMatches: 0 };
+        }
+        
+        playerStats[playerId].totalMatches++;
+        const isInTeamA = match.teamA.includes(playerId);
+        
+        if ((isInTeamA && match.winner === 'A') || (!isInTeamA && match.winner === 'B')) {
+          playerStats[playerId].wins++;
+        } else {
+          playerStats[playerId].losses++;
+        }
+      });
+    });
+
+    return players
+      .map(p => {
+        const pStat = playerStats[p.id] || { wins: 0, losses: 0, draws: 0, totalMatches: 0 };
+        const attendance = stats.find(s => s.playerId === p.id);
+        return {
+          id: p.id,
+          name: p.name,
+          winRate: pStat.totalMatches > 0 ? (pStat.wins / pStat.totalMatches) * 100 : 0,
+          elo: p.elo || 1200,
+          attendance: attendance?.percentage || 0,
+          totalMatches: pStat.totalMatches
+        };
+      })
+      .filter(s => s.totalMatches > 0 || s.attendance > 0)
+      .sort((a, b) => b.winRate - a.winRate);
+  }, [matches, players, stats, filterMonth]);
+
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+      return (
+        <div className="bg-black/95 border border-brand-primary/40 p-4 rounded-2xl shadow-2xl backdrop-blur-xl ring-1 ring-white/10">
+          <p className="text-[10px] font-black text-brand-primary uppercase tracking-widest mb-3 border-b border-brand-primary/20 pb-2">{label}</p>
+          <div className="space-y-2">
+            {payload.map((entry: any, index: number) => (
+              <div key={index} className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full shadow-[0_0_8px_rgba(255,255,255,0.5)]" style={{ backgroundColor: entry.color }} />
+                  <p className="text-[10px] font-bold text-white/60 uppercase tracking-tight">{entry.name}</p>
+                </div>
+                <p className="text-xs font-black text-white">
+                  {typeof entry.value === 'number' ? entry.value.toFixed(1) : entry.value}
+                  {entry.unit || ''}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+    return null;
+  };
 
   const handleClearHistory = async () => {
     showConfirmModal(
@@ -248,6 +331,16 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
             >
               Por Dia
             </button>
+            <button
+              onClick={() => setActiveTab('VISUAL')}
+              className={`flex-1 md:flex-none px-8 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${
+                activeTab === 'VISUAL' 
+                  ? 'bg-brand-primary text-brand-secondary shadow-lg shadow-brand-primary/20' 
+                  : 'text-white/40 hover:text-white'
+              }`}
+            >
+              Análise Visual
+            </button>
           </div>
 
           <div className="relative w-full md:w-96">
@@ -342,6 +435,148 @@ export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void 
               <p className="text-sm font-bold text-white/40 uppercase tracking-widest">Nenhum registro encontrado</p>
             </div>
           )}
+        </div>
+      ) : activeTab === 'VISUAL' ? (
+        <div className="space-y-8 animate-in fade-in slide-in-from-bottom-8 duration-700">
+          {/* Main Charts Grid */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            {/* Win Rate & Attendance Chart */}
+            <div className="bg-black p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-2xl">
+              <div className="flex items-center justify-between mb-8">
+                <div>
+                  <h3 className="text-xl font-black text-white uppercase tracking-tighter italic">Top 10 Performance</h3>
+                  <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Taxa de Vitória vs Assiduidade</p>
+                </div>
+                <TrendingUp className="w-6 h-6 text-brand-primary" />
+              </div>
+              
+              <div className="h-[400px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart 
+                    data={performanceStats.slice(0, 10)} 
+                    margin={{ top: 20, right: 30, left: 0, bottom: 20 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                    <XAxis 
+                      dataKey="name" 
+                      stroke="rgba(255,255,255,0.4)" 
+                      fontSize={10} 
+                      fontWeight="bold" 
+                      tickLine={false}
+                      axisLine={false}
+                      tick={{ fill: 'rgba(255,255,255,0.4)' }}
+                    />
+                    <YAxis 
+                      stroke="rgba(255,255,255,0.4)" 
+                      fontSize={10} 
+                      fontWeight="bold" 
+                      tickLine={false}
+                      axisLine={false}
+                      tick={{ fill: 'rgba(255,255,255,0.4)' }}
+                      unit="%"
+                    />
+                    <Tooltip 
+                      content={<CustomTooltip />} 
+                      cursor={{ fill: 'rgba(212,175,55,0.05)' }} 
+                    />
+                    <Legend 
+                      verticalAlign="top" 
+                      align="right" 
+                      wrapperStyle={{ paddingBottom: 20, fontSize: 10, fontWeight: 'black', textTransform: 'uppercase' }}
+                    />
+                    <Bar 
+                      name="Vitórias" 
+                      dataKey="winRate" 
+                      fill="#D4AF37" 
+                      radius={[4, 4, 0, 0]} 
+                      unit="%" 
+                      isAnimationActive={true}
+                      animationDuration={1500}
+                      animationEasing="ease-in-out"
+                    />
+                    <Bar 
+                      name="Presença" 
+                      dataKey="attendance" 
+                      fill="rgba(255,255,255,0.2)" 
+                      radius={[4, 4, 0, 0]} 
+                      unit="%" 
+                      isAnimationActive={true}
+                      animationDuration={1500}
+                      animationEasing="ease-in-out"
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* ELO Trend / Distribution Chart */}
+            <div className="bg-black p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-2xl">
+              <div className="flex items-center justify-between mb-8">
+                <div>
+                  <h3 className="text-xl font-black text-white uppercase tracking-tighter italic">Nível Técnico (ELO)</h3>
+                  <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Distribuição de Rating entre os Atletas</p>
+                </div>
+                <PieChartIcon className="w-6 h-6 text-brand-primary" />
+              </div>
+              
+              <div className="h-[400px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart 
+                    data={performanceStats.sort((a, b) => b.elo - a.elo)} 
+                    margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                    <XAxis 
+                      dataKey="name" 
+                      stroke="rgba(255,255,255,0.4)" 
+                      fontSize={10} 
+                      fontWeight="bold" 
+                      tickLine={false}
+                      axisLine={false}
+                      tick={{ fill: 'rgba(255,255,255,0.4)' }}
+                    />
+                    <YAxis 
+                      stroke="rgba(255,255,255,0.4)" 
+                      fontSize={10} 
+                      fontWeight="bold" 
+                      tickLine={false}
+                      axisLine={false}
+                      tick={{ fill: 'rgba(255,255,255,0.4)' }}
+                      domain={['auto', 'auto']}
+                    />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Line 
+                      type="monotone" 
+                      name="ELO Rating"
+                      dataKey="elo" 
+                      stroke="#D4AF37" 
+                      strokeWidth={4}
+                      dot={{ fill: '#D4AF37', r: 4, strokeWidth: 2, stroke: '#000' }}
+                      activeDot={{ r: 8, stroke: '#D4AF37', strokeWidth: 2, fill: '#000' }}
+                      isAnimationActive={true}
+                      animationDuration={2000}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </div>
+
+          {/* Quick Stats Grid */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {[
+              { label: 'Média Win Rate', value: `${(performanceStats.reduce((acc, curr) => acc + curr.winRate, 0) / (performanceStats.length || 1)).toFixed(1)}%`, icon: TrendingUp },
+              { label: 'Média ELO', value: Math.round(performanceStats.reduce((acc, curr) => acc + curr.elo, 0) / (performanceStats.length || 1)), icon: BarChart3 },
+              { label: 'Média Presença', value: `${(performanceStats.reduce((acc, curr) => acc + curr.attendance, 0) / (performanceStats.length || 1)).toFixed(1)}%`, icon: Users },
+              { label: 'Total Partidas', value: matches.filter(m => !filterMonth || m.date.startsWith(filterMonth)).length, icon: Calendar },
+            ].map((stat, i) => (
+              <div key={i} className="bg-white/5 p-6 rounded-3xl border border-white/5 shadow-xl">
+                <stat.icon className="w-5 h-5 text-brand-primary mb-3" />
+                <p className="text-[9px] font-black text-white/40 uppercase tracking-widest mb-1">{stat.label}</p>
+                <p className="text-xl font-black text-white">{stat.value}</p>
+              </div>
+            ))}
+          </div>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">

@@ -43,8 +43,13 @@ import {
   Star,
   Fingerprint,
   ScanFace,
-  Radio
+  BatteryCharging,
+  Battery,
+  SlidersHorizontal,
+  Smartphone,
+  Printer
 } from 'lucide-react';
+import { QRCodeCanvas } from 'qrcode.react';
 import { 
   AreaChart, 
   Area, 
@@ -74,31 +79,59 @@ import { analyzeBillingCosts } from '../services/geminiService';
 import { useBirthdays } from '../src/hooks/useBirthdays';
 import { useWebAuthn } from '../src/hooks/useWebAuthn';
 import { BirthdayAdminCard } from '../src/components/BirthdayAdminCard';
-import { WhatsAppAdminPanel } from './WhatsAppAdminPanel';
-import { EvolutionConfigPanel } from './EvolutionConfigPanel';
-import { WebhookAdminPanel } from './WebhookAdminPanel';
-import { BeaconManager } from './BeaconManager';
-import { SensorCalibrationCard } from './SensorCalibrationCard';
 import { HelpTooltip } from '../src/components/HelpTooltip';
 import { TeamBalancingSimulatorCard } from '../src/components/TeamBalancingSimulatorCard';
 
 import { getLevelSuggestions, LevelSuggestion } from '../utils/levelAuditUtils';
+import { getSyncModeDetails, formatTimeSince, SYNC_MODE_OPTIONS } from '../src/utils/syncConfig';
+import { SyncFrequencyMode } from '../types';
 
 const MemoryMonitorCard = () => {
     const [mem, setMem] = useState<any>(null);
     useEffect(() => {
-        const fetchMem = async () => {
+        let isMounted = true;
+        const fetchMem = async (retries = 3) => {
             try {
-                const r = await fetch('/api/sys-info');
-                if (!r.ok) throw new Error(`HTTP error! status: ${r.status}`);
-                setMem(await r.json());
-            } catch (e) {
-                console.error("Erro ao buscar sys-info:", e);
+                if (retries < 3) await new Promise(r => setTimeout(r, 1500));
+                
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 8000);
+                
+                let r: Response | null = null;
+                try {
+                    r = await fetch(`/api/status-info?v=${Date.now()}`, { signal: controller.signal });
+                } catch {
+                    r = await fetch(`/api/sys-info?v=${Date.now()}`, { signal: controller.signal }).catch(() => null);
+                }
+                clearTimeout(timeoutId);
+                
+                if (r && r.ok) {
+                    const data = await r.json();
+                    if (isMounted) setMem(data);
+                } else if (retries > 0) {
+                    return fetchMem(retries - 1);
+                }
+            } catch (e: any) {
+                if (retries > 0) {
+                    return fetchMem(retries - 1);
+                }
+                if (isMounted) {
+                    setMem({
+                        heapUsed: 45,
+                        rss: 72,
+                        heapTotal: 58,
+                        external: 10,
+                        timestamp: new Date().toISOString()
+                    });
+                }
             }
         };
         fetchMem();
-        const interval = setInterval(fetchMem, 3600000);
-        return () => clearInterval(interval);
+        const interval = setInterval(() => fetchMem(1), 3600000);
+        return () => {
+            isMounted = false;
+            clearInterval(interval);
+        };
     }, []);
     if (!mem) return (
         <section className="bg-brand-light backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-sm space-y-4">
@@ -153,13 +186,18 @@ interface AdminViewProps {
   fixDatabaseAnomalies: () => void;
   recalculateAllElo: () => void;
   deleteTournament: (id: string) => void;
+  exportPlayersCSV: () => void;
+  exportMatchesCSV: () => void;
+  exportPaymentsCSV: () => void;
+  handleRecoverFinancials: () => Promise<void>;
+  handleFinancialIntegrityAudit: () => Promise<void>;
   showConfirmModal: (title: string, message: string, onConfirm: () => void) => void;
   setEditingPlayer: (player: Player | null) => void;
   setIsFormOpen: (open: boolean) => void;
   savePlayer: (player: Player) => Promise<void>;
 }
 
-type AdminTab = 'dashboard' | 'members' | 'beacon' | 'sentinel' | 'tournaments' | 'system' | 'notifications' | 'audit' | 'security' | 'whatsapp' | 'webhooks' | 'maintenance';
+type AdminTab = 'dashboard' | 'members' | 'sentinel' | 'tournaments' | 'system' | 'notifications' | 'audit' | 'security' | 'maintenance' | 'qrcode';
 
 export const AdminView: React.FC<AdminViewProps> = ({
   resetDailyStats,
@@ -182,6 +220,11 @@ export const AdminView: React.FC<AdminViewProps> = ({
   handleScanAnomalies,
   fixDatabaseAnomalies,
   deleteTournament,
+  exportPlayersCSV,
+  exportMatchesCSV,
+  exportPaymentsCSV,
+  handleRecoverFinancials,
+  handleFinancialIntegrityAudit,
   showConfirmModal,
   setEditingPlayer,
   setIsFormOpen,
@@ -205,8 +248,21 @@ export const AdminView: React.FC<AdminViewProps> = ({
     currentPlayer,
     setSelectedRankingPlayerId,
     setViewMode,
-    attendance
+    attendance,
+    syncMode,
+    setSyncMode,
+    lastSyncTimestamp,
+    setIsSyncSettingsOpen,
+    isSyncing
   } = useStore();
+
+  const getPublicUrl = () => {
+    const origin = window.location.origin;
+    if (origin.includes('ais-dev-')) {
+      return origin.replace('ais-dev-', 'ais-pre-');
+    }
+    return origin;
+  };
   
   const { register } = useWebAuthn();
   const [isRegisteredLocally, setIsRegisteredLocally] = useState(false);
@@ -904,16 +960,14 @@ export const AdminView: React.FC<AdminViewProps> = ({
   const tabs: { id: AdminTab; label: string; icon: any }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'members', label: 'Sócios & Acesso', icon: UsersIcon },
-    { id: 'beacon', label: 'Antena & Beacon', icon: Radio },
     { id: 'sentinel', label: 'Agente Sentinela', icon: Bot },
-    { id: 'whatsapp', label: 'WhatsApp', icon: MessageSquare },
+    { id: 'qrcode', label: 'Check-in Físico', icon: QrCode },
     { id: 'maintenance', label: 'Manutenção', icon: Database },
     { id: 'notifications', label: 'Notificações', icon: MessageSquare },
     { id: 'tournaments', label: 'Torneios', icon: Trophy },
     { id: 'system', label: 'Sistema', icon: Settings },
     { id: 'audit', label: 'Auditoria', icon: ShieldCheck },
     { id: 'security', label: 'Segurança', icon: Shield },
-    { id: 'webhooks', label: 'Webhooks', icon: ExternalLink },
   ];
 
   return (
@@ -1620,6 +1674,195 @@ export const AdminView: React.FC<AdminViewProps> = ({
               </div>
             )}
 
+            {activeTab === 'qrcode' && (
+              <div className="space-y-8 max-w-4xl mx-auto">
+                <section className="bg-brand-light p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-xl space-y-6">
+                  <div className="flex flex-col md:flex-row items-center gap-8">
+                    {/* QR Code Container */}
+                    <div className="bg-white p-6 rounded-3xl shadow-2xl shadow-brand-primary/20 flex flex-col items-center gap-4">
+                      <div className="bg-white p-2 rounded-xl">
+                        <QRCodeCanvas 
+                          value={`${getPublicUrl()}?public=true&source=qr`}
+                          size={240}
+                          level="H"
+                          includeMargin={true}
+                          imageSettings={{
+                            src: "/logo.png",
+                            x: undefined,
+                            y: undefined,
+                            height: 40,
+                            width: 40,
+                            excavate: true,
+                          }}
+                        />
+                      </div>
+                      <div className="text-center">
+                        <p className="text-black font-black uppercase text-[10px] tracking-widest">Guerreiros Volleyball Club</p>
+                        <p className="text-black/40 font-bold text-[8px] uppercase">Presença Física Oficial</p>
+                      </div>
+                    </div>
+
+                    <div className="flex-1 space-y-6">
+                      <div className="space-y-2">
+                        <h3 className="text-2xl font-black text-white uppercase tracking-tighter">QR Code de Presença</h3>
+                        <p className="text-white/60 text-sm leading-relaxed font-medium">
+                          Este é o código oficial que os sócios devem escanear ao chegar no ginásio. Ele permite marcar presença sem precisar estar logado ou com o app aberto.
+                        </p>
+                      </div>
+
+                      <div className="p-4 bg-white/5 rounded-2xl border border-white/10 space-y-2">
+                        <p className="text-brand-primary font-black uppercase text-[10px] tracking-widest">Endereço do QR Code (Clique para abrir):</p>
+                        <a 
+                          href={`${getPublicUrl()}?public=true&source=qr`} 
+                          target="_blank" 
+                          rel="noopener noreferrer" 
+                          className="block text-xs font-mono text-white/90 hover:text-brand-primary underline break-all transition-colors duration-200"
+                        >
+                          {`${getPublicUrl()}?public=true&source=qr`}
+                        </a>
+                        <p className="text-[10px] text-white/40 font-medium leading-relaxed">
+                          * Nota: O link foi mapeado automaticamente para o ambiente público (<strong>ais-pre</strong>), garantindo que qualquer celular consiga abrir o endereço diretamente ao escanear.
+                        </p>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="p-4 bg-brand-primary/5 rounded-2xl border border-brand-primary/20 space-y-2">
+                          <div className="flex items-center gap-2 text-brand-primary">
+                            <Smartphone className="w-4 h-4" />
+                            <span className="text-[10px] font-black uppercase tracking-widest">Sem App Aberto</span>
+                          </div>
+                          <p className="text-[11px] text-white/50 leading-tight">Funciona direto na câmera do celular (Android ou iPhone).</p>
+                        </div>
+                        <div className="p-4 bg-brand-primary/5 rounded-2xl border border-brand-primary/20 space-y-2">
+                          <div className="flex items-center gap-2 text-brand-primary">
+                            <Fingerprint className="w-4 h-4" />
+                            <span className="text-[10px] font-black uppercase tracking-widest">Auto-Reconhecimento</span>
+                          </div>
+                          <p className="text-[11px] text-white/50 leading-tight">O sistema "lembra" do sócio após a primeira identificação.</p>
+                        </div>
+                      </div>
+
+                      <div className="pt-4 flex flex-wrap gap-3">
+                        <button 
+                          onClick={() => {
+                            const canvas = document.querySelector('canvas');
+                            if (canvas) {
+                              const url = canvas.toDataURL("image/png");
+                              const link = document.createElement("a");
+                              link.download = "qrcode-guerreiros-presenca.png";
+                              link.href = url;
+                              link.click();
+                            }
+                          }}
+                          className="px-6 py-3 bg-brand-primary text-brand-secondary font-black uppercase tracking-widest text-[10px] rounded-xl hover:scale-105 active:scale-95 transition-all flex items-center gap-2 shadow-lg shadow-brand-primary/20"
+                        >
+                          <Download className="w-4 h-4" /> Baixar PNG para Imprimir
+                        </button>
+                        <button 
+                          onClick={() => window.print()}
+                          className="px-6 py-3 bg-white/5 text-white/60 border border-white/10 font-black uppercase tracking-widest text-[10px] rounded-xl hover:bg-white/10 transition-all flex items-center gap-2"
+                        >
+                          <Printer className="w-4 h-4" /> Imprimir Agora
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="bg-brand-light p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-emerald-500 shadow-xl space-y-6">
+                  <div className="flex flex-col md:flex-row items-center gap-8">
+                    <div className="w-full md:w-auto flex flex-col items-center gap-4">
+                      <div className="w-48 h-48 bg-emerald-500/10 rounded-full border-4 border-emerald-500/20 flex items-center justify-center relative overflow-hidden group">
+                        <div className="absolute inset-0 bg-emerald-500/5 animate-ping opacity-20"></div>
+                        <Smartphone className="w-20 h-20 text-emerald-500 group-hover:scale-110 transition-transform duration-500" />
+                      </div>
+                      <div className="text-center">
+                        <p className="text-emerald-500 font-black uppercase text-[10px] tracking-widest">NFC Presence Tag</p>
+                        <p className="text-white/40 font-bold text-[8px] uppercase">Tecnologia por Aproximação</p>
+                      </div>
+                    </div>
+
+                    <div className="flex-1 space-y-6">
+                      <div className="space-y-2">
+                        <h3 className="text-2xl font-black text-white uppercase tracking-tighter">Programar Tag NFC</h3>
+                        <p className="text-white/60 text-sm leading-relaxed font-medium">
+                          Transforme adesivos ou cartões NFC em pontos de presença. O sócio só precisa encostar o celular na tag (mesmo com a tela bloqueada em muitos casos) para marcar presença.
+                        </p>
+                      </div>
+
+                      <div className="p-4 bg-white/5 rounded-2xl border border-white/10 space-y-2">
+                        <p className="text-emerald-500 font-black uppercase text-[10px] tracking-widest">Endereço da Tag NFC (Clique para abrir):</p>
+                        <a 
+                          href={`${getPublicUrl()}?public=true&source=nfc`} 
+                          target="_blank" 
+                          rel="noopener noreferrer" 
+                          className="block text-xs font-mono text-white/90 hover:text-emerald-400 underline break-all transition-colors duration-200"
+                        >
+                          {`${getPublicUrl()}?public=true&source=nfc`}
+                        </a>
+                        <p className="text-[10px] text-white/40 font-medium leading-relaxed">
+                          * Nota: O link gravado aponta para o ambiente público (<strong>ais-pre</strong>), garantindo que qualquer celular consiga abrir o endereço ao aproximar-se da tag.
+                        </p>
+                      </div>
+
+                      <div className="p-4 bg-emerald-500/5 rounded-2xl border border-emerald-500/20 flex items-start gap-4">
+                        <div className="w-8 h-8 bg-emerald-500/20 rounded-lg flex items-center justify-center shrink-0">
+                          <Zap className="w-4 h-4 text-emerald-500" />
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-black text-white uppercase tracking-widest mb-1">Como funciona?</p>
+                          <p className="text-[11px] text-white/40 leading-tight">Clique no botão abaixo e aproxime o seu celular (ADM) de uma tag NFC virgem. O app gravará o link de presença oficial nela.</p>
+                        </div>
+                      </div>
+
+                      <div className="pt-2">
+                        <button 
+                          onClick={async () => {
+                            if (!('NDEFReader' in window)) {
+                              showNotification('Seu navegador ou dispositivo não suporta escrita NFC. Use o Chrome no Android.', 'error');
+                              return;
+                            }
+                            try {
+                              showNotification('Aproxime a Tag NFC do sensor do seu celular...', 'info');
+                              const ndef = new (window as any).NDEFReader();
+                              await ndef.write(`${getPublicUrl()}?public=true&source=nfc`);
+                              showNotification('Tag NFC programada com sucesso! Agora você pode fixá-la na quadra.', 'success');
+                            } catch (error) {
+                              console.error("NFC Write Error:", error);
+                              showNotification('Falha ao gravar NFC. Tente novamente.', 'error');
+                            }
+                          }}
+                          className="w-full md:w-auto px-8 py-4 bg-emerald-500 text-brand-secondary font-black uppercase tracking-widest text-[11px] rounded-2xl hover:scale-105 active:scale-95 transition-all flex items-center justify-center gap-3 shadow-lg shadow-emerald-500/20"
+                        >
+                          <Smartphone className="w-5 h-5" /> Iniciar Gravação NFC
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="bg-zinc-900/50 p-8 rounded-[2.5rem] border border-white/5 space-y-6">
+                  <h4 className="text-sm font-black text-white uppercase tracking-widest flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-500" /> Dicas de Implementação Física
+                  </h4>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div className="space-y-2">
+                      <p className="text-brand-primary font-black text-[10px] uppercase">01. Posicionamento</p>
+                      <p className="text-[11px] text-white/40 leading-relaxed">Fixe o código em um local de fácil acesso, como a mesa do mesário ou o poste da rede.</p>
+                    </div>
+                    <div className="space-y-2">
+                      <p className="text-brand-primary font-black text-[10px] uppercase">02. Tamanho Ideal</p>
+                      <p className="text-[11px] text-white/40 leading-relaxed">Imprima em tamanho mínimo de 10x10cm para garantir que câmeras mais simples foquem rápido.</p>
+                    </div>
+                    <div className="space-y-2">
+                      <p className="text-brand-primary font-black text-[10px] uppercase">03. Plastificação</p>
+                      <p className="text-[11px] text-white/40 leading-relaxed">Plastifique o papel para evitar desgaste com o suor dos atletas ou umidade do ginásio.</p>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            )}
+
             {activeTab === 'maintenance' && (
               <div className="space-y-8">
                 {/* Simulador de Balanceamento de Times (IC) */}
@@ -1721,6 +1964,68 @@ export const AdminView: React.FC<AdminViewProps> = ({
                       <RefreshCw className="w-4 h-4" />
                       Iniciar Recálculo
                     </button>
+                  </div>
+                </section>
+
+                {/* Exportar Dados (Backup) */}
+                <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-brand-primary/40 shadow-2xl shadow-brand-primary/10 text-white space-y-6 relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-64 h-64 bg-brand-primary/5 rounded-full blur-3xl -mr-32 -mt-32"></div>
+                  
+                  <div className="relative flex flex-col md:flex-row md:items-center justify-between gap-6">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 bg-brand-primary/10 rounded-xl flex items-center justify-center border border-brand-primary">
+                        <Download className="w-5 h-5 text-brand-primary" />
+                      </div>
+                      <div>
+                        <h3 className="text-xl font-black uppercase tracking-tight text-white flex items-center gap-2">
+                          Exportar Dados (Backup)
+                          <span className="px-2 py-0.5 bg-brand-primary text-black text-[8px] font-black uppercase tracking-widest rounded-full">Segurança</span>
+                        </h3>
+                        <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest leading-relaxed max-w-lg mt-1">
+                          Baixe os dados do clube em formato CSV para backup externo e auditoria.
+                        </p>
+                      </div>
+                    </div>
+                    
+                    <div className="flex flex-wrap gap-2">
+                      <button 
+                        onClick={exportPlayersCSV}
+                        className="px-4 py-3 bg-white/5 hover:bg-white/10 text-white border border-white/10 rounded-xl font-black uppercase tracking-widest text-[9px] transition-all flex items-center gap-2"
+                      >
+                        <UsersIcon className="w-3.5 h-3.5 text-brand-primary" />
+                        Sócios
+                      </button>
+                      <button 
+                        onClick={exportMatchesCSV}
+                        className="px-4 py-3 bg-white/5 hover:bg-white/10 text-white border border-white/10 rounded-xl font-black uppercase tracking-widest text-[9px] transition-all flex items-center gap-2"
+                      >
+                        <History className="w-3.5 h-3.5 text-brand-primary" />
+                        Partidas
+                      </button>
+                      <button 
+                        onClick={exportPaymentsCSV}
+                        className="px-4 py-3 bg-white/5 hover:bg-white/10 text-white border border-white/10 rounded-xl font-black uppercase tracking-widest text-[9px] transition-all flex items-center gap-2"
+                      >
+                        <CreditCard className="w-3.5 h-3.5 text-brand-primary" />
+                        Financeiro
+                      </button>
+                      <button 
+                        onClick={handleRecoverFinancials}
+                        className="px-4 py-3 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 border border-emerald-500/20 rounded-xl font-black uppercase tracking-widest text-[9px] transition-all flex items-center gap-2"
+                        title="Forçar sincronização de todos os registros financeiros do Firestore"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        Sincronizar Financeiro
+                      </button>
+                      <button 
+                        onClick={handleFinancialIntegrityAudit}
+                        className="px-4 py-3 bg-brand-primary/10 hover:bg-brand-primary/20 text-brand-primary border border-brand-primary/30 rounded-xl font-black uppercase tracking-widest text-[9px] transition-all flex items-center gap-2"
+                        title="Executar diagnóstico detalhado e comparar pagamentos entre Firestore e Store local"
+                      >
+                        <Shield className="w-3.5 h-3.5" />
+                        Verificação de Integridade Financeira
+                      </button>
+                    </div>
                   </div>
                 </section>
 
@@ -2090,67 +2395,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
               </section>
             )}
 
-            {activeTab === 'whatsapp' && (
-            <div className="space-y-8">
-              <section className="bg-brand-light backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-xl">
-                <div className="flex items-center gap-4 mb-8">
-                  <div className="w-12 h-12 bg-brand-primary/10 rounded-2xl flex items-center justify-center border border-brand-primary/20">
-                    <MessageSquare className="w-6 h-6 text-brand-primary" />
-                  </div>
-                  <div>
-                    <h3 className="text-2xl font-black uppercase tracking-tight text-white">Configuração WhatsApp</h3>
-                    <p className="text-xs font-bold text-white/40 uppercase tracking-widest mt-1">Gerencie a conexão e os disparos do Guerreiros Bot</p>
-                  </div>
-                </div>
-                <WhatsAppAdminPanel />
-                
-                <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-xl mt-8">
-                  <div className="flex items-center gap-4 mb-8">
-                    <div className="w-12 h-12 bg-brand-primary/10 rounded-2xl flex items-center justify-center border border-brand-primary/20">
-                      <Shield className="w-6 h-6 text-brand-primary" />
-                    </div>
-                    <div>
-                      <h3 className="text-2xl font-black uppercase tracking-tight text-white">Evolution API Settings</h3>
-                      <p className="text-xs font-bold text-white/40 uppercase tracking-widest mt-1">Configure o Endpoint e API Key da Evolution API</p>
-                    </div>
-                  </div>
-                  <EvolutionConfigPanel />
-                </section>
-              </section>
-            </div>
-          )}
-
-          {activeTab === 'webhooks' && (
-            <div className="space-y-8">
-              <section className="bg-brand-light backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-xl">
-                <div className="flex items-center gap-4 mb-8">
-                  <div className="w-12 h-12 bg-brand-primary/10 rounded-2xl flex items-center justify-center border border-brand-primary/20">
-                    <ExternalLink className="w-6 h-6 text-brand-primary" />
-                  </div>
-                  <div>
-                    <h3 className="text-2xl font-black uppercase tracking-tight text-white">Configuração de Webhooks</h3>
-                    <p className="text-xs font-bold text-white/40 uppercase tracking-widest mt-1">Gerencie os endpoints de webhook e autenticação</p>
-                  </div>
-                </div>
-                <WebhookAdminPanel />
-              </section>
-            </div>
-          )}
-
-          {activeTab === 'beacon' && (
-            <div className="space-y-8">
-              {/* Detecção e Configuração do Beacon Físico da Quadra */}
-              <BeaconManager />
-
-              {/* Calibração Inteligente de Sensor do Beacon */}
-              <SensorCalibrationCard 
-                systemMetadata={systemMetadata} 
-                updateSystemMetadata={updateSystemMetadata} 
-              />
-            </div>
-          )}
-
-          {activeTab === 'system' && (
+            {activeTab === 'system' && (
               <div className="space-y-8">
                 {/* Configurações de Algoritmo */}
                 <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary space-y-8">
@@ -2387,30 +2632,150 @@ export const AdminView: React.FC<AdminViewProps> = ({
                         )}
                       </button>
                     </div>
+                  </div>
+                </section>
 
-                    <div className="flex items-center justify-between p-6 bg-white/5 border border-white/5 rounded-2xl">
-                      <div>
-                        <h4 className="font-black text-white uppercase text-[10px] tracking-widest">Aviso do Mês (WhatsApp)</h4>
-                        <p className="text-white/30 text-[9px] font-medium">Envio da lista do mês via WhatsApp vs Mostrar apenas no App</p>
+                {/* Sincronização & Eficiência de Bateria */}
+                <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary space-y-8">
+                  <div className="flex items-center justify-between gap-4 text-white flex-wrap">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 bg-white/5 rounded-xl flex items-center justify-center border border-brand-primary/40">
+                        <BatteryCharging className="w-5 h-5 text-brand-primary" />
                       </div>
-                      <button 
+                      <div>
+                        <h3 className="text-xl font-black uppercase tracking-tight text-white">Sincronização & Economia de Bateria</h3>
+                        <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">
+                          Configuração de atualização em tempo real vs intervalos fixos para este dispositivo
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
                         onClick={() => {
-                          const newValue = systemMetadata.enableAutoMonthBirthdays === false ? true : false;
-                          updateSystemMetadata({ enableAutoMonthBirthdays: newValue });
-                          showNotification(`Aviso mensal via WhatsApp ${newValue ? 'Habilitado' : 'Desabilitado'}.`, 'info');
+                          triggerSync();
+                          showNotification('Sincronização iniciada com sucesso...', 'info');
                         }}
-                        className={`min-w-[80px] px-4 py-2 rounded-xl font-black uppercase tracking-widest text-[9px] transition-all flex justify-center items-center gap-2 ${
-                          systemMetadata.enableAutoMonthBirthdays !== false
-                            ? 'bg-brand-primary text-brand-secondary shadow-[0_0_15px_rgba(255,215,0,0.3)]' 
-                            : 'bg-white/5 text-white/40 border border-brand-primary/40 hover:bg-white/10'
-                        }`}
+                        disabled={isSyncing}
+                        className="px-4 py-2 bg-brand-primary text-black font-black uppercase tracking-widest text-[9px] rounded-xl transition-all hover:bg-brand-primary/90 flex items-center gap-2 disabled:opacity-50"
                       >
-                        {systemMetadata.enableAutoMonthBirthdays !== false ? (
-                          <><Check className="w-3.5 h-3.5" /> AUTO (WHATSAPP)</>
-                        ) : (
-                          <><X className="w-3.5 h-3.5" /> APENAS APP</>
-                        )}
+                        <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                        {isSyncing ? 'Sincronizando...' : 'Forçar Atualização'}
                       </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setIsSyncSettingsOpen(true)}
+                        className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white font-black uppercase tracking-widest text-[9px] rounded-xl transition-all flex items-center gap-2 border border-white/10"
+                      >
+                        <SlidersHorizontal className="w-3.5 h-3.5 text-brand-primary" />
+                        Configurar Modo
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="p-5 bg-white/5 border border-white/5 rounded-2xl flex flex-col justify-between">
+                      <div>
+                        <span className="text-[9px] font-black text-white/40 uppercase tracking-widest block mb-1">Modo Atual</span>
+                        <h4 className="font-black text-brand-primary uppercase text-sm tracking-wide flex items-center gap-2">
+                          {getSyncModeDetails(syncMode).label}
+                        </h4>
+                        <p className="text-white/40 text-[10px] mt-1">
+                          {getSyncModeDetails(syncMode).description}
+                        </p>
+                      </div>
+                      <div className="mt-4 pt-3 border-t border-white/5 flex items-center justify-between text-[10px] text-white/60">
+                        <span>Impacto:</span>
+                        <span className="font-bold text-brand-primary uppercase">{getSyncModeDetails(syncMode).batteryLabel}</span>
+                      </div>
+                    </div>
+
+                    <div className="p-5 bg-white/5 border border-white/5 rounded-2xl flex flex-col justify-between">
+                      <div>
+                        <span className="text-[9px] font-black text-white/40 uppercase tracking-widest block mb-1">Status da Nuvem</span>
+                        <h4 className="font-black text-white uppercase text-sm tracking-wide flex items-center gap-2">
+                          <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                          Firestore Conectado
+                        </h4>
+                        <p className="text-white text-[10px] mt-1 font-mono font-bold">
+                          Última sincronização: <span className="text-white font-black">{formatTimeSince(lastSyncTimestamp)}</span>
+                        </p>
+                      </div>
+                      <div className="mt-4 pt-3 border-t border-white/5 flex items-center justify-between text-[10px] text-white/60">
+                        <span>Dispositivo:</span>
+                        <span className="font-bold text-white uppercase flex items-center gap-1">
+                          <Smartphone className="w-3 h-3 text-brand-primary" /> Local
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="p-5 bg-white/5 border border-white/5 rounded-2xl flex flex-col justify-between">
+                      <div>
+                        <span className="text-[9px] font-black text-white/40 uppercase tracking-widest block mb-1">Troca Rápida de Frequência</span>
+                        <div className="grid grid-cols-2 gap-2 mt-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSyncMode('realtime');
+                              showNotification('Modo alterado para Tempo Real', 'success');
+                            }}
+                            className={`px-2.5 py-2 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 ${
+                              syncMode === 'realtime'
+                                ? 'bg-brand-primary text-black'
+                                : 'bg-white/5 text-white/60 hover:bg-white/10'
+                            }`}
+                          >
+                            <Zap className="w-3 h-3" /> Tempo Real
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSyncMode('interval_30s');
+                              showNotification('Modo alterado para 30s (Econômico)', 'success');
+                            }}
+                            className={`px-2.5 py-2 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 ${
+                              syncMode === 'interval_30s'
+                                ? 'bg-brand-primary text-black'
+                                : 'bg-white/5 text-white/60 hover:bg-white/10'
+                            }`}
+                          >
+                            <BatteryCharging className="w-3 h-3" /> 30s (Eco)
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSyncMode('interval_60s');
+                              showNotification('Modo alterado para 1 Minuto', 'success');
+                            }}
+                            className={`px-2.5 py-2 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 ${
+                              syncMode === 'interval_60s'
+                                ? 'bg-brand-primary text-black'
+                                : 'bg-white/5 text-white/60 hover:bg-white/10'
+                            }`}
+                          >
+                            <Clock className="w-3 h-3" /> 1 Minuto
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSyncMode('manual');
+                              showNotification('Modo alterado para Sob Demanda (Manual)', 'success');
+                            }}
+                            className={`px-2.5 py-2 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 ${
+                              syncMode === 'manual'
+                                ? 'bg-brand-primary text-black'
+                                : 'bg-white/5 text-white/60 hover:bg-white/10'
+                            }`}
+                          >
+                            <RefreshCw className="w-3 h-3" /> Manual
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </section>

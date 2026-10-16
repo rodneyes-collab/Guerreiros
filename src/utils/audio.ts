@@ -1,5 +1,5 @@
 
-export const playSound = (type: 'winA' | 'winB' | 'announce') => {
+export const playSound = (type: 'winA' | 'winB' | 'announce' | 'success') => {
   const audio = new Audio(`/audio/${type}.mp3`);
   audio.play().catch(e => {
     // Silently fail if audio file is missing

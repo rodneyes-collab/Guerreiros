@@ -1,8 +1,11 @@
 
-export enum Gender {
-  MALE = 'MALE',
-  FEMALE = 'FEMALE'
-}
+export const Gender = {
+  MALE: 'MALE',
+  FEMALE: 'FEMALE'
+} as const;
+
+export type Gender = typeof Gender[keyof typeof Gender];
+
 
 export interface AuditLog {
   field: string;
@@ -17,8 +20,10 @@ export interface Player {
   name: string;
   email?: string;
   phone?: string;
+  photoUrl?: string;
   gender: Gender;
   isOfficialSetter: boolean;
+  setterStartDate?: string; // Data a partir da qual o atleta atua como levantador (YYYY-MM-DD)
   matchesPlayed: number; // Total histórico
   dailyMatches: number; // Partidas no dia atual
   dailyWins: number; // Vitórias no dia atual
@@ -43,6 +48,7 @@ export interface Player {
   isAdmin?: boolean;
   joinedAt?: string;
   playedLastMatch?: boolean;
+  consecutivePlayed?: number; // Número de partidas consecutivas em quadra
   timestamp?: number; // Timestamp de chegada na presença
   leftAt?: number; // Timestamp de saída/remoção da presença
   consecutiveBenched?: number; // Número de partidas consecutivas no banco
@@ -84,6 +90,8 @@ export interface Player {
   };
   fidelityPoints?: number;
   lastFidelityDate?: string;
+  isPresent?: boolean;
+  checkInMethod?: 'NFC' | 'QR' | 'MANUAL';
 }
 
 export interface AppNotification {
@@ -109,6 +117,7 @@ export interface IntentionsData {
   responses: Record<string, 'GOING' | 'NOT_GOING'>;
   confirmationTimestamps?: Record<string, number>;
   remindersSent: Record<string, boolean>;
+  lastUpdated?: number;
 }
 
 export interface Match {
@@ -117,6 +126,8 @@ export interface Match {
   date: string; // ISO date string
   teamA: string[]; // IDs dos jogadores do Time A
   teamB: string[]; // IDs dos jogadores do Time B
+  setterA?: string | null; // ID do levantador do Time A
+  setterB?: string | null; // ID do levantador do Time B
   scoreA: number;
   scoreB: number;
   winner: 'A' | 'B';
@@ -126,6 +137,7 @@ export interface Match {
   mode: MatchMode;
   dailyNumber?: number;
   stats?: any[];
+  updatedAt?: string;
 }
 
 export interface SystemMetadata {
@@ -190,15 +202,21 @@ export interface Expense {
 export interface Team {
   setter: Player | null;
   players: Player[];
-  totalElo: number;
+  totalIC: number;
   totalEfficiency?: number;
 }
 
-export interface AutoCorrectionRuleCheck {
-  ruleId: 'BOTTOM2' | 'TOP2' | 'GENDER' | 'GUESTS' | 'SETTER' | 'TEAM_SIZE' | 'SETTER_CAPACITY' | 'SYNERGY';
-  ruleName: string;
+export interface RuleCheck {
+  fulfilled: boolean;
   description: string;
-  passed: boolean;
+  badgeLabel: string;
+}
+
+export interface ClubGenerationRules {
+  allFulfilled: boolean;
+  setter: RuleCheck;
+  gender: RuleCheck;
+  topBottom: RuleCheck;
 }
 
 export interface AutoCorrectionFixLog {
@@ -207,6 +225,12 @@ export interface AutoCorrectionFixLog {
   description: string;
   playerA?: string;
   playerB?: string;
+}
+
+export interface AutoCorrectionRuleCheck {
+  category: string;
+  passed: boolean;
+  message: string;
 }
 
 export interface AutoCorrectionAudit {
@@ -223,6 +247,11 @@ export interface GenerationResult {
   swaps?: { playerA: string; playerB: string }[];
   bottomTwoIds?: string[];
   topTwoIds?: string[];
+  techTierIds?: {
+    top4Ids: string[];
+    bottom4Ids: string[];
+    cascadeLevel: 'TOP4_BOTTOM4' | 'TOP2_BOTTOM4' | 'TOP2_BOTTOM2';
+  };
   timestamp?: number;
   combinationsCount?: number;
   autoCorrectionAudit?: AutoCorrectionAudit;
@@ -230,13 +259,21 @@ export interface GenerationResult {
     teamA: Team;
     teamB: Team;
   };
+  balancingStrategy?: 'BOTH' | 'BOTTOM_TWO' | 'SYNERGY';
+  balancingRatingMode?: 'HYBRID' | 'IC_ONLY';
+  teamGenerationMode?: 'PURE_SKILLS' | 'TRUESKILL';
+  appliedCascadeLevel?: string;
+  simulationNumber?: number;
+  topBottomValidation?: any;
+  diffTop?: number;
+  diffBottom?: number;
 }
 
 export interface TournamentTeam {
   id: string;
   name: string;
   players: string[]; // IDs dos jogadores
-  totalElo?: number;
+  totalIC?: number;
   points: number;
   setsWon: number;
   setsLost: number;
@@ -337,4 +374,18 @@ export interface ScheduledMessage {
   content: string;
   error?: string;
   createdAt: number;
+}
+
+export type SyncFrequencyMode = 'realtime' | 'interval_15s' | 'interval_30s' | 'interval_60s' | 'interval_300s' | 'manual';
+
+export interface SyncModeOption {
+  id: SyncFrequencyMode;
+  label: string;
+  shortLabel: string;
+  description: string;
+  intervalSeconds: number; // 0 for realtime or manual
+  batteryImpact: 'high' | 'medium' | 'low' | 'minimal' | 'none';
+  batteryLabel: string;
+  networkImpact: 'high' | 'medium' | 'low' | 'minimal' | 'none';
+  recommendedFor?: string;
 }

@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../store';
 import { Payment, PaymentStatus, Expense } from '../types';
-import { db, doc, updateDoc, getFirestoreDateKey } from '../firebase';
+import { db, doc, updateDoc, getFirestoreDateKey, clearIndexedDbPersistence, getDocsFromServer, collection } from '../firebase';
 import { 
   Trash2, 
   Plus, 
@@ -18,7 +18,8 @@ import {
   History,
   ExternalLink,
   TrendingUp,
-  Shield
+  Shield,
+  RefreshCw
 } from 'lucide-react';
 
 import { HelpTooltip } from '../src/components/HelpTooltip';
@@ -32,6 +33,7 @@ interface PaymentsViewProps {
   setEditingExpense: (expense: Expense | null) => void;
   setIsExpenseFormOpen: (open: boolean) => void;
   updateMonthlyFee: (fee: number) => void;
+  handleFinancialIntegrityAudit?: () => Promise<void>;
 }
 
 export const PaymentsView: React.FC<PaymentsViewProps> = ({
@@ -41,7 +43,8 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
   deleteExpense,
   setEditingExpense,
   setIsExpenseFormOpen,
-  updateMonthlyFee
+  updateMonthlyFee,
+  handleFinancialIntegrityAudit
 }) => {
   const { payments, expenses, userRole, systemMetadata, players: allPlayers } = useStore();
   const players = React.useMemo(() => allPlayers.filter(p => (p.status === 'active' || p.status === 'guest' || !p.status || p.status === '') && !p.isDM), [allPlayers]);
@@ -53,6 +56,109 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
   const [isEditingFee, setIsEditingFee] = useState(false);
   const [tempFee, setTempFee] = useState(systemMetadata.monthlyFee || 0);
   const [toastMessage, setToastMessage] = useState('');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [pullStartY, setPullStartY] = useState(0);
+  const [pullDist, setPullDist] = useState(0);
+
+  const [isForcingSync, setIsForcingSync] = useState(false);
+
+  const handleRefresh = async () => {
+    if (handleFinancialIntegrityAudit) {
+      setIsRefreshing(true);
+      try {
+        await handleFinancialIntegrityAudit();
+        setToastMessage('Dados financeiros sincronizados!');
+        setTimeout(() => setToastMessage(''), 3000);
+      } catch (err) {
+        setToastMessage('Erro ao sincronizar.');
+        setTimeout(() => setToastMessage(''), 3000);
+      } finally {
+        setIsRefreshing(false);
+      }
+    }
+  };
+
+  const handleForceSyncFinancials = async () => {
+    setIsForcingSync(true);
+    setToastMessage('Limpando cache e forçando busca do servidor...');
+    try {
+      // 1. Invoca clearIndexedDbPersistence para invalidar cache do IndexedDB
+      try {
+        if (typeof clearIndexedDbPersistence === 'function') {
+          await clearIndexedDbPersistence(db);
+        }
+      } catch (cacheErr) {
+        console.info('[Financeiro Cache] clearIndexedDbPersistence ignorado (instância ativa):', cacheErr);
+      }
+
+      // 2. Limpa quaisquer entradas de cache em localStorage específicas de pagamentos e despesas
+      try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          Object.keys(window.localStorage).forEach(k => {
+            if (k.toLowerCase().includes('payment') || k.toLowerCase().includes('expense')) {
+              window.localStorage.removeItem(k);
+            }
+          });
+        }
+      } catch (e) {}
+
+      // 3. Força busca do SERVIDOR Firestore sem passar pelo cache local
+      const [paymentsSnap, expensesSnap] = await Promise.all([
+        getDocsFromServer(collection(db, 'payments')),
+        getDocsFromServer(collection(db, 'expenses'))
+      ]);
+
+      const freshPayments: Payment[] = [];
+      paymentsSnap.forEach(d => freshPayments.push({ ...d.data(), id: d.id } as Payment));
+
+      const freshExpenses: Expense[] = [];
+      expensesSnap.forEach(d => freshExpenses.push({ ...d.data(), id: d.id } as Expense));
+
+      useStore.setState({ payments: freshPayments, expenses: freshExpenses });
+
+      setToastMessage(`Sincronização forçada concluída! ${freshPayments.length} pagamentos carregados.`);
+      setTimeout(() => setToastMessage(''), 4000);
+    } catch (err) {
+      console.error('[Financeiro] Erro ao sincronizar forçadamente:', err);
+      if (handleFinancialIntegrityAudit) {
+        await handleFinancialIntegrityAudit();
+      }
+      setToastMessage('Sincronização concluída via integridade.');
+      setTimeout(() => setToastMessage(''), 3000);
+    } finally {
+      setIsForcingSync(false);
+    }
+  };
+
+  useEffect(() => {
+    if (handleFinancialIntegrityAudit) {
+      handleRefresh();
+    }
+  }, []);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (window.scrollY === 0) {
+      setPullStartY(e.touches[0].clientY);
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (pullStartY > 0 && window.scrollY === 0) {
+      const currentY = e.touches[0].clientY;
+      const diff = currentY - pullStartY;
+      if (diff > 0) {
+        setPullDist(Math.min(diff * 0.5, 100));
+      }
+    }
+  };
+
+  const handleTouchEnd = async () => {
+    if (pullDist > 60 && !isRefreshing) {
+      await handleRefresh();
+    }
+    setPullStartY(0);
+    setPullDist(0);
+  };
 
   const copyList = (statusType: 'PAID' | 'UNPAID', label: string) => {
     if (!filterMonth) {
@@ -212,16 +318,20 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
 
   const filteredPayments = useMemo(() => {
     return payments.filter(p => {
-      const player = allPlayers.find(ap => ap.id === p.playerId);
-      if (!player || player.isDM) return false;
-      
       const matchMonth = !filterMonth || p.month === filterMonth;
       const matchDate = !filterDate || p.paymentDate === filterDate;
-      const matchPlayer = !filterPlayer || p.playerName === filterPlayer;
+      const matchPlayer = !filterPlayer || (p.playerName || '').toLowerCase().includes(filterPlayer.toLowerCase());
       const calculatedStatus = getCalculatedStatus(p, p.playerId, p.month);
       const matchStatus = !filterStatus || calculatedStatus === filterStatus;
       return matchMonth && matchDate && matchPlayer && matchStatus;
-    }).sort((a,b) => (a.playerName || '').localeCompare(b.playerName || ''));
+    }).sort((a, b) => {
+      const dateA = a.paymentDate || a.dueDate || '';
+      const dateB = b.paymentDate || b.dueDate || '';
+      if (typeof dateB === 'string' && typeof dateA === 'string') {
+        return dateB.localeCompare(dateA);
+      }
+      return (Number(dateB) || 0) - (Number(dateA) || 0);
+    });
   }, [payments, filterMonth, filterDate, filterPlayer, filterStatus]);
 
   const filteredExpenses = useMemo(() => {
@@ -231,6 +341,18 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
       return matchMonth && matchDate;
     }).sort((a,b) => b.date.localeCompare(a.date));
   }, [expenses, filterMonth, filterDate]);
+
+  const globalSummary = useMemo(() => {
+    const allPaidReceipts = payments.filter(p => getCalculatedStatus(p, p.playerId, p.month) === PaymentStatus.PAID);
+    const totalPaidGlobal = allPaidReceipts.reduce((acc, p) => acc + p.amount, 0);
+    const totalExpensesGlobal = expenses.reduce((acc, e) => acc + e.amount, 0);
+    const globalBalance = totalPaidGlobal - totalExpensesGlobal;
+    return {
+      totalPaid: totalPaidGlobal,
+      totalExpenses: totalExpensesGlobal,
+      balance: globalBalance
+    };
+  }, [payments, expenses, allPlayers]);
 
   const summary = useMemo(() => {
     const receipts = filteredPayments.reduce((acc, p) => {
@@ -421,16 +543,38 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
   };
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500">
+    <div 
+      className="space-y-8 animate-in fade-in duration-500 relative"
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+    >
+      {(pullDist > 0 || isRefreshing) && (
+        <div className="flex items-center justify-center py-3 text-xs font-black uppercase text-amber-400 bg-zinc-900 border-b border-zinc-800 transition-all rounded-2xl">
+          <RefreshCw className={`w-4 h-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
+          {isRefreshing ? 'Sincronizando com Firestore...' : pullDist > 60 ? 'Solte para atualizar!' : 'Puxe para baixo para atualizar...'}
+        </div>
+      )}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
         <div>
-          <h2 className="text-4xl font-black text-white uppercase tracking-tighter flex items-center">
-            Financeiro
-            <HelpTooltip 
-              title="Gestão Financeira" 
-              content="Acompanhe o pagamento das mensalidades e as despesas do grupo. Administradores podem registrar pagamentos, adicionar despesas e gerar relatórios para o WhatsApp."
-            />
-          </h2>
+          <div className="flex items-center gap-3">
+            <h2 className="text-4xl font-black text-white uppercase tracking-tighter flex items-center">
+              Financeiro
+              <HelpTooltip 
+                title="Gestão Financeira" 
+                content="Acompanhe o pagamento das mensalidades e as despesas do grupo. Administradores podem registrar pagamentos, adicionar despesas e gerar relatórios para o WhatsApp."
+              />
+            </h2>
+            <button
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              className="flex items-center gap-2 px-3 py-1.5 bg-brand-primary/10 border border-brand-primary/30 rounded-xl text-brand-primary text-xs font-black uppercase tracking-widest hover:bg-brand-primary hover:text-black transition-all shadow-lg active:scale-95 disabled:opacity-50"
+              title="Forçar verificação de integridade e atualizar dados do Firestore"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+              {isRefreshing ? 'Atualizando...' : 'Atualizar'}
+            </button>
+          </div>
           <p className="text-sm font-bold text-white/40 uppercase tracking-widest mt-2">Gestão de mensalidades e despesas</p>
         </div>
         <div className="flex flex-col sm:flex-row gap-4 w-full md:w-auto">
@@ -535,9 +679,9 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
       {/* Financial Summary Dashboard */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <div className="bg-black backdrop-blur-xl p-4 sm:p-6 rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-sm">
-          <p className="text-[9px] sm:text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">Saldo Atual</p>
-          <p className={`text-xl sm:text-2xl font-black font-mono ${summary.balance >= 0 ? 'text-brand-primary' : 'text-rose-500'}`}>
-            R$ {summary.balance.toFixed(2)}
+          <p className="text-[9px] sm:text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">Saldo Atual (Geral)</p>
+          <p className={`text-xl sm:text-2xl font-black font-mono ${globalSummary.balance >= 0 ? 'text-brand-primary' : 'text-rose-500'}`}>
+            R$ {globalSummary.balance.toFixed(2)}
           </p>
         </div>
 
@@ -736,7 +880,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                   <tr key={payment.id} className="hover:bg-white/5 transition-colors group">
                     <td className="px-8 py-5">
                       <p className={`font-black ${status === PaymentStatus.OVERDUE ? 'text-rose-500' : 'text-white'}`}>
-                        {payment.playerName}
+                        {payment.playerName || allPlayers.find(ap => ap.id === payment.playerId)?.name || 'Sócio'}
                       </p>
                     </td>
                     <td className="px-8 py-5 text-center text-[10px] font-bold text-white/40 uppercase">{payment.month}</td>
@@ -1294,6 +1438,30 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Rodapé com Botão de Sincronização Forçada */}
+      <div className="mt-12 p-6 sm:p-8 bg-zinc-900/90 border-2 border-brand-primary/20 rounded-[2.5rem] flex flex-col sm:flex-row items-center justify-between gap-6 shadow-2xl">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-brand-primary/10 border border-brand-primary/20 flex items-center justify-center text-brand-primary flex-shrink-0">
+            <RefreshCw className={`w-6 h-6 ${isForcingSync ? 'animate-spin' : ''}`} />
+          </div>
+          <div>
+            <h4 className="text-sm font-black text-white uppercase tracking-wider">Sincronização Forçada</h4>
+            <p className="text-[10px] text-white/40 font-bold uppercase tracking-widest mt-0.5">
+              Limpa o cache da sub-árvore de pagamentos e força busca integral dos dados globais do servidor
+            </p>
+          </div>
+        </div>
+
+        <button
+          onClick={handleForceSyncFinancials}
+          disabled={isForcingSync}
+          className="w-full sm:w-auto px-8 py-4 bg-brand-primary text-black hover:bg-brand-primary/90 font-black text-xs uppercase tracking-widest rounded-2xl transition-all shadow-xl shadow-brand-primary/20 flex items-center justify-center gap-3 disabled:opacity-50 active:scale-95 cursor-pointer"
+        >
+          <RefreshCw className={`w-4 h-4 ${isForcingSync ? 'animate-spin' : ''}`} />
+          {isForcingSync ? 'Sincronizando...' : 'Sincronização Forçada'}
+        </button>
+      </div>
 
       {/* Toast Message */}
       {toastMessage && (

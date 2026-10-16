@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { useRegisterSW } from 'virtual:pwa-register/react';
 
 export function useServiceWorkerUpdate() {
@@ -8,41 +8,44 @@ export function useServiceWorkerUpdate() {
   const {
     needRefresh: [needRefresh, setNeedRefresh],
     offlineReady: [offlineReady, setOfflineReady],
-    updateServiceWorker,
+    updateServiceWorker: updateSW,
   } = useRegisterSW({
+    onNeedRefresh() {
+      console.log('[SWUpdate] New version detected!');
+    },
     onRegisteredSW(swUrl, r) {
-      console.log('SW Registered:', swUrl, r);
       if (r) {
         setRegistration(r);
-        // Periodically check for updates every 3 minutes
+        // Periodically check for updates every 10 minutes
         const interval = setInterval(() => {
-          r.update().catch(err => console.warn('SW update check failed:', err));
-        }, 3 * 60 * 1000);
+          r.update().catch(err => console.warn('SW periodic update check failed:', err));
+        }, 10 * 60 * 1000);
 
-        // Check on window focus
-        const onFocus = () => {
-          r.update().catch(err => console.warn('SW update check on focus failed:', err));
-        };
-        window.addEventListener('focus', onFocus);
-
-        return () => {
-          clearInterval(interval);
-          window.removeEventListener('focus', onFocus);
-        };
+        return () => clearInterval(interval);
       }
     },
     onRegisterError(error) {
-      console.log('SW Registration error:', error);
+      console.error('SW Registration error:', error);
       setError(error as Error);
     },
   });
+
+  const applyUpdate = useCallback(async () => {
+    console.log('[SWUpdate] Applying service worker update...');
+    try {
+      await updateSW(true);
+    } catch (e) {
+      console.error('[SWUpdate] Failed to update service worker:', e);
+      window.location.reload();
+    }
+  }, [updateSW]);
 
   return {
     needRefresh,
     setNeedRefresh,
     offlineReady,
     setOfflineReady,
-    updateServiceWorker,
+    updateServiceWorker: applyUpdate,
     registration,
     error,
   };

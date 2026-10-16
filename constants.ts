@@ -1,7 +1,8 @@
+export { Gender } from './types';
 
 import { Gender, Player } from './types';
 
-export const APP_VERSION = '3.2.0';
+export const APP_VERSION = '3.3.5';
 
 export const INITIAL_PLAYERS: Player[] = [];
 

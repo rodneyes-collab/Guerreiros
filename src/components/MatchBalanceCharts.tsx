@@ -53,28 +53,21 @@ export const MatchBalanceCharts: React.FC<MatchBalanceChartsProps> = ({ generati
   const avgSettingA = getSkillAvg(teamAPlayers, 'setting');
   const avgSettingB = getSkillAvg(teamBPlayers, 'setting');
 
-  // ELO & IC Averages
-  const avgEloA = teamAPlayers.length > 0 ? teamAPlayers.reduce((acc, p) => acc + p.elo, 0) / teamAPlayers.length : 1200;
-  const avgEloB = teamBPlayers.length > 0 ? teamBPlayers.reduce((acc, p) => acc + p.elo, 0) / teamBPlayers.length : 1200;
-  
+  // IC Averages
   const sumIcA = teamAPlayers.reduce((acc, p) => acc + calculateCompositePerformanceRating(p), 0);
   const sumIcB = teamBPlayers.reduce((acc, p) => acc + calculateCompositePerformanceRating(p), 0);
   const avgIcA = teamAPlayers.length > 0 ? sumIcA / teamAPlayers.length : 50;
   const avgIcB = teamBPlayers.length > 0 ? sumIcB / teamBPlayers.length : 50;
 
-  const maxEloA = teamAPlayers.length > 0 ? Math.max(...teamAPlayers.map(p => p.elo)) : 1200;
-  const maxEloB = teamBPlayers.length > 0 ? Math.max(...teamBPlayers.map(p => p.elo)) : 1200;
-  const minEloA = teamAPlayers.length > 0 ? Math.min(...teamAPlayers.map(p => p.elo)) : 1200;
-  const minEloB = teamBPlayers.length > 0 ? Math.min(...teamBPlayers.map(p => p.elo)) : 1200;
+  const maxIcA = teamAPlayers.length > 0 ? Math.max(...teamAPlayers.map(p => calculateCompositePerformanceRating(p))) : 50;
+  const maxIcB = teamBPlayers.length > 0 ? Math.max(...teamBPlayers.map(p => calculateCompositePerformanceRating(p))) : 50;
+  const minIcA = teamAPlayers.length > 0 ? Math.min(...teamAPlayers.map(p => calculateCompositePerformanceRating(p))) : 50;
+  const minIcB = teamBPlayers.length > 0 ? Math.min(...teamBPlayers.map(p => calculateCompositePerformanceRating(p))) : 50;
 
-  const maxOverallElo = Math.max(maxEloA, maxEloB, 1500);
-
-  const eloDiff = Math.abs(avgEloA - avgEloB);
-  const totalEloA = Math.round(teamAPlayers.reduce((acc, p) => acc + p.elo, 0));
-  const totalEloB = Math.round(teamBPlayers.reduce((acc, p) => acc + p.elo, 0));
-
+  const icDiff = Math.abs(avgIcA - avgIcB);
+  
   // Balance Quality metric
-  const percentDiff = Math.max(0.1, Math.round((eloDiff / Math.max(1, Math.min(avgEloA, avgEloB))) * 1000) / 10);
+  const percentDiff = Math.max(0.1, Math.round((icDiff / Math.max(1, Math.min(avgIcA, avgIcB))) * 1000) / 10);
   const balanceQuality = Math.max(0, 100 - Math.round(percentDiff * 4));
 
   // 1. Radar Chart Data
@@ -115,57 +108,54 @@ export const MatchBalanceCharts: React.FC<MatchBalanceChartsProps> = ({ generati
       labelB: `${avgIcB.toFixed(1)} pts`,
     },
     {
-      subject: 'Força ELO',
-      TeamA: Math.round((avgEloA / maxOverallElo) * 100),
-      TeamB: Math.round((avgEloB / maxOverallElo) * 100),
-      labelA: `${Math.round(avgEloA)} pts`,
-      labelB: `${Math.round(avgEloB)} pts`,
+      subject: 'Consistência',
+      TeamA: Math.round(Math.min(100, (avgIcA / 80) * 100)),
+      TeamB: Math.round(Math.min(100, (avgIcB / 80) * 100)),
+      labelA: `${avgIcA.toFixed(1)} pts`,
+      labelB: `${avgIcB.toFixed(1)} pts`,
     },
   ];
 
   // 2. Player-by-Player Sorted Bar Chart Data
-  const sortedA = [...teamAPlayers].sort((a, b) => b.elo - a.elo);
-  const sortedB = [...teamBPlayers].sort((a, b) => b.elo - a.elo);
+  const sortedA = [...teamAPlayers].sort((a, b) => calculateCompositePerformanceRating(b) - calculateCompositePerformanceRating(a));
+  const sortedB = [...teamBPlayers].sort((a, b) => calculateCompositePerformanceRating(b) - calculateCompositePerformanceRating(a));
   const maxPlayersCount = Math.max(sortedA.length, sortedB.length, 6);
 
   const playerComparisonData = Array.from({ length: maxPlayersCount }).map((_, idx) => {
     const pA = sortedA[idx];
     const pB = sortedB[idx];
+    const icA = pA ? calculateCompositePerformanceRating(pA) : 0;
+    const icB = pB ? calculateCompositePerformanceRating(pB) : 0;
     return {
       rank: `#${idx + 1}`,
-      'Equipe A': pA ? pA.elo : 0,
-      'Equipe B': pB ? pB.elo : 0,
+      'Equipe A': icA,
+      'Equipe B': icB,
       nameA: pA ? pA.name.split(' ')[0] : '-',
       nameB: pB ? pB.name.split(' ')[0] : '-',
-      icA: pA ? calculateCompositePerformanceRating(pA).toFixed(1) : '0',
-      icB: pB ? calculateCompositePerformanceRating(pB).toFixed(1) : '0',
+      icA: icA.toFixed(1),
+      icB: icB.toFixed(1),
     };
   });
 
   // 3. Team Aggregated Metrics Bar Chart Data
   const teamMetricsData = [
     {
-      metric: 'Média ELO',
-      'Equipe A': Math.round(avgEloA),
-      'Equipe B': Math.round(avgEloB),
-    },
-    {
-      metric: 'Maior ELO',
-      'Equipe A': maxEloA,
-      'Equipe B': maxEloB,
-    },
-    {
-      metric: 'Menor ELO',
-      'Equipe A': minEloA,
-      'Equipe B': minEloB,
-    },
-    {
       metric: 'Média IC',
       'Equipe A': Math.round(avgIcA),
       'Equipe B': Math.round(avgIcB),
     },
     {
-      metric: 'Soma IC',
+      metric: 'Maior IC',
+      'Equipe A': Math.round(maxIcA),
+      'Equipe B': Math.round(maxIcB),
+    },
+    {
+      metric: 'Menor IC',
+      'Equipe A': Math.round(minIcA),
+      'Equipe B': Math.round(minIcB),
+    },
+    {
+      metric: 'Soma Total IC',
       'Equipe A': Math.round(sumIcA),
       'Equipe B': Math.round(sumIcB),
     },
@@ -209,21 +199,19 @@ export const MatchBalanceCharts: React.FC<MatchBalanceChartsProps> = ({ generati
       return (
         <div className="bg-black/95 border border-brand-primary/40 rounded-2xl p-3 shadow-2xl backdrop-blur-md min-w-[200px]">
           <p className="text-xs font-black uppercase text-brand-primary tracking-wider mb-2 border-b border-white/10 pb-1">
-            Rank {label} por ELO
+            Rank {label} por IC
           </p>
           <div className="space-y-2 text-xs">
             <div className="p-2 rounded-xl bg-brand-primary/10 border border-brand-primary/20">
               <p className="text-[10px] font-black uppercase text-brand-primary">Equipe A • {dataItem.nameA}</p>
               <div className="flex justify-between items-center text-white font-mono text-xs font-bold mt-0.5">
-                <span>ELO: <strong className="text-brand-primary">{dataItem['Equipe A']}</strong></span>
-                <span>IC: {dataItem.icA}</span>
+                <span>IC: <strong className="text-brand-primary">{dataItem.icA}</strong></span>
               </div>
             </div>
             <div className="p-2 rounded-xl bg-white/5 border border-white/10">
               <p className="text-[10px] font-black uppercase text-white/70">Equipe B • {dataItem.nameB}</p>
               <div className="flex justify-between items-center text-white font-mono text-xs font-bold mt-0.5">
-                <span>ELO: <strong>{dataItem['Equipe B']}</strong></span>
-                <span>IC: {dataItem.icB}</span>
+                <span>IC: <strong>{dataItem.icB}</strong></span>
               </div>
             </div>
           </div>
@@ -255,7 +243,7 @@ export const MatchBalanceCharts: React.FC<MatchBalanceChartsProps> = ({ generati
               </span>
             </div>
             <p className="text-[10px] font-bold text-white/50 uppercase tracking-widest mt-0.5">
-              Visualização gráfica de simetria de ELO e matriz de habilidades
+              Visualização gráfica de simetria técnica e matriz de competências
             </p>
           </div>
         </div>
@@ -290,36 +278,36 @@ export const MatchBalanceCharts: React.FC<MatchBalanceChartsProps> = ({ generati
                 : 'text-white/60 hover:text-white hover:bg-white/5'
             }`}
           >
-            📊 ELO Barchart
+            📊 IC Barchart
           </button>
         </div>
       </div>
 
       {/* Quick Comparison Bar Header */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-        <div className="bg-brand-secondary/30 p-3.5 rounded-2xl border border-white/5 flex flex-col justify-between">
-          <span className="text-[8px] font-black uppercase tracking-widest text-white/40 block">Média ELO Equipe A</span>
-          <div className="flex items-baseline gap-2 mt-1">
-            <span className="text-xl font-black text-brand-primary font-mono">{Math.round(avgEloA)}</span>
-            <span className="text-[9px] text-white/40 font-mono">Total: {totalEloA}</span>
-          </div>
+      <div className="bg-brand-secondary/30 p-3.5 rounded-2xl border border-white/5 flex flex-col justify-between">
+        <span className="text-[8px] font-black uppercase tracking-widest text-white/40 block">Média IC Equipe A</span>
+        <div className="flex items-baseline gap-2 mt-1">
+          <span className="text-xl font-black text-brand-primary font-mono">{Math.round(avgIcA)}</span>
+          <span className="text-[9px] text-white/40 font-mono">Total: {Math.round(sumIcA)}</span>
         </div>
+      </div>
 
-        <div className="bg-brand-secondary/30 p-3.5 rounded-2xl border border-white/5 flex flex-col justify-between">
-          <span className="text-[8px] font-black uppercase tracking-widest text-white/40 block">Média ELO Equipe B</span>
-          <div className="flex items-baseline gap-2 mt-1">
-            <span className="text-xl font-black text-white font-mono">{Math.round(avgEloB)}</span>
-            <span className="text-[9px] text-white/40 font-mono">Total: {totalEloB}</span>
-          </div>
+      <div className="bg-brand-secondary/30 p-3.5 rounded-2xl border border-white/5 flex flex-col justify-between">
+        <span className="text-[8px] font-black uppercase tracking-widest text-white/40 block">Média IC Equipe B</span>
+        <div className="flex items-baseline gap-2 mt-1">
+          <span className="text-xl font-black text-white font-mono">{Math.round(avgIcB)}</span>
+          <span className="text-[9px] text-white/40 font-mono">Total: {Math.round(sumIcB)}</span>
         </div>
+      </div>
 
-        <div className="bg-brand-secondary/30 p-3.5 rounded-2xl border border-white/5 flex flex-col justify-between">
-          <span className="text-[8px] font-black uppercase tracking-widest text-white/40 block">Diferença ELO (Delta)</span>
-          <div className="flex items-baseline gap-2 mt-1">
-            <span className="text-xl font-black text-brand-primary font-mono">{Math.round(eloDiff)} pts</span>
-            <span className="text-[9px] text-brand-primary font-bold uppercase">{percentDiff}% desvio</span>
-          </div>
+      <div className="bg-brand-secondary/30 p-3.5 rounded-2xl border border-white/5 flex flex-col justify-between">
+        <span className="text-[8px] font-black uppercase tracking-widest text-white/40 block">Diferença IC (Delta)</span>
+        <div className="flex items-baseline gap-2 mt-1">
+          <span className="text-xl font-black text-brand-primary font-mono">{icDiff.toFixed(1)} pts</span>
+          <span className="text-[9px] text-brand-primary font-bold uppercase">{percentDiff}% desvio</span>
         </div>
+      </div>
 
         <div className="bg-brand-secondary/30 p-3.5 rounded-2xl border border-white/5 flex flex-col justify-between">
           <span className="text-[8px] font-black uppercase tracking-widest text-white/40 block">Índice de Simetria</span>
@@ -345,7 +333,7 @@ export const MatchBalanceCharts: React.FC<MatchBalanceChartsProps> = ({ generati
                   RADAR DE COMPETÊNCIAS E HABILIDADES
                 </h5>
                 <p className="text-[9px] font-bold text-white/40 uppercase tracking-widest mt-0.5">
-                  Ataque, Defesa, Saque, Levantamento, IC e ELO
+                  Ataque, Defesa, Saque, Levantamento e IC
                 </p>
               </div>
 
@@ -409,10 +397,10 @@ export const MatchBalanceCharts: React.FC<MatchBalanceChartsProps> = ({ generati
               <div>
                 <h5 className="text-xs font-black uppercase tracking-wider text-white flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-brand-primary shadow-[0_0_8px_rgba(245,196,41,0.8)]" />
-                  DISTRIBUIÇÃO DE ELO E POTÊNCIA
+                  DISTRIBUIÇÃO DE ÍNDICE COMPOSTO (IC)
                 </h5>
                 <p className="text-[9px] font-bold text-white/40 uppercase tracking-widest mt-0.5">
-                  Comparativo de nível técnico atleta a atleta
+                  Comparativo de nível técnico atleta a atleta (60% Hab + 40% WR)
                 </p>
               </div>
 
@@ -465,8 +453,8 @@ export const MatchBalanceCharts: React.FC<MatchBalanceChartsProps> = ({ generati
                     <Legend
                       wrapperStyle={{ fontSize: '10px', textTransform: 'uppercase', fontWeight: 'bold' }}
                     />
-                    <Bar name="Equipe A (ELO)" dataKey="Equipe A" fill="#F5C429" radius={[6, 6, 0, 0]} />
-                    <Bar name="Equipe B (ELO)" dataKey="Equipe B" fill="#FFFFFF" radius={[6, 6, 0, 0]} />
+                    <Bar name="Equipe A (IC)" dataKey="Equipe A" fill="#F5C429" radius={[6, 6, 0, 0]} />
+                    <Bar name="Equipe B (IC)" dataKey="Equipe B" fill="#FFFFFF" radius={[6, 6, 0, 0]} />
                   </BarChart>
                 ) : (
                   <BarChart
@@ -508,8 +496,8 @@ export const MatchBalanceCharts: React.FC<MatchBalanceChartsProps> = ({ generati
 
             <div className="text-[9px] font-bold text-white/40 uppercase tracking-wider text-center mt-2 pt-2 border-t border-white/5">
               {barMode === 'players'
-                ? 'Os atletas estão organizados por rank de ELO (Maior pro menor) para comparar os confrontos diretos em quadra.'
-                : 'Métricas consolidadas de ELO e Índice Composto (IC) para ambas as equipes.'}
+                ? 'Os atletas estão organizados por rank de IC (Maior pro menor) para comparar os confrontos diretos em quadra.'
+                : 'Métricas consolidadas do Índice Composto (IC) para ambas as equipes.'}
             </div>
           </div>
         )}

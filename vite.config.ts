@@ -19,12 +19,8 @@ export default defineConfig(({ mode }) => {
         react(), 
         tailwindcss(),
         VitePWA({
-          registerType: 'prompt',
+          registerType: 'autoUpdate',
           includeAssets: ['logo.png'],
-          devOptions: {
-            enabled: true,
-            type: 'module'
-          },
           manifest: {
             name: 'Guerreiros Volleyball Club',
             short_name: 'Guerreiros',
@@ -37,48 +33,14 @@ export default defineConfig(({ mode }) => {
                 type: 'image/png',
               }
             ]
-          },
-          workbox: {
-            skipWaiting: true,
-            clientsClaim: true,
-            cleanupOutdatedCaches: true,
-            runtimeCaching: [
-              {
-                // Critical files
-                urlPattern: /\/(?:index\.html|manifest\.webmanifest)$/,
-                handler: 'NetworkFirst',
-                options: {
-                  cacheName: 'critical-files-cache',
-                },
-              },
-              {
-                // Images
-                urlPattern: /\.(?:png|jpg|jpeg|svg|gif|webp)$/,
-                handler: 'StaleWhileRevalidate',
-                options: {
-                  cacheName: 'images-cache',
-                  expiration: {
-                    maxEntries: 50,
-                    maxAgeSeconds: 30 * 24 * 60 * 60, // 30 Days
-                  },
-                },
-              },
-              {
-                // Styles and Scripts
-                urlPattern: /\.(?:js|css)$/,
-                handler: 'NetworkFirst',
-                options: {
-                  cacheName: 'static-resources',
-                },
-              },
-            ],
-          },
+          }
         })
       ],
       build: {
+        target: 'chrome64',
         outDir: 'dist',
         emptyOutDir: true,
-        sourcemap: true,
+        sourcemap: false,
         rollupOptions: {
           output: {
             manualChunks(id) {
@@ -92,7 +54,7 @@ export default defineConfig(({ mode }) => {
             }
           }
         },
-        chunkSizeWarningLimit: 1000,
+        chunkSizeWarningLimit: 2000,
       },
       base: '/',
       define: {
@@ -101,7 +63,7 @@ export default defineConfig(({ mode }) => {
       },
       resolve: {
         alias: {
-          '@': path.resolve(__dirname, '.'),
+          '@': path.resolve(__dirname, 'src')
         }
       }
     };

@@ -73,10 +73,10 @@ export const translateGender = (gender: string) => {
   switch (gender) {
     case 'MALE':
     case 'M': 
-      return 'Masculino';
+      return 'M';
     case 'FEMALE':
     case 'F': 
-      return 'Feminino';
+      return 'F';
     default: return gender;
   }
 };

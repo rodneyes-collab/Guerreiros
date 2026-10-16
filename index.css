@@ -71,7 +71,9 @@
   }
   
   body {
+    background-color: #000000; /* Fallback for very old browsers */
     background-color: var(--bg-app);
+    color: #ffffff; /* Fallback */
     color: var(--text-app);
     font-size: 16px; /* Base size for mobile */
   }
@@ -137,9 +139,11 @@
   }
 
   .card {
+    background-color: #000000;
     background-color: var(--card-bg);
     border-color: var(--card-border);
-    @apply backdrop-blur-xl rounded-[2.5rem] shadow-2xl p-6 md:p-10 relative overflow-hidden border;
+    @apply rounded-[2.5rem] shadow-2xl p-6 md:p-10 relative overflow-hidden border;
+    backdrop-filter: blur(20px);
   }
 
   .input-field {

@@ -17,10 +17,13 @@ import {
   Shield,
   BarChart3,
   Clock,
-  LogOut
+  LogOut,
+  SmartphoneNfc,
+  QrCode,
+  UserCheck
 } from 'lucide-react';
 
-import { getPriorityQueue, calculateEffectiveElo, calculatePredictedMatches } from '../utils/teamLogic';
+import { getPriorityQueue, calculateEffectiveElo, calculatePredictedMatches, calculateCompositePerformanceRating, calculatePracticalSkillsSum } from '../utils/teamLogic';
 import { SESSION_START_TIME, SESSION_END_TIME, AVG_MATCH_DURATION_MINS } from '../constants';
 import { HelpTooltip } from '../src/components/HelpTooltip';
 import { Tooltip } from '../src/components/Tooltip';
@@ -59,7 +62,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
   userRole,
   setViewMode
 }) => {
-  const { attendance: allAttendance, preConfirmations: allPreConfirmations, isSyncing, matches } = useStore();
+  const { attendance: allAttendance, preConfirmations: allPreConfirmations, isSyncing, matches, players: allPlayers } = useStore();
 
   const { avgMatchDuration, todayMatchesCount, firstMatchStartTimeStr } = React.useMemo(() => {
     const today = new Date().toISOString().split('T')[0];
@@ -97,14 +100,16 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
     };
   }, [matches]);
 
-  const attendance = React.useMemo(() => allAttendance.filter(p => (!p.status || p.status === 'active' || p.status === 'guest') && !p.isDM), [allAttendance]);
+  const attendance = React.useMemo(() => allAttendance.filter(p => p.status !== 'left' && !p.isDM && p.status !== 'dm'), [allAttendance]);
 
   const displayedAttendance = React.useMemo(() => {
     return [...attendance].sort((a, b) => {
-      if (a.arrivalOrder !== b.arrivalOrder) {
-        return (a.arrivalOrder ?? 999) - (b.arrivalOrder ?? 999);
+      const timeA = a.timestamp || 0;
+      const timeB = b.timestamp || 0;
+      if (timeA !== timeB) {
+        return timeA - timeB;
       }
-      return (a.timestamp || 0) - (b.timestamp || 0);
+      return (a.arrivalOrder ?? 999) - (b.arrivalOrder ?? 999);
     });
   }, [attendance]);
 
@@ -116,7 +121,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
     }
   };
 
-  const preConfirmations = React.useMemo(() => allPreConfirmations.filter(p => (!p.status || p.status === 'active' || p.status === 'guest') && !p.isDM), [allPreConfirmations]);
+  const preConfirmations = React.useMemo(() => allPreConfirmations.filter(p => p.status !== 'left' && !p.isDM && p.status !== 'dm'), [allPreConfirmations]);
   const [editingDeparture, setEditingDeparture] = React.useState<string | null>(null);
   const [editingArrival, setEditingArrival] = React.useState<string | null>(null);
   const [tempDepartureTime, setTempDepartureTime] = React.useState("");
@@ -153,6 +158,57 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
     setPullDistance(0);
     setIsPulling(false);
   };
+
+  // Cálculo dos LEDs Duplos para a Lista de Presença:
+  // LED 1: IC (Índice Composto) com 5 níveis de cores
+  // LED 2: Tier Técnico / Habilidades Puras (TOP 2, TOP 4, BOTTOM 4, BOTTOM 2)
+  const attendanceStats = React.useMemo(() => {
+    const enrichedList = (attendance || []).map(p => {
+      const full = availablePlayers.find(ap => ap.id === p.id) || p;
+      return { 
+        id: p.id, 
+        ic: calculateCompositePerformanceRating(full), 
+        skills: calculatePracticalSkillsSum(full) 
+      };
+    });
+
+    const sortedByIc = [...enrichedList].sort((a, b) => b.ic - a.ic);
+    const sortedBySkills = [...enrichedList].sort((a, b) => b.skills - a.skills);
+
+    const icMap: Record<string, { color: string; title: string }> = {};
+    const techTierMap: Record<string, 'TOP2' | 'TOP4' | 'BOTTOM4' | 'BOTTOM2' | undefined> = {};
+
+    const total = sortedByIc.length;
+    sortedByIc.forEach((item, rank) => {
+      if (rank <= 1 || item.ic >= 55) {
+        icMap[item.id] = { color: 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.9)] animate-pulse', title: `LED IC: Top IC (Rank #${rank + 1} | IC ${item.ic})` };
+      } else if (rank <= Math.floor(total * 0.35) || item.ic >= 42) {
+        icMap[item.id] = { color: 'bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.9)] animate-pulse', title: `LED IC: Alto IC (Rank #${rank + 1} | IC ${item.ic})` };
+      } else if (rank >= total - 2 || item.ic < 18) {
+        icMap[item.id] = { color: 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.9)] animate-pulse', title: `LED IC: Bottom 2 IC (Rank #${rank + 1} | IC ${item.ic})` };
+      } else if (rank >= total - 4 || item.ic < 30) {
+        icMap[item.id] = { color: 'bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.9)] animate-pulse', title: `LED IC: IC Baixo (Rank #${rank + 1} | IC ${item.ic})` };
+      } else {
+        icMap[item.id] = { color: 'bg-yellow-400 shadow-[0_0_8px_rgba(250,204,21,0.9)] animate-pulse', title: `LED IC: IC Médio (Rank #${rank + 1} | IC ${item.ic})` };
+      }
+    });
+
+    if (total >= 4) {
+      sortedBySkills.forEach((item, rank) => {
+        if (rank === 0 || rank === 1) techTierMap[item.id] = 'TOP2';
+        else if (rank === 2 || rank === 3) techTierMap[item.id] = 'TOP4';
+        else if (rank === total - 1 || rank === total - 2) techTierMap[item.id] = 'BOTTOM2';
+        else if (rank === total - 3 || rank === total - 4) techTierMap[item.id] = 'BOTTOM4';
+      });
+    }
+
+    return { icMap, techTierMap };
+  }, [attendance, availablePlayers]);
+
+  // Strictly filter active members for convocation list (excluding inactive, dm, and waiting list)
+  const activeAvailablePlayers = React.useMemo(() => {
+    return (availablePlayers || []).filter(p => p.status === 'active' || (!p.status && p.status !== 'inactive' && p.status !== 'dm' && p.status !== 'waiting' && p.status !== 'lista_espera'));
+  }, [availablePlayers]);
 
   return (
     <div 
@@ -276,9 +332,9 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                             <div className="absolute top-0 right-0 w-16 h-16 -mr-8 -mt-8 bg-brand-primary/5 rounded-full blur-xl group-hover:bg-brand-primary/10 transition-all"></div>
                           )}
                           <div className="flex items-center justify-between">
-                            <span className="text-[8px] font-black italic text-brand-primary/40">
+                            <div className="text-[8px] font-black italic text-brand-primary/40">
                               #{(player.arrivalOrder && player.arrivalOrder < 999) ? player.arrivalOrder : idx + 1}
-                            </span>
+                            </div>
                             <div className="flex items-center gap-1">
                               {(userRole === 'ADMIN' || currentPlayer?.id === player.id) && (
                                 <div className="flex items-center gap-1">
@@ -321,9 +377,70 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                           </div>
                           
                           <div className="min-w-0">
-                             <p className={`text-[12px] font-black uppercase leading-none tracking-tighter ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
+                             <div className={`text-[12px] font-black uppercase leading-none tracking-tighter flex items-center flex-wrap gap-1 justify-end ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
                                {capitalizeName(displayName)}
-                             </p>
+                               {/* LED 1: IC (Índice Composto) */}
+                               {attendanceStats.icMap[player.id] && (
+                                 <div 
+                                   className="inline-flex items-center ml-0.5" 
+                                   title={attendanceStats.icMap[player.id].title}
+                                 >
+                                   <div className={`w-2 h-2 rounded-full ${attendanceStats.icMap[player.id].color}`} />
+                                 </div>
+                               )}
+                               {/* LED 2: Tier Técnico / Habilidades Puras (TOP 2, TOP 4, BOT 4, BOT 2) */}
+                               {attendanceStats.techTierMap[player.id] === 'TOP2' && (
+                                 <div 
+                                   className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded bg-green-500/20 text-green-300 border border-green-500/40 text-[7.5px] font-black uppercase shadow-sm shrink-0"
+                                   title="LED Técnico: Top 2 (Maior nível de Habilidades Puras da presença)"
+                                 >
+                                   <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                                   <div className="ml-0.5">TOP 2</div>
+                                 </div>
+                               )}
+                               {attendanceStats.techTierMap[player.id] === 'TOP4' && (
+                                 <div 
+                                   className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-[7.5px] font-black uppercase shadow-sm shrink-0"
+                                   title="LED Técnico: Top 4 (Destaque de Habilidades Puras da presença)"
+                                 >
+                                   <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                   <div className="ml-0.5">TOP 4</div>
+                                 </div>
+                               )}
+                               {attendanceStats.techTierMap[player.id] === 'BOTTOM4' && (
+                                 <div 
+                                   className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded bg-orange-500/20 text-orange-400 border border-orange-500/40 text-[7.5px] font-black uppercase shadow-sm shrink-0"
+                                   title="LED Técnico: Bottom 4 (Menor nível de Habilidades Puras)"
+                                 >
+                                   <div className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse" />
+                                   <div className="ml-0.5">BOT 4</div>
+                                 </div>
+                               )}
+                               {attendanceStats.techTierMap[player.id] === 'BOTTOM2' && (
+                                 <div 
+                                   className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded bg-red-500/20 text-red-400 border border-red-500/40 text-[7.5px] font-black uppercase shadow-sm shrink-0"
+                                   title="LED Técnico: Bottom 2 (Menor nível técnico de Habilidades Puras)"
+                                 >
+                                   <div className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
+                                   <div className="ml-0.5">BOT 2</div>
+                                 </div>
+                               )}
+                               {player.checkInMethod === 'NFC' && (
+                                 <div className="text-[7px] bg-white text-emerald-600 border border-emerald-500 px-1.5 py-0.5 rounded flex items-center gap-1 font-black tracking-widest shadow-lg shadow-emerald-500/20" title="Check-in via Tag NFC">
+                                   <SmartphoneNfc className="w-2.5 h-2.5 text-emerald-600" /> NFC
+                                 </div>
+                               )}
+                               {player.checkInMethod === 'QR' && (
+                                 <div className="text-[7px] bg-white text-blue-600 border border-blue-500 px-1.5 py-0.5 rounded flex items-center gap-1 font-black tracking-widest shadow-lg shadow-blue-500/20" title="Check-in via QR Code">
+                                   <QrCode className="w-2.5 h-2.5 text-blue-600" /> QR
+                                 </div>
+                               )}
+                               {(!player.checkInMethod || player.checkInMethod === 'MANUAL') && (
+                                 <div className="text-[7px] bg-white text-zinc-900 border border-zinc-300 px-1.5 py-0.5 rounded flex items-center gap-1 font-black tracking-widest shadow-lg" title="Check-in Manual">
+                                   <UserCheck className="w-2.5 h-2.5 text-zinc-900 opacity-90" /> MANUAL
+                                 </div>
+                               )}
+                             </div>
                              
                              {editingDeparture === player.id || editingArrival === player.id ? (
                                <div className="flex items-center gap-1 my-1 animate-in fade-in slide-in-from-top-1 z-30 bg-black/95 p-1.5 rounded-lg border border-brand-primary/40 shadow-2xl">
@@ -362,30 +479,30 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                                </div>
                              ) : (
                                <div className="flex items-center gap-1 mt-1 flex-wrap">
-                                 <span className="text-[8px] font-black text-brand-primary/60 italic tracking-tighter uppercase shrink-0">
-                                   ELO {Math.round(calculateEffectiveElo(fullPlayer || player))}
-                                 </span>
+                                 <div className="text-[8px] font-black text-brand-primary/60 italic tracking-tighter uppercase shrink-0">
+                                   IC {Math.round(calculateEffectiveElo(fullPlayer || player))}
+                                 </div>
                                  {displayBenchedCount > 0 && (
                                    <div className="px-1.5 py-0.5 rounded-full bg-brand-primary text-black text-[8px] font-black shrink-0">{displayBenchedCount}B</div>
                                  )}
                                                       {player.arrivalTime && (
                                    <div className="flex items-center gap-1 bg-brand-primary/40 px-2 py-1 rounded border border-brand-primary/60 shadow-md">
                                      <Zap className="w-3.5 h-3.5 text-white" strokeWidth={3} />
-                                     <span className="text-[12px] font-black text-white uppercase tracking-tight">In: {player.arrivalTime}</span>
+                                     <div className="text-[12px] font-black text-white uppercase tracking-tight">In: {player.arrivalTime}</div>
                                    </div>
                                  )}
  
                                  {player.departureTime && (
                                    <div className="flex items-center gap-1 bg-brand-primary/40 px-2 py-1 rounded border border-brand-primary/60 shadow-md">
                                      <LogOut className="w-3.5 h-3.5 text-white" strokeWidth={3} />
-                                     <span className="text-[12px] font-black text-white uppercase tracking-tight">Out: {player.departureTime}</span>
+                                     <div className="text-[12px] font-black text-white uppercase tracking-tight">Out: {player.departureTime}</div>
                                    </div>
                                  )}
                                  
                                  {predicted !== 99 && (
                                    <div className="flex items-center gap-0.5 bg-white/5 px-1 py-0.5 rounded border border-white/10">
                                      <BarChart3 className="w-2.5 h-2.5 text-white" strokeWidth={3} />
-                                     <span className="text-[7px] font-black text-white uppercase">Prev: {predicted}j</span>
+                                     <div className="text-[7px] font-black text-white uppercase">Prev: {predicted}j</div>
                                    </div>
                                  )}
                                </div>
@@ -395,7 +512,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                       );
                     })
                 )}
-              </div>
+                </div>
               <div className="p-8 bg-brand-primary/5 border-t border-brand-primary/40">
                 <p className="text-xs text-white/40 font-black uppercase text-center italic leading-relaxed tracking-widest">
                   {attendance.length < 12 
@@ -417,29 +534,29 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                 </div>
                 <div className="flex items-center gap-3 text-xs font-black text-brand-primary uppercase tracking-widest bg-brand-primary/10 px-5 py-3 rounded-2xl border border-brand-primary/40">
                   <div className="w-3 h-3 rounded-full bg-brand-primary animate-pulse shadow-[0_0_12px_rgba(245,196,41,0.8)]"></div>
-                  {(availablePlayers || []).length} Sócios Ativos
+                  {activeAvailablePlayers.length} Sócios Ativos
                 </div>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-6">
                 {userRole !== 'ADMIN' ? (
-                  <div className="col-span-full py-32 text-center bg-white/5 rounded-[2.5rem] border-2 border-dashed border-brand-primary/40 space-y-6">
+                  <span className="col-span-full py-32 text-center bg-white/5 rounded-[2.5rem] border-2 border-dashed border-brand-primary/40 space-y-6">
                     <Users className="w-20 h-20 text-white/20 mx-auto" />
                     <p className="text-white/40 text-sm font-black uppercase tracking-[0.3em] max-w-md mx-auto leading-relaxed">Apenas o comando administrativo pode realizar convocações diretas.</p>
-                  </div>
-                ) : (availablePlayers || []).length === 0 ? (
-                  <div className="col-span-full py-32 text-center space-y-4">
-                    <div className="w-10 h-10 border-4 border-brand-primary border-t-transparent rounded-full animate-spin mx-auto"></div>
+                  </span>
+                ) : activeAvailablePlayers.length === 0 ? (
+                  <span className="col-span-full py-32 text-center space-y-4">
+                    <span className="w-10 h-10 border-4 border-brand-primary border-t-transparent rounded-full animate-spin mx-auto"></span>
                     <p className="text-white/60 text-lg font-black uppercase tracking-tighter italic">Carregando sócios...</p>
-                  </div>
-                ) : (availablePlayers || [])
+                  </span>
+                ) : activeAvailablePlayers
                   .filter(p => !attendance.some(a => a.id === p.id))
                   .length === 0 ? (
-                  <div className="col-span-full py-32 text-center space-y-4">
+                  <span className="col-span-full py-32 text-center space-y-4">
                     <CheckCircle2 className="w-20 h-20 text-brand-primary/20 mx-auto" />
                     <p className="text-white/60 text-xl font-black uppercase tracking-tighter italic">Todos os guerreiros já estão em campo!</p>
-                  </div>
+                  </span>
                 ) : (
-                    (availablePlayers || [])
+                    activeAvailablePlayers
                     .filter(p => !attendance.some(a => a.id === p.id))
                     .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
                     .map((player, idx) => (
@@ -449,13 +566,13 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                         disabled={isSyncing}
                         className={`flex items-center justify-between p-2 rounded-xl border hover:shadow-xl transition-all text-left group bg-brand-light border-brand-primary/40 hover:border-brand-primary/50 ${isSyncing ? 'opacity-50 cursor-not-allowed' : ''}`}
                       >
-                        <div className="min-w-0">
+                        <span className="min-w-0">
                           <p className={`text-[12px] font-black uppercase flex items-center gap-1.5 leading-tight tracking-tighter ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
                             {capitalizeName(player.name || "Sócio")}
                             {player.isOfficialSetter && <span className="text-[7px] font-black uppercase bg-brand-primary/10 text-brand-primary px-1.5 py-0.5 rounded-full border border-brand-primary/40 leading-none">L</span>}
                           </p>
-                        </div>
-                        <div className="p-1 bg-brand-primary/10 text-brand-primary group-hover:bg-brand-primary group-hover:text-brand-secondary rounded-lg shadow-lg transition-all border border-brand-primary/40 shrink-0"><Plus className="w-4 h-4" /></div>
+                        </span>
+                        <span className="p-1 bg-brand-primary/10 text-brand-primary group-hover:bg-brand-primary group-hover:text-brand-secondary rounded-lg shadow-lg transition-all border border-brand-primary/40 shrink-0"><Plus className="w-4 h-4" /></span>
                       </button>
                     ))
                 )}
@@ -467,26 +584,26 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
 
       {/* PHASE: OFF-CYCLE (Fri-Wed) - Hidden for Admin */}
       {!isGameDay && userRole !== 'ADMIN' && (
-        <div className="lg:col-span-12 py-40 text-center space-y-10 animate-in zoom-in duration-1000">
-          <div className="relative inline-block">
-            <div className="absolute inset-0 bg-brand-primary/30 blur-[100px] rounded-full animate-pulse"></div>
+        <span className="lg:col-span-12 py-40 text-center space-y-10 animate-in zoom-in duration-1000">
+          <span className="relative inline-block">
+            <span className="absolute inset-0 bg-brand-primary/30 blur-[100px] rounded-full animate-pulse"></span>
             <Calendar className="w-40 h-40 text-brand-primary relative z-10 mx-auto drop-shadow-2xl" />
-          </div>
-          <div className="space-y-6">
+          </span>
+          <span className="space-y-6">
             <h2 className="text-7xl font-black text-white tracking-tighter uppercase leading-none">Descanso dos Guerreiros</h2>
             <p className="text-2xl text-white/60 font-black uppercase tracking-[0.4em] max-w-3xl mx-auto leading-relaxed">
               As batalhas acontecem às <span className="text-brand-primary">quintas-feiras</span>. 
               <br />
               Prepare-se para a próxima convocação.
             </p>
-          </div>
-          <div className="flex justify-center gap-6">
-            <div className="px-12 py-6 bg-brand-light backdrop-blur-xl rounded-[2rem] shadow-2xl border border-white/5 border-l-[6px] border-l-brand-primary">
+          </span>
+          <span className="flex justify-center gap-6">
+            <span className="px-12 py-6 bg-brand-light backdrop-blur-xl rounded-[2rem] shadow-2xl border border-white/5 border-l-[6px] border-l-brand-primary">
               <p className="text-[10px] font-black text-brand-primary uppercase tracking-[0.3em] mb-2">Próxima Partida</p>
               <p className="text-2xl font-black text-white uppercase tracking-tighter">Quinta-feira</p>
-            </div>
-          </div>
-        </div>
+            </span>
+          </span>
+        </span>
       )}
     </div>
   );

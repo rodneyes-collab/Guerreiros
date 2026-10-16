@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { useStore } from '../store';
 import { PaymentStatus, Payment } from '../types';
-import { useAppLogic } from '@/src/hooks/useAppLogic';
+import { useAppLogic } from '../src/hooks/useAppLogic';
 import { 
   db, 
   collection, 

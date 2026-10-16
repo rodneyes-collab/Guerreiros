@@ -143,6 +143,8 @@ export const useAuth = () => {
     const userRef = doc(db, 'users', user.uid);
     setIsRoleLoading(true);
     const simpleEmail = window.localStorage.getItem('simpleLoginEmail')?.trim().toLowerCase();
+    const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
+
     const unsubscribeUserDoc = onSnapshot(userRef, (docSnap) => {
       try {
         const effectiveEmail = user.email?.trim().toLowerCase() || simpleEmail;
@@ -164,7 +166,19 @@ export const useAuth = () => {
             newRole = 'ADMIN';
           }
           
-          console.log(`useAuth: Role check - isOwner: ${isOwner}, docRole: ${roleFromDoc}, profileAdmin: ${isAdminFromProfile} -> Result: ${newRole}`);
+          console.log(`[MOBILE AUTH DEBUG] Role validation check on device:`, {
+            isMobileDevice,
+            userAgent: navigator.userAgent,
+            viewport: `${window.innerWidth}x${window.innerHeight}`,
+            uid: user.uid,
+            email: user.email,
+            effectiveEmail,
+            isOwner,
+            docRole: roleFromDoc,
+            isAdminFromProfile,
+            validatedRole: newRole,
+            isAdminValidated: newRole === 'ADMIN'
+          });
 
           if (userRole !== newRole) {
             setUserRole(newRole);
@@ -177,7 +191,13 @@ export const useAuth = () => {
           
           const defaultRole = (isOwner || isAdminFromProfile) ? 'ADMIN' : 'MEMBER';
           
-          console.info('useAuth: User doc not found, creating default role:', defaultRole);
+          console.info(`[MOBILE AUTH DEBUG] User doc not found, creating default role (${defaultRole}):`, {
+            isMobileDevice,
+            uid: user.uid,
+            email: user.email,
+            defaultRole,
+            isAdminValidated: defaultRole === 'ADMIN'
+          });
           setDoc(userRef, cleanObject({
             uid: user.uid,
             email: user.email || simpleEmail,

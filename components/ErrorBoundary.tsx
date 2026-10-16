@@ -1,5 +1,6 @@
 import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { AlertCircle, RotateCcw } from 'lucide-react';
+import { forceAppUpdate } from '../src/utils/forceAppUpdate';
 
 interface Props {
   children: ReactNode;
@@ -25,6 +26,19 @@ export class ErrorBoundary extends React.Component<Props, State> {
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('Uncaught error:', error, errorInfo);
     
+    // Check for dynamic import errors and trigger auto-update
+    const isDynamicImportError = 
+      error.message.includes('Failed to fetch dynamically imported module') ||
+      error.message.includes('Importing a shadowed module') ||
+      error.message.includes('error loading dynamically imported module') ||
+      error.message.includes('chunk') ||
+      error.name === 'ChunkLoadError';
+
+    if (isDynamicImportError) {
+      console.warn('[ErrorBoundary] Detected dynamic import error. Triggering automatic recovery...');
+      forceAppUpdate();
+    }
+
     // Try to parse JSON error from Firestore
     let detailedInfo = null;
     try {

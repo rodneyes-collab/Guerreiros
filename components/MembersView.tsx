@@ -1,6 +1,7 @@
 import React from 'react';
 import { useStore } from '../store';
 import { Player, Gender } from '../types';
+import { PlayerAvatar } from '../src/components/PlayerAvatar';
 import { translateGender, capitalizeName, formatPhoneNumber } from '../utils/helpers';
 import { getPlayerTier } from '../utils/tierUtils';
 import { Tooltip } from '../src/components/Tooltip';
@@ -30,8 +31,10 @@ import {
 import { EvasionIcon } from './EvasionIcon';
 import { calculateEvasionLevel } from '../utils/evasion';
 import { calculateTrueSkillUpdate } from '../src/utils/trueSkill';
+import { calculateCompositePerformanceRating } from '../utils/teamLogic';
 import { getFirestoreDateKey } from '../firebase';
 import { useIntentions } from '../src/hooks/useIntentions';
+import { useBirthdays } from '../src/hooks/useBirthdays';
 
 interface MembersViewProps {
   clearAllPlayers: () => void;
@@ -54,6 +57,18 @@ export const MembersView: React.FC<MembersViewProps> = ({
 }) => {
   const { players, userRole, isSyncing, showConfirmModal, matches, attendance, systemMetadata } = useStore();
   const { intentions } = useIntentions();
+  const { monthBirthdays, getBirthdaysByMonth } = useBirthdays(players);
+  const [selectedMonth, setSelectedMonth] = React.useState<string>((new Date().getMonth() + 1).toString().padStart(2, '0'));
+
+  const monthBirthdaysList = React.useMemo(() => {
+    return getBirthdaysByMonth(parseInt(selectedMonth, 10));
+  }, [selectedMonth, getBirthdaysByMonth]);
+
+  React.useEffect(() => {
+    if (monthBirthdays.month && !selectedMonth) {
+      setSelectedMonth(String(monthBirthdays.month).padStart(2, '0'));
+    }
+  }, [monthBirthdays.month]);
 
   const getPlayerHistoryList = React.useCallback((p: Player) => {
     const list: Array<{ time: string; label: string }> = [];
@@ -273,7 +288,6 @@ export const MembersView: React.FC<MembersViewProps> = ({
     direction: 'asc'
   });
   const [showBirthdayModal, setShowBirthdayModal] = React.useState(false);
-  const [selectedMonth, setSelectedMonth] = React.useState<string>((new Date().getMonth() + 1).toString().padStart(2, '0'));
   const [selectedPlayerHistory, setSelectedPlayerHistory] = React.useState<Player | null>(null);
 
   const generateBirthdayList = () => {
@@ -407,7 +421,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
                 <th className="px-2 py-2 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">Nível</th>
                 <th onClick={() => handleSort('elo')} className="px-2 py-2 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center cursor-pointer hover:opacity-80 transition-colors">
                   <div className="flex items-center justify-center gap-1">
-                    ELO {sortConfig.key === 'elo' && <span>{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>}
+                    ELO / IC {sortConfig.key === 'elo' && <span>{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>}
                   </div>
                 </th>
                 <th className="px-2 py-2 text-[9px] font-black text-brand-primary uppercase tracking-widest text-center">
@@ -426,7 +440,8 @@ export const MembersView: React.FC<MembersViewProps> = ({
               {sortedList(list).map(player => (
                 <tr key={player.id} className="hover:bg-white/5 transition-colors group">
                   <td className="px-2 py-1.5">
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-2">
+                      <PlayerAvatar player={player} size="sm" />
                       <div className="flex items-center gap-1 min-w-0">
                         {userRole === 'ADMIN' && <div className="shrink-0">{getImpactIcon(player.impactLevel)}</div>}
                         <div className={`font-bold text-xs break-words whitespace-normal ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
@@ -490,16 +505,27 @@ export const MembersView: React.FC<MembersViewProps> = ({
                   <td className="px-2 py-1.5 text-center">
                     {(() => {
                       const tr = traditionalEloRankings[player.id];
-                      if (!tr) return <span className="font-black text-white text-xs">{Math.round(player.elo)}</span>;
+                      const icValue = calculateCompositePerformanceRating(player);
                       return (
                         <div className="flex flex-col items-center gap-0.5">
                           <div className="flex items-center gap-1">
-                            <span className="text-[10px] font-black text-white">#{tr.rank}</span>
-                            {tr.type === 'up' && <div className="flex items-center gap-0.5"><TrendingUp className="w-2.5 h-2.5 text-emerald-500" /><span className="text-[8px] font-black text-emerald-500">{tr.diff}</span></div>}
-                            {tr.type === 'down' && <div className="flex items-center gap-0.5"><TrendingDown className="w-2.5 h-2.5 text-rose-500" /><span className="text-[8px] font-black text-rose-500">{tr.diff}</span></div>}
-                            {tr.type === 'neutral' && <Minus className="w-2.5 h-2.5 text-white/40" />}
+                            {tr ? (
+                              <>
+                                <span className="text-[10px] font-black text-white">#{tr.rank}</span>
+                                {tr.type === 'up' && <div className="flex items-center gap-0.5"><TrendingUp className="w-2.5 h-2.5 text-emerald-500" /><span className="text-[8px] font-black text-emerald-500">{tr.diff}</span></div>}
+                                {tr.type === 'down' && <div className="flex items-center gap-0.5"><TrendingDown className="w-2.5 h-2.5 text-rose-500" /><span className="text-[8px] font-black text-rose-500">{tr.diff}</span></div>}
+                                {tr.type === 'neutral' && <Minus className="w-2.5 h-2.5 text-white/40" />}
+                              </>
+                            ) : (
+                              <span className="text-[10px] font-black text-white">#{traditionalEloRankings[player.id]?.rank || '-'}</span>
+                            )}
                           </div>
-                          <span className="text-[8px] font-black text-white/40">{Math.round(player.elo)} pts</span>
+                          <div className="flex items-center justify-center gap-1.5 mt-0.5">
+                            <span className="text-[9px] font-black text-white/70 font-mono whitespace-nowrap">{Math.round(player.elo)} pts</span>
+                            <span className="px-1.5 py-0.5 rounded bg-brand-primary/15 text-brand-primary border border-brand-primary/30 font-black text-[9px] font-mono whitespace-nowrap shadow-sm" title="Índice Composto (IC) Soberano">
+                              IC {icValue.toFixed(1)}
+                            </span>
+                          </div>
                         </div>
                       );
                     })()}
@@ -651,9 +677,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
           <div key={player.id} className={`bg-brand-secondary/30 backdrop-blur-xl p-6 rounded-[2.5rem] border border-white/5 border-l-[6px] ${color.replace('bg-', 'border-l-')} shadow-xl space-y-4 relative overflow-hidden group`}>
             <div className="flex justify-between items-start">
               <div className="flex items-center gap-4 flex-1 min-w-0 pr-2">
-                <div className="w-12 h-12 rounded-full bg-brand-secondary flex items-center justify-center text-brand-primary font-black text-lg border-2 border-brand-primary/40 shrink-0">
-                  {player.name.charAt(0)}
-                </div>
+                <PlayerAvatar player={player} size="lg" />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <h4 className={`text-sm font-bold tracking-tight break-words whitespace-normal leading-tight ${player.status === 'inactive' ? 'text-white/40' : 'text-white'}`}>
@@ -736,11 +760,17 @@ export const MembersView: React.FC<MembersViewProps> = ({
               <div className="text-right shrink-0">
                 {(() => {
                   const tr = traditionalEloRankings[player.id];
+                  const icValue = calculateCompositePerformanceRating(player);
                   if (!tr) return (
-                    <>
-                      <p className="text-2xl font-black text-brand-primary tracking-tighter leading-none">{Math.round(player.elo)}</p>
-                      <p className="text-[8px] font-black text-white/40 uppercase tracking-widest mt-1">ELO</p>
-                    </>
+                    <div className="flex flex-col items-end gap-1">
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-2xl font-black text-brand-primary tracking-tighter leading-none">{Math.round(player.elo)}</p>
+                        <span className="px-2 py-0.5 rounded-lg bg-brand-primary/15 text-brand-primary border border-brand-primary/30 font-black text-[10px] font-mono shadow-sm">
+                          IC {icValue.toFixed(1)}
+                        </span>
+                      </div>
+                      <p className="text-[8px] font-black text-white/40 uppercase tracking-widest mt-0.5">ELO / IC</p>
+                    </div>
                   );
                   return (
                     <div className="flex flex-col items-end gap-1">
@@ -750,7 +780,12 @@ export const MembersView: React.FC<MembersViewProps> = ({
                         {tr.type === 'down' && <div className="flex items-center gap-0.5"><TrendingDown className="w-3 h-3 text-rose-500" /></div>}
                         {tr.type === 'neutral' && <Minus className="w-3 h-3 text-white/40" />}
                       </div>
-                      <span className="text-[10px] font-black text-brand-primary">{Math.round(player.elo)} pts</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[11px] font-black text-white/80 font-mono">{Math.round(player.elo)} pts</span>
+                        <span className="px-2 py-0.5 rounded-lg bg-brand-primary/15 text-brand-primary border border-brand-primary/30 font-black text-[10px] font-mono shadow-sm" title="Índice Composto (IC) Soberano">
+                          IC {icValue.toFixed(1)}
+                        </span>
+                      </div>
                     </div>
                   );
                 })()}
@@ -861,6 +896,68 @@ export const MembersView: React.FC<MembersViewProps> = ({
             <button onClick={() => { setEditingPlayer(null); setIsFormOpen(true); }} className="md:flex-none bg-brand-primary text-brand-secondary px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 hover:scale-105 shadow-xl shadow-brand-primary/20 transition-all"><UserPlus className="w-4 h-4" />Novo Sócio</button>
           )}
         </div>
+      </div>
+
+      <div className="bg-zinc-900 border-2 border-brand-primary/20 rounded-[2.5rem] p-6 sm:p-8 mb-10 shadow-2xl relative overflow-hidden group">
+        <div className="absolute top-0 right-0 w-64 h-64 bg-brand-primary/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 group-hover:bg-brand-primary/10 transition-all duration-700"></div>
+        <div className="relative z-10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6 mb-8">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 bg-amber-500/10 rounded-2xl flex items-center justify-center border border-amber-500/20">
+              <Cake className="w-7 h-7 text-amber-500 animate-bounce" />
+            </div>
+            <div>
+              <h3 className="text-base font-black text-white uppercase tracking-[0.2em]">Aniversariantes</h3>
+              <p className="text-[10px] text-white/40 font-bold uppercase tracking-widest flex items-center gap-2">
+                <Star className="w-3 h-3 text-amber-500/40" />
+                Guerreiros do Mês
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 w-full sm:w-auto">
+            <div className="relative flex-1 sm:flex-none min-w-[160px]">
+              <select 
+                value={selectedMonth}
+                onChange={(e) => setSelectedMonth(e.target.value)}
+                className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2.5 text-white text-xs font-black uppercase tracking-widest focus:border-brand-primary outline-none transition-all appearance-none cursor-pointer"
+              >
+                {Array.from({ length: 12 }, (_, i) => {
+                  const m = String(i + 1).padStart(2, '0');
+                  return (
+                    <option key={m} value={m}>
+                      {new Intl.DateTimeFormat('pt-BR', { month: 'long' }).format(new Date(2024, i))}
+                    </option>
+                  );
+                })}
+              </select>
+              <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-white/40">
+                <RotateCcw className="w-3 h-3 rotate-90" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {monthBirthdaysList.length > 0 ? (
+          <div className="relative z-10 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-4">
+            {monthBirthdaysList.map(player => (
+              <div key={player.id} className="group relative bg-black/40 border border-white/5 rounded-3xl p-4 flex flex-col items-center text-center transition-all hover:border-brand-primary/40 hover:bg-brand-primary/[0.03]">
+                <div className="absolute -top-2 -right-1 z-10 bg-brand-primary text-black px-2.5 py-1 rounded-xl text-[9px] font-black shadow-lg">
+                  {player.birthDate ? (player.birthDate.split(/[-/]/)[0].length === 4 ? player.birthDate.split(/[-/]/)[2] : player.birthDate.split(/[-/]/)[0]) : '??'} / {selectedMonth}
+                </div>
+                <div className="relative mb-3">
+                  <PlayerAvatar player={player} size="md" />
+                  <div className="absolute -bottom-1 -right-1 bg-black rounded-full p-1 shadow-lg border border-white/10">
+                    <div className="w-4 h-4 bg-brand-primary rounded-full flex items-center justify-center text-[8px] text-black">🎂</div>
+                  </div>
+                </div>
+                <span className="text-[10px] font-black text-white uppercase truncate w-full group-hover:text-brand-primary transition-colors">{player.name.split(' ')[0]}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="relative z-10 py-10 flex flex-col items-center justify-center bg-black/20 rounded-3xl border border-dashed border-white/5">
+            <p className="text-[10px] font-black text-white/20 uppercase tracking-widest">Nenhum aniversariante</p>
+          </div>
+        )}
       </div>
 
       {/* Desktop Table View */}

@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo, useEffect, lazy, Suspense } from 'react';
+import React, { useState, useMemo, useEffect, Suspense } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { playSound } from './src/utils/audio';
 import { 
@@ -27,12 +27,13 @@ import {
   WifiOff,
   Bluetooth,
   Cpu,
-  RefreshCw
+  RefreshCw,
+  Tv
 } from 'lucide-react';
 
-import { ServiceWorkerDiagnostics } from './src/components/ServiceWorkerDiagnostics';
+import ViewManager from './src/components/ViewManager';
 
-import { getBrazilDay, getFirestoreDateKey, db, doc, updateDoc, clearIndexedDbPersistence } from './firebase';
+import { getBrazilDay, getFirestoreDateKey, db, doc, updateDoc, setDoc, clearIndexedDbPersistence } from './firebase';
 import { useStore } from './store';
 import { useAuth } from './src/hooks/useAuth';
 import { useFirestoreSync } from './src/hooks/useFirestoreSync';
@@ -40,47 +41,19 @@ import { useDailyReset } from './src/hooks/useDailyReset';
 import { useNarration } from './src/hooks/useNarration';
 import { usePushNotifications } from './src/hooks/usePushNotifications';
 import { useAppLogic } from './src/hooks/useAppLogic';
+import { useMatchSwaps } from './src/hooks/useMatchSwaps';
 import { PaymentStatus } from './types';
 import { APP_VERSION } from './constants';
-
-import { NetworkStatusIndicator } from './src/components/NetworkStatusIndicator';
-import { UpdateNotificationToast } from './src/components/UpdateNotificationToast';
 import { useServiceWorkerUpdate } from './src/hooks/useServiceWorkerUpdate';
-import { ErrorBoundary } from './components/ErrorBoundary';
-import { Notification } from './components/Notification';
-import { ConfirmModal } from './components/ConfirmModal';
-import { SetterStrategyModal } from './components/SetterStrategyModal';
-import { AttendanceView } from './components/AttendanceView';
-import { AttendanceReportView } from './components/AttendanceReportView';
-import { IntentionsView } from './components/IntentionsView';
-import { MatchView } from './components/MatchView';
-import { RankingView } from './components/RankingView';
-import { MembersView } from './components/MembersView';
-import { PaymentsView } from './components/PaymentsView';
-import { RulesView } from './components/RulesView';
-import { AdminView } from './components/AdminView';
-import { HistoryView } from './components/HistoryView';
-import { TournamentView } from './components/TournamentView';
-import { MyPaymentsView } from './components/MyPaymentsView';
 import { useIntentions } from './src/hooks/useIntentions';
-import { PlayerForm } from './components/PlayerForm';
-import { PaymentForm } from './components/PaymentForm';
-import { ExpenseForm } from './components/ExpenseForm';
-import { PlayerStatusCard } from './src/components/PlayerStatusCard';
-import { LoginView } from './src/components/LoginView';
-import { PublicPresenceView } from './components/PublicPresenceView';
-import { AccessRequestView } from './src/components/AccessRequestView';
-import { Logo } from './src/components/Logo';
+import { useNavItems } from './src/hooks/useNavItems';
 import { clearOldStorage } from './services/geminiService';
 import { calculateEffectiveElo } from './utils/teamLogic';
+import { cleanObject } from './utils/helpers';
 import { useBirthdays } from './src/hooks/useBirthdays';
 import { useWelcomeCelebration } from './src/hooks/useWelcomeCelebration';
 import { useAdminAutomations } from './src/hooks/useAdminAutomations';
 import { useDatabaseMaintenance } from './src/hooks/useDatabaseMaintenance';
-import { BirthdayBanner } from './src/components/BirthdayBanner';
-import { WelcomeBanner } from './src/components/WelcomeBanner';
-import { NotificationCenter } from './src/components/NotificationCenter';
-import { ReloadPrompt } from './src/components/ReloadPrompt';
 import { useAutoVersionCheck } from './src/hooks/useAutoVersionCheck';
 
 // Module-level safeguard to prevent multi-mount infinite loops in StrictMode/remounts
@@ -88,9 +61,9 @@ let versionUpdateChecked = false;
 
 const App: React.FC = () => {
   // --- Hooks ---
-  useAutoVersionCheck();
+  const { hasNewVersion, serverVersion, forceUpdate } = useAutoVersionCheck();
   const { user, userRole, currentPlayer, isAuthReady, isRoleLoading } = useAuth();
-  useFirestoreSync();
+  const { commitBatchWithLog } = useFirestoreSync();
   useDailyReset();
   usePushNotifications();
   useAdminAutomations();
@@ -111,11 +84,14 @@ const App: React.FC = () => {
   const preConfirmations = useStore(state => state.preConfirmations);
   const generationResult = useStore(state => state.generationResult);
   const activeTournament = useStore(state => state.activeTournament);
+  const tournaments = useStore(state => state.tournaments);
+  const idToCanonicalId = useStore(state => state.idToCanonicalId);
   const isVerifyingRules = useStore(state => state.isVerifyingRules);
   const isScanningAnomalies = useStore(state => state.isScanningAnomalies);
   const anomalyReport = useStore(state => state.anomalyReport);
   const isLoggingOut = useStore(state => state.isLoggingOut);
   const isSyncing = useStore(state => state.isSyncing);
+  const syncError = useStore(state => state.syncError);
   const dbStatus = useStore(state => state.dbStatus);
   const isNarrating = useStore(state => state.isNarrating);
   const theme = useStore(state => state.theme);
@@ -143,7 +119,7 @@ const App: React.FC = () => {
   const forceSync = useStore(state => state.triggerSync);
   const isNarratingSummary = useStore(state => state.isNarratingSummary);
   const prevIsNearCourt = React.useRef(isNearCourt);
-
+  
   // --- App Logic ---
   const {
     magicLinkEmail,
@@ -163,6 +139,7 @@ const App: React.FC = () => {
     handleMagicLink,
     handleRequestAccess,
     handleGenerate,
+    applyPreviewResult,
     handleDiscard,
     handleFinishDay,
     deleteMatchesByDate,
@@ -194,6 +171,8 @@ const App: React.FC = () => {
     clearAllHistory,
     clearMatchesOnly,
     deleteMatch,
+    updateMatchResult,
+    reprocessAllMatchesAndStats,
     clearAllDatabase,
     resetElo,
     refreshPlayers,
@@ -209,12 +188,16 @@ const App: React.FC = () => {
     addTournamentPlayer,
     substituteTournamentPlayer,
     resetTournamentMatch,
-    deleteTournament
-  } = useAppLogic();
+    deleteTournament,
+    exportPlayersCSV,
+    exportMatchesCSV,
+    exportPaymentsCSV,
+    handleRecoverFinancials
+  } = useAppLogic(commitBatchWithLog);
   
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [entryRoute, setEntryRoute] = useState<'CHOICE' | 'LOGIN' | 'PRESENCE_BIOMETRICS'>('LOGIN');
-  const { intentions, setIntent } = useIntentions();
+  const { intentions, setIntent } = useIntentions(commitBatchWithLog);
   const [skippedIntentionChoice, setSkippedIntentionChoice] = useState(false);
   const [isSubmittingIntention, setIsSubmittingIntention] = useState(false);
   
@@ -228,7 +211,7 @@ const App: React.FC = () => {
       updateSystemMetadata({
         appVersion: APP_VERSION,
         versionNumber: nextBuildNumber
-      });
+      }).catch(() => {});
     }
   }, [userRole, systemMetadata, updateSystemMetadata]);
 
@@ -267,7 +250,7 @@ const App: React.FC = () => {
       if (!isAlreadyCheckedIn) {
         // Inicia o contador de 3 segundos de sinal estável e contínuo
         checkInTimer = setTimeout(() => {
-          registerAttendance(currentPlayer);
+          registerAttendance(currentPlayer, 'MANUAL').catch(() => {});
           showNotification(
             `Estabilização de Sinal Confirmada! Sinal potente de rádio (${rssiValue} dBm >= limite de ${threshold} dBm) por 3s contínuos. Check-in automático de presença realizado com sucesso na quadra!`,
             'success'
@@ -300,7 +283,7 @@ const App: React.FC = () => {
     if (user && entryRoute === 'PRESENCE_BIOMETRICS') {
       const player = players.find(p => p.email === user.email);
       if (player) {
-        registerAttendance(player);
+        registerAttendance(player).catch(() => {});
         setEntryRoute('CHOICE'); 
         setViewMode('intentions'); 
       }
@@ -346,6 +329,15 @@ const App: React.FC = () => {
     return () => clearTimeout(timeout);
   }, [isNarratingSummary, isNarrating]);
 
+  // Diagnostic Log
+  useEffect(() => {
+    console.log('--- DIAGNOSTIC LOG: INITIALIZING APP ---');
+    console.log('ViewManager status:', typeof ViewManager !== 'undefined' ? 'DEFINED' : 'UNDEFINED');
+    console.log('App version:', APP_VERSION);
+    console.log('Navigator online:', navigator.onLine);
+    console.log('--- END DIAGNOSTIC LOG ---');
+  }, []);
+
   // --- Local UI State ---
   const [isPublicMode, setIsPublicMode] = useState(() => {
     const params = new URLSearchParams(window.location.search);
@@ -360,6 +352,43 @@ const App: React.FC = () => {
 
   const [showRescueLoader, setShowRescueLoader] = useState(false);
   const [selectedPlayerForHistory, setSelectedPlayerForHistory] = useState<any>(null);
+
+  // --- Auto Check-in / Check-out for NFC/QR Scans ---
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const isNfcScan = params.get('source') === 'nfc';
+    const isQrScan = params.get('source') === 'qr';
+
+    if ((isNfcScan || isQrScan) && isAuthReady && user && currentPlayer) {
+      const existingPlayer = attendance.find(p => p.id === currentPlayer.id && p.status !== 'left');
+      
+      if (!existingPlayer) {
+        registerAttendance(currentPlayer, isNfcScan ? 'NFC' : 'QR').catch(() => {});
+        showNotification(`Check-in realizado com sucesso: ${currentPlayer.name}!`, 'success');
+        
+        try { playSound('success'); } catch (e) {}
+      } else {
+        const checkInTime = existingPlayer.timestamp || 0;
+        const diffMinutes = checkInTime > 0 ? (Date.now() - checkInTime) / (1000 * 60) : 0;
+        const thresholdMinutes = 30;
+
+        if (checkInTime === 0 || diffMinutes >= thresholdMinutes) {
+          removeAttendance(currentPlayer.id);
+          showNotification(`Check-out realizado (removido após ${Math.floor(diffMinutes)} min): ${currentPlayer.name}!`, 'info');
+          try { playSound('success'); } catch (e) {}
+        } else {
+          const remainingMin = Math.ceil(thresholdMinutes - diffMinutes);
+          showNotification(`Você já consta na lista (${Math.floor(diffMinutes)} min atrás). O check-out via NFC/QR só após 30 min (faltam ${remainingMin} min).`, 'info');
+        }
+      }
+
+      // Clear the params to avoid repeated check-ins on refresh
+      const url = new URL(window.location.href);
+      url.searchParams.delete('source');
+      url.searchParams.delete('public');
+      window.history.replaceState({}, '', url.pathname + url.search);
+    }
+  }, [user, currentPlayer, isAuthReady, attendance, registerAttendance, removeAttendance, showNotification]);
 
   // --- Rescue Timer ---
   useEffect(() => {
@@ -602,34 +631,18 @@ const App: React.FC = () => {
     }
   }, [editingExpense]);
 
-  // --- Navigation Items ---
-  const navItems = useMemo(() => [
-    { id: 'intentions', label: 'Lista', icon: ListTodo, adminOnly: false },
-    { id: 'presence', label: 'Presença', icon: ClipboardCheck, adminOnly: false },
-    { id: 'generation', label: 'Partida', icon: Swords, adminOnly: false },
-    { id: 'tournament', label: 'Torneio', icon: Trophy, adminOnly: false },
-    { id: 'history', label: 'Histórico', icon: History, adminOnly: false },
-    { id: 'members', label: 'Sócios', icon: Users, adminOnly: false },
-    { id: 'payments', label: 'Financeiro', icon: DollarSign, adminOnly: true },
-    { id: 'my_payments', label: 'Pagamentos', icon: CreditCard, adminOnly: false },
-    { id: 'ranking', label: 'Ranking', icon: Medal, adminOnly: false },
-    { id: 'rules', label: 'Regras', icon: ShieldAlert, adminOnly: false },
-    { id: 'diagnostics', label: 'Diagnóstico', icon: Cpu, adminOnly: false },
-    { id: 'admin', label: 'Admin', icon: Settings, adminOnly: true },
-  ].filter(item => {
-    if (item.adminOnly && userRole !== 'ADMIN') return false;
-    if (item.id === 'tournament' && !systemMetadata.isTournamentEnabled && userRole !== 'ADMIN') return false;
-    if (item.id === 'presence' && !isGameDay && userRole !== 'ADMIN') {
-       // Permite ver a lista de presença se houver alguém nela, mesmo que não seja quinta-feira oficialmente
-       if (attendance.length === 0) return false;
-    }
-    return true;
-  }), [userRole, systemMetadata.isTournamentEnabled, isGameDay]);
+  // --- Navigation Items (Optimized granular hook) ---
+  const navItems = useNavItems({
+    userRole,
+    isTournamentEnabled: Boolean(systemMetadata?.isTournamentEnabled),
+    isGameDay,
+    hasAttendance: attendance.length > 0,
+  });
 
   // --- Security Redirect ---
   useEffect(() => {
     if (isAuthReady && userRole) {
-      const validViews = [...navItems.map(item => item.id), 'attendance_report', 'intentions'];
+      const validViews = [...navItems.map(item => item.id), 'attendance_report', 'intentions', 'court_tablet'];
       const isRestricted = !validViews.includes(viewMode);
       if (isRestricted) {
         setViewMode('intentions');
@@ -639,696 +652,178 @@ const App: React.FC = () => {
 
   const isDarkView = true; // Always dark premium now
 
-  // --- Helper Functions (Remaining in App for View Logic) ---
-  const handleSwapClick = (source: 'A' | 'B' | 'Bench', playerId: string) => {
-    if (!swapSelection) {
-      setSwapSelection({ source, playerId });
-    } else {
-      if (swapSelection.playerId === playerId) {
-        setSwapSelection(null);
-      } else {
-        performSwap(swapSelection.playerId, playerId);
-        setSwapSelection(null);
-      }
-    }
-  };
-
-  const performSwap = (id1: string, id2: string) => {
-    if (!generationResult) return;
-
-    const allPlayers = [
-      generationResult.teamA.setter,
-      ...generationResult.teamA.players,
-      generationResult.teamB.setter,
-      ...generationResult.teamB.players,
-      ...generationResult.remainingPlayers
-    ].filter(Boolean) as any[];
-
-    const p1 = allPlayers.find(p => p.id === id1);
-    const p2 = allPlayers.find(p => p.id === id2);
-
-    if (!p1 || !p2) return;
-
-    const swapInTeam = (team: any) => {
-      let newSetter = team.setter;
-      if (team.setter?.id === id1) newSetter = p2;
-      else if (team.setter?.id === id2) newSetter = p1;
-
-      const newPlayers = team.players.map((p: any) => {
-        if (p.id === id1) return p2;
-        if (p.id === id2) return p1;
-        return p;
-      });
-
-      return { ...team, setter: newSetter, players: newPlayers };
-    };
-
-    const swapInList = (list: any[]) => {
-      return list.map(p => {
-        if (p.id === id1) return p2;
-        if (p.id === id2) return p1;
-        return p;
-      });
-    };
-
-    const newTeamA = swapInTeam(generationResult.teamA);
-    const newTeamB = swapInTeam(generationResult.teamB);
-    const newRemaining = swapInList(generationResult.remainingPlayers);
-    
-    // Recalcula métricas em tempo real para feedback imediato no Drag and Drop
-    const calcElo = (t: any) => (t.players.reduce((s: number, p: any) => s + (p.elo || 1200), 0) + (t.setter?.elo || 0));
-    
-    // Recalcula eficiência baseada na lógica centralizada do teamLogic
-    const calcEff = (t: any) => {
-      const allP = t.setter ? [t.setter, ...t.players] : t.players;
-      return Math.round(allP.reduce((s: number, p: any) => s + calculateEffectiveElo(p), 0));
-    };
-
-    setGenerationResult({
-      teamA: { ...newTeamA, totalElo: calcElo(newTeamA), totalEfficiency: calcEff(newTeamA) },
-      teamB: { ...newTeamB, totalElo: calcElo(newTeamB), totalEfficiency: calcEff(newTeamB) },
-      remainingPlayers: newRemaining
-    });
-  };
-
-  const handleRemovePlayer = (teamOrId: string, maybeId?: string) => {
-    const targetPlayerId = maybeId || teamOrId;
-    if (!generationResult) return;
-    if (!generationResult?.remainingPlayers || generationResult.remainingPlayers.length === 0) {
-      showNotification("Não há reservas disponíveis para substituição!", "error");
-      return;
-    }
-    performSwap(targetPlayerId, generationResult.remainingPlayers[0].id);
-  };
-
-  const promoteToSetter = (team: 'A' | 'B', playerId: string) => {
-    if (!generationResult) return;
-    
-    const teamKey = team === 'A' ? 'teamA' : 'teamB';
-    const teamData = generationResult[teamKey];
-    const playerIndex = teamData.players.findIndex((p: any) => p.id === playerId);
-    if (playerIndex === -1) return;
-    
-    const player = teamData.players[playerIndex];
-    const oldSetter = teamData.setter;
-    
-    const newPlayers = [...teamData.players];
-    newPlayers.splice(playerIndex, 1);
-    if (oldSetter) {
-      newPlayers.push(oldSetter);
-    }
-    
-    setGenerationResult({
-      ...generationResult,
-      [teamKey]: {
-        ...teamData,
-        setter: player,
-        players: newPlayers
-      }
-    });
-    showNotification(`${player.name} designado como levantador da equipe.`, 'success');
-  };
+  // --- Match Swaps Logic (Extracted to useMatchSwaps hook) ---
+  const {
+    handleSwapClick,
+    performSwap,
+    handleRemovePlayer,
+    promoteToSetter
+  } = useMatchSwaps();
 
   // --- Render Logic ---
-  if (isLoggingOut) {
+  if (!ViewManager) {
     return (
-      <div className="min-h-screen bg-black flex flex-col items-center justify-center p-4 text-white">
-        <motion.div
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="text-center space-y-6"
-        >
-          <Logo size="lg" className="mx-auto mb-8" />
-          <h1 className="text-4xl font-black uppercase tracking-tighter italic">
-            Até breve!
-          </h1>
-          <p className="text-slate-400 font-medium">
-            Sua sessão foi encerrada com segurança.
-          </p>
-          <div className="pt-8">
-            <div className="w-12 h-1 bg-amber-500 mx-auto rounded-full animate-pulse" />
-          </div>
-        </motion.div>
-      </div>
-    );
-  }
-
-  if (!isAuthReady || (user && isRoleLoading)) {
-    return (
-      <div className="min-h-screen bg-black flex items-center justify-center p-6">
-        <div className="flex flex-col items-center gap-6 max-w-xs w-full">
-          <motion.div 
-            animate={{ scale: [1, 1.05, 1] }}
-            transition={{ duration: 2, repeat: Infinity }}
-            className="mx-auto"
+      <div className="min-h-screen bg-black flex items-center justify-center p-4 text-white">
+        <div className="text-center">
+          <p className="text-amber-400 font-bold mb-4 uppercase tracking-widest text-sm">Carregando Módulos do Aplicativo...</p>
+          <button 
+            onClick={() => window.location.reload()} 
+            className="px-6 py-3 bg-amber-500 text-black font-black rounded-2xl uppercase tracking-widest text-xs"
           >
-            <Logo size="lg" />
-          </motion.div>
-          <div className="flex flex-col items-center gap-3 w-full">
-            <div className="w-10 h-10 border-4 border-brand-primary border-t-transparent rounded-full animate-spin" />
-            <p className="text-white/40 font-black uppercase tracking-[0.3em] text-[10px] animate-pulse">Iniciando Sincronização...</p>
-            
-            {showRescueLoader && (
-              <motion.div 
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="mt-8 p-6 bg-white/5 border border-white/10 rounded-[2rem] text-center w-full"
-              >
-                <p className="text-xs text-white/60 mb-4 font-medium leading-relaxed">
-                  A inicialização está demorando mais que o esperado. Isso pode ocorrer devido a manutenções no servidor ou conexões lentas.
-                </p>
-                <button
-                  onClick={handleRescueReset}
-                  className="w-full py-3 bg-brand-primary text-brand-secondary font-black uppercase tracking-widest text-[10px] rounded-xl hover:scale-105 active:scale-95 transition-all"
-                >
-                  Limpar Cache e Reiniciar
-                </button>
-              </motion.div>
-            )}
-          </div>
+            Recarregar
+          </button>
         </div>
       </div>
     );
   }
 
-  if (!user) {
-    if (isPublicMode) {
-      return (
-        <PublicPresenceView 
-          onBackToLogin={() => {
-            setIsPublicMode(false);
-            const url = new URL(window.location.href);
-            url.searchParams.delete('public');
-            window.history.replaceState({}, document.title, url.pathname + url.search);
-          }} 
-          handleGoogleLogin={handleGoogleLogin}
-        />
-      );
-    }
-
-    return (
-      <LoginView 
-        isAttendanceMode={entryRoute === 'PRESENCE_BIOMETRICS'}
-        magicLinkEmail={magicLinkEmail}
-        setMagicLinkEmail={setMagicLinkEmail}
-        isSendingMagicLink={isSendingMagicLink}
-        isLoggingIn={isLoggingIn}
-        handleMagicLink={handleMagicLink}
-        handleGoogleLogin={handleGoogleLogin}
-        onClickPublic={() => {
-          setIsPublicMode(true);
-          const url = new URL(window.location.href);
-          url.searchParams.set('public', 'true');
-          window.history.replaceState({}, document.title, url.pathname + url.search);
-        }}
-        onLoginSuccess={() => {
-          setIsPublicMode(false);
-        }}
-      />
-    );
-  }
-
-  if (!userRole) {
-    return (
-      <AccessRequestView 
-        user={user}
-        requestName={requestName}
-        setRequestName={setRequestName}
-        isRequestingAccess={isRequestingAccess}
-        isRequestSubmitted={isRequestSubmitted}
-        handleRequestAccess={handleRequestAccess}
-        handleLogout={handleLogout}
-      />
-    );
-  }
-
   return (
-    <ErrorBoundary>
-      <NetworkStatusIndicator />
-      <UpdateNotificationToast needRefresh={needRefresh} updateServiceWorker={updateServiceWorker} />
-      <ReloadPrompt />
-      <BirthdayBanner birthdays={todayBirthdays} />
-      <WelcomeBanner 
-        show={showWelcome} 
-        onClose={() => setShowWelcome(false)} 
-        playerName={currentPlayer?.name || ''} 
-      />
-      <div className="min-h-screen transition-colors duration-500 pb-20 sm:pb-0 sm:pl-28 bg-brand-light">
-        {/* Header */}
-        <header className="sticky top-0 z-30 relative px-4 py-3 sm:px-12 sm:py-12 shadow-2xl shadow-black/50 border-b border-white/5 bg-brand-light transition-colors duration-500">
-          {/* Header Background Image with Overlay */}
-          <div className="absolute inset-0 z-0 overflow-hidden">
-            <img 
-              src="https://images.unsplash.com/photo-1592656094267-764a45160876?auto=format&fit=crop&q=80&w=2000" 
-              alt="Volleyball Background" 
-              className="w-full h-full object-cover opacity-5 scale-110 blur-[4px]"
-              referrerPolicy="no-referrer"
-            />
-            <div className="absolute inset-0 bg-gradient-to-r from-brand-light via-brand-light/95 to-transparent"></div>
-            <div className="absolute inset-0 bg-gradient-to-b from-transparent to-brand-light/80"></div>
-          </div>
-
-          <div className="max-w-7xl mx-auto flex justify-between items-center relative z-10">
-            <div className="flex items-center gap-3 sm:gap-10">
-              <div className="relative group">
-                <div className="absolute -inset-4 bg-brand-primary/10 rounded-full blur-3xl group-hover:bg-brand-primary/20 transition-all duration-500"></div>
-                <Logo size="sm" className="!w-10 !h-10 sm:!w-24 sm:!h-24 -rotate-3 hover:rotate-0 transition-transform duration-500 relative z-10" />
-              </div>
-              <div>
-                <h1 className="text-lg sm:text-5xl font-black text-white tracking-tighter uppercase leading-none drop-shadow-2xl">
-                  Guerreiros <span className="text-brand-primary">Volleyball</span> Club
-                </h1>
-                <div className="flex items-center flex-wrap gap-2 sm:gap-4 mt-1 sm:mt-4">
-                  {isOffline ? (
-                    <div className="flex items-center gap-1.5 sm:gap-2">
-                      <WifiOff className="w-3 h-3 sm:w-4 sm:h-4 text-red-500 animate-pulse drop-shadow-md" />
-                      <p className="text-[8px] sm:text-[10px] font-black text-red-500 uppercase tracking-[0.2em] drop-shadow-md leading-tight">
-                        Modo Offline <span className="hidden sm:inline">- Sincronização Pendente</span>
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-1.5 sm:gap-2">
-                      <div className={`w-2 h-2 sm:w-3 sm:h-3 rounded-full shadow-[0_0_12px_rgba(245,196,41,0.5)] ${dbStatus === 'idle' ? 'bg-brand-primary' : 'bg-brand-primary animate-pulse'}`}></div>
-                      <p className="text-[8px] sm:text-xs font-black text-brand-primary uppercase tracking-[0.3em] drop-shadow-md">
-                        {dbStatus === 'idle' ? 'Sistema Online' : 'Sincronizando...'}
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Version & Diagnostics Badge */}
-                  <button
-                    onClick={() => setViewMode('diagnostics')}
-                    className="flex items-center gap-1.5 px-2.5 py-0.5 sm:px-3 sm:py-1 rounded-full border border-brand-primary/40 bg-brand-primary/10 text-brand-primary text-[8px] sm:text-[10px] font-black uppercase tracking-wider hover:bg-brand-primary hover:text-black transition-all cursor-pointer shadow-sm"
-                    title="Acessar Diagnóstico e Atualização do App"
-                  >
-                    <RefreshCw className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
-                    <span>v{APP_VERSION}</span>
-                  </button>
-
-                  {/* Bluetooth Beacon Live Status Badge */}
-                  <div className={`flex items-center gap-1.5 px-2 py-0.5 sm:px-3 sm:py-1 rounded-full border text-[7.5px] sm:text-[10px] font-black uppercase tracking-wider leading-none transition-all ${
-                    isNearCourt 
-                      ? 'border-brand-primary bg-brand-primary/10 text-brand-primary shadow-[0_0_8px_rgba(245,196,41,0.2)]' 
-                      : 'border-white/10 bg-white/5 text-white/40'
-                  }`}>
-                    <Bluetooth className={`w-3 h-3 ${isNearCourt ? 'animate-pulse text-brand-primary' : 'text-white/25'}`} />
-                    <span>
-                      BLE:{' '}
-                      {currentBeaconRssi !== null ? (
-                        <>
-                          {isNearCourt ? 'Quadra Detectada' : 'Sinal Fraco'}{' '}
-                          <span className="font-mono text-[7.5px] sm:text-[9px] opacity-80">
-                            ({currentBeaconRssi} dBm / ~{Math.pow(10, (-60 - currentBeaconRssi) / 20).toFixed(1)}m)
-                          </span>
-                        </>
-                      ) : (
-                        'Sem Sinal'
-                      )}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3 sm:gap-8">
-              <div className="sm:hidden flex items-center gap-2">
-                <NotificationCenter />
-                <PlayerStatusCard 
-                  currentPlayer={currentPlayer}
-                  attendance={attendance}
-                  generationResult={generationResult}
-                  matches={matches}
-                  systemMetadata={systemMetadata}
-                  activeTournament={activeTournament}
-                />
-              </div>
-              
-              {userRole === 'ADMIN' && (
-                <button 
-                  onClick={() => {
-                    forceSync();
-                    showNotification('Sincronização forçada iniciada...', 'info');
-                  }}
-                  className={`p-2.5 sm:p-5 rounded-xl sm:rounded-2xl transition-all border-2 ${isSyncing ? 'bg-brand-primary/20 border-brand-primary text-brand-primary animate-spin' : 'bg-white/5 text-white/80 hover:bg-brand-primary/20 hover:text-brand-primary border-brand-primary/40 hover:border-brand-primary/50'}`}
-                  title="Sincronizar Agora"
-                  disabled={isSyncing}
-                >
-                  <Database className="w-5 h-5 sm:w-8 sm:h-8" />
-                </button>
-              )}
-
-              <div className="hidden sm:flex flex-col items-end">
-                <p className="text-xs font-black text-white/40 uppercase tracking-[0.2em] mb-1">Atleta</p>
-                <div className="flex items-center gap-3">
-                  <NotificationCenter />
-                  <PlayerStatusCard 
-                    currentPlayer={currentPlayer}
-                    attendance={attendance}
-                    generationResult={generationResult}
-                    matches={matches}
-                    systemMetadata={systemMetadata}
-                    activeTournament={activeTournament}
-                  />
-                  <p className="text-lg font-black text-white uppercase tracking-tight flex items-center gap-2">
-                    {currentPlayer?.name || user.displayName || 'Atleta'}
-                    {userRole === 'ADMIN' && (
-                      <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-brand-primary/10 border border-brand-primary/30">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-brand-primary" />
-                        <span className="text-[10px] text-brand-primary font-black tracking-widest">ADMIN</span>
-                      </span>
-                    )}
-                  </p>
-                </div>
-              </div>
-              <button 
-                onClick={handleLogout}
-                className="p-2.5 sm:p-5 rounded-xl sm:rounded-2xl bg-white/5 text-white/60 hover:bg-rose-500/20 hover:text-rose-500 border border-brand-primary/40 hover:border-rose-500/50 transition-all group"
-                title="Sair"
-              >
-                <LogOut className="w-5 h-5 sm:w-8 sm:h-8 group-hover:-translate-x-1 transition-transform" />
-              </button>
-            </div>
-          </div>
-        </header>
-
-        {/* Sidebar Navigation */}
-        <nav className="fixed bottom-0 left-0 w-full sm:w-28 sm:h-full bg-brand-nav border-t sm:border-t-0 sm:border-r border-white/5 z-40 flex sm:flex-col items-center overflow-x-auto sm:overflow-y-auto justify-start sm:justify-start sm:pt-28 sm:pb-12 gap-2 sm:gap-6 p-2 pr-12 sm:pr-0 scrollbar-hide shadow-2xl">
-          {navItems.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => setViewMode(item.id as any)}
-              className={`flex flex-col items-center gap-1 sm:gap-2 p-2.5 sm:p-6 rounded-2xl sm:rounded-3xl transition-all relative group flex-shrink-0 ${
-                viewMode === item.id 
-                  ? 'bg-brand-primary text-brand-secondary shadow-2xl shadow-brand-primary/30 scale-110' 
-                  : 'text-white/80 hover:bg-brand-primary/10 hover:text-brand-primary'
-              } transition-all`}
-            >
-              <item.icon className="w-5 h-5 sm:w-9 sm:h-9" />
-              <span className={`text-[8px] font-black uppercase tracking-tighter sm:hidden`}>{item.label}</span>
-              
-              {/* Tooltip Desktop */}
-              <div className="absolute left-full ml-6 px-4 py-3 bg-brand-primary text-brand-secondary text-[10px] font-black uppercase tracking-[0.2em] rounded-xl opacity-0 group-hover:opacity-100 pointer-events-none transition-all translate-x-[-10px] group-hover:translate-x-0 shadow-2xl hidden sm:block whitespace-nowrap z-50">
-                {item.label}
-              </div>
-            </button>
-          ))}
-          {/* Version code at the bottom of the sidebar */}
-          <div className="hidden sm:block mt-auto pb-4">
-            <span className="text-[10px] font-black text-brand-primary/40 uppercase tracking-widest font-mono">
-              v{APP_VERSION}
-              {systemMetadata?.versionNumber ? ` (${systemMetadata.versionNumber})` : ''}
-            </span>
-          </div>
-        </nav>
-
-        {/* Main Content */}
-        <main className="max-w-[1400px] mx-auto p-4 sm:p-8 lg:p-10">
-          <Suspense fallback={
-            <div className="flex flex-col items-center justify-center p-20 gap-4">
-              <div className="w-12 h-12 border-4 border-brand-primary border-t-transparent rounded-full animate-spin" />
-              <p className="text-white/40 font-black uppercase tracking-widest text-[10px]">Carregando Módulo...</p>
-            </div>
-          }>
-          {/* Mismatch Session Control / Warning */}
-          {currentPlayer && currentPlayer.uid && currentPlayer.uid !== 'undefined' && user?.uid && currentPlayer.uid !== user.uid && (
-            <motion.div 
-              initial={{ opacity: 0, y: -20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="mb-8 p-6 sm:p-8 bg-black rounded-[2rem] border border-brand-primary/40 shadow-2xl shadow-black relative overflow-hidden"
-            >
-              {/* Decorative background overlay */}
-              <div className="absolute top-0 right-0 w-32 h-32 bg-brand-primary/5 rounded-full blur-3xl pointer-events-none"></div>
-              
-              <div className="flex flex-col md:flex-row items-center md:items-start justify-between gap-6 relative z-10">
-                <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4 text-center sm:text-left">
-                  <div className="p-4 rounded-2xl bg-brand-primary/10 border border-brand-primary/20 text-brand-primary animate-pulse">
-                    <ShieldAlert className="w-8 h-8 sm:w-10 sm:h-10" />
-                  </div>
-                  <div className="space-y-2">
-                    <h3 className="text-xl sm:text-2xl font-black text-brand-primary uppercase tracking-tight">
-                      Perfil em uso em outro navegador
-                    </h3>
-                    <p className="text-sm font-bold text-white/90">
-                      Olá, <span className="text-brand-primary">{currentPlayer.name}</span>! Detectamos que este perfil já está conectado em outro navegador ou dispositivo.
-                    </p>
-                    <p className="text-xs text-white/60">
-                      Isto acontece se você acessou o sistema de outro celular, computador ou aba anônima. Para garantir que suas confirmações de quadra funcionem perfeitamente nesta tela, vincule este navegador abaixo.
-                    </p>
-                  </div>
-                </div>
-                
-                <div className="flex-shrink-0 w-full md:w-auto">
-                  <button
-                    onClick={async () => {
-                      try {
-                        const res = await fetch(`/api/players/${currentPlayer.id}/link`, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ uid: user.uid })
-                        });
-                        
-                        if (!res.ok) {
-                          const errData = await res.json();
-                          throw new Error(errData.error || 'Falha ao vincular dispositivo');
-                        }
-                        
-                        showNotification('Vínculo de dispositivo atualizado com sucesso para este navegador!', 'success');
-                      } catch (e: any) {
-                        console.error('Erro ao atualizar vínculo:', e);
-                        showNotification('Erro ao redefinir o vínculo: ' + (e?.message || 'Erro desconhecido'), 'error');
-                      }
-                    }}
-                    className="w-full md:w-auto flex items-center justify-center gap-3 px-6 py-4 bg-brand-primary text-brand-secondary text-xs font-black uppercase tracking-widest rounded-2xl hover:scale-[1.02] active:scale-[0.98] transition-all shadow-lg shadow-brand-primary/10 hover:shadow-brand-primary/20 cursor-pointer"
-                  >
-                    <Zap className="w-4 h-4 text-brand-secondary" />
-                    Vincular Este Navegador
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          )}
-          {viewMode === 'intentions' && (
-            <IntentionsView 
-              userRole={userRole}
-              currentPlayer={currentPlayer}
-              showNotification={showNotification}
-              onMoveToAttendance={(playerId) => {
-                const player = players.find(p => p.id === playerId);
-                if (player) {
-                  registerAttendance(player);
-                  showNotification('Sócio movido para a quadra!', 'success');
-                }
-              }}
-            />
-          )}
-
-          {viewMode === 'presence' && (
-            <AttendanceView 
-              userRole={userRole}
-              isGameDay={isGameDay}
-              isIntentionPhase={isIntentionPhase}
-              currentPlayer={currentPlayer}
-              registerAttendance={registerAttendance}
-              removeAttendance={removeAttendance}
-              updateDepartureTime={updateDepartureTime}
-              updateArrivalTime={updateArrivalTime}
-              clearAttendance={clearAttendance}
-              onToggleIntention={onToggleIntention}
-              refreshPlayers={refreshPlayers}
-              resetDailyMatches={handleFinishDay}
-              availablePlayers={players.filter(p => (!p.status || p.status === 'active' || p.status === 'guest') && !p.isDM)}
-              preConfirmations={preConfirmations}
-              setViewMode={setViewMode}
-            />
-          )}
-
-          {viewMode === 'attendance_report' && (
-            <AttendanceReportView setViewMode={setViewMode} />
-          )}
-
-          {viewMode === 'generation' && (
-            <div className="space-y-12">
-              <MatchView 
-                userRole={userRole || 'ADMIN'}
-                onGenerate={handleGenerate}
-                onDiscard={handleDiscard}
-                onFinishDay={handleFinishDay}
-                onDeleteMatchesByDate={deleteMatchesByDate}
-                onFinishMatch={handleFinishMatch}
-                onVerifyRules={handleVerifyRules}
-                onAutoFixInconsistencies={handleAutoFixInconsistencies}
-                onAnalyzeMatch={handleAnalyzeMatch}
-                recalculateDailyStats={recalculateDailyStats}
-                isVerifyingRules={isVerifyingRules}
-                isAnalyzing={isAnalyzing}
-                isNarratingSummary={isNarratingSummary}
-                onAnnounce={() => {
-                  handleAnnounce('teams');
-                  playSound('announce');
-                }}
-                onSwapClick={handleSwapClick}
-                onRemovePlayer={handleRemovePlayer}
-                onPromoteToSetter={promoteToSetter}
-                systemMetadata={systemMetadata}
-                updateSystemMetadata={updateSystemMetadata}
-                updateDepartureTime={updateDepartureTime}
-              />
-              
-              {/* Posições sugeridas removidas conforme solicitação de retirar as quadras */}
-            </div>
-          )}
-
-          {viewMode === 'history' && (
-            <HistoryView onDeleteMatch={deleteMatch} onDeleteMatchesByDate={deleteMatchesByDate} />
-          )}
-
-          {viewMode === 'tournament' && (
-            <TournamentView 
-              onStart={startTournament}
-              onRecord={recordTournamentMatch}
-              onResetMatch={resetTournamentMatch}
-              onEnd={endTournament}
-              onAddPlayer={addTournamentPlayer}
-              onSubstitute={substituteTournamentPlayer}
-            />
-          )}
-
-          {viewMode === 'members' && (
-            <MembersView 
-              clearAllPlayers={clearAllPlayers}
-              deletePlayer={deletePlayer}
-              setEditingPlayer={setEditingPlayer}
-              setIsFormOpen={setIsFormOpen}
-              refreshPlayers={refreshPlayers}
-              repairDatabase={repairDatabase}
-              savePlayer={savePlayer}
-            />
-          )}
-
-          {viewMode === 'payments' && (
-            <PaymentsView 
-              deletePayment={deletePayment}
-              setEditingPayment={setEditingPayment}
-              setIsPaymentFormOpen={setIsPaymentFormOpen}
-              deleteExpense={deleteExpense}
-              setEditingExpense={setEditingExpense}
-              setIsExpenseFormOpen={setIsExpenseFormOpen}
-              updateMonthlyFee={updateMonthlyFee}
-            />
-          )}
-
-          {viewMode === 'ranking' && (
-            <RankingView 
-              userRole={userRole || 'MEMBER'}
-              refreshPlayers={refreshPlayers}
-              handleAnnounceSummary={(data) => handleAnnounce('ranking', data)}
-              isNarratingSummary={isNarratingSummary}
-              resetDailyMatches={handleFinishDay}
-              fixDatabaseAnomalies={fixDatabaseAnomalies}
-              isDark={isDarkView}
-            />
-          )}
-
-          {viewMode === 'rules' && <RulesView />}
-
-          {viewMode === 'diagnostics' && (
-            <div className="max-w-2xl mx-auto py-4">
-              <ServiceWorkerDiagnostics />
-            </div>
-          )}
-
-          {viewMode === 'my_payments' && currentPlayer && (
-            <MyPaymentsView playerId={currentPlayer.id} />
-          )}
-
-          {viewMode === 'admin' && (
-            <AdminView 
-              resetDailyStats={handleFinishDay}
-              resetElo={resetElo}
-              triggerSync={triggerSync}
-              recalculateDailyStats={recalculateDailyStats}
-              updateSystemMetadata={updateSystemMetadata}
-              recalculateStats={recalculateStats}
-              repairDatabase={repairDatabase}
-              initializeEloHistory={initializeEloHistory}
-              updateQuotaSettings={updateQuotaSettings}
-              createDataSnapshot={createDataSnapshot}
-              clearAllHistory={clearAllHistory}
-              clearMatchesOnly={clearMatchesOnly}
-              clearAllDatabase={clearAllDatabase}
-              pendingRequests={pendingRequests}
-              onApproveRequest={onApproveRequest}
-              onRejectRequest={onRejectRequest}
-              handleScanAnomalies={handleScanAnomalies}
-              fixDatabaseAnomalies={fixDatabaseAnomalies}
-              recalculateAllElo={recalculateAllElo}
-              deleteTournament={deleteTournament}
-              showConfirmModal={showConfirmModal}
-              setEditingPlayer={setEditingPlayer}
-              setIsFormOpen={setIsFormOpen}
-              savePlayer={savePlayer}
-            />
-          )}
-          </Suspense>
-        </main>
-
-        <PlayerForm 
-          isOpen={isFormOpen}
-          onClose={() => {
-            setIsFormOpen(false);
-            setEditingPlayer(null);
-          }}
-          onSubmit={handlePlayerSubmit}
-          editingPlayer={editingPlayer}
-          formData={formData}
-          setFormData={setFormData}
-          isAdmin={userRole === 'ADMIN'}
-        />
-
-        <PaymentForm
-          isOpen={isPaymentFormOpen}
-          isSyncing={isSyncing}
-          onClose={() => {
-            setIsPaymentFormOpen(false);
-            setEditingPayment(null);
-          }}
-          onSubmit={handlePaymentSubmit}
-          editingPayment={editingPayment}
-          paymentFormData={paymentFormData}
-          setPaymentFormData={setPaymentFormData}
-          players={players.filter(p => !p.status || (p.status !== 'inactive' && p.status !== 'waitlist' && !p.isDM))}
-        />
-
-        <ExpenseForm
-          isOpen={isExpenseFormOpen}
-          onClose={() => {
-            setIsExpenseFormOpen(false);
-            setEditingExpense(null);
-          }}
-          onSubmit={handleExpenseSubmit}
-          editingExpense={editingExpense}
-          expenseFormData={expenseFormData}
-          setExpenseFormData={setExpenseFormData}
-        />
-
-        {/* Modals & Notifications */}
-        <Notification />
-        <ReloadPrompt />
-        <ConfirmModal />
-        <SetterStrategyModal />
-
-        {isSyncing && (
-          <div className="fixed bottom-8 right-8 z-50 bg-black backdrop-blur-md px-8 py-4 rounded-[2rem] shadow-2xl border border-brand-primary/40 flex items-center gap-4 animate-in slide-in-from-right-8 border-l-[6px] border-l-brand-primary">
-            <div className="w-3 h-3 rounded-full bg-brand-primary animate-ping"></div>
-            <div className="flex flex-col">
-               <p className="text-[10px] font-black text-brand-primary uppercase tracking-[0.2em] leading-tight">Guerreiros Intelligence</p>
-               <p className="text-[9px] font-bold text-white/60 uppercase tracking-widest mt-0.5">Sincronizando Resultados...</p>
-            </div>
-          </div>
-        )}
-      </div>
-    </ErrorBoundary>
+    <ViewManager 
+      hasNewVersion={hasNewVersion}
+      serverVersion={serverVersion}
+      isLoggingOut={isLoggingOut} 
+      isAuthReady={isAuthReady} 
+      user={user} 
+      isRoleLoading={isRoleLoading} 
+      showRescueLoader={showRescueLoader} 
+      handleRescueReset={handleRescueReset} 
+      isPublicMode={isPublicMode} 
+      setIsPublicMode={setIsPublicMode} 
+      entryRoute={entryRoute} 
+      setEntryRoute={setEntryRoute} 
+      magicLinkEmail={magicLinkEmail} 
+      setMagicLinkEmail={setMagicLinkEmail} 
+      isSendingMagicLink={isSendingMagicLink} 
+      isLoggingIn={isLoggingIn} 
+      handleMagicLink={handleMagicLink} 
+      handleGoogleLogin={handleGoogleLogin} 
+      handleLogout={handleLogout} 
+      userRole={userRole} 
+      requestName={requestName} 
+      setRequestName={setRequestName} 
+      isRequestingAccess={isRequestingAccess} 
+      isRequestSubmitted={isRequestSubmitted} 
+      handleRequestAccess={handleRequestAccess} 
+      needRefresh={needRefresh} 
+      updateServiceWorker={updateServiceWorker} 
+      todayBirthdays={todayBirthdays} 
+      showWelcome={showWelcome} 
+      setShowWelcome={setShowWelcome} 
+      currentPlayer={currentPlayer} 
+      isOffline={isOffline} 
+      dbStatus={dbStatus} 
+      isSyncing={isSyncing} 
+      forceUpdate={forceUpdate} 
+      isNearCourt={isNearCourt} 
+      currentBeaconRssi={currentBeaconRssi} 
+      attendance={attendance} 
+      players={players}
+      matches={matches} 
+      tournaments={tournaments}
+      generationResult={generationResult}
+      systemMetadata={systemMetadata} 
+      activeTournament={activeTournament} 
+      navItems={navItems} 
+      viewMode={viewMode} 
+      setViewMode={setViewMode}
+      isGameDay={isGameDay}
+      isIntentionPhase={isIntentionPhase}
+      preConfirmations={preConfirmations}
+      isFormOpen={isFormOpen}
+      setIsFormOpen={setIsFormOpen}
+      editingPlayer={editingPlayer}
+      setEditingPlayer={setEditingPlayer}
+      formData={formData}
+      setFormData={setFormData}
+      handlePlayerSubmit={handlePlayerSubmit}
+      isPaymentFormOpen={isPaymentFormOpen}
+      setIsPaymentFormOpen={setIsPaymentFormOpen}
+      editingPayment={editingPayment}
+      setEditingPayment={setEditingPayment}
+      paymentFormData={paymentFormData}
+      setPaymentFormData={setPaymentFormData}
+      handlePaymentSubmit={handlePaymentSubmit}
+      isExpenseFormOpen={isExpenseFormOpen}
+      setIsExpenseFormOpen={setIsExpenseFormOpen}
+      editingExpense={editingExpense}
+      setEditingExpense={setEditingExpense}
+      expenseFormData={expenseFormData}
+      setExpenseFormData={setExpenseFormData}
+      handleExpenseSubmit={handleExpenseSubmit}
+      onMoveToAttendance={(playerId) => {
+        const player = players.find(p => p.id === playerId);
+        if (player) registerAttendance(player);
+      }}
+      onToggleIntention={async (player) => {
+        const canonicalId = idToCanonicalId[player.id] || player.id;
+        const current = intentions[canonicalId]?.intent;
+        await setIntent(player.id, current === 'GOING' ? 'NOT_GOING' : 'GOING');
+      }}
+      showNotification={showNotification}
+      showConfirmModal={showConfirmModal}
+      clearAttendance={clearAttendance}
+      resetDailyMatches={recalculateDailyStats}
+      removeAttendance={removeAttendance}
+      updateDepartureTime={updateDepartureTime}
+      updateArrivalTime={updateArrivalTime}
+      registerAttendance={registerAttendance}
+      refreshPlayers={refreshPlayers}
+      handleGenerate={handleGenerate}
+      handleDiscard={handleDiscard}
+      handleFinishDay={handleFinishDay}
+      handleDeleteMatchesByDate={deleteMatchesByDate}
+      handleFinishMatch={handleFinishMatch}
+      handleVerifyRules={handleVerifyRules}
+      handleAutoFixInconsistencies={handleAutoFixInconsistencies}
+      handleAnalyzeMatch={handleAnalyzeMatch}
+      recalculateDailyStats={recalculateDailyStats}
+      isVerifyingRules={isVerifyingRules}
+      isAnalyzing={isAnalyzing}
+      isNarratingSummary={isNarratingSummary}
+      handleAnnounceSummary={handleAnnounce}
+      handleSwapClick={handleSwapClick}
+      handleRemovePlayer={handleRemovePlayer}
+      promoteToSetter={promoteToSetter}
+      updateSystemMetadata={updateSystemMetadata}
+      handleApplyPreview={applyPreviewResult}
+      clearAllPlayers={clearAllPlayers}
+      deletePlayer={deletePlayer}
+      savePlayer={savePlayer}
+      repairDatabase={repairDatabase}
+      deletePayment={deletePayment}
+      deleteExpense={deleteExpense}
+      updateMonthlyFee={updateMonthlyFee}
+      startTournament={startTournament}
+      recordTournamentMatch={recordTournamentMatch}
+      resetTournamentMatch={resetTournamentMatch}
+      endTournament={endTournament}
+      addTournamentPlayer={addTournamentPlayer}
+      substituteTournamentPlayer={substituteTournamentPlayer}
+      deleteTournament={deleteTournament}
+      deleteMatch={deleteMatch}
+      updateMatchResult={updateMatchResult}
+      reprocessAllMatchesAndStats={reprocessAllMatchesAndStats}
+      resetDailyStats={recalculateDailyStats}
+      resetElo={resetElo}
+      triggerSync={triggerSync}
+      recalculateStats={recalculateStats}
+      initializeEloHistory={initializeEloHistory}
+      updateQuotaSettings={updateQuotaSettings}
+      createDataSnapshot={createDataSnapshot}
+      clearAllHistory={clearAllHistory}
+      clearMatchesOnly={clearMatchesOnly}
+      clearAllDatabase={clearAllDatabase}
+      pendingRequests={pendingRequests}
+      onApproveRequest={onApproveRequest}
+      onRejectRequest={onRejectRequest}
+      handleScanAnomalies={handleScanAnomalies}
+      fixDatabaseAnomalies={fixDatabaseAnomalies}
+      recalculateAllElo={recalculateAllElo}
+      exportPlayersCSV={exportPlayersCSV}
+      exportMatchesCSV={exportMatchesCSV}
+      exportPaymentsCSV={exportPaymentsCSV}
+      handleRecoverFinancials={handleRecoverFinancials}
+    />
   );
 };
-
 export default App;

@@ -21,6 +21,9 @@ export const useDatabaseMaintenance = () => {
 
   useEffect(() => {
     const runAutonomousAgent = async () => {
+      // Delay execution to avoid resource contention during app startup (especially on mobile)
+      await new Promise(resolve => setTimeout(resolve, 20000));
+
       // 1. Authorization: Master Admin or Admin role
       if (!user || userRole !== 'ADMIN') return;
 

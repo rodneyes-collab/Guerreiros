@@ -1,5 +1,7 @@
 import React, { useMemo } from 'react';
 import { getFirestoreDateKey } from '../firebase';
+import { useBirthdays } from '../src/hooks/useBirthdays';
+import { PlayerAvatar } from '../src/components/PlayerAvatar';
 // No active local types from types.ts needed here now
 import { 
   Users,
@@ -7,7 +9,10 @@ import {
   BarChart3,
   Swords,
   Clock,
-  Timer
+  Timer,
+  Flame,
+  ArrowRight,
+  Star
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
@@ -35,6 +40,35 @@ export const GlobalStats: React.FC<DashboardViewProps> = ({
   rankingPeriod,
   selectedDailyDate
 }) => {
+  // Debug log for data arrival
+  React.useEffect(() => {
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    if (isMobile || process.env.NODE_ENV === 'development') {
+      console.log('[DASHBOARD DATA DEBUG]', {
+        allPlayersReceived: allPlayers?.length || 0,
+        hasBirthDates: allPlayers?.filter(p => !!p.birthDate).length || 0,
+        matchesCount: matches?.length || 0,
+        timestamp: new Date().toISOString()
+      });
+    }
+  }, [allPlayers?.length, matches?.length]);
+
+  // Use allPlayers from props to stay in sync with parent filtering/loading state
+  const { monthBirthdays, getBirthdaysByMonth } = useBirthdays(allPlayers);
+  const [selectedMonth, setSelectedMonth] = React.useState<number>(0);
+
+  // Sync selectedMonth with the recommended month from the hook
+  React.useEffect(() => {
+    if (monthBirthdays.month && selectedMonth === 0) {
+      setSelectedMonth(monthBirthdays.month);
+    }
+  }, [monthBirthdays.month, selectedMonth]);
+
+  const activeMonthBirthdays = useMemo(() => {
+    const m = selectedMonth || monthBirthdays.month;
+    return getBirthdaysByMonth(m);
+  }, [selectedMonth, monthBirthdays.month, getBirthdaysByMonth]);
+
   const players = useMemo(() => 
     allPlayers.filter(p => (p.status === 'active' || p.status === 'guest' || !p.status || p.status === '') && !p.isDM),
     [allPlayers]
@@ -285,6 +319,96 @@ export const GlobalStats: React.FC<DashboardViewProps> = ({
 
       {/* Main Stats Layout */}
       <div className="grid grid-cols-1 gap-8">
+        {/* Monthly Birthdays Celebration Card (Dashboard View) */}
+        <div className="bg-brand-secondary/30 backdrop-blur-xl border-2 border-brand-primary/20 rounded-[3rem] p-6 sm:p-10 shadow-2xl relative overflow-hidden group">
+          <div className="absolute top-0 right-0 w-64 h-64 bg-brand-primary/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 group-hover:bg-brand-primary/10 transition-all duration-700"></div>
+          
+          <div className="relative z-10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6 mb-10">
+            <div className="flex items-center gap-5">
+              <div className="w-14 h-14 bg-amber-500/10 rounded-2xl flex items-center justify-center border border-amber-500/20 shadow-inner group-hover:scale-110 transition-transform duration-500">
+                <Flame className="w-8 h-8 text-amber-500 animate-pulse" />
+              </div>
+              <div>
+                <h3 className="text-xl font-black text-white uppercase tracking-[0.2em] mb-1">
+                  Aniversariantes
+                </h3>
+                <p className="text-[10px] text-white/40 font-bold uppercase tracking-[0.3em] flex items-center gap-2">
+                  <Star className="w-3 h-3 text-amber-500/40" />
+                  Celebrando os Guerreiros
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 w-full sm:w-auto">
+              <div className="relative flex-1 sm:flex-none min-w-[180px]">
+                <select 
+                  value={selectedMonth}
+                  onChange={(e) => setSelectedMonth(Number(e.target.value))}
+                  className="w-full bg-black/60 border border-white/10 rounded-xl px-5 py-3 text-white text-xs font-black uppercase tracking-widest focus:border-brand-primary outline-none transition-all appearance-none cursor-pointer hover:bg-black/80"
+                >
+                  {Array.from({ length: 12 }, (_, i) => (
+                    <option key={i + 1} value={i + 1}>
+                      {new Intl.DateTimeFormat('pt-BR', { month: 'long' }).format(new Date(2024, i))}
+                    </option>
+                  ))}
+                </select>
+                <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-brand-primary/60">
+                  <ArrowRight className="w-4 h-4 rotate-90" />
+                </div>
+              </div>
+              
+              <div className="hidden lg:flex items-center gap-2 px-4 py-3 bg-brand-primary/10 rounded-xl border border-brand-primary/20">
+                <span className="text-[11px] font-black text-brand-primary uppercase tracking-widest">
+                  {activeMonthBirthdays.length} Sócios
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {activeMonthBirthdays.length > 0 ? (
+            <div className="relative z-10 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-5 sm:gap-6">
+              {activeMonthBirthdays.map(player => {
+                if (!player || !player.id) return null;
+                const bDate = player.birthDate ? new Date(player.birthDate) : null;
+                const day = bDate ? bDate.getUTCDate() : '??';
+                
+                return (
+                  <div 
+                    key={player.id} 
+                    className="group/card relative bg-black/40 border border-white/5 rounded-[2.5rem] p-5 flex flex-col items-center text-center transition-all hover:border-brand-primary/40 hover:bg-brand-primary/[0.03] hover:-translate-y-1 duration-300"
+                  >
+                    {/* Date Badge */}
+                    <div className="absolute -top-3 -right-1 z-10 bg-brand-primary text-black px-3 py-1.5 rounded-xl text-[10px] font-black shadow-xl transform rotate-6 group-hover/card:rotate-0 transition-all duration-500 border-2 border-black">
+                      {day} / {String(selectedMonth).padStart(2, '0')}
+                    </div>
+
+                    <div className="relative mb-4 group-hover/card:scale-105 transition-transform duration-500">
+                      <PlayerAvatar player={player} size="lg" />
+                      <div className="absolute -bottom-2 -right-2 bg-black rounded-full p-1.5 shadow-2xl border border-white/10 group-hover/card:rotate-12 transition-transform duration-500">
+                        <div className="w-6 h-6 bg-brand-primary rounded-full flex items-center justify-center text-[11px] text-black">
+                          🎂
+                        </div>
+                      </div>
+                    </div>
+
+                    <h4 className="text-[11px] font-black text-white uppercase tracking-wider line-clamp-1 w-full mb-1">
+                      {player.name.split(' ')[0]}
+                    </h4>
+                    <p className="text-[9px] font-bold text-white/30 uppercase tracking-widest">
+                      Guerreiro
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="relative z-10 py-12 flex flex-col items-center justify-center gap-4 bg-black/20 rounded-[2rem] border border-dashed border-white/5">
+              <Star className="w-10 h-10 text-white/10" />
+              <p className="text-xs font-black text-white/20 uppercase tracking-[0.3em]">Nenhum aniversariante neste mês</p>
+            </div>
+          )}
+        </div>
+
         {/* ELO Distribution */}
         <div className="bg-brand-secondary/30 backdrop-blur-xl border border-white/5 p-8 rounded-[3rem] shadow-2xl relative overflow-hidden group">
           <div className="flex items-center gap-3 mb-8">

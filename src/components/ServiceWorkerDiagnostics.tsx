@@ -17,52 +17,13 @@ export const ServiceWorkerDiagnostics: React.FC = () => {
 
   const handleCheckUpdates = async () => {
     setIsChecking(true);
-    setStatusMessage('Validando registro de Service Worker e versão...');
+    setStatusMessage('Limpando cache, removendo Service Workers e buscando versão mais recente no servidor...');
 
     try {
-      if ('serviceWorker' in navigator) {
-        const reg = registration || (await navigator.serviceWorker.getRegistration());
-        if (reg) {
-          setStatusMessage('Buscando atualizações no Service Worker...');
-          await reg.update().catch((err) => console.warn('Erro ao atualizar SW:', err));
-
-          if (reg.waiting) {
-            setStatusMessage('Novo Service Worker encontrado! Aplicando e recarregando...');
-            reg.waiting.postMessage({ type: 'SKIP_WAITING' });
-            if (typeof updateServiceWorker === 'function') {
-              updateServiceWorker(true);
-            }
-            setTimeout(() => {
-              (window.location.reload as any)(true);
-            }, 600);
-            return;
-          }
-        }
-      }
-
-      // Check server API version
-      const res = await fetch('/api/version?t=' + Date.now(), { cache: 'no-store' }).catch(() => null);
-      if (res && res.ok) {
-        const data = await res.json();
-        if (data.version && data.version !== APP_VERSION) {
-          setStatusMessage(`Nova versão (${data.version}) detectada! Recarregando...`);
-          setTimeout(() => {
-            (window.location.reload as any)(true);
-          }, 600);
-          return;
-        }
-      }
-
-      setStatusMessage('Nenhum Service Worker pendente. Recarregando a aplicação...');
-      setTimeout(() => {
-        (window.location.reload as any)(true);
-      }, 500);
+      await forceAppUpdate();
     } catch (err) {
-      console.error('Erro na verificação de atualização:', err);
-      setStatusMessage('Recarregando a aplicação...');
-      setTimeout(() => {
-        (window.location.reload as any)(true);
-      }, 500);
+      console.error('Erro ao forçar atualização:', err);
+      window.location.reload();
     } finally {
       setIsChecking(false);
     }

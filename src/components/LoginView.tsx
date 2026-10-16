@@ -79,7 +79,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
 
   const handleBiometricLogin = () => {
     if (isIframe) {
-      window.alert("O navegador bloqueou a biometria segura (Passkeys) devido às restrições de segurança do painel do AI Studio.\n\nPor favor, use o botão 'ABRIR EM NOVA ABA' para acessar ou cadastrar sua digital/Face ID de forma 100% nativa e sem senha!");
+      window.alert("O navegador bloqueou a Biometria segura (Passkeys) dentro do painel do AI Studio por restrição de segurança.\n\nPor favor, use o botão 'ABRIR EM NOVA ABA' no topo direito do AI Studio para acessar ou cadastrar sua digital/Face ID de forma 100% nativa!");
       return;
     }
     // If successful, log the user into the main authenticated member/admin menu

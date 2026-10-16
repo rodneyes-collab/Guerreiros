@@ -16,6 +16,7 @@ import {
   collection, 
   deleteDoc, 
   writeBatch,
+  getDoc,
   getDocs,
   query,
   where,
@@ -24,24 +25,32 @@ import {
   trackUsage,
   trackAIUsage,
   getFirestoreDateKey,
+  getNextThursday,
   deleteField,
-  serverTimestamp
+  serverTimestamp,  isQuotaExceeded,
+  storage,
+  ref,
+  uploadBytes
 } from '../../firebase';
 import { useStore } from '../../store';
 import { cleanObject, generateUUID } from '../../utils/helpers';
+import { RODNEY_ID, RODNEY_SETTER_START_DATE } from '../../utils/setterStats';
+import { toStandardDateKey } from '../utils/dateUtils';
+import { recalculateAllStatsFromMatches } from '../utils/matchReprocessor';
 import { calculateTrueSkillUpdate } from '../utils/trueSkill';
-import { Player, Team, Match, Gender, Tournament, TournamentTeam, TournamentMatch, SetScore, SystemMetadata, TournamentStrategy } from '../../types';
-import { generateTeams, generateTournamentTeams, getPriorityQueue, autoFixAllInconsistencies, optimizeTeamSynergyIteratively } from '../../utils/teamLogic';
+import { Player, Team, Match, Gender, Tournament, TournamentTeam, TournamentMatch, SetScore, SystemMetadata, TournamentStrategy, Payment, Expense } from '../../types';
+import { generateTeams, generateTournamentTeams, getPriorityQueue, autoFixAllInconsistencies, optimizeTeamSynergyIteratively, enrichPlayerImmutably, cloneGenerationResultImmutably, calculateCompositePerformanceRating } from '../../utils/teamLogic';
 import { playerSchema, matchSchema } from '../lib/schemas';
 
 import { analyzeMatch, verifyRules, detectAnomalies, generateTeamAnnouncementAudio } from '../../services/geminiService';
 import { logAction, AuditAction } from '../../services/auditService';
+import { playFeedbackSound, triggerHaptic } from '../utils/feedback';
 
 // Module-level safeguards to prevent multiple simultaneous runners of critical hooks
 let activeBirthdaysSyncId: string | null = null;
 let activeGuardianId: string | null = null;
 
-export const useAppLogic = () => {
+export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, size: number) => Promise<void>) => {
   const [instanceId] = useState(() => generateUUID());
   const MAX_ACTIVE_MEMBERS = 32;
   const WAITLIST_LIMIT = 5;
@@ -50,6 +59,7 @@ export const useAppLogic = () => {
   const userRole = useStore(state => state.userRole);
   const players = useStore(state => state.players);
   const attendance = useStore(state => state.attendance);
+  const currentPlayer = useStore(state => state.currentPlayer);
   const preConfirmations = useStore(state => state.preConfirmations);
   const matches = useStore(state => state.matches);
   const systemMetadata = useStore(state => state.systemMetadata);
@@ -111,6 +121,76 @@ export const useAppLogic = () => {
   const setSynergy = useStore(state => state.setSynergy);
   const setNegativeSynergy = useStore(state => state.setNegativeSynergy);
   const setRivalry = useStore(state => state.setRivalry);
+  const setPayments = useStore(state => state.setPayments);
+  const setExpenses = useStore(state => state.setExpenses);
+
+  // --- Backup & Export Logic ---
+  const downloadCSV = (content: string, filename: string) => {
+    const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    if (link.download !== undefined) {
+      const url = URL.createObjectURL(blob);
+      link.setAttribute('href', url);
+      link.setAttribute('download', filename);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+  };
+
+  const exportPlayersCSV = () => {
+    const headers = ['ID', 'Nome', 'Email', 'Status', 'ELO', 'Vitórias', 'Derrotas', 'Jogos', 'Gênero', 'Levantador'];
+    const rows = players.map(p => [
+      p.id,
+      p.name,
+      p.email || '',
+      p.status || 'active',
+      p.elo,
+      p.wins,
+      p.losses,
+      p.matchesPlayed,
+      p.gender,
+      p.isOfficialSetter ? 'Sim' : 'Não'
+    ]);
+    const csvContent = [headers, ...rows].map(e => e.join(',')).join('\n');
+    downloadCSV(csvContent, `guerreiros_socios_${new Date().toISOString().split('T')[0]}.csv`);
+    showNotification('Lista de sócios exportada com sucesso!', 'success');
+  };
+
+  const exportMatchesCSV = () => {
+    const headers = ['ID', 'Data', 'Time A', 'Time B', 'Vencedor', 'Placar A', 'Placar B', 'Duração (s)'];
+    const rows = matches.map(m => [
+      m.id,
+      m.date,
+      m.teamA.join(';'),
+      m.teamB.join(';'),
+      m.winner,
+      m.scoreA,
+      m.scoreB,
+      m.duration
+    ]);
+    const csvContent = [headers, ...rows].map(e => e.join(',')).join('\n');
+    downloadCSV(csvContent, `guerreiros_partidas_${new Date().toISOString().split('T')[0]}.csv`);
+    showNotification('Histórico de partidas exportado com sucesso!', 'success');
+  };
+
+  const exportPaymentsCSV = () => {
+    const headers = ['ID', 'Sócio ID', 'Mês', 'Valor', 'Status', 'Vencimento', 'Data Pagamento', 'Método'];
+    const rows = payments.map(p => [
+      p.id,
+      p.playerId,
+      p.month,
+      p.amount,
+      p.status,
+      p.dueDate || '',
+      p.paymentDate || '',
+      p.method || ''
+    ]);
+    const csvContent = [headers, ...rows].map(e => e.join(',')).join('\n');
+    downloadCSV(csvContent, `guerreiros_financeiro_${new Date().toISOString().split('T')[0]}.csv`);
+    showNotification('Relatório financeiro exportado com sucesso!', 'success');
+  };
 
   // --- Birthdays Index Sync ---
   // Mantem o indexer de aniversários atualizado para que os crons do backend leiam um único field
@@ -143,7 +223,7 @@ export const useAppLogic = () => {
     const isDifferent = !isCurrentValidArray || newIndex.length !== currentIndex.length || !newIndex.every((v, i) => v === currentIndex[i]);
     
     if (isDifferent) {
-       updateSystemMetadata({ activeBirthdaysIndex: newIndex });
+       updateSystemMetadata({ activeBirthdaysIndex: newIndex }).catch(() => {});
     }
 
     return () => {
@@ -154,9 +234,25 @@ export const useAppLogic = () => {
   }, [players, userRole, instanceId]);
 
   // AI Guardian - Autonomous Data Integrity Monitor
+  const [isGuardianLocked, setIsGuardianLocked] = useState(true);
+
+  // Stability lock: Prevent autonomous writes during the first 30s of app life
+  // This avoids race conditions and accidental resets during sync/updates.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setIsGuardianLocked(false);
+      console.log('[AI Guardian] Estabilização concluída. Monitoramento autônomo ativado.');
+    }, 30000); // 30s lock
+    return () => clearTimeout(timer);
+  }, []);
+
   useEffect(() => {
     // Only allow one Admin client to run the Guardian to prevent race conditions
-    if (userRole !== 'ADMIN' || isSyncing || matches.length === 0) return;
+    // 1. Must be ADMIN
+    // 2. Must NOT be currently syncing (prevent race conditions)
+    // 3. Must have players and matches loaded
+    // 4. Must pass the 30-second stability lock (prevent triggers during app reloads/updates)
+    if (userRole !== 'ADMIN' || isSyncing || players.length === 0 || matches.length === 0 || isGuardianLocked) return;
 
     // Register this instance as the active runner if none is registered
     if (activeGuardianId === null) {
@@ -167,17 +263,26 @@ export const useAppLogic = () => {
     if (activeGuardianId !== instanceId) return;
 
     const runGuardian = async () => {
-      // Ensure user is authenticated and is an admin before attempting writes
-      if (!auth.currentUser || userRole !== 'ADMIN') return;
-
       try {
+        // Ensure user is authenticated and is an admin before attempting writes
+        
+        if (!auth.currentUser || userRole !== 'ADMIN' || isQuotaExceeded) return;
+
         const now = Date.now();
         const sixteenHoursAgo = now - (16 * 60 * 60 * 1000);
-        let currentThreshold = systemMetadata.lastResetTimestamp || sixteenHoursAgo;
+        let currentThreshold = Math.max(systemMetadata.lastResetTimestamp || 0, sixteenHoursAgo);
 
         if (currentThreshold > now) currentThreshold = sixteenHoursAgo;
 
         const sessionMatches = matches.filter(m => m.timestamp > currentThreshold);
+        
+        // CRITICAL PROTECTION: If there are matches in metadata but sessionMatches is empty,
+        // it means matches are still loading. SKIP TO PREVENT ZEROING OUT STATS.
+        if (systemMetadata.dailyMatchCount > 0 && sessionMatches.length === 0) {
+          console.warn('[AI Guardian] Partidas da sessão ainda não carregadas. Abortando verificação para evitar perda de dados.');
+          return;
+        }
+
         let hasAnomalies = false;
         
         // 1. Check if session matches are correctly sequenced AND have correct Brazil Date
@@ -216,7 +321,7 @@ export const useAppLogic = () => {
         if (playersToFix.length > 0) hasAnomalies = true;
 
         if (hasAnomalies) {
-          // console.log('[Guardião IA] Anomalia detectada na contagem/datas de partidas ou no ELO History. Iniciando reparo autônomo...');
+          console.info(`[AI Guardian] Anomalia detectada (Partidas: ${sessionMatches.length}, Meta: ${systemMetadata.dailyMatchCount}). Iniciando reparo autônomo...`);
           const batch = writeBatch(db);
           let updates = 0;
 
@@ -253,9 +358,13 @@ export const useAppLogic = () => {
           sortedByTime.forEach((m, index) => {
             const expectedNumber = index + 1;
             const matchUpdates: any = {};
-            if (m.dailyNumber !== expectedNumber) matchUpdates.dailyNumber = expectedNumber;
+            if (m.dailyNumber !== expectedNumber) {
+              matchUpdates.dailyNumber = expectedNumber;
+            }
             // Force the match date to be the base date of the session so they are unified
-            // if (m.date !== sessionBaseDate) matchUpdates.date = sessionBaseDate;
+            if (m.date !== sessionBaseDate) {
+              matchUpdates.date = sessionBaseDate;
+            }
             
             if (Object.keys(matchUpdates).length > 0) {
               batch.update(doc(db, 'matches', m.id), matchUpdates);
@@ -270,7 +379,7 @@ export const useAppLogic = () => {
             updates++;
           }
 
-          if (updates > 0 || hasAnomalies) {
+          if (updates > 0) {
             
             // Recalcular as métricas diárias dos jogadores para garantir consistência total com as partidas de hoje
             const resetPlayers = players.map(p => ({
@@ -346,7 +455,9 @@ export const useAppLogic = () => {
               }
             });
 
-            await batch.commit();
+            await batch.commit().catch(err => {
+              console.warn('[AI Guardian] Failed to commit autonomous fixes:', err);
+            });
             
             // showNotification(`🤖 Guardião IA: Reparadas e ordenadas cronologicamente numerações de jogo e rankings corrigidos automaticamente!`, 'info');
           }
@@ -412,8 +523,34 @@ export const useAppLogic = () => {
     );
   };
 
+  const validateMatchAttendance = async (teamAIds: string[], teamBIds: string[], matchDate: string, originalMatchPlayers?: string[]) => {
+    const stdDate = toStandardDateKey(matchDate);
+    const attSnap = await getDocs(collection(db, 'attendance', stdDate, 'players'));
+    const presentIds = new Set<string>();
+    attSnap.forEach(d => presentIds.add(d.id.toLowerCase()));
+
+    const allIds = [...teamAIds, ...teamBIds];
+    const absentIds = allIds.filter(id => {
+      const isPresent = presentIds.has(id.toLowerCase());
+      if (isPresent) return false;
+      
+      // Se não está na presença, mas já estava na partida original, permitimos (confiança retroativa para históricos)
+      if (originalMatchPlayers && originalMatchPlayers.includes(id)) return false;
+      
+      return true;
+    });
+
+    if (absentIds.length > 0) {
+      const absentNames = absentIds.map(id => {
+        const p = players.find(pl => pl.id === id);
+        return p ? p.name : id;
+      }).join(', ');
+      throw new Error(`ERRO DE BLOQUEIO DE INTEGRIDADE: O(s) seguinte(s) participante(s) não estão presentes na lista de presença do dia ${stdDate}: [${absentNames}]. Gravação abortada.`);
+    }
+  };
+
   const handleFinishMatch = async (winner: 'A' | 'B', manualScoreA?: number, manualScoreB?: number, stats?: any[]) => {
-    if (!generationResult) return;
+    if (!generationResult || isSyncing) return;
     
     try {
       setIsSyncing(true);
@@ -448,19 +585,18 @@ export const useAppLogic = () => {
         return ids;
       };
 
-      // Garantir que o dailyMatchCount esteja sincronizado
-      const now = Date.now();
-      const sixteenHoursAgo = now - (16 * 60 * 60 * 1000);
-      let resetThreshold = systemMetadata.lastResetTimestamp || sixteenHoursAgo;
-      
-      // Fix for future date anomalies (e.g. 2026 dates in DB while user is in 2024)
-      if (resetThreshold > now) {
-        resetThreshold = sixteenHoursAgo;
-      }
-      
-      const sessionMatches = (matches || []).filter(m => m.timestamp > resetThreshold);
+      // Garantir que o dailyMatchCount esteja sincronizado estritamente com a data atual
+      // Filtramos o store local pelo campo 'date' que acabamos de calcular
+      const sessionMatches = (matches || []).filter(m => m.date === date);
       const maxDailyNumber = sessionMatches.reduce((max, m) => Math.max(max, m.dailyNumber || 0), 0);
-      const finalCount = maxDailyNumber + 1;
+      
+      // Se o lastResetDate for de outro dia, o dailyMatchCount do metadata pertence a uma sessão anterior
+      const isMetadataFromToday = systemMetadata.lastResetDate === date;
+      const metadataDailyCount = isMetadataFromToday ? (systemMetadata.dailyMatchCount || 0) : 0;
+      
+      const finalCount = Math.max(maxDailyNumber + 1, metadataDailyCount + 1);
+      
+      console.log(`[FinishMatch] Calculando sequência: Max local=${maxDailyNumber}, Metadata=${systemMetadata.dailyMatchCount}, Final=${finalCount}, Data=${date}`);
       
       const match: Match = {
         id: matchId,
@@ -479,8 +615,9 @@ export const useAppLogic = () => {
         stats: stats || []
       };
       
-      // Validate match data
+      // Validate match data & Attendance Integrity
       matchSchema.parse(match);
+      await validateMatchAttendance(match.teamA, match.teamB, date);
       
       // Dynamic ELO calculation based on team averages
       const teamA = [generationResult.teamA.setter, ...generationResult.teamA.players].filter(Boolean) as Player[];
@@ -502,6 +639,8 @@ export const useAppLogic = () => {
       
       // Atualizar ELO e estatísticas
       const updatePlayerStats = (p: Player, isTeamA: boolean) => {
+        // Obter o estado mais atual do jogador do store para evitar stale state do generationResult
+        const latestPlayer = players.find(pl => pl.id === p.id) || p;
         const isWinner = (isTeamA && winner === 'A') || (!isTeamA && winner === 'B');
         
         // Regra Pedida: +20 para vitória, -20 para derrota (Fixo)
@@ -512,18 +651,18 @@ export const useAppLogic = () => {
         const pAgainst = isTeamA ? finalScoreB : finalScoreA;
         const pBalance = pFor - pAgainst;
         
-        const hasFidelityToday = p.lastFidelityDate === date;
-        let finalPlayerElo = p.elo;
-        let updatedHistory = [...(p.eloHistory || [])];
+        const hasFidelityToday = latestPlayer.lastFidelityDate === date;
+        let finalPlayerElo = latestPlayer.elo;
+        let updatedHistory = [...(latestPlayer.eloHistory || [])];
         
         const updates: any = {};
         
         // Se ainda não recebeu bônus de fidelidade hoje, adiciona +50 de fidelidade e soma 50 ao ELO
         if (!hasFidelityToday) {
-          updates.fidelityPoints = (p.fidelityPoints || 0) + 50;
+          updates.fidelityPoints = (latestPlayer.fidelityPoints || 0) + 50;
           updates.lastFidelityDate = date;
           finalPlayerElo += 50;
-          updates.dailyEloGain = (p.dailyEloGain || 0) + 50;
+          updates.dailyEloGain = (latestPlayer.dailyEloGain || 0) + 50;
           
           const fidelityHistoryEntry = {
             date: date,
@@ -555,22 +694,23 @@ export const useAppLogic = () => {
         updatedHistory.push(newHistoryEntry);
         
         updates.elo = eloAfterMatch;
-        updates.matchesPlayed = (p.matchesPlayed || 0) + 1;
-        updates.pointsFor = (p.pointsFor || 0) + pFor;
-        updates.pointsAgainst = (p.pointsAgainst || 0) + pAgainst;
-        updates.pointsBalance = (p.pointsBalance || 0) + pBalance;
-        updates.wins = isWinner ? (p.wins || 0) + 1 : (p.wins || 0);
-        updates.losses = !isWinner ? (p.losses || 0) + 1 : (p.losses || 0);
-        updates.dailyMatches = (p.dailyMatches || 0) + 1;
-        updates.dailyWins = isWinner ? (p.dailyWins || 0) + 1 : (p.dailyWins || 0);
-        updates.dailyLosses = !isWinner ? (p.dailyLosses || 0) + 1 : (p.dailyLosses || 0);
+        updates.matchesPlayed = (latestPlayer.matchesPlayed || 0) + 1;
+        updates.pointsFor = (latestPlayer.pointsFor || 0) + pFor;
+        updates.pointsAgainst = (latestPlayer.pointsAgainst || 0) + pAgainst;
+        updates.pointsBalance = updates.pointsFor - updates.pointsAgainst;
+        updates.wins = isWinner ? (latestPlayer.wins || 0) + 1 : (latestPlayer.wins || 0);
+        updates.losses = !isWinner ? (latestPlayer.losses || 0) + 1 : (latestPlayer.losses || 0);
+        updates.dailyMatches = (latestPlayer.dailyMatches || 0) + 1;
+        updates.dailyWins = isWinner ? (latestPlayer.dailyWins || 0) + 1 : (latestPlayer.dailyWins || 0);
+        updates.dailyLosses = !isWinner ? (latestPlayer.dailyLosses || 0) + 1 : (latestPlayer.dailyLosses || 0);
         updates.dailyEloGain = (updates.dailyEloGain || 0) + totalEloChange;
-        updates.dailyResults = [...(p.dailyResults || []), (isWinner ? 'V' : 'D') as 'V' | 'D'];
+        updates.dailyResults = [...(latestPlayer.dailyResults || []), (isWinner ? 'V' : 'D') as 'V' | 'D'];
         updates.playedLastMatch = true;
+        updates.consecutivePlayed = (latestPlayer.consecutivePlayed || 0) + 1;
         updates.consecutiveBenched = 0;
         updates.eloHistory = updatedHistory.slice(-200);
 
-        console.log(`[DEBUG - handleFinishMatch] Player ${p.name} (${p.id}): matchesPlayed before=`, p.matchesPlayed, `new value=`, updates.matchesPlayed, `new dailyMatches=`, updates.dailyMatches);
+        console.log(`[DEBUG - handleFinishMatch] Player ${latestPlayer.name} (${latestPlayer.id}): matchesPlayed before=`, latestPlayer.matchesPlayed, `new value=`, updates.matchesPlayed, `new dailyMatches=`, updates.dailyMatches);
         
         const trueskillUpdate = tsMap.get(p.id);
         if (trueskillUpdate) {
@@ -632,6 +772,7 @@ export const useAppLogic = () => {
         
         const updates: any = {
           playedLastMatch: false,
+          consecutivePlayed: 0,
           consecutiveBenched: newConsecutiveBenched
         };
         
@@ -743,11 +884,12 @@ export const useAppLogic = () => {
             dailyEloGain: (p.dailyEloGain || 0) + eloChange,
             dailyResults: [...(p.dailyResults || []), (isWinner ? 'V' : 'D') as 'V' | 'D'],
             playedLastMatch: true,
+            consecutivePlayed: (p.consecutivePlayed || 0) + 1,
             consecutiveBenched: 0
           };
         } else {
           // Se estava na reserva ou nem estava na partida, playedLastMatch é false
-          return { ...p, playedLastMatch: false, consecutiveBenched: (p.consecutiveBenched || 0) + 1 };
+          return { ...p, playedLastMatch: false, consecutivePlayed: 0, consecutiveBenched: (p.consecutiveBenched || 0) + 1 };
         }
       };
 
@@ -768,9 +910,14 @@ export const useAppLogic = () => {
 
       setViewMode('generation');
       showNotification(`Partida registrada! Vitória da Equipe ${winner}`, 'success');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Erro ao finalizar partida:', error);
-      handleFirestoreError(error, OperationType.WRITE, 'finish-match');
+      if (error?.message && error.message.includes('ERRO DE BLOQUEIO DE INTEGRIDADE')) {
+        showNotification(error.message, 'error');
+        alert(error.message); // Alerta crítico de força bruta
+      } else {
+        handleFirestoreError(error, OperationType.WRITE, 'finish-match');
+      }
     } finally {
       setIsSyncing(false);
     }
@@ -880,41 +1027,163 @@ export const useAppLogic = () => {
     return () => clearTimeout(timer);
   }, [setDbStatus]);
 
-  const registerAttendance = async (player: Player) => {
+  // --- Utilitário de Log para Sanitização e Depuração de Attendance ---
+  const debugAttendanceMatching = useCallback((targetPlayer: Player | null, contextTag: string = 'GERAL') => {
+    const sanitize = (val?: string) => (val ? val.trim().toLowerCase() : '');
+
+    if (!targetPlayer) {
+      console.log(`[AttendanceDebug][${contextTag}] ⚠️ Jogador-alvo não fornecido (null/undefined).`);
+      return null;
+    }
+
+    const sTargetId = sanitize(targetPlayer.id);
+    const sTargetEmail = sanitize(targetPlayer.email);
+    const sTargetUid = sanitize(targetPlayer.uid);
+
+    console.log(`[AttendanceDebug][${contextTag}] 🔍 Inspecionando Jogador Alvo:`, {
+      rawId: targetPlayer.id,
+      sanitizedId: sTargetId,
+      name: targetPlayer.name,
+      rawEmail: targetPlayer.email,
+      sanitizedEmail: sTargetEmail,
+      rawUid: targetPlayer.uid,
+      sanitizedUid: sTargetUid,
+      totalAttendanceCount: attendance.length
+    });
+
+    const matchById = attendance.find(a => sanitize(a.id) === sTargetId);
+    const matchByEmail = sTargetEmail ? attendance.find(a => a.email && sanitize(a.email) === sTargetEmail) : null;
+    const matchByUid = sTargetUid ? attendance.find(a => a.uid && sanitize(a.uid) === sTargetUid) : null;
+
+    const matchedRecord = matchById || matchByEmail || matchByUid || null;
+
+    if (matchedRecord) {
+      console.log(`[AttendanceDebug][${contextTag}] ✅ Jogador ENCONTRADO na lista de presença (attendance):`, {
+        matchedBy: matchById ? 'ID' : matchByEmail ? 'EMAIL' : 'UID',
+        foundPlayerId: matchedRecord.id,
+        foundPlayerName: matchedRecord.name,
+        foundPlayerEmail: matchedRecord.email,
+        status: matchedRecord.status,
+        isPresent: matchedRecord.isPresent
+      });
+    } else {
+      console.warn(`[AttendanceDebug][${contextTag}] ❌ Jogador NÃO ENCONTRADO na lista de presença (attendance).`, {
+        targetPlayer: { id: targetPlayer.id, name: targetPlayer.name, email: targetPlayer.email, uid: targetPlayer.uid },
+        currentAttendanceList: attendance.map(a => ({
+          id: a.id,
+          sanitizedId: sanitize(a.id),
+          name: a.name,
+          email: a.email,
+          sanitizedEmail: sanitize(a.email),
+          uid: a.uid,
+          sanitizedUid: sanitize(a.uid),
+          status: a.status
+        }))
+      });
+    }
+
+    return matchedRecord;
+  }, [attendance]);
+
+  const alignArrivalOrders = async (dateKey: string) => {
     try {
-      setIsSyncing(true);
+      const collectionRef = collection(db, 'attendance', dateKey, 'players');
+      const snapshot = await getDocs(collectionRef);
+      const playersList = snapshot.docs
+        .map(d => ({ id: d.id, ...d.data() } as Player))
+        .filter(p => p.status !== 'left' && !p.isDM && p.status !== 'dm');
+
+      // Sort chronologically by timestamp, fallback to ID alphabetical
+      playersList.sort((a, b) => {
+        const timeA = a.timestamp || 0;
+        const timeB = b.timestamp || 0;
+        if (timeA !== timeB) return timeA - timeB;
+        return a.id.localeCompare(b.id);
+      });
+
+      const batch = writeBatch(db);
+      let updatedCount = 0;
+
+      playersList.forEach((p, index) => {
+        const correctOrder = index + 1;
+        if (p.arrivalOrder !== correctOrder) {
+          const playerRef = doc(db, 'attendance', dateKey, 'players', p.id);
+          batch.update(playerRef, { arrivalOrder: correctOrder });
+          updatedCount++;
+        }
+      });
+
+      if (updatedCount > 0) {
+        if (commitBatchWithLog) {
+          await commitBatchWithLog(batch, 'Auto-Alinhamento da Fila de Chegada', updatedCount);
+        } else {
+          await batch.commit();
+        }
+        console.log(`[useAppLogic] Alinhamento concluído! Corrigido ${updatedCount} posições.`);
+      }
+    } catch (error) {
+      console.error("[useAppLogic] Erro ao alinhar ordens de chegada:", error);
+    }
+  };
+
+  const registerAttendance = async (player: Player, method: 'NFC' | 'QR' | 'MANUAL' = 'MANUAL') => {
+    const previousAttendance = [...attendance];
+    const fullPlayer = players.find(p => p.id === player.id);
+    
+    // Immediate sensory feedback
+    triggerHaptic('success');
+    playFeedbackSound('success');
+    const previousPlayerState = fullPlayer ? {
+      fidelityPoints: fullPlayer.fidelityPoints,
+      lastFidelityDate: fullPlayer.lastFidelityDate,
+      elo: fullPlayer.elo,
+      eloHistory: fullPlayer.eloHistory
+    } : null;
+
+    try {
       triggerDbStatus('writing');
+
       const dateKey = getFirestoreDateKey();
-      const dateDocRef = doc(db, 'attendance', dateKey);
-      const attendanceRef = doc(db, 'attendance', dateKey, 'players', player.id);
       
-      // Ensure the parent date document exists so it shows up in collection listings
-      await setDoc(dateDocRef, { 
-        date: dateKey, 
-        lastUpdate: Date.now() 
-      }, { merge: true });
-      
-      // Calculate next arrival order based on current max in attendance
-      // Fetch fresh attendance to avoid stale state issues
-      const attendanceSnap = await getDocs(collection(db, 'attendance', dateKey, 'players'));
-      const currentAttendance = attendanceSnap.docs.map(d => d.data() as Player);
-      const maxOrder = currentAttendance.reduce((max, p) => Math.max(max, p.arrivalOrder || 0), 0);
+      const activeAttendance = attendance.filter(p => p.status !== 'left' && !p.isDM && p.status !== 'dm');
+      const maxOrder = activeAttendance.reduce((max, p) => Math.max(max, p.arrivalOrder || 0), 0);
       const nextOrder = maxOrder + 1;
-      
-      // Calculate actual today's stats from matches list rather than trusting potentially stale player object
+
       const todayMatches = matches.filter(m => m.date === dateKey && (m.teamA.includes(player.id) || m.teamB.includes(player.id)));
       const actualDailyMatches = todayMatches.length;
       const actualDailyWins = todayMatches.filter(m => (m.winner === 'A' && m.teamA.includes(player.id)) || (m.winner === 'B' && m.teamB.includes(player.id))).length;
       const actualDailyLosses = todayMatches.filter(m => (m.winner === 'B' && m.teamA.includes(player.id)) || (m.winner === 'A' && m.teamB.includes(player.id))).length;
-      
-      // Ensure we have the most up-to-date name from the players list
-      const fullPlayer = players.find(p => p.id === player.id);
+
       const nameToSave = fullPlayer?.name || player.name || "Sócio sem nome";
-      
-      // Award ELO fidelity bonus (+50) immediately upon registering attendance if they haven't received it today
+
+      const optimisticPlayer = cleanObject({
+        ...player,
+        status: 'active',
+        name: nameToSave,
+        arrivalOrder: nextOrder,
+        isPresent: true,
+        checkInMethod: method,
+        timestamp: Date.now(),
+        dailyMatches: actualDailyMatches,
+        dailyWins: actualDailyWins,
+        dailyLosses: actualDailyLosses,
+        dailyResults: [],
+        playedLastMatch: false,
+        consecutiveBenched: 0
+      }) as Player;
+
+      // === OPTIMISTIC LOCAL UPDATE ===
+      setAttendance([...attendance.filter(p => p.id !== player.id), optimisticPlayer]);
+
+      let awardedFidelity = false;
+      let nextFidelityPoints = fullPlayer?.fidelityPoints || 0;
+      let nextElo = fullPlayer?.elo || 1200;
+      let nextEloHistory = fullPlayer?.eloHistory || [];
+
       if (fullPlayer && fullPlayer.lastFidelityDate !== dateKey) {
-        const nextFidelityPoints = (fullPlayer.fidelityPoints || 0) + 50;
-        const nextElo = (fullPlayer.elo || 1200) + 50;
+        awardedFidelity = true;
+        nextFidelityPoints += 50;
+        nextElo += 50;
         const newHistoryEntry = {
           date: dateKey,
           elo: nextElo,
@@ -924,39 +1193,40 @@ export const useAppLogic = () => {
           result: 'P' as 'P',
           fidelityBonus: true
         };
-        const nextEloHistory = [...(fullPlayer.eloHistory || []), newHistoryEntry].slice(-200);
+        nextEloHistory = [...nextEloHistory, newHistoryEntry].slice(-200);
 
-        // Update player document in Firestore
-        await setDoc(doc(db, 'players', player.id), {
-          fidelityPoints: nextFidelityPoints,
-          lastFidelityDate: dateKey,
-          elo: nextElo,
-          eloHistory: nextEloHistory
-        }, { merge: true });
-
-        // Update local state instantly so everything updates
         fullPlayer.fidelityPoints = nextFidelityPoints;
         fullPlayer.lastFidelityDate = dateKey;
         fullPlayer.elo = nextElo;
         fullPlayer.eloHistory = nextEloHistory;
       }
       
-      await setDoc(attendanceRef, cleanObject({
-        ...player,
-        status: 'active', // Forces the status to active to clear any leftover 'left' checkout status
-        name: nameToSave,
-        arrivalOrder: nextOrder,
-        isPresent: true,
-        timestamp: Date.now(),
-        dailyMatches: actualDailyMatches,
-        dailyWins: actualDailyWins,
-        dailyLosses: actualDailyLosses,
-        dailyResults: [],
-        playedLastMatch: false,
-        consecutiveBenched: 0
-      }));
+      showNotification(`${nameToSave} confirmou presença!`, 'success');
 
-      // Clear old reminders for this player
+      // === FIRESTORE BACKGROUND SYNC ===
+      const dateDocRef = doc(db, 'attendance', dateKey);
+      const attendanceRef = doc(db, 'attendance', dateKey, 'players', player.id);
+      
+      const batch = writeBatch(db);
+      let batchSize = 0;
+
+      batch.set(dateDocRef, { date: dateKey, lastUpdate: Date.now() }, { merge: true });
+      batchSize++;
+
+      if (awardedFidelity && fullPlayer) {
+        batch.set(doc(db, 'players', player.id), {
+          fidelityPoints: nextFidelityPoints,
+          lastFidelityDate: dateKey,
+          elo: nextElo,
+          eloHistory: nextEloHistory
+        }, { merge: true });
+        batchSize++;
+      }
+      
+      batch.set(attendanceRef, optimisticPlayer);
+      batchSize++;
+
+      // Clear old reminders asynchronously (non-blocking for UI)
       try {
         const q = query(
           collection(db, 'notifications'),
@@ -964,46 +1234,66 @@ export const useAppLogic = () => {
           where('type', '==', 'reminder')
         );
         const snap = await getDocs(q);
-        const batchReminders = writeBatch(db);
-        snap.forEach(d => batchReminders.delete(d.ref));
-        await batchReminders.commit();
+        snap.forEach(d => {
+          batch.delete(d.ref);
+          batchSize++;
+        });
       } catch (err) {
-        console.warn('Erro ao limpar lembretes antigos:', err);
+        console.warn('Erro ao mapear lembretes antigos para o lote:', err);
+      }
+
+      if (commitBatchWithLog) {
+        await commitBatchWithLog(batch, 'Registro de Presença', batchSize);
+      } else {
+        await batch.commit();
       }
       
       await trackUsage(1, 1);
-      showNotification(`${nameToSave} confirmou presença!`, 'success');
+      await alignArrivalOrders(dateKey);
     } catch (error) {
+      console.error("Reverting optimistic UI due to network error:", error);
+      // Revert optimistic updates
+      setAttendance(previousAttendance);
+      if (fullPlayer && previousPlayerState) {
+        fullPlayer.fidelityPoints = previousPlayerState.fidelityPoints;
+        fullPlayer.lastFidelityDate = previousPlayerState.lastFidelityDate;
+        fullPlayer.elo = previousPlayerState.elo;
+        fullPlayer.eloHistory = previousPlayerState.eloHistory;
+      }
       handleFirestoreError(error, OperationType.WRITE, 'attendance');
-    } finally {
-      setIsSyncing(false);
     }
   };
 
   const removeAttendance = async (playerId: string) => {
+    const previousAttendance = [...attendance];
+    
     try {
-      setIsSyncing(true);
       triggerDbStatus('writing');
       const dateKey = getFirestoreDateKey();
-      const attendanceRef = doc(db, 'attendance', dateKey, 'players', playerId);
       
-      // Instead of deleting, we mark as left to preserve session tracking data
-      // This helps with "Time Off Court" calculations in reports
-      await updateDoc(attendanceRef, {
+      // OPTIMISTIC LOCAL UPDATE
+      setAttendance(attendance.filter(p => p.id !== playerId));
+
+      const attendanceRef = doc(db, 'attendance', dateKey, 'players', playerId);
+      const batch = writeBatch(db);
+      
+      batch.update(attendanceRef, {
         status: 'left',
         leftAt: Date.now()
-      }).catch(async (err) => {
-        // If update fails (e.g. doc doesn't exist or permissions), fallback to delete or just ignore
-        if (err.code === 'not-found') return;
-        await deleteDoc(attendanceRef);
       });
+
+      if (commitBatchWithLog) {
+        await commitBatchWithLog(batch, 'Remover Presença Individual', 1);
+      } else {
+        await batch.commit();
+      }
 
       await trackUsage(0, 1);
       showNotification('Presença removida.', 'info');
     } catch (error) {
+      console.error("Reverting optimistic UI due to network error:", error);
+      setAttendance(previousAttendance);
       handleFirestoreError(error, OperationType.WRITE, 'attendance');
-    } finally {
-      setIsSyncing(false);
     }
   };
 
@@ -1088,7 +1378,11 @@ export const useAppLogic = () => {
             }
           }
           
-          await batch.commit();
+          if (commitBatchWithLog) {
+            await commitBatchWithLog(batch, 'Limpeza de Presença Geral', attendance.length * 2);
+          } else {
+            await batch.commit();
+          }
           showNotification('Lista de presença limpa.', 'success');
         } catch (error) {
           handleFirestoreError(error, OperationType.WRITE, 'attendance-clear');
@@ -1104,35 +1398,72 @@ export const useAppLogic = () => {
     try {
       setIsSyncing(true);
       triggerDbStatus('writing');
-      const dateKey = getFirestoreDateKey();
+      const today = getFirestoreDateKey();
+      const nextThu = getNextThursday();
       
       const intentionsRef = doc(db, 'metadata', 'intentions');
-      const { getDoc } = await import("firebase/firestore");
+      const { getDoc, deleteField } = await import("firebase/firestore");
       const intentionsSnap = await getDoc(intentionsRef);
+      
+      const currentStoredTarget = intentionsSnap.exists() && intentionsSnap.data().targetDate ? intentionsSnap.data().targetDate : today;
+      const targetDate = (currentStoredTarget && currentStoredTarget >= today) ? currentStoredTarget : nextThu;
+      
       const isConfirmed = intentionsSnap.exists() ? (intentionsSnap.data().responses?.[player.id] === 'GOING') : false;
-      const targetDate = intentionsSnap.exists() && intentionsSnap.data().targetDate ? intentionsSnap.data().targetDate : dateKey;
+      const isDateRotating = currentStoredTarget && currentStoredTarget < today;
 
       const preConfirmationRef = doc(db, 'preConfirmations', targetDate, 'players', player.id);
       
-      if (isConfirmed) {
-        await deleteDoc(preConfirmationRef);
-        await setDoc(intentionsRef, {
+      const batch = writeBatch(db);
+      let batchSize = 0;
+
+      if (isConfirmed && !isDateRotating) {
+        batch.delete(preConfirmationRef);
+        batchSize++;
+        batch.set(intentionsRef, {
           responses: { [player.id]: deleteField() },
           confirmationTimestamps: { [player.id]: deleteField() }
         }, { merge: true });
+        batchSize++;
+        
+        if (commitBatchWithLog) {
+          await commitBatchWithLog(batch, 'Remover Intenção', batchSize);
+        } else {
+          await batch.commit();
+        }
         showNotification('Presença removida da lista.', 'info');
       } else {
         const now = Date.now();
-        await setDoc(preConfirmationRef, cleanObject({
+        batch.set(preConfirmationRef, cleanObject({
           ...player,
           timestamp: now,
           id: player.id
         }));
-        await setDoc(intentionsRef, {
-          responses: { [player.id]: 'GOING' },
-          confirmationTimestamps: { [player.id]: now },
-          targetDate: targetDate
-        }, { merge: true });
+        batchSize++;
+
+        // If rotating, we MUST clear all old responses to avoid mixing weeks
+        if (isDateRotating) {
+          const prevAutomation = intentionsSnap.exists() ? (intentionsSnap.data().automationEnabled ?? true) : true;
+          batch.set(intentionsRef, {
+            responses: { [player.id]: 'GOING' },
+            confirmationTimestamps: { [player.id]: now },
+            targetDate: targetDate,
+            remindersSent: {},
+            automationEnabled: prevAutomation
+          }, { merge: false }); 
+        } else {
+          batch.set(intentionsRef, {
+            responses: { [player.id]: 'GOING' },
+            confirmationTimestamps: { [player.id]: now },
+            targetDate: targetDate
+          }, { merge: true });
+        }
+        batchSize++;
+
+        if (commitBatchWithLog) {
+          await commitBatchWithLog(batch, 'Confirmar Intenção', batchSize);
+        } else {
+          await batch.commit();
+        }
         const firstName = player.name.split(' ')[0];
         showNotification(`Presença confirmada! Bom jogo, ${firstName}! 🏐🔥`, 'success');
       }
@@ -1157,6 +1488,29 @@ export const useAppLogic = () => {
           
           // Delete the player
           batch.delete(doc(db, 'players', id));
+          
+          // Clean up player from intentions list
+          try {
+            const intentionsRef = doc(db, 'metadata', 'intentions');
+            const intentionsSnap = await getDoc(intentionsRef);
+            if (intentionsSnap.exists()) {
+              const data = intentionsSnap.data();
+              const responses = data.responses || {};
+              const timestamps = data.confirmationTimestamps || {};
+              if (responses[id]) {
+                const newResponses = { ...responses };
+                const newTimestamps = { ...timestamps };
+                delete newResponses[id];
+                delete newTimestamps[id];
+                batch.update(intentionsRef, { 
+                  responses: newResponses, 
+                  confirmationTimestamps: newTimestamps 
+                });
+              }
+            }
+          } catch (cleanErr) {
+            console.warn('Erro ao limpar intenções na exclusão:', cleanErr);
+          }
           
           // Log the deletion
           await logAction(AuditAction.DELETE_PLAYER, id, playerToDelete?.name || 'Sócio excluído');
@@ -1307,22 +1661,22 @@ export const useAppLogic = () => {
           const isToday = matchDate === getFirestoreDateKey();
           
           allPlayersInMatch.forEach(pid => {
-            const p = players.find(player => player.id === pid);
-            if (!p) return;
+            const latestPlayer = players.find(player => player.id === pid);
+            if (!latestPlayer) return;
             
-            const isWinner = (matchToDelete.winner === 'A' && matchToDelete.teamA.includes(pid)) || 
-                             (matchToDelete.winner === 'B' && matchToDelete.teamB.includes(pid));
-            const isTeamA = matchToDelete.teamA.includes(pid);
+            const isWinner = (matchToDelete.winner === 'A' && (matchToDelete.teamA || []).includes(pid)) || 
+                             (matchToDelete.winner === 'B' && (matchToDelete.teamB || []).includes(pid));
+            const isTeamA = (matchToDelete.teamA || []).includes(pid);
             
             const eloChange = isWinner ? 20 : -20;
             
-            let updatedHistory = [...(p.eloHistory || [])];
-            let previousElo = p.elo;
+            let updatedHistory = [...(latestPlayer.eloHistory || [])];
+            let previousElo = latestPlayer.elo;
             
-            const matchTime = new Date(matchToDelete.endTime).getTime();
+            const matchTime = new Date(matchToDelete.endTime || matchToDelete.timestamp).getTime();
             const entryIndex = updatedHistory.findIndex(entry => {
-              const entryTime = new Date(entry.timestamp || 0).getTime();
               if (entry.matchId === matchId) return true;
+              const entryTime = new Date(entry.timestamp || 0).getTime();
               return Math.abs(entryTime - matchTime) < 60000;
             });
             
@@ -1330,17 +1684,17 @@ export const useAppLogic = () => {
               if (entryIndex > 0) {
                 previousElo = updatedHistory[entryIndex - 1].elo;
               } else {
-                previousElo = Math.max(800, p.elo - eloChange);
+                previousElo = Math.max(800, latestPlayer.elo - eloChange);
               }
               updatedHistory.splice(entryIndex, 1);
             } else {
-              previousElo = Math.max(800, p.elo - eloChange);
+              previousElo = Math.max(800, latestPlayer.elo - eloChange);
               if (updatedHistory.length > 0) {
                 updatedHistory.pop();
               }
             }
             
-            const results = [...(p.dailyResults || [])];
+            const results = [...(latestPlayer.dailyResults || [])];
             if (isToday && results.length > 0) {
               const expectedResult = isWinner ? 'V' : 'D';
               const lastIdx = results.lastIndexOf(expectedResult);
@@ -1351,23 +1705,23 @@ export const useAppLogic = () => {
             
             const updates = {
               elo: previousElo,
-              matchesPlayed: Math.max(0, (p.matchesPlayed || 0) - 1),
-              pointsFor: Math.max(0, (p.pointsFor || 0) - (isTeamA ? matchToDelete.scoreA : matchToDelete.scoreB)),
-              pointsAgainst: Math.max(0, (p.pointsAgainst || 0) - (isTeamA ? matchToDelete.scoreB : matchToDelete.scoreA)),
-              pointsBalance: (p.pointsBalance || 0) - ((isTeamA ? matchToDelete.scoreA : matchToDelete.scoreB) - (isTeamA ? matchToDelete.scoreB : matchToDelete.scoreA)),
-              wins: isWinner ? Math.max(0, (p.wins || 0) - 1) : (p.wins || 0),
-              losses: !isWinner ? Math.max(0, (p.losses || 0) - 1) : (p.losses || 0),
-              dailyMatches: isToday ? Math.max(0, (p.dailyMatches || 0) - 1) : (p.dailyMatches || 0),
-              dailyWins: isToday ? (isWinner ? Math.max(0, (p.dailyWins || 0) - 1) : (p.dailyWins || 0)) : (p.dailyWins || 0),
-              dailyLosses: isToday ? (!isWinner ? Math.max(0, (p.dailyLosses || 0) - 1) : (p.dailyLosses || 0)) : (p.dailyLosses || 0),
-              dailyEloGain: isToday ? (p.dailyEloGain || 0) - eloChange : (p.dailyEloGain || 0),
+              matchesPlayed: Math.max(0, (latestPlayer.matchesPlayed || 0) - 1),
+              pointsFor: Math.max(0, (latestPlayer.pointsFor || 0) - (isTeamA ? matchToDelete.scoreA : matchToDelete.scoreB)),
+              pointsAgainst: Math.max(0, (latestPlayer.pointsAgainst || 0) - (isTeamA ? matchToDelete.scoreB : matchToDelete.scoreA)),
+              pointsBalance: (latestPlayer.pointsBalance || 0) - ((isTeamA ? matchToDelete.scoreA : matchToDelete.scoreB) - (isTeamA ? matchToDelete.scoreB : matchToDelete.scoreA)),
+              wins: isWinner ? Math.max(0, (latestPlayer.wins || 0) - 1) : (latestPlayer.wins || 0),
+              losses: !isWinner ? Math.max(0, (latestPlayer.losses || 0) - 1) : (latestPlayer.losses || 0),
+              dailyMatches: isToday ? Math.max(0, (latestPlayer.dailyMatches || 0) - 1) : (latestPlayer.dailyMatches || 0),
+              dailyWins: isToday ? (isWinner ? Math.max(0, (latestPlayer.dailyWins || 0) - 1) : (latestPlayer.dailyWins || 0)) : (latestPlayer.dailyWins || 0),
+              dailyLosses: isToday ? (!isWinner ? Math.max(0, (latestPlayer.dailyLosses || 0) - 1) : (latestPlayer.dailyLosses || 0)) : (latestPlayer.dailyLosses || 0),
+              dailyEloGain: isToday ? (latestPlayer.dailyEloGain || 0) - eloChange : (latestPlayer.dailyEloGain || 0),
               dailyResults: results,
               eloHistory: updatedHistory,
               playedLastMatch: false
             };
             
-            batch.set(doc(db, 'players', p.id), updates, { merge: true });
-            batch.set(doc(db, 'attendance', matchDate, 'players', p.id), updates, { merge: true });
+            batch.set(doc(db, 'players', latestPlayer.id), updates, { merge: true });
+            batch.set(doc(db, 'attendance', matchDate, 'players', latestPlayer.id), updates, { merge: true });
           });
 
           // 2. Restaurar status de banco e quem jogou por último
@@ -1414,6 +1768,211 @@ export const useAppLogic = () => {
         }
       }
     );
+  };
+
+  const updateMatchResult = async (
+    matchId: string, 
+    newWinner: 'A' | 'B', 
+    newScoreA: number, 
+    newScoreB: number,
+    newTeamA?: string[],
+    newTeamB?: string[]
+  ) => {
+    try {
+      setIsSyncing(true);
+      triggerDbStatus('writing');
+
+      const matchToUpdate = matches.find(m => m.id === matchId);
+      if (!matchToUpdate) {
+        showNotification('Partida não encontrada.', 'error');
+        return;
+      }
+
+      const updatedMatch: Match = {
+        ...matchToUpdate,
+        winner: newWinner,
+        scoreA: newScoreA,
+        scoreB: newScoreB,
+        ...(newTeamA ? { teamA: newTeamA } : {}),
+        ...(newTeamB ? { teamB: newTeamB } : {}),
+        updatedAt: new Date().toISOString()
+      };
+
+      // Validate Attendance Integrity before updating
+      // Passa os jogadores originais da partida como exceção permitida caso a lista de presença tenha sumido (histórico)
+      const originalPlayers = [...(matchToUpdate.teamA || []), ...(matchToUpdate.teamB || [])];
+      await validateMatchAttendance(
+        updatedMatch.teamA, 
+        updatedMatch.teamB, 
+        updatedMatch.date || getFirestoreDateKey(),
+        originalPlayers
+      );
+
+      const updatedMatchesList = matches.map(m => m.id === matchId ? updatedMatch : m);
+
+      // Salva partida atualizada no Firestore
+      await setDoc(doc(db, 'matches', matchId), cleanObject(updatedMatch), { merge: true });
+
+      // Recalcula todas as estatísticas e rankings com base na lista de partidas atualizada
+      const todayDateKey = getFirestoreDateKey();
+      const recalculatedPlayers = recalculateAllStatsFromMatches(players, updatedMatchesList, todayDateKey);
+
+      // Salva atletas recalculados em lote no Firestore
+      const batch = writeBatch(db);
+      recalculatedPlayers.forEach(p => {
+        const playerUpdates = {
+          elo: p.elo,
+          wins: p.wins,
+          losses: p.losses,
+          matchesPlayed: p.matchesPlayed,
+          pointsFor: p.pointsFor,
+          pointsAgainst: p.pointsAgainst,
+          pointsBalance: p.pointsBalance,
+          dailyMatches: p.dailyMatches,
+          dailyWins: p.dailyWins,
+          dailyLosses: p.dailyLosses,
+          dailyEloGain: p.dailyEloGain,
+          dailyResults: p.dailyResults,
+          eloHistory: p.eloHistory,
+          playedLastMatch: p.playedLastMatch,
+          consecutiveBenched: p.consecutiveBenched,
+        };
+        batch.set(doc(db, 'players', p.id), cleanObject(playerUpdates), { merge: true });
+        
+        // Sempre atualiza o documento na lista de presença do dia atual para manter consistência no Ranking Diário
+        // Independentemente de dailyMatches ser 0 (pode ter sido removido da única partida que jogou)
+        batch.set(doc(db, 'attendance', todayDateKey, 'players', p.id), cleanObject(playerUpdates), { merge: true });
+
+        // Se a partida editada for de uma data passada, também tentamos atualizar o registro de presença daquela data específica
+        if (updatedMatch.date && updatedMatch.date !== todayDateKey) {
+          batch.set(doc(db, 'attendance', updatedMatch.date, 'players', p.id), cleanObject(playerUpdates), { merge: true });
+        }
+      });
+
+      await batch.commit();
+
+      setMatches(updatedMatchesList);
+      setPlayers(recalculatedPlayers);
+      
+      // Sincroniza estado local de presença para resposta imediata na UI
+      const updatedAttendance = attendance.map(attPlayer => {
+        const recalculated = recalculatedPlayers.find(p => p.id === attPlayer.id);
+        return recalculated ? { ...attPlayer, ...recalculated } : attPlayer;
+      });
+      setAttendance(updatedAttendance);
+
+      const teamsChanged = Boolean(newTeamA || newTeamB);
+      const logMessage = teamsChanged
+        ? `Resultado e escalação alterados: Vencedor ${newWinner} (${newScoreA}x${newScoreB}) com troca de atletas`
+        : `Resultado alterado: Vencedor ${newWinner} (${newScoreA}x${newScoreB})`;
+
+      await logAction(AuditAction.UPDATE_MATCH, matchId, logMessage);
+      showNotification('Partida atualizada e ranking reprocessado com sucesso!', 'success');
+    } catch (error: any) {
+      console.error('Erro ao atualizar partida e reprocessar:', error);
+      if (error?.message && error.message.includes('ERRO DE BLOQUEIO DE INTEGRIDADE')) {
+        showNotification(error.message, 'error');
+        alert(error.message); // Alerta crítico de força bruta
+      } else {
+        handleFirestoreError(error, OperationType.WRITE, `matches/${matchId}`);
+        showNotification('Erro ao reprocessar resultado da partida.', 'error');
+      }
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const reprocessAllMatchesAndStats = async () => {
+    try {
+      setIsSyncing(true);
+      triggerDbStatus('writing');
+      showNotification('Reprocessando todas as partidas e o ranking dos sócios...', 'info');
+
+      const dateKey = getFirestoreDateKey();
+      console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] --------------------------------------------------`);
+      console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] INICIANDO QUERY AO FIRESTORE EM 'matches'`);
+      console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Parâmetro 'dateKey' formatado: "${dateKey}"`);
+
+      // 1. Consulta direta geral à coleção 'matches' sem filtros
+      const matchesSnap = await getDocs(collection(db, 'matches'));
+      console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Total de documentos recuperados sem filtro de collection(db, 'matches'): ${matchesSnap.size}`);
+
+      // 2. Consulta direta filtrada por data usando a chave construída dateKey
+      const qFiltered = query(collection(db, 'matches'), where('date', '==', dateKey));
+      const filteredSnap = await getDocs(qFiltered);
+      console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] --- QUERY FIRESTORE FILTRADA POR DATA ---`);
+      console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Query parameters: collection('matches').where('date', '==', '${dateKey}')`);
+      console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Total de documentos retornados após a busca: ${filteredSnap.size}`);
+      console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] --------------------------------------------------`);
+
+      filteredSnap.forEach((docSnap, idx) => {
+        const m = docSnap.data();
+        console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Documento retornado [${idx + 1}]: ID=${docSnap.id}, date=${m.date}, timestamp=${m.timestamp}, dailyNumber=${m.dailyNumber}`);
+      });
+
+      if (filteredSnap.size <= 1 && matchesSnap.size > 1) {
+        console.warn(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] ANÁLISE: A query filtrada por dateKey ("${dateKey}") retornou ${filteredSnap.size} partida(s), enquanto o total geral na coleção é ${matchesSnap.size}. Isso indica que o filtro por data restringe o resultado caso a data corrente não coincida com os dias em que houve partidas.`);
+      }
+
+      const fetchedMatches: Match[] = [];
+      const dateCountMap: Record<string, number> = {};
+
+      matchesSnap.forEach(docSnap => {
+        const data = docSnap.data();
+        const rawDate = data.date;
+        const mDate = rawDate ? (rawDate.includes('T') ? rawDate.split('T')[0] : rawDate) : 'sem_data';
+        dateCountMap[mDate] = (dateCountMap[mDate] || 0) + 1;
+        fetchedMatches.push({ ...data, id: docSnap.id } as Match);
+      });
+
+      console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Distribuição completa de partidas por data no Firestore:`, dateCountMap);
+      console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Nenhuma paginação ou limite restritivo detectado. Total exato de partidas validadas: ${fetchedMatches.length}`);
+
+      const matchesToUse = fetchedMatches.length > 0 ? fetchedMatches : matches;
+      const recalculatedPlayers = recalculateAllStatsFromMatches(players, matchesToUse, todayDateKey);
+
+      const batch = writeBatch(db);
+      recalculatedPlayers.forEach(p => {
+        const playerUpdates = {
+          elo: p.elo,
+          wins: p.wins,
+          losses: p.losses,
+          matchesPlayed: p.matchesPlayed,
+          pointsFor: p.pointsFor,
+          pointsAgainst: p.pointsAgainst,
+          pointsBalance: p.pointsBalance,
+          dailyMatches: p.dailyMatches,
+          dailyWins: p.dailyWins,
+          dailyLosses: p.dailyLosses,
+          dailyEloGain: p.dailyEloGain,
+          dailyResults: p.dailyResults,
+          eloHistory: p.eloHistory,
+          playedLastMatch: p.playedLastMatch,
+          consecutiveBenched: p.consecutiveBenched,
+        };
+        batch.set(doc(db, 'players', p.id), cleanObject(playerUpdates), { merge: true });
+        
+        // Sempre atualiza o documento na lista de presença do dia atual para manter consistência no Ranking Diário
+        batch.set(doc(db, 'attendance', todayDateKey, 'players', p.id), cleanObject(playerUpdates), { merge: true });
+      });
+
+      await batch.commit();
+      setPlayers(recalculatedPlayers);
+
+      // Sincroniza estado local de presença para resposta imediata na UI
+      const updatedAttendance = attendance.map(attPlayer => {
+        const recalculated = recalculatedPlayers.find(p => p.id === attPlayer.id);
+        return recalculated ? { ...attPlayer, ...recalculated } : attPlayer;
+      });
+      setAttendance(updatedAttendance);
+
+      showNotification('Ranking e estatísticas reprocessados com sucesso!', 'success');
+    } catch (error) {
+      console.error('Erro ao reprocessar partidas e ranking:', error);
+      showNotification('Erro ao reprocessar ranking.', 'error');
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
   const deleteMatchesByDate = async (date: string) => {
@@ -1931,6 +2490,17 @@ export const useAppLogic = () => {
       triggerDbStatus('writing');
       
       const id = playerData.id || generateUUID();
+      
+      // Check for duplicate names if this is a new player
+      if (!playerData.id && playerData.name) {
+        const normalizedName = playerData.name.trim().toLowerCase();
+        const isDuplicate = players.some(p => p.name.trim().toLowerCase() === normalizedName);
+        if (isDuplicate) {
+          showNotification(`Já existe um sócio cadastrado com o nome "${playerData.name}".`, 'error');
+          return;
+        }
+      }
+
       const existingPlayer = players.find(p => p.id === id);
       const playerRef = doc(db, 'players', id);
       
@@ -1988,7 +2558,29 @@ export const useAppLogic = () => {
         delete (validatedData as any).email;
       }
 
-      await setDoc(playerRef, cleanObject(validatedData), { merge: true });
+      // Handle Rodney's setter status transition if not already set
+      if (id === RODNEY_ID && validatedData.isOfficialSetter && !validatedData.setterStartDate) {
+        (validatedData as any).setterStartDate = RODNEY_SETTER_START_DATE;
+      }
+
+      const batch = writeBatch(db);
+      batch.set(playerRef, cleanObject(validatedData), { merge: true });
+
+      // Sincronização Automática com a Lista de Presença do Dia
+      // Se o sócio estiver na lista de presença, atualiza o status de levantador lá também
+      const today = getFirestoreDateKey();
+      const attendanceRef = doc(db, 'attendance', today, 'players', id);
+      
+      // Verificamos se o jogador está na lista de presença atual
+      const isInAttendance = attendance.some(p => p.id === id);
+      if (isInAttendance) {
+        batch.set(attendanceRef, {
+          isOfficialSetter: validatedData.isOfficialSetter,
+          setterStartDate: (validatedData as any).setterStartDate || null
+        }, { merge: true });
+      }
+
+      await batch.commit();
       await trackUsage(0, 1);
 
       // Audit Logging
@@ -2071,16 +2663,10 @@ export const useAppLogic = () => {
         }).format(new Date(ts));
       };
 
-      let currentSessionBaseDate = "";
-      let lastMatchTs = 0;
-      const MAX_GAP = 8 * 60 * 60 * 1000; // 8 hours
       const dateMapping = new Map<string, string>(); // Maps old match dates to clean session dates
 
       allSortedMatches.forEach(m => {
-        if (m.timestamp - lastMatchTs > MAX_GAP) {
-           currentSessionBaseDate = getCorrectDate(m.timestamp);
-        }
-        lastMatchTs = m.timestamp;
+        const currentSessionBaseDate = getCorrectDate(m.timestamp);
         
         dateMapping.set(m.date, currentSessionBaseDate);
 
@@ -2572,6 +3158,187 @@ export const useAppLogic = () => {
     }
   };
 
+  const applyPreviewResult = async (resultToApply: any) => {
+    if (!resultToApply) return;
+    if (navigator.vibrate) navigator.vibrate(50);
+    setIsSyncing(true);
+    triggerDbStatus('writing');
+
+    const now = Date.now();
+    const threshold = systemMetadata.lastResetTimestamp || (now - (16 * 60 * 60 * 1000));
+    const sessionMatches = (matches || []).filter(m => m.timestamp > threshold);
+
+    try {
+      // 1. Clona e normaliza de forma estritamente imutável preservando a formação validada
+      const result = cloneGenerationResultImmutably(resultToApply, players, attendance);
+
+      // 2. Extrai com segurança os atletas escalados para a quadra
+      const onCourtPlayers = [
+        result.teamA?.setter,
+        ...(result.teamA?.players || []),
+        result.teamB?.setter,
+        ...(result.teamB?.players || [])
+      ].filter(Boolean) as Player[];
+
+      const onCourtIds = new Set(onCourtPlayers.map(p => p.id));
+
+      // 3. Persistir partida no Firestore para sincronização entre admins e sócios
+      await setDoc(doc(db, 'metadata', 'currentMatch'), cleanObject(result));
+      await trackUsage(0, 1);
+
+      // 4. Calcular número da partida
+      const maxDailyNumber = sessionMatches.reduce((max, m) => Math.max(max, m.dailyNumber || 0), 0);
+      const matchNumber = maxDailyNumber + 1;
+
+      const batch = writeBatch(db);
+      let hasNotifications = false;
+
+      for (const player of onCourtPlayers) {
+        const playerRef = doc(db, 'attendance', getFirestoreDateKey(), 'players', player.id);
+        const prevPlayed = attendance.find(a => a.id === player.id)?.consecutivePlayed || 0;
+        batch.set(playerRef, { playedLastMatch: true, consecutivePlayed: prevPlayed + 1, consecutiveBenched: 0 }, { merge: true });
+        hasNotifications = true;
+      }
+
+      const attendanceList = attendance.filter(p => !p.status || p.status === 'active');
+      for (const att of attendanceList) {
+        if (!onCourtIds.has(att.id)) {
+          const playerRef = doc(db, 'attendance', getFirestoreDateKey(), 'players', att.id);
+          batch.set(playerRef, { playedLastMatch: false, consecutivePlayed: 0, consecutiveBenched: (att.consecutiveBenched || 0) + 1 }, { merge: true });
+          hasNotifications = true;
+        }
+      }
+
+      // Notificações FCM e In-App para jogadores em quadra e fila
+      const playersToNotifyWithTokens = [
+        ...onCourtPlayers,
+        ...(result.remainingPlayers ? result.remainingPlayers.slice(0, 12) : [])
+      ].filter(p => p && p.id && p.fcmToken);
+
+      const notificationData = await Promise.all(playersToNotifyWithTokens.map(async (p) => {
+        try {
+          const q = query(collection(db, 'notifications'), where('playerUid', '==', p!.uid), where('read', '==', false));
+          const snap = await getDocs(q);
+          return { id: p!.id, unreadCount: snap.size + 1 };
+        } catch (e) {
+          return { id: p!.id, unreadCount: 1 };
+        }
+      }));
+
+      const queueNotification = (player: Player | null | undefined, title: string, body: string) => {
+        if (player) {
+          const appNotifRef = doc(collection(db, 'notifications'));
+          batch.set(appNotifRef, {
+            playerId: player.id,
+            playerUid: player.uid || null,
+            title,
+            message: body,
+            createdAt: Date.now(),
+            read: false,
+            type: 'match'
+          });
+
+          if (player.fcmToken && systemMetadata.matchNotificationsGlobalEnabled !== false && player.matchNotificationsEnabled !== false) {
+            const unreadCount = notificationData.find(d => d.id === player.id)?.unreadCount || 1;
+            const notificationRef = doc(collection(db, 'fcm_messages'));
+            batch.set(notificationRef, {
+              token: player.fcmToken,
+              notification: { title, body: body, sound: 'default' },
+              data: {
+                unreadCount: String(unreadCount),
+                type: 'match'
+              },
+              createdAt: serverTimestamp()
+            });
+          }
+          hasNotifications = true;
+        }
+      };
+
+      // Notificar Equipe A
+      const notifyTeamA = (p: Player | null | undefined) => {
+        if (!p) return;
+        const otherTeammates = [result.teamA.setter, ...result.teamA.players]
+          .filter(tp => tp && tp.id !== p.id)
+          .map(tp => tp!.name)
+          .join(', ');
+
+        queueNotification(
+          p,
+          `Partida #${matchNumber} - Sua vez!`,
+          `Você está na Equipe A com: ${otherTeammates}.\nHoje: ${p.dailyWins || 0}V / ${p.dailyLosses || 0}D.\nDirija-se à quadra!`
+        );
+      };
+      notifyTeamA(result.teamA.setter);
+      result.teamA.players.forEach(notifyTeamA);
+
+      // Notificar Equipe B
+      const notifyTeamB = (p: Player | null | undefined) => {
+        if (!p) return;
+        const otherTeammates = [result.teamB.setter, ...result.teamB.players]
+          .filter(tp => tp && tp.id !== p.id)
+          .map(tp => tp!.name)
+          .join(', ');
+
+        queueNotification(
+          p,
+          `Partida #${matchNumber} - Sua vez!`,
+          `Você está na Equipe B com: ${otherTeammates}.\nHoje: ${p.dailyWins || 0}V / ${p.dailyLosses || 0}D.\nDirija-se à quadra!`
+        );
+      };
+      notifyTeamB(result.teamB.setter);
+      result.teamB.players.forEach(notifyTeamB);
+
+      // Notificar Próximos na Fila
+      if (result.remainingPlayers) {
+        const nextPlayers = result.remainingPlayers.slice(0, 12);
+        nextPlayers.forEach(p => {
+          queueNotification(
+            p,
+            `Prepare-se!`,
+            `Você está na próxima partida. Fique atento!`
+          );
+        });
+      }
+
+      if (hasNotifications) {
+        await batch.commit();
+      }
+
+      setGenerationResult(result);
+      setAnalysis('');
+      setRuleVerification('');
+      setViewMode('generation');
+      setScoreA(0);
+      setScoreB(0);
+      setTempScoreA('0');
+      setTempScoreB('0');
+      setScoreMode('QUICK');
+
+      generateTeamAnnouncementAudio(result.teamA, result.teamB).then(audio => {
+        if (audio) setNarrationAudio(audio);
+      }).catch(err => console.error("Pre-generation error:", err));
+
+      setDoc(doc(db, 'metadata', 'system'), cleanObject({
+        dailyMatchCount: matchNumber,
+        matchStartTime: now
+      }), { merge: true }).catch(err => handleFirestoreError(err, OperationType.WRITE, 'metadata/system'));
+
+      setSystemMetadata({
+        ...systemMetadata,
+        dailyMatchCount: matchNumber,
+        matchStartTime: now
+      });
+
+      showNotification(`Partida #${matchNumber} escalada com sucesso!`, 'success');
+    } catch (err) {
+      console.error("Erro ao aplicar pré-visualização de partida:", err);
+      showNotification("Erro ao aplicar escalação. Tente novamente.", "error");
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   const handleGenerate = async (onlyCurrentPlayers: boolean | any = false) => {
     const isReshuffle = onlyCurrentPlayers === true;
     let playersToUse = (isReshuffle && generationResult) 
@@ -2586,29 +3353,8 @@ export const useAppLogic = () => {
     // Filter out DMs
     playersToUse = playersToUse.filter(p => !p.isDM);
 
-    // Enrich players with full data from the master players list but keep attendance state as priority for session fields
-    playersToUse = playersToUse.map(p => {
-      const fullPlayer = players.find(fp => fp.id === p.id) || {} as any;
-      return {
-        ...p, // Start with attendance data
-        ...fullPlayer, // Overwrite with master data for profile fields
-        // Explicitly keep session-specific data from p (attendance)
-        arrivalOrder: p.arrivalOrder ?? 0,
-        dailyMatches: p.dailyMatches ?? 0,
-        dailyWins: p.dailyWins ?? 0,
-        dailyLosses: p.dailyLosses ?? 0,
-        dailyResults: p.dailyResults || [],
-        playedLastMatch: p.playedLastMatch ?? false,
-        consecutiveBenched: p.consecutiveBenched ?? 0,
-        status: p.status || 'active',
-        timestamp: p.timestamp,
-        // Override name/elo/gender to use the most recent from fullPlayer if available
-        name: fullPlayer.name || p.name || "Sócio sem nome",
-        elo: fullPlayer.elo ?? p.elo ?? 1200,
-        gender: fullPlayer.gender || p.gender || Gender.MALE,
-        isOfficialSetter: fullPlayer.isOfficialSetter ?? p.isOfficialSetter ?? false
-      };
-    });
+    // Enrich players with full data from the master players list and attendance state
+    playersToUse = playersToUse.map(p => enrichPlayerImmutably(p, players, attendance));
 
     if (playersToUse.length < 12) {
       showNotification("Para gerar uma partida equilibrada, são necessários no mínimo 12 sócios presentes.", "info");
@@ -2620,7 +3366,7 @@ export const useAppLogic = () => {
     const numOfficialSetters = matchPool.filter(p => p.isOfficialSetter).length;
     const numLinePlayers = matchPool.filter(p => !p.isOfficialSetter).length;
 
-    const hasCond1 = numOfficialSetters === 2 && numLinePlayers === 10;
+    const hasCond1 = numOfficialSetters >= 2 && (numOfficialSetters + numLinePlayers === 12);
     const hasCond2 = numOfficialSetters === 0 && numLinePlayers === 12;
     const hasCond3 = numOfficialSetters === 1 && numLinePlayers === 11;
 
@@ -2663,49 +3409,28 @@ export const useAppLogic = () => {
           }));
 
           const useTrueSkill = teamGenerationMode === 'TRUESKILL';
-          let generationResult = generateTeams(playersToUse, previousFormations, useTrueSkill, forceNoTemporarySetters, allMatchHistory, balancingStrategy, balancingRatingMode);
           
-          // Otimização de Sinergia entre Jogadores (última etapa do balanceamento)
-          generationResult = optimizeTeamSynergyIteratively(generationResult, allMatchHistory, useTrueSkill, balancingStrategy, balancingRatingMode);
-          if (isReshuffle) {
-            // Keep/calculate the remaining players from the full attendance list who are NOT on the court
-            const fullAttendance = attendance.filter(p => (!p.status || p.status === 'active') && !p.isDM);
+          let bestResult = null;
+          let minDelta = Infinity;
+
+          for (let i = 0; i < 50; i++) {
+            let genRes = generateTeams(playersToUse, previousFormations, useTrueSkill, forceNoTemporarySetters, allMatchHistory, balancingStrategy, balancingRatingMode);
+            genRes = optimizeTeamSynergyIteratively(genRes, allMatchHistory, useTrueSkill, balancingStrategy, balancingRatingMode, previousFormations);
             
-            // Enrich players with full data from the master players list but keep attendance state as priority for session fields
-            const enrichedFullAttendance = fullAttendance.map(p => {
-              const fullPlayer = players.find(fp => fp.id === p.id) || {} as any;
-              return {
-                ...p, // Start with attendance data
-                ...fullPlayer, // Overwrite with master data for profile fields
-                // Explicitly keep session-specific data from p (attendance)
-                arrivalOrder: p.arrivalOrder ?? 0,
-                dailyMatches: p.dailyMatches ?? 0,
-                dailyWins: p.dailyWins ?? 0,
-                dailyLosses: p.dailyLosses ?? 0,
-                dailyResults: p.dailyResults || [],
-                playedLastMatch: p.playedLastMatch ?? false,
-                consecutiveBenched: p.consecutiveBenched ?? 0,
-                status: p.status || 'active',
-                timestamp: p.timestamp,
-                // Override name/elo/gender/setter to use the most recent from fullPlayer if available
-                name: fullPlayer.name || p.name || "Sócio sem nome",
-                elo: fullPlayer.elo ?? p.elo ?? 1200,
-                gender: fullPlayer.gender || p.gender || Gender.MALE,
-                isOfficialSetter: fullPlayer.isOfficialSetter ?? p.isOfficialSetter ?? false
-              };
-            });
-
-            const currentOnCourtIds = new Set(playersToUse.map(p => p.id));
-            const pq = getPriorityQueue(enrichedFullAttendance, 12, 2);
-            const allSorted = [...pq.topPlayers, ...pq.remainingPlayers];
-            const remainingPlayers = allSorted.filter(p => !currentOnCourtIds.has(p.id));
-
-            generationResult = {
-              ...generationResult,
-              remainingPlayers
-            };
+            const statsA = (genRes.teamA.players.reduce((sum, p) => sum + calculateCompositePerformanceRating(p), 0) + calculateCompositePerformanceRating(genRes.teamA.setter || { elo: 0 } as any));
+            const statsB = (genRes.teamB.players.reduce((sum, p) => sum + calculateCompositePerformanceRating(p), 0) + calculateCompositePerformanceRating(genRes.teamB.setter || { elo: 0 } as any));
+            const delta = Math.abs(statsA - statsB);
+            
+            if (delta < minDelta) {
+              minDelta = delta;
+              bestResult = genRes;
+            }
           }
-          result = { ...generationResult, timestamp: now };
+          
+          let genRes = bestResult!;
+          
+          result = cloneGenerationResultImmutably(genRes, players, attendance);
+          result.timestamp = now;
           
           // Persistir partida no Firestore para outros admins
           await setDoc(doc(db, 'metadata', 'currentMatch'), cleanObject(result));
@@ -2907,11 +3632,18 @@ export const useAppLogic = () => {
   };
 
   const handleDiscard = () => {
-    if (!generationResult) return;
+    console.log('handleDiscard called');
+    const { generationResult } = useStore.getState();
+    console.log('generationResult:', generationResult);
+    if (!generationResult) {
+      console.log('Discard aborted: No generationResult');
+      return;
+    }
     showConfirmModal(
       'Descartar Partida',
       'Tem certeza que deseja descartar esta partida? Os dados não serão salvos.',
       () => {
+        setIsSyncing(false);
         setGenerationResult(null);
         setScoreA(0);
         setScoreB(0);
@@ -3169,6 +3901,132 @@ export const useAppLogic = () => {
     }
   };
 
+  const handleRecoverFinancials = async () => {
+    try {
+      setIsSyncing(true);
+      triggerDbStatus('reading');
+      showNotification('Recuperando registros financeiros do Firestore...', 'info');
+
+      let paymentsSnap, expensesSnap;
+      try {
+        paymentsSnap = await getDocs(collection(db, 'payments'));
+        expensesSnap = await getDocs(collection(db, 'expenses'));
+      } catch (err) {
+        console.warn('[RECOVER FINANCIALS] Fetch failed:', err);
+        paymentsSnap = await getDocs(collection(db, 'payments'));
+        expensesSnap = await getDocs(collection(db, 'expenses'));
+      }
+
+      const paymentsList: Payment[] = [];
+      paymentsSnap.forEach((d) => paymentsList.push({ ...d.data(), id: d.id } as Payment));
+      setPayments(paymentsList);
+
+      const expensesList: Expense[] = [];
+      expensesSnap.forEach((d) => expensesList.push({ ...d.data(), id: d.id } as any));
+      setExpenses(expensesList);
+
+      console.log('[RECOVER FINANCIALS] Success:', { paymentsCount: paymentsList.length, expensesCount: expensesList.length });
+      showNotification('Registros financeiros recuperados e sincronizados com sucesso!', 'success');
+    } catch (error) {
+      console.error('Erro ao recuperar dados financeiros:', error);
+      handleFirestoreError(error, OperationType.LIST, 'financial-recovery');
+      showNotification('Erro ao recuperar registros financeiros.', 'error');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handleFinancialIntegrityAudit = async () => {
+    try {
+      setIsSyncing(true);
+      triggerDbStatus('reading');
+      showNotification('Executando diagnóstico de integridade financeira...', 'info');
+
+      let paymentsSnap, expensesSnap;
+      try {
+        paymentsSnap = await getDocs(collection(db, 'payments'));
+        expensesSnap = await getDocs(collection(db, 'expenses'));
+      } catch (err) {
+        console.warn('[FINANCIAL AUDIT] Fetch failed:', err);
+        paymentsSnap = await getDocs(collection(db, 'payments'));
+        expensesSnap = await getDocs(collection(db, 'expenses'));
+      }
+
+      const firestorePayments: Payment[] = [];
+      paymentsSnap.forEach((d) => firestorePayments.push({ ...d.data(), id: d.id } as Payment));
+
+      const firestoreExpenses: Expense[] = [];
+      expensesSnap.forEach((d) => firestoreExpenses.push({ ...d.data(), id: d.id } as any));
+
+      const localPayments = payments || [];
+      const localExpenses = expenses || [];
+      const firestoreIds = new Set(firestorePayments.map(p => p.id));
+      const localIds = new Set(localPayments.map(p => p.id));
+
+      const missingInLocal = firestorePayments.filter(p => !localIds.has(p.id));
+      const missingInFirestore = localPayments.filter(p => !firestoreIds.has(p.id));
+
+      const outdatedOrMismatched: any[] = [];
+      firestorePayments.forEach(fp => {
+        const lp = localPayments.find(l => l.id === fp.id);
+        if (lp) {
+          if (lp.amount !== fp.amount || lp.status !== fp.status || lp.month !== fp.month || lp.playerId !== fp.playerId) {
+            outdatedOrMismatched.push({ id: fp.id, firestore: fp, local: lp });
+          }
+        }
+      });
+
+      console.log('=== [FINANCIAL INTEGRITY AUDIT REPORT] ===', {
+        firestorePaymentsCount: firestorePayments.length,
+        localPaymentsCount: localPayments.length,
+        firestoreExpensesCount: firestoreExpenses.length,
+        localExpensesCount: localExpenses.length,
+        missingInLocal: missingInLocal.map(p => ({ id: p.id, name: p.playerName, month: p.month })),
+        outdatedOrMismatched,
+      });
+
+      // Always update payments and expenses with fresh server data
+      setPayments(firestorePayments);
+      useStore.setState({ expenses: firestoreExpenses });
+
+      showNotification(
+        `Sincronização financeira concluída: Pagamentos (${firestorePayments.length}), Despesas (${firestoreExpenses.length}).`,
+        'success'
+      );
+    } catch (error) {
+      console.error('Erro na auditoria de integridade financeira:', error);
+      handleFirestoreError(error, OperationType.LIST, 'financial-integrity-audit');
+      showNotification('Erro ao executar auditoria financeira.', 'error');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const createSecurityBackup = async () => {
+    try {
+      const today = getFirestoreDateKey();
+      const timestamp = Date.now();
+      const backupData = {
+        timestamp,
+        date: today,
+        players: players.map(p => cleanObject(p)),
+        matches: matches.map(m => cleanObject(m)),
+        metadata: systemMetadata
+      };
+
+      const jsonString = JSON.stringify(backupData, null, 2);
+      const blob = new Blob([jsonString], { type: 'application/json' });
+      const storageRef = ref(storage, `backups/guerreiros_backup_${today}_${timestamp}.json`);
+      
+      await uploadBytes(storageRef, blob);
+      console.log('Security backup uploaded to Firebase Storage successfully.');
+      // No notification here because it will be called inside handleFinishDay which has its own success message
+    } catch (error) {
+      console.error('Erro ao realizar backup de segurança:', error);
+      showNotification('Aviso: Falha ao salvar backup no Storage.', 'info');
+    }
+  };
+
   const handleFinishDay = async () => {
     showConfirmModal(
       'Finalizar Dia de Jogos',
@@ -3181,6 +4039,9 @@ export const useAppLogic = () => {
           // Create a snapshot before resetting
           const today = getFirestoreDateKey();
           await createDataSnapshot(`Auto-Reset-${today}`);
+          
+          // NEW: Create Security Backup on Storage
+          await createSecurityBackup();
           
           const batch = writeBatch(db);
           
@@ -4321,6 +5182,7 @@ export const useAppLogic = () => {
     handleMagicLink,
     handleRequestAccess,
     handleGenerate,
+    applyPreviewResult,
     handleDiscard,
     handleFinishDay,
     resetElo,
@@ -4334,6 +5196,7 @@ export const useAppLogic = () => {
     recalculateStats,
     recalculateDailyStats,
     updateSystemMetadata,
+    debugAttendanceMatching,
     registerAttendance,
     removeAttendance,
     updateDepartureTime,
@@ -4349,6 +5212,8 @@ export const useAppLogic = () => {
     clearAllHistory,
     clearMatchesOnly,
     deleteMatch,
+    updateMatchResult,
+    reprocessAllMatchesAndStats,
     deleteMatchesByDate,
     clearAllDatabase,
     refreshPlayers,
@@ -4363,6 +5228,11 @@ export const useAppLogic = () => {
     addTournamentPlayer,
     substituteTournamentPlayer,
     resetTournamentMatch,
-    deleteTournament
+    deleteTournament,
+    exportPlayersCSV,
+    exportMatchesCSV,
+    exportPaymentsCSV,
+    handleRecoverFinancials,
+    handleFinancialIntegrityAudit
   };
 };

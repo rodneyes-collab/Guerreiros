@@ -13,7 +13,9 @@ import {
   Sparkles,
   TrendingUp,
   Zap,
-  Clock
+  Clock,
+  Star,
+  Award
 } from 'lucide-react';
 
 export const RulesView: React.FC = () => {
@@ -220,6 +222,98 @@ export const RulesView: React.FC = () => {
           </div>
         </section>
 
+        {/* SISTEMA OFICIAL DE MVP (SCORE B-1) */}
+        <section className="bg-black backdrop-blur-xl p-8 md:p-10 rounded-[3rem] border border-brand-primary/30 border-l-[8px] border-l-brand-primary shadow-2xl space-y-8 relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-brand-primary/5 rounded-full blur-3xl pointer-events-none" />
+          
+          <div className="flex items-center gap-4 text-brand-primary">
+            <div className="w-12 h-12 bg-brand-primary/10 rounded-2xl flex items-center justify-center border border-brand-primary/40">
+              <Award className="w-6 h-6 text-brand-primary" />
+            </div>
+            <div>
+              <span className="text-[10px] font-black uppercase tracking-widest text-brand-primary">Guerreiros Intelligence</span>
+              <h3 className="text-2xl font-black uppercase tracking-tight text-white">O Título de MVP: Como Funciona o Score B-1?</h3>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            <p className="text-xs text-white/70 leading-relaxed">
+              O título de <strong className="text-brand-primary uppercase">MVP (Most Valuable Player)</strong> coroa o atleta mais decisivo, consistente e de maior impacto positivo do clube — tanto na rodada diária quanto no acumulado de carreira. A fórmula oficial <strong className="text-white">Opção B-1</strong> combina rigor técnico com valorização da participação efetiva em quadra:
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {/* Pilar 1: Índice Composto */}
+              <div className="bg-white/5 border border-white/5 p-4 rounded-2xl flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Target className="w-4 h-4 text-brand-primary" />
+                    <h5 className="text-[10px] font-black text-white uppercase tracking-widest">1. Desempenho Técnico (IC)</h5>
+                  </div>
+                  <p className="text-xs text-white/60 leading-relaxed">
+                    Combina suas habilidades práticas com sua taxa real de vitórias no período:
+                  </p>
+                  <ul className="text-xs text-white/50 space-y-1 mt-2 list-disc pl-4">
+                    <li><strong className="text-white">80%</strong> Habilidades Fundamentais (Ataque, Defesa, Levantamento e Saque)</li>
+                    <li><strong className="text-white">20%</strong> Aproveitamento real de Vitórias (% WR)</li>
+                  </ul>
+                </div>
+                <div className="text-[9px] font-mono text-brand-primary uppercase mt-4">Qualidade & Vitória</div>
+              </div>
+
+              {/* Pilar 2: Saldo Médio de Pontos */}
+              <div className="bg-white/5 border border-white/5 p-4 rounded-2xl flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <TrendingUp className="w-4 h-4 text-emerald-400" />
+                    <h5 className="text-[10px] font-black text-white uppercase tracking-widest">2. Domínio em Quadra</h5>
+                  </div>
+                  <p className="text-xs text-white/60 leading-relaxed">
+                    Mede a autoridade das vitórias através do saldo de pontos por partida:
+                  </p>
+                  <div className="text-xs text-white/50 mt-2 space-y-1">
+                    <p>Saldo Médio = (Pontos Pró - Contra) / Partidas</p>
+                    <p className="text-emerald-400 font-bold">Multiplicador 1.5x sobre o saldo médio</p>
+                  </div>
+                </div>
+                <div className="text-[9px] font-mono text-emerald-400 uppercase mt-4">Saldo de Pontos (1.5x)</div>
+              </div>
+
+              {/* Pilar 3: Bônus de Volume */}
+              <div className="bg-white/5 border border-brand-primary/30 p-4 rounded-2xl flex flex-col justify-between relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-12 h-12 bg-brand-primary/10 rounded-full blur-xl pointer-events-none" />
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Zap className="w-4 h-4 text-brand-primary" />
+                    <h5 className="text-[10px] font-black text-brand-primary uppercase tracking-widest">3. Volume & Assiduidade</h5>
+                  </div>
+                  <p className="text-xs text-white/60 leading-relaxed">
+                    Premia quem assume responsabilidade e disputa múltiplos jogos:
+                  </p>
+                  <ul className="text-xs text-white/50 space-y-1 mt-2 list-disc pl-4">
+                    <li><strong className="text-brand-primary font-bold">Na Rodada Diária:</strong> +2.0 pts por jogo disputado</li>
+                    <li><strong className="text-brand-primary font-bold">Na Carreira:</strong> Escala até +15 pts (teto 45 jogos)</li>
+                  </ul>
+                </div>
+                <div className="text-[9px] font-mono text-brand-primary uppercase mt-4">Compromisso em Quadra</div>
+              </div>
+            </div>
+
+            {/* Caixa da Fórmula Oficial */}
+            <div className="bg-white/5 border border-white/10 p-5 rounded-2xl space-y-3">
+              <div className="flex items-center gap-2 text-brand-primary">
+                <Star className="w-4 h-4" />
+                <h5 className="text-xs font-black uppercase tracking-wider">A Fórmula do Score B-1</h5>
+              </div>
+              <div className="bg-black/70 border border-brand-primary/30 p-3 rounded-xl text-center font-mono text-xs text-brand-primary font-black tracking-wide">
+                Score B-1 = [IC + (Saldo Médio * 1.5)] + Pilar Volume
+              </div>
+              <p className="text-xs text-white/60 leading-relaxed">
+                Esta calibração impede que um sócio que jogou apenas 1 ou 2 partidas com 100% de vitória tire o MVP de atletas que sustentaram excelente rendimento ao longo de toda a rodada. No ranking, selecione o botão <strong className="text-white">"MVP (B-1)"</strong> para ordenar a lista completa por esta pontuação.
+              </p>
+            </div>
+          </div>
+        </section>
+
         <section className="bg-black backdrop-blur-xl p-10 rounded-[3rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-sm space-y-8 relative overflow-hidden">
           <div className="absolute top-0 right-0 p-8 opacity-5">
             <Scale className="w-40 h-40 text-white" />
@@ -263,9 +357,9 @@ export const RulesView: React.FC = () => {
               { title: "3. Distribuição Snake (ABBA)", desc: "Os jogadores são ordenados pelo Elo e distribuídos no padrão A-BB-AA: O mais forte de todos vai para o Time A, o 2º e 3º para o Time B, o 4º e 5º para o Time A, e assim por diante. Isso garante que a 'elite' do dia seja dividida entre os dois lados." },
               { title: "4. Separação e Equilíbrio de Gênero", desc: "Antes do sorteio, o sistema separa homens e mulheres em grupos distintos. Ele distribui primeiro os homens usando o padrão Snake e depois as mulheres, garantindo que se houver 4 mulheres, cada time tenha exatamente 2, mantendo a paridade absoluta." },
               { title: "5. Otimização Multi-Camadas", desc: "Após a distribuição inicial, o sistema simula milhares de trocas para minimizar diferenças em: 1º Elo Total; 2º Destaques (Top 4); 3º Base (os 4 menos experientes); 4º Simetria Técnica entre as equipes." },
-              { title: "6. Rating Híbrido de Equilíbrio (50/50)", desc: "O balanceamento utiliza uma média ponderada composta por: 50% de ELO Puro (descontado do Bônus Diário de Fidelidade) e 50% de Índice Composto de Desempenho (60% Habilidades Práticas de Ataque, Levantamento, Defesa e Saque + 40% Taxa Real de Vitória). Isso garante partidas perfeitamente paritárias e altamente competitivas." },
+              { title: "6. Rating Híbrido e Índice Composto (80/20)", desc: "O balanceamento prioriza a técnica através do Índice Composto soberano: 80% Habilidades Práticas de Ataque, Levantamento, Defesa e Saque + 20% Taxa Real de Vitória. Além disso, conta com a Trava Soberana de separação obrigatória do Top 2 e do Bottom 2 da linha entre as equipes (exatamente 1 de cada por time)." },
               { title: "7. Registro de Placar e Bônus", desc: "As partidas são disputadas até 15 pontos. Vitórias dominantes (ex: 15x05) rendem bônus extras de ELO, enquanto derrotas por 14 pontos minimizam a perda de pontos, reconhecendo o alto nível de competitividade." },
-              { title: "8. Análise de Sinergia por ML", desc: "A IA do aplicativo avalia todo o histórico de partidas (com foco nos últimos 15 dias). Se dois jogadores perdem com frequência quando jogam juntos, a IA penaliza essa combinação para testar formações mais vitoriosas. Se ganham juntos, a sinergia positiva é premiada, tornando os jogos mais competitivos." }
+              { title: "8. Otimização de DNA Tático e Sinergia", desc: "A IA do aplicativo avalia o equilíbrio de 'assinatura tática' entre os times, garantindo que a força ofensiva (Ataque + Saque) e defensiva (Defesa + Levantamento) estejam distribuídas de forma paritária. Além disso, varre o histórico de partidas para dissolver duplas com alto atrito, atuando estritamente entre atletas intermediários sem jamais violar a separação obrigatória dos destaques (Top 2) e da base (Bottom 2)." }
             ].map((item, i) => (
               <div key={i} className="flex gap-6 group">
                 <span className="text-4xl font-black text-white/20 group-hover:text-brand-primary/50 transition-colors italic">{String(i+7).padStart(2, '0')}</span>

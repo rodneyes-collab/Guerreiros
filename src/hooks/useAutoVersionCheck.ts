@@ -11,20 +11,34 @@ export function useAutoVersionCheck() {
 
     const checkVersion = async () => {
       try {
-        const res = await fetch(`/api/version?t=${Date.now()}`, {
+        const res = await fetch(`/api/version?v=${Date.now()}&r=${Math.random()}`, {
           cache: 'no-store',
-          headers: { 'Cache-Control': 'no-cache, no-store' }
+          headers: { 
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0'
+          }
         });
         if (res.ok) {
           const data = await res.json();
           if (data.version && isMounted) {
             setServerVersion(data.version);
             if (data.version !== APP_VERSION) {
-              console.log(`[VersionCheck] Server version (${data.version}) differs from app (${APP_VERSION}). Triggering update...`);
+              console.log(`[VersionCheck] Server version (${data.version}) differs from app (${APP_VERSION}).`);
               setHasNewVersion(true);
-              setTimeout(() => {
-                forceAppUpdate();
-              }, 1500);
+              
+              // AUTO-UPDATE LOGIC:
+              // To prevent infinite reload loops, we check if we already tried to update to THIS version
+              const lastUpdateAttempt = localStorage.getItem('last_auto_update_target');
+              if (lastUpdateAttempt !== data.version) {
+                console.log(`[VersionCheck] Triggering automatic update to v${data.version}...`);
+                localStorage.setItem('last_auto_update_target', data.version);
+                setTimeout(() => {
+                  forceAppUpdate();
+                }, 2000); // Give user 2 seconds to see the message if displayed
+              }
+            } else {
+              setHasNewVersion(false);
             }
           }
         }
@@ -34,18 +48,22 @@ export function useAutoVersionCheck() {
     };
 
     checkVersion();
-    const interval = setInterval(checkVersion, 60000);
+    const interval = setInterval(checkVersion, 30000); // Check every 30 seconds for faster auto-updates
 
     const onVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
         checkVersion();
       }
     };
+    window.addEventListener('focus', checkVersion);
+    window.addEventListener('online', checkVersion);
     document.addEventListener('visibilitychange', onVisibilityChange);
 
     return () => {
       isMounted = false;
       clearInterval(interval);
+      window.removeEventListener('focus', checkVersion);
+      window.removeEventListener('online', checkVersion);
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, []);

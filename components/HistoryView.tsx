@@ -1,9 +1,11 @@
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../store';
 import { Match, Player } from '../types';
+import { getMatchSetters } from '../utils/setterStats';
 import { formatTime } from '../utils/helpers';
 import { WinLossChart } from '../src/components/WinLossChart';
 import { getFirestoreDateKey } from '../firebase';
+import { toStandardDateKey } from '../src/utils/dateUtils';
 import { 
   Trophy, 
   Clock, 
@@ -18,6 +20,8 @@ import {
   User,
   ShieldCheck,
   Trash2,
+  Edit3,
+  RefreshCw,
   BarChart3,
   Copy,
   Check,
@@ -28,22 +32,84 @@ import { motion } from 'motion/react';
 
 import { HelpTooltip } from '../src/components/HelpTooltip';
 import { HistoryCalendar } from './HistoryCalendar';
+import { EditMatchModal } from '../src/components/EditMatchModal';
 
 interface HistoryViewProps {
   onDeleteMatch?: (matchId: string) => void;
   onDeleteMatchesByDate?: (date: string) => void;
+  onUpdateMatchResult?: (matchId: string, newWinner: 'A' | 'B', newScoreA: number, newScoreB: number, newTeamA?: string[], newTeamB?: string[]) => Promise<void>;
+  onReprocessAllMatches?: () => Promise<void>;
 }
 
-export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDeleteMatchesByDate }) => {
+export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDeleteMatchesByDate, onUpdateMatchResult, onReprocessAllMatches }) => {
+  const [editingMatch, setEditingMatch] = useState<Match | null>(null);
+  const [isReprocessing, setIsReprocessing] = useState(false);
   const { matches, players: allPlayers, userRole, currentPlayer, attendance: allAttendance, tournaments } = useStore();
   const players = React.useMemo(() => allPlayers.filter(p => p.status !== 'inactive'), [allPlayers]);
   const attendance = React.useMemo(() => allAttendance.filter(p => p.status !== 'inactive'), [allAttendance]);
   
-  const [performanceDate, setPerformanceDate] = useState(getFirestoreDateKey());
+  const getMatchStandardDate = (m: { date?: string; timestamp?: number }): string => {
+    if (m.timestamp) {
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Sao_Paulo',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      }).format(new Date(m.timestamp));
+    }
+    return m.date ? toStandardDateKey(m.date) : '';
+  };
+
+  const filterSessionDates = useMemo(() => {
+    const dates = new Set<string>();
+    matches.forEach(m => {
+      const d = getMatchStandardDate(m);
+      if (d) {
+        dates.add(d);
+      }
+    });
+    return Array.from(dates).sort((a, b) => b.localeCompare(a));
+  }, [matches]);
+
+  const [performanceDate, setPerformanceDate] = useState(() => {
+    const today = getFirestoreDateKey();
+    const hasToday = matches.some(m => {
+      const matchDate = getMatchStandardDate(m);
+      const directDate = m.date ? toStandardDateKey(m.date) : '';
+      return matchDate === today || directDate === today;
+    });
+    if (hasToday) return 'Hoje';
+    const dates = new Set<string>();
+    matches.forEach(m => {
+      const d = getMatchStandardDate(m);
+      if (d) dates.add(d);
+    });
+    const sorted = Array.from(dates).sort((a, b) => b.localeCompare(a));
+    return sorted[0] || 'Hoje';
+  });
+
+  // Sincronizar performanceDate caso hoje não tenha partidas e matches carreguem depois
+  React.useEffect(() => {
+    const today = getFirestoreDateKey();
+    const hasToday = matches.some(m => {
+      const matchDate = getMatchStandardDate(m);
+      const directDate = m.date ? toStandardDateKey(m.date) : '';
+      return matchDate === today || directDate === today;
+    });
+    if (!hasToday && filterSessionDates.length > 0) {
+      if (performanceDate === 'Hoje' || performanceDate === today || !performanceDate) {
+        setPerformanceDate(filterSessionDates[0]);
+      }
+    }
+  }, [matches, filterSessionDates, performanceDate]);
+
   const displayMatches = React.useMemo(() => {
     const targetDate = performanceDate === 'Hoje' ? getFirestoreDateKey() : performanceDate;
+    const targetDateStd = toStandardDateKey(targetDate);
     return matches.filter(m => {
-      return m.date === targetDate;
+      const matchDate = getMatchStandardDate(m);
+      const directDate = m.date ? toStandardDateKey(m.date) : '';
+      return matchDate === targetDateStd || directDate === targetDateStd;
     }).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
   }, [matches, performanceDate]);
 
@@ -82,34 +148,26 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
 
   const availableDates = useMemo(() => {
     const today = getFirestoreDateKey();
-    const dates = new Set(matches.map(m => m.date));
-    // Remove a data de hoje do set para não duplicar com o rótulo "Hoje"
-    dates.delete(today);
-    const sortedDates = Array.from(dates).sort((a, b) => b.localeCompare(a));
-    return ['Hoje', ...sortedDates];
-  }, [matches]);
-
-  const filterSessionDates = useMemo(() => {
     const dates = new Set<string>();
     matches.forEach(m => {
-      const d = m.date || (m.timestamp ? new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'America/Sao_Paulo',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit'
-      }).format(new Date(m.timestamp)) : '');
+      const d = getMatchStandardDate(m);
       if (d) {
         dates.add(d);
       }
     });
-    return Array.from(dates).sort((a, b) => b.localeCompare(a));
+    const hasToday = dates.has(today);
+    // Remove a data de hoje do set para não duplicar com o rótulo "Hoje"
+    dates.delete(today);
+    const sortedDates = Array.from(dates).sort((a, b) => b.localeCompare(a));
+    return hasToday ? ['Hoje', ...sortedDates] : sortedDates;
   }, [matches]);
 
   const formatDateLabel = (dateStr: string) => {
     if (!dateStr) return '';
-    const parts = dateStr.split('-');
+    const std = toStandardDateKey(dateStr);
+    const parts = std.split('-');
     if (parts.length === 3) {
-      return `${parts[2]}/${parts[1]}/${parts[2].length === 4 ? parts[0] : parts[0]}`; // formatting DD/MM/YYYY
+      return `${parts[2]}/${parts[1]}/${parts[0]}`; // formatting DD/MM/YYYY
     }
     return dateStr;
   };
@@ -119,6 +177,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
   const [filterPlayerId, setFilterPlayerId] = useState<string>('');
   const [filterDate, setFilterDate] = useState<string>('');
   const [filterMatchId, setFilterMatchId] = useState<string>('');
+  const [filterPlayerResult, setFilterPlayerResult] = useState<string>('');
   const [isFilterExpanded, setIsFilterExpanded] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState(false);
 
@@ -257,22 +316,33 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
 
       // Filter by Date
       if (filterDate) {
-        // filterDate is usually YYYY-MM-DD from the input type="date"
-        // Let's format the m.timestamp to match the same timezone output that input expects
-        const formatter = new Intl.DateTimeFormat('en-CA', {
-          timeZone: 'America/Sao_Paulo',
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit'
-        });
-        const matchDateStr = formatter.format(new Date(m.timestamp));
-        if (matchDateStr !== filterDate) return false;
+        const filterDateStd = toStandardDateKey(filterDate);
+        const matchDateStr = getMatchStandardDate(m);
+        const directDate = m.date ? toStandardDateKey(m.date) : '';
+        if (matchDateStr !== filterDateStd && directDate !== filterDateStd) return false;
       }
 
       // Filter by Match ID
       if (filterMatchId) {
         const shortId = m.id.split('_')[1]?.slice(-3) || '';
         if (!shortId.includes(filterMatchId)) return false;
+      }
+
+      // Filter by Result / Winner
+      if (filterPlayerResult) {
+        if (filterPlayerId) {
+          const played = (m.teamA || []).includes(filterPlayerId) || (m.teamB || []).includes(filterPlayerId);
+          if (!played) return false;
+          const won = (
+            ((m.teamA || []).includes(filterPlayerId) && m.winner === 'A') ||
+            ((m.teamB || []).includes(filterPlayerId) && m.winner === 'B')
+          );
+          if (filterPlayerResult === 'win' && !won) return false;
+          if (filterPlayerResult === 'loss' && won) return false;
+        } else {
+          if (filterPlayerResult === 'win_A' && m.winner !== 'A') return false;
+          if (filterPlayerResult === 'win_B' && m.winner !== 'B') return false;
+        }
       }
 
       // General Search Term
@@ -305,17 +375,27 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
             <ArrowLeft className="w-4 h-4" /> Voltar para a Lista
           </button>
           
-          {userRole === 'ADMIN' && onDeleteMatch && (
-            <button
-              onClick={() => {
-                onDeleteMatch(selectedMatch.id);
-                setSelectedMatch(null);
-              }}
-              className="flex items-center gap-2 text-rose-500 hover:text-rose-600 transition-colors font-black uppercase text-[10px] tracking-widest"
-            >
-              <Trash2 className="w-4 h-4" /> Excluir Partida
-            </button>
-          )}
+          <div className="flex items-center gap-3">
+            {userRole === 'ADMIN' && onUpdateMatchResult && (
+              <button
+                onClick={() => setEditingMatch(selectedMatch)}
+                className="flex items-center gap-2 text-brand-primary hover:text-white transition-colors font-black uppercase text-[10px] tracking-widest bg-brand-primary/10 border border-brand-primary/30 px-3 py-1.5 rounded-xl hover:bg-brand-primary/20"
+              >
+                <Edit3 className="w-4 h-4" /> Editar Resultado
+              </button>
+            )}
+            {userRole === 'ADMIN' && onDeleteMatch && (
+              <button
+                onClick={() => {
+                  onDeleteMatch(selectedMatch.id);
+                  setSelectedMatch(null);
+                }}
+                className="flex items-center gap-2 text-rose-500 hover:text-rose-600 transition-colors font-black uppercase text-[10px] tracking-widest"
+              >
+                <Trash2 className="w-4 h-4" /> Excluir Partida
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="bg-brand-light backdrop-blur-xl rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-xl overflow-hidden">
@@ -402,43 +482,52 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
                 )}
               </div>
               <div className="space-y-3">
-                {(selectedMatch.teamA || []).map((id, idx) => (
-                  <div key={id} className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-brand-primary/40 shadow-sm">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-[10px] font-black text-white/60">
-                        {idx === 0 ? <ShieldCheck className="w-4 h-4 text-brand-primary" /> : idx + 1}
+                {(() => {
+                  const playersMap = players.reduce((acc, p) => ({ ...acc, [p.id]: p }), {} as Record<string, Player>);
+                  const { setterAId } = getMatchSetters(selectedMatch, playersMap);
+                  
+                  return (selectedMatch.teamA || []).map((id, idx) => {
+                    const isSetter = id === setterAId;
+                    
+                    return (
+                      <div key={id} className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-brand-primary/40 shadow-sm">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-[10px] font-black text-white/60">
+                            {isSetter ? <ShieldCheck className="w-4 h-4 text-brand-primary" /> : idx + 1}
+                          </div>
+                          <motion.span 
+                            initial={{ opacity: 0, x: -10 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            transition={{ type: "spring", stiffness: 300, damping: 20 }}
+                            className={`text-xs font-black uppercase tracking-tight ${isSetter ? 'text-rose-500' : 'text-white'}`}
+                          >
+                            {getPlayerName(id)}
+                          </motion.span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {isSetter && <span className="text-[8px] font-black text-brand-primary bg-brand-primary/10 border border-brand-primary/40 px-2 py-0.5 rounded uppercase tracking-widest">Levantador</span>}
+                          {(() => {
+                            const change = getPlayerEloChangeForMatch(id, selectedMatch.id);
+                            if (change === null) return null;
+                            const isPositive = change > 0;
+                            const isNegative = change < 0;
+                            return (
+                              <span className={`text-[9px] font-black px-2 py-0.5 rounded uppercase tracking-widest border ${
+                                isPositive 
+                                  ? 'bg-brand-primary border-brand-primary text-black' 
+                                  : isNegative 
+                                    ? 'bg-white border-white text-black' 
+                                    : 'bg-white/10 border-white/20 text-white/60'
+                              }`}>
+                                {isPositive ? `+${change}` : change} ELO
+                              </span>
+                            );
+                          })()}
+                        </div>
                       </div>
-                      <motion.span 
-                        initial={{ opacity: 0, x: -10 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        transition={{ type: "spring", stiffness: 300, damping: 20 }}
-                        className={`text-xs font-black uppercase tracking-tight ${players.find(p => p.id === id)?.isOfficialSetter ? 'text-rose-500' : 'text-white'}`}
-                      >
-                        {getPlayerName(id)}
-                      </motion.span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {idx === 0 && <span className="text-[8px] font-black text-brand-primary bg-brand-primary/10 border border-brand-primary/40 px-2 py-0.5 rounded uppercase tracking-widest">Levantador</span>}
-                      {(() => {
-                        const change = getPlayerEloChangeForMatch(id, selectedMatch.id);
-                        if (change === null) return null;
-                        const isPositive = change > 0;
-                        const isNegative = change < 0;
-                        return (
-                          <span className={`text-[9px] font-black px-2 py-0.5 rounded uppercase tracking-widest border ${
-                            isPositive 
-                              ? 'bg-brand-primary border-brand-primary text-black' 
-                              : isNegative 
-                                ? 'bg-white border-white text-black' 
-                                : 'bg-white/10 border-white/20 text-white/60'
-                          }`}>
-                            {isPositive ? `+${change}` : change} ELO
-                          </span>
-                        );
-                      })()}
-                    </div>
-                  </div>
-                ))}
+                    );
+                  });
+                })()}
               </div>
             </div>
 
@@ -470,43 +559,52 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
                 )}
               </div>
               <div className="space-y-3">
-                {(selectedMatch.teamB || []).map((id, idx) => (
-                  <div key={id} className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-brand-primary/40 shadow-sm">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-[10px] font-black text-white/60">
-                        {idx === 0 ? <ShieldCheck className="w-4 h-4 text-rose-500" /> : idx + 1}
+                {(() => {
+                  const playersMap = players.reduce((acc, p) => ({ ...acc, [p.id]: p }), {} as Record<string, Player>);
+                  const { setterBId } = getMatchSetters(selectedMatch, playersMap);
+                  
+                  return (selectedMatch.teamB || []).map((id, idx) => {
+                    const isSetter = id === setterBId;
+                    
+                    return (
+                      <div key={id} className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-brand-primary/40 shadow-sm">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-[10px] font-black text-white/60">
+                            {isSetter ? <ShieldCheck className="w-4 h-4 text-rose-500" /> : idx + 1}
+                          </div>
+                          <motion.span 
+                            initial={{ opacity: 0, x: -10 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            transition={{ type: "spring", stiffness: 300, damping: 20 }}
+                            className={`text-xs font-black uppercase tracking-tight ${isSetter ? 'text-rose-500' : 'text-white'}`}
+                          >
+                            {getPlayerName(id)}
+                          </motion.span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {isSetter && <span className="text-[8px] font-black text-rose-500 bg-rose-500/10 border border-rose-500/20 px-2 py-0.5 rounded uppercase tracking-widest">Levantador</span>}
+                          {(() => {
+                            const change = getPlayerEloChangeForMatch(id, selectedMatch.id);
+                            if (change === null) return null;
+                            const isPositive = change > 0;
+                            const isNegative = change < 0;
+                            return (
+                              <span className={`text-[9px] font-black px-2 py-0.5 rounded uppercase tracking-widest border ${
+                                isPositive 
+                                  ? 'bg-brand-primary border-brand-primary text-black' 
+                                  : isNegative 
+                                    ? 'bg-white border-white text-black' 
+                                    : 'bg-white/10 border-white/20 text-white/60'
+                              }`}>
+                                {isPositive ? `+${change}` : change} ELO
+                              </span>
+                            );
+                          })()}
+                        </div>
                       </div>
-                      <motion.span 
-                        initial={{ opacity: 0, x: -10 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        transition={{ type: "spring", stiffness: 300, damping: 20 }}
-                        className={`text-xs font-black uppercase tracking-tight ${players.find(p => p.id === id)?.isOfficialSetter ? 'text-rose-500' : 'text-white'}`}
-                      >
-                        {getPlayerName(id)}
-                      </motion.span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {idx === 0 && <span className="text-[8px] font-black text-rose-500 bg-rose-500/10 border border-rose-500/20 px-2 py-0.5 rounded uppercase tracking-widest">Levantador</span>}
-                      {(() => {
-                        const change = getPlayerEloChangeForMatch(id, selectedMatch.id);
-                        if (change === null) return null;
-                        const isPositive = change > 0;
-                        const isNegative = change < 0;
-                        return (
-                          <span className={`text-[9px] font-black px-2 py-0.5 rounded uppercase tracking-widest border ${
-                            isPositive 
-                              ? 'bg-brand-primary border-brand-primary text-black' 
-                              : isNegative 
-                                ? 'bg-white border-white text-black' 
-                                : 'bg-white/10 border-white/20 text-white/60'
-                          }`}>
-                            {isPositive ? `+${change}` : change} ELO
-                          </span>
-                        );
-                      })()}
-                    </div>
-                  </div>
-                ))}
+                    );
+                  });
+                })()}
               </div>
             </div>
 
@@ -578,7 +676,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
       <HistoryCalendar
         matches={matches}
         tournaments={tournaments || []}
-        selectedDate={filterDate}
+        selectedDate={filterDate || (performanceDate !== 'Hoje' ? performanceDate : '')}
         onSelectDate={(date) => {
           setFilterDate(date);
           const today = getFirestoreDateKey();
@@ -630,92 +728,89 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
           </div>
 
           <div className="relative">
-            <div className="overflow-x-auto pb-6 -mx-10 px-10">
-              <table className="min-w-full border-separate border-spacing-y-2">
-                <thead>
-                  <tr>
-                    <th className="text-left py-4 px-6 text-[10px] font-black text-white/40 uppercase tracking-[0.2em] sticky left-0 bg-black z-20">Guerreiro</th>
-                    {displayMatches.map((_, i) => (
-                      <th key={i} className="py-4 px-2 text-center min-w-[60px]">
-                        <div className="mx-auto w-10 h-10 rounded-xl bg-black border border-brand-primary/40 text-brand-primary flex items-center justify-center text-[10px] font-black shadow-lg uppercase tracking-widest">
-                          B{i + 1}
-                        </div>
-                      </th>
-                    ))}
-                    {displayMatches.length === 0 && (
-                      <th className="py-4 px-2 text-center min-w-[60px]">
-                        <div className="mx-auto w-10 h-10 rounded-xl bg-black border border-brand-primary/40 text-brand-primary flex items-center justify-center text-[10px] font-black shadow-lg uppercase tracking-widest">
-                          B1
-                        </div>
-                      </th>
-                    )}
-                    <th className="py-4 px-6 text-center text-[10px] font-black text-white/40 uppercase tracking-[0.2em] min-w-[100px]">Saldo</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {participants.map((player, idx) => {
-                    const displayName = player.name || "Sócio sem nome";
-                    const rawArrivalOrder = player.arrivalOrder || 0;
-                    const displayArrivalOrder = (rawArrivalOrder && rawArrivalOrder < 999) ? rawArrivalOrder : (idx + 1);
-
-                    return (
-                      <tr key={player.id || `participant-row-${idx}`} className="group">
-                        <td className="py-4 px-6 sticky left-0 bg-black z-10 border-y border-l border-brand-primary/40 rounded-l-2xl group-hover:bg-brand-secondary transition-colors">
-                          <div className="flex items-center gap-4">
-                            <div className="w-8 h-8 rounded-xl bg-black border border-brand-primary/40 text-brand-primary flex items-center justify-center text-[10px] font-black shadow-lg">
-                              {displayArrivalOrder}
-                            </div>
-                            <div>
-                              <p className={`text-xs font-black uppercase tracking-tight ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>{displayName}</p>
-                              <p className="text-[9px] font-black text-white/40 uppercase tracking-widest mt-0.5">Nível Pro</p>
-                            </div>
+            {displayMatches.length === 0 ? (
+              <div className="py-12 text-center">
+                <p className="text-xs font-black text-white/40 uppercase tracking-widest">Nenhuma partida registrada nesta data</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto pb-6 -mx-10 px-10">
+                <table className="min-w-full border-separate border-spacing-y-2">
+                  <thead>
+                    <tr>
+                      <th className="text-left py-4 px-6 text-[10px] font-black text-white/40 uppercase tracking-[0.2em] sticky left-0 bg-black z-20">Guerreiro</th>
+                      {displayMatches.map((match, i) => (
+                        <th key={match.id || i} className="py-4 px-2 text-center min-w-[64px]">
+                          <div 
+                            className="mx-auto px-2 h-10 rounded-xl bg-black border border-brand-primary/40 text-brand-primary flex flex-col items-center justify-center text-[10px] font-black shadow-lg uppercase tracking-wider"
+                            title={`Partida #${match.dailyNumber || (i + 1)}`}
+                          >
+                            <span className="text-[7.5px] text-white/50 leading-tight">PARTIDA</span>
+                            <span className="leading-tight text-brand-primary">#{match.dailyNumber || (i + 1)}</span>
                           </div>
-                        </td>
-                        {displayMatches.map((match, mIdx) => {
-                          const isTeamA = (match.teamA || []).includes(player.id);
-                          const isTeamB = (match.teamB || []).includes(player.id);
-                          const played = isTeamA || isTeamB;
-                          const won = (isTeamA && match.winner === 'A') || (isTeamB && match.winner === 'B');
-                          
-                          return (
-                            <td 
-                              key={match.id || `match-cell-${mIdx}`} 
-                              className="py-4 px-2 text-center border-y border-brand-primary/40 group-hover:bg-brand-secondary transition-colors"
-                              title={match.scoreA > 0 || match.scoreB > 0 ? `Placar: ${match.scoreA} x ${match.scoreB}` : 'Placar não registrado'}
-                            >
-                              {played ? (
-                                <div className={`inline-flex items-center justify-center w-10 h-10 rounded-xl font-black text-xs shadow-lg transition-all group-hover:scale-110 border ${won ? 'bg-brand-primary border-brand-primary/30 text-black' : 'bg-white border-white/30 text-black'}`}>
-                                  {won ? 'V' : 'D'}
-                                </div>
-                              ) : (
-                                <div className="w-10 h-10 mx-auto rounded-xl border border-dashed border-brand-primary/40 flex items-center justify-center">
-                                  <div className="w-1 h-1 rounded-full bg-brand-primary/20" />
-                                </div>
-                              )}
-                            </td>
-                          );
-                        })}
-                        {displayMatches.length === 0 && (
-                          <td className="py-4 px-2 text-center border-y border-brand-primary/40 group-hover:bg-brand-secondary transition-colors">
-                            <div className="w-10 h-10 mx-auto rounded-xl border border-dashed border-brand-primary/40 flex items-center justify-center">
-                              <div className="w-1 h-1 rounded-full bg-brand-primary/20" />
+                        </th>
+                      ))}
+                      <th className="py-4 px-6 text-center text-[10px] font-black text-white/40 uppercase tracking-[0.2em] min-w-[100px]">Saldo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {participants.map((player, idx) => {
+                      const displayName = player.name || "Sócio sem nome";
+                      const rawArrivalOrder = player.arrivalOrder || 0;
+                      const displayArrivalOrder = (rawArrivalOrder && rawArrivalOrder < 999) ? rawArrivalOrder : (idx + 1);
+
+                      return (
+                        <tr key={player.id || `participant-row-${idx}`} className="group">
+                          <td className="py-4 px-6 sticky left-0 bg-black z-10 border-y border-l border-brand-primary/40 rounded-l-2xl group-hover:bg-brand-secondary transition-colors">
+                            <div className="flex items-center gap-4">
+                              <div className="w-8 h-8 rounded-xl bg-black border border-brand-primary/40 text-brand-primary flex items-center justify-center text-[10px] font-black shadow-lg">
+                                {displayArrivalOrder}
+                              </div>
+                              <div>
+                                <p className={`text-xs font-black uppercase tracking-tight ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>{displayName}</p>
+                                <p className="text-[9px] font-black text-white/40 uppercase tracking-widest mt-0.5">Nível Pro</p>
+                              </div>
                             </div>
                           </td>
-                        )}
-                        <td className="py-4 px-6 text-center border-y border-r border-brand-primary/40 rounded-r-2xl group-hover:bg-brand-secondary transition-colors">
-                          <div className="flex flex-col items-center">
-                            <span className="text-xs font-black text-white uppercase tracking-tight">{player.sessionMatches} Jogos</span>
-                            <div className="flex gap-2 mt-1.5">
-                              <span className="text-[9px] font-black text-black bg-brand-primary px-2 py-0.5 rounded-lg border border-brand-primary/40">{player.sessionWins}V</span>
-                              <span className="text-[9px] font-black text-black bg-white px-2 py-0.5 rounded-lg border border-brand-primary/40">{player.sessionLosses}D</span>
+                          {displayMatches.map((match, mIdx) => {
+                            const isTeamA = (match.teamA || []).includes(player.id);
+                            const isTeamB = (match.teamB || []).includes(player.id);
+                            const played = isTeamA || isTeamB;
+                            const won = (isTeamA && match.winner === 'A') || (isTeamB && match.winner === 'B');
+                            
+                            return (
+                              <td 
+                                key={match.id || `match-cell-${mIdx}`} 
+                                className="py-4 px-2 text-center border-y border-brand-primary/40 group-hover:bg-brand-secondary transition-colors"
+                                title={match.scoreA > 0 || match.scoreB > 0 ? `Placar: ${match.scoreA} x ${match.scoreB}` : 'Placar não registrado'}
+                              >
+                                {played ? (
+                                  <div className={`inline-flex items-center justify-center w-10 h-10 rounded-xl font-black text-xs shadow-lg transition-all group-hover:scale-110 border ${won ? 'bg-brand-primary border-brand-primary/30 text-black' : 'bg-white border-white/30 text-black'}`}>
+                                    {won ? 'V' : 'D'}
+                                  </div>
+                                ) : (
+                                  <div className="w-10 h-10 mx-auto rounded-xl border border-dashed border-brand-primary/40 flex items-center justify-center">
+                                    <div className="w-1 h-1 rounded-full bg-brand-primary/20" />
+                                  </div>
+                                )}
+                              </td>
+                            );
+                          })}
+                          <td className="py-4 px-6 text-center border-y border-r border-brand-primary/40 rounded-r-2xl group-hover:bg-brand-secondary transition-colors">
+                            <div className="flex flex-col items-center">
+                              <span className="text-xs font-black text-white uppercase tracking-tight">{player.sessionMatches} Jogos</span>
+                              <div className="flex gap-2 mt-1.5">
+                                <span className="text-[9px] font-black text-black bg-brand-primary px-2 py-0.5 rounded-lg border border-brand-primary/40">{player.sessionWins}V</span>
+                                <span className="text-[9px] font-black text-black bg-white px-2 py-0.5 rounded-lg border border-brand-primary/40">{player.sessionLosses}D</span>
+                              </div>
                             </div>
-                          </div>
-                        </td>
-                      </tr>
-                    ); })}
-                </tbody>
-              </table>
-            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
 
@@ -769,12 +864,15 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
         </div>
 
         {isFilterExpanded && (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-6 bg-brand-light backdrop-blur-xl rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary animate-in slide-in-from-top duration-300">
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 p-6 bg-brand-light backdrop-blur-xl rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary animate-in slide-in-from-top duration-300">
             <div className="space-y-2">
               <label className="text-[10px] font-black text-white/40 uppercase tracking-widest px-1">Filtrar por Jogador</label>
               <select 
                 value={filterPlayerId}
-                onChange={(e) => setFilterPlayerId(e.target.value)}
+                onChange={(e) => {
+                  setFilterPlayerId(e.target.value);
+                  setFilterPlayerResult(''); // Reset result filter when player changes to ensure compatibility
+                }}
                 className="w-full p-3 bg-white/5 border border-brand-primary/40 rounded-xl text-xs font-bold text-white outline-none focus:ring-2 focus:ring-brand-primary"
               >
                 <option value="" className="bg-brand-secondary text-white">Todos os Jogadores</option>
@@ -808,7 +906,31 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
                 className="w-full p-3 bg-white/5 border border-brand-primary/40 rounded-xl text-xs font-bold text-white outline-none focus:ring-2 focus:ring-brand-primary placeholder:text-white/20"
               />
             </div>
-            <div className="sm:col-span-3 flex flex-col sm:flex-row justify-between items-center gap-4 mt-2 border-t border-white/5 pt-4">
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-white/40 uppercase tracking-widest px-1">
+                {filterPlayerId ? 'Resultado do Sócio' : 'Time Vencedor'}
+              </label>
+              <select 
+                value={filterPlayerResult}
+                onChange={(e) => setFilterPlayerResult(e.target.value)}
+                className="w-full p-3 bg-white/5 border border-brand-primary/40 rounded-xl text-xs font-bold text-white outline-none focus:ring-2 focus:ring-brand-primary"
+              >
+                {filterPlayerId ? (
+                  <>
+                    <option value="" className="bg-brand-secondary text-white">Todos os Resultados</option>
+                    <option value="win" className="bg-brand-secondary text-white">Vitórias do Sócio</option>
+                    <option value="loss" className="bg-brand-secondary text-white">Derrotas do Sócio</option>
+                  </>
+                ) : (
+                  <>
+                    <option value="" className="bg-brand-secondary text-white">Qualquer Vencedor</option>
+                    <option value="win_A" className="bg-brand-secondary text-white">Vitória do Time A</option>
+                    <option value="win_B" className="bg-brand-secondary text-white">Vitória do Time B</option>
+                  </>
+                )}
+              </select>
+            </div>
+            <div className="sm:col-span-4 flex flex-col sm:flex-row justify-between items-center gap-4 mt-2 border-t border-white/5 pt-4">
               <button
                 onClick={handleCopyReport}
                 disabled={filteredMatches.length === 0}
@@ -838,6 +960,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
                   setFilterPlayerId('');
                   setFilterDate('');
                   setFilterMatchId('');
+                  setFilterPlayerResult('');
                   setSearchTerm('');
                 }}
                 className="text-[10px] font-black text-brand-primary uppercase tracking-widest hover:underline"
@@ -852,10 +975,10 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
       <div className="grid grid-cols-1 gap-4">
         {filteredMatches.length > 0 ? (
           filteredMatches.map((match) => (
-            <button
+            <div
               key={match.id}
               onClick={() => setSelectedMatch(match)}
-              className="group bg-brand-light p-6 rounded-[2.5rem] border border-white/5 border-l-[6px] border-l-brand-primary hover:border-brand-primary/50 hover:shadow-xl hover:shadow-brand-primary/5 transition-all text-left flex flex-col md:flex-row items-center justify-between gap-6"
+              className="group bg-brand-light p-6 rounded-[2.5rem] border border-white/5 border-l-[6px] border-l-brand-primary hover:border-brand-primary/50 hover:shadow-xl hover:shadow-brand-primary/5 transition-all text-left flex flex-col md:flex-row items-center justify-between gap-6 cursor-pointer"
             >
               <div className="flex items-center gap-6 w-full md:w-auto">
                 <div className="w-16 h-16 rounded-2xl bg-white/5 flex flex-col items-center justify-center border border-brand-primary/40 group-hover:bg-brand-primary/10 group-hover:border-brand-primary/40 transition-colors">
@@ -866,9 +989,30 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
                 </div>
                 
                 <div className="space-y-1">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center flex-wrap gap-2">
                     <Calendar className="w-3 h-3 text-white/60" />
-                    <span className="text-[10px] font-black text-white/60 uppercase tracking-widest">{new Date(match.timestamp).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</span>
+                    <span className="text-[10px] font-black text-white/60 uppercase tracking-widest">
+                      {new Date(match.timestamp).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
+                    </span>
+                    {filterPlayerId && (
+                      (() => {
+                        const played = (match.teamA || []).includes(filterPlayerId) || (match.teamB || []).includes(filterPlayerId);
+                        if (!played) return null;
+                        const won = (
+                          ((match.teamA || []).includes(filterPlayerId) && match.winner === 'A') ||
+                          ((match.teamB || []).includes(filterPlayerId) && match.winner === 'B')
+                        );
+                        return won ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-wider bg-brand-primary text-black font-mono">
+                            🟢 VITÓRIA
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-wider bg-white text-black font-mono">
+                            🔴 DERROTA
+                          </span>
+                        );
+                      })()
+                    )}
                   </div>
                   <div className="flex items-center gap-4">
                     <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl transition-all ${match.winner === 'A' ? 'bg-brand-primary/10 border-2 border-brand-primary/30 shadow-sm scale-105' : 'border border-transparent'}`}>
@@ -899,11 +1043,25 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
                     <span className="text-[10px] font-black text-white/60 uppercase tracking-widest">{(match.teamA || []).length + (match.teamB || []).length} Atletas</span>
                   </div>
                 </div>
-                <div className="w-10 h-10 rounded-full bg-white/5 border border-brand-primary/40 flex items-center justify-center group-hover:bg-brand-primary group-hover:text-brand-secondary transition-all">
-                  <ChevronRight className="w-5 h-5 text-white" />
+                <div className="flex items-center gap-2">
+                  {userRole === 'ADMIN' && onUpdateMatchResult && (
+                    <div
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditingMatch(match);
+                      }}
+                      className="p-2 rounded-xl bg-white/5 border border-brand-primary/30 text-brand-primary hover:bg-brand-primary hover:text-black transition-all"
+                      title="Editar Resultado"
+                    >
+                      <Edit3 className="w-4 h-4" />
+                    </div>
+                  )}
+                  <div className="w-10 h-10 rounded-full bg-white/5 border border-brand-primary/40 flex items-center justify-center group-hover:bg-brand-primary group-hover:text-brand-secondary transition-all">
+                    <ChevronRight className="w-5 h-5 text-white" />
+                  </div>
                 </div>
               </div>
-            </button>
+            </div>
           ))
         ) : (
           <div className="h-64 flex flex-col items-center justify-center text-center space-y-4 bg-brand-light backdrop-blur-xl rounded-[3rem] border-4 border-dashed border-brand-primary/40">
@@ -917,6 +1075,33 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
           </div>
         )}
       </div>
+
+      {/* Modal de Edição de Resultado de Partida */}
+      <EditMatchModal
+        isOpen={Boolean(editingMatch)}
+        match={editingMatch}
+        players={players}
+        onClose={() => setEditingMatch(null)}
+        onSave={async (matchId, newWinner, newScoreA, newScoreB, newTeamA, newTeamB) => {
+          if (userRole !== 'ADMIN') {
+            console.error('[ERROR - HistoryView] Apenas administradores podem editar resultados de partidas.');
+            return;
+          }
+          if (onUpdateMatchResult) {
+            await onUpdateMatchResult(matchId, newWinner, newScoreA, newScoreB, newTeamA, newTeamB);
+            if (selectedMatch && selectedMatch.id === matchId) {
+              setSelectedMatch({
+                ...selectedMatch,
+                winner: newWinner,
+                scoreA: newScoreA,
+                scoreB: newScoreB,
+                ...(newTeamA ? { teamA: newTeamA } : {}),
+                ...(newTeamB ? { teamB: newTeamB } : {}),
+              });
+            }
+          }
+        }}
+      />
     </div>
   );
 };

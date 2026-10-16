@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Player, Gender } from '../types';
 import { getPlayerTier } from '../utils/tierUtils';
-import { X, Target } from 'lucide-react';
+import { X, Target, Camera, Upload } from 'lucide-react';
+import { PlayerAvatar } from '../src/components/PlayerAvatar';
 
 interface PlayerFormProps {
   isOpen: boolean;
@@ -38,6 +39,86 @@ export const PlayerForm: React.FC<PlayerFormProps> = ({
         </div>
         
         <form onSubmit={onSubmit} className="p-8 space-y-6">
+          {/* Foto / Avatar do Sócio */}
+          <div className="bg-white/5 p-4 rounded-2xl border border-brand-primary/20 flex flex-col sm:flex-row items-center gap-4">
+            <PlayerAvatar
+              name={formData.name || 'Sócio'}
+              gender={formData.gender}
+              photoUrl={formData.photoUrl}
+              id={editingPlayer?.id}
+              size="xl"
+            />
+            <div className="flex-1 w-full space-y-2 text-center sm:text-left">
+              <label className="text-[10px] font-black text-white/60 uppercase tracking-widest block">
+                Foto do Sócio
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <label className="flex items-center gap-1.5 px-3 py-2 bg-brand-primary text-black font-black text-xs uppercase rounded-xl cursor-pointer hover:bg-brand-primary/90 transition-all">
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Enviar Foto</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        const reader = new FileReader();
+                        reader.onload = (evt) => {
+                          const img = new Image();
+                          img.onload = () => {
+                            const canvas = document.createElement('canvas');
+                            const MAX_WIDTH = 300;
+                            const MAX_HEIGHT = 300;
+                            let width = img.width;
+                            let height = img.height;
+
+                            if (width > height) {
+                              if (width > MAX_WIDTH) {
+                                height *= MAX_WIDTH / width;
+                                width = MAX_WIDTH;
+                              }
+                            } else {
+                              if (height > MAX_HEIGHT) {
+                                width *= MAX_HEIGHT / height;
+                                height = MAX_HEIGHT;
+                              }
+                            }
+                            canvas.width = width;
+                            canvas.height = height;
+                            const ctx = canvas.getContext('2d');
+                            ctx?.drawImage(img, 0, 0, width, height);
+                            const resizedDataUrl = canvas.toDataURL('image/jpeg', 0.85);
+                            setFormData({ ...formData, photoUrl: resizedDataUrl });
+                          };
+                          img.src = evt.target?.result as string;
+                        };
+                        reader.readAsDataURL(file);
+                      }
+                    }}
+                  />
+                </label>
+
+                {formData.photoUrl && (
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, photoUrl: '' })}
+                    className="px-3 py-2 bg-rose-500/20 text-rose-300 border border-rose-500/40 font-bold text-xs uppercase rounded-xl hover:bg-rose-500/30 transition-all"
+                  >
+                    Remover Foto
+                  </button>
+                )}
+              </div>
+              <input
+                type="url"
+                placeholder="Ou cole o link da foto (URL)"
+                value={formData.photoUrl || ''}
+                onChange={(e) => setFormData({ ...formData, photoUrl: e.target.value })}
+                className="w-full px-3 py-2 bg-black/40 border border-white/10 rounded-xl text-xs font-mono text-white/80 placeholder:text-white/20 outline-none focus:border-brand-primary"
+              />
+            </div>
+          </div>
+
           <div className="space-y-2">
             <label className="text-[10px] font-black text-white/40 uppercase tracking-widest ml-1">Nome Completo</label>
             <input

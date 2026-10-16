@@ -27,6 +27,7 @@ import {
   getDoc, 
   getDocFromServer, 
   getDocs, 
+  getDocsFromServer, 
   writeBatch, 
   increment, 
   query, 
@@ -48,6 +49,7 @@ import {
   deleteField 
 } from 'firebase/firestore';
 import { getMessaging, getToken, onMessage } from 'firebase/messaging';
+import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import firebaseConfig from './firebase-applet-config.json';
 
 // Initialize Firebase with persistence-friendly settings
@@ -68,29 +70,31 @@ if (typeof window !== 'undefined') {
 
 // Multi-Tab Persistence Setup for Firebase 11
 let dbInstance;
-// Prioriza o banco default para os dados do Guerreiros Volleyball Club
-const dbId = firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)' 
+// Prioriza o banco customizado se definido
+const dbId = (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)') 
   ? firebaseConfig.firestoreDatabaseId 
   : undefined;
 
 if (typeof window !== 'undefined') {
   try {
-    dbInstance = initializeFirestore(app, {
+    const settings = {
       localCache: persistentLocalCache({
         tabManager: persistentMultipleTabManager()
       }),
       experimentalForceLongPolling: true
-    }, dbId);
+    };
+    dbInstance = dbId ? initializeFirestore(app, settings, dbId) : initializeFirestore(app, settings);
   } catch (e) {
     console.warn('[Firestore] Modern persistence init skipped or already initialized, using existing instance:', e);
-    dbInstance = getFirestore(app, dbId);
+    dbInstance = dbId ? getFirestore(app, dbId) : getFirestore(app);
   }
 } else {
-  dbInstance = getFirestore(app, dbId);
+  dbInstance = dbId ? getFirestore(app, dbId) : getFirestore(app);
 }
 
 export const db = dbInstance;
 export const auth = getAuth(app);
+export const storage = getStorage(app);
 export const messaging = typeof window !== 'undefined' && 'Notification' in window ? getMessaging(app) : null;
 
 // Persistence Auth
@@ -132,8 +136,16 @@ export interface FirestoreErrorInfo {
 }
 
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const message = error instanceof Error ? error.message : String(error);
+  const code = (error as any)?.code;
+
+  if (code === 'resource-exhausted' || message.includes('bandwidth for writes') || message.includes('quota exceeded')) {
+    isQuotaExceeded = true;
+    console.error('[Firestore] Quota exceeded! Disabling background writes.');
+  }
+
   const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
+    error: message,
     authInfo: {
       userId: auth.currentUser?.uid,
       email: auth.currentUser?.email,
@@ -160,8 +172,8 @@ let lastSyncTime = 0;
 let cachedLastUpdate: string | null = null; // Cache local para evitar getDoc desnecessário
 let currentPlayerId: string | null = null;
 let cachedPlayerLastUpdate: string | null = null;
-let isQuotaExceeded = false;
-const SYNC_INTERVAL = 60000; // Aumentado para 60s para máxima economia, já que a lógica está corrigida
+export let isQuotaExceeded = false;
+const SYNC_INTERVAL = 600000; // Aumentado para 10 minutos para máxima economia de banda e escrita
 
 export const setCurrentPlayerId = (id: string | null) => {
   if (id !== currentPlayerId) {
@@ -171,6 +183,7 @@ export const setCurrentPlayerId = (id: string | null) => {
 };
 
 export const trackAccess = async (overridePlayerId?: string) => {
+  if (isQuotaExceeded) return;
   const targetId = overridePlayerId || currentPlayerId;
   if (!targetId || isQuotaExceeded) {
     if (!targetId && auth.currentUser) {
@@ -225,8 +238,11 @@ export const trackAccess = async (overridePlayerId?: string) => {
     const newHistory = [now, ...loginHistory].slice(0, 20);
     const currentAccesses = Number(playerData?.accesses || 0);
 
+    const batch = writeBatch(db);
+    let batchSize = 0;
+
     if (isNewDay) {
-      await updateDoc(playerRef, {
+      batch.update(playerRef, {
         accesses: currentAccesses + 1,
         dailyAccesses: 1,
         lastReadUpdate: today,
@@ -235,7 +251,7 @@ export const trackAccess = async (overridePlayerId?: string) => {
       });
     } else {
       const currentDaily = Number(playerData?.dailyAccesses || 0);
-      await updateDoc(playerRef, {
+      batch.update(playerRef, {
         accesses: currentAccesses + 1,
         dailyAccesses: currentDaily + 1,
         lastReadUpdate: today,
@@ -243,27 +259,40 @@ export const trackAccess = async (overridePlayerId?: string) => {
         loginHistory: newHistory
       });
     }
+    batchSize++;
 
     // Incrementar o contador global de acessos também
     const usageRef = doc(db, 'metadata', 'usage');
-    await updateDoc(usageRef, {
+    batch.set(usageRef, {
       accesses: increment(1)
-    }).catch(() => {
-      setDoc(usageRef, { accesses: 1 }, { merge: true });
-    });
+    }, { merge: true });
+    batchSize++;
+
+    console.log(`[trackAccess] Enviando lote de acesso (${targetId}): ${batchSize} operações.`);
+    await batch.commit();
 
     console.log(`[Usage] Acesso registrado para o sócio: ${targetId} (Dia: ${isNewDay ? 1 : 'inc'}) às ${now}`);
-  } catch (e) {
+  } catch (e: any) {
+    if (e?.code === 'resource-exhausted' || e?.message?.includes('bandwidth for writes')) {
+      isQuotaExceeded = true;
+      console.error('[Firestore] Quota exceeded in trackAccess.');
+      return;
+    }
     try {
       const now = new Date().toISOString();
-      await setDoc(playerRef, { 
+      const batch = writeBatch(db);
+      batch.set(playerRef, { 
         accesses: 1, 
         dailyAccesses: 1, 
         lastReadUpdate: today,
         lastLoginAt: now,
         loginHistory: [now]
       }, { merge: true });
-      console.log(`[Usage] Acesso registrado via setDoc para o sócio: ${targetId}`);
+      batch.set(doc(db, 'metadata', 'usage'), {
+        accesses: increment(1)
+      }, { merge: true });
+      await batch.commit();
+      console.log(`[Usage] Acesso registrado via lote fallback para o sócio: ${targetId}`);
     } catch (err) {
       console.warn('Erro ao rastrear acesso:', err);
     }
@@ -299,6 +328,23 @@ export const getBrazilDay = () => {
   return days[dayName || 'Sun'] || 0;
 };
 
+/**
+ * Returns the date key (YYYY-MM-DD) for the next upcoming Thursday.
+ * If today is Thursday, it returns today.
+ */
+export const getNextThursday = () => {
+  const todayStr = getFirestoreDateKey();
+  const [y, m, d] = todayStr.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  const day = getBrazilDay();
+  
+  let diff = 4 - day;
+  if (diff < 0) diff += 7;
+  
+  date.setDate(date.getDate() + diff);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+};
+
 export const trackUsage = async (reads: number, writes: number) => {
   if (isQuotaExceeded) return;
 
@@ -327,102 +373,110 @@ export const trackUsage = async (reads: number, writes: number) => {
   const monthlyUsageRef = doc(db, 'metadata', `usage_${monthKey}`);
   const playerRef = currentPlayerId ? doc(db, 'players', currentPlayerId) : null;
 
+  const batch = writeBatch(db);
+  let batchSize = 0;
+
   try {
     // Sincronização do Sócio (Individual)
     if (playerRef) {
-      try {
-        if (cachedPlayerLastUpdate === today) {
-          await updateDoc(playerRef, {
+      if (cachedPlayerLastUpdate === today) {
+        batch.update(playerRef, {
+          reads: increment(readsToSync),
+          writes: increment(writesToSync),
+          totalReads: increment(readsToSync),
+          totalWrites: increment(writesToSync),
+          lastReadUpdate: today
+        });
+        batchSize++;
+      } else {
+        const playerSnap = await getDoc(playerRef);
+        const playerData = playerSnap.exists() ? playerSnap.data() : null;
+        const shouldResetPlayer = !playerData || !playerData.lastReadUpdate || (playerData.lastReadUpdate < today);
+
+        if (shouldResetPlayer) {
+          batch.set(playerRef, {
+            reads: readsToSync,
+            writes: writesToSync,
+            totalReads: increment(readsToSync),
+            totalWrites: increment(writesToSync),
+            lastReadUpdate: today
+          }, { merge: true });
+        } else {
+          batch.update(playerRef, {
             reads: increment(readsToSync),
             writes: increment(writesToSync),
             totalReads: increment(readsToSync),
             totalWrites: increment(writesToSync),
             lastReadUpdate: today
           });
-        } else {
-          const playerSnap = await getDoc(playerRef);
-          const playerData = playerSnap.exists() ? playerSnap.data() : null;
-          const shouldResetPlayer = !playerData || !playerData.lastReadUpdate || (playerData.lastReadUpdate < today);
-
-          if (shouldResetPlayer) {
-            await setDoc(playerRef, {
-              reads: readsToSync,
-              writes: writesToSync,
-              totalReads: increment(readsToSync),
-              totalWrites: increment(writesToSync),
-              lastReadUpdate: today
-            }, { merge: true });
-          } else {
-            await updateDoc(playerRef, {
-              reads: increment(readsToSync),
-              writes: increment(writesToSync),
-              totalReads: increment(readsToSync),
-              totalWrites: increment(writesToSync),
-              lastReadUpdate: today
-            });
-          }
-          cachedPlayerLastUpdate = today;
         }
-      } catch (err) {
-        console.warn('Erro ao atualizar uso do sócio:', err);
+        batchSize++;
+        cachedPlayerLastUpdate = today;
       }
     }
 
-    // Se já sabemos que o documento de hoje existe, apenas incrementamos (0 leituras, 1 escrita)
+    // Se já sabemos que o documento de hoje existe, apenas incrementamos
     if (cachedLastUpdate === today) {
-      await updateDoc(usageRef, {
+      batch.update(usageRef, {
         reads: increment(readsToSync),
         writes: increment(writesToSync),
         lastUpdate: today
       });
-      console.log(`[Usage] Sincronizado: +${readsToSync}R, +${writesToSync}W (Cache)`);
+      batchSize++;
+      console.log(`[Usage] Batching: +${readsToSync}R, +${writesToSync}W (Cache)`);
     } else {
-      // Caso contrário, verificamos uma única vez (1 leitura)
       const usageSnap = await getDoc(usageRef);
       const currentData = usageSnap.exists() ? usageSnap.data() : null;
-
-      // SÓ RESETAMOS se o dia no banco for ANTERIOR ao dia atual de Brasília
       const shouldReset = !currentData || (currentData.lastUpdate < today);
 
       if (shouldReset) {
         console.log(`[Usage] Novo dia detectado (${today}). Arquivando e resetando contadores.`);
-        // Arquivar dados do dia anterior antes de resetar
         if (currentData && currentData.lastUpdate) {
-          try {
-            const historyRef = doc(db, 'usage_history', currentData.lastUpdate);
-            await setDoc(historyRef, {
-              ...currentData,
-              archivedAt: serverTimestamp()
-            }, { merge: true });
-          } catch (err) {
-            console.warn('Erro ao arquivar histórico de uso:', err);
-          }
+          const historyRef = doc(db, 'usage_history', currentData.lastUpdate);
+          batch.set(historyRef, {
+            ...currentData,
+            archivedAt: serverTimestamp()
+          }, { merge: true });
+          batchSize++;
         }
 
-        await setDoc(usageRef, {
+        batch.set(usageRef, {
           reads: readsToSync,
           writes: writesToSync,
           aiCalls: 0,
           accesses: 0,
           lastUpdate: today
         }, { merge: true });
+        batchSize++;
       } else if (currentData.lastUpdate === today) {
-        // Mesmo dia: incrementamos
-        await updateDoc(usageRef, {
+        batch.update(usageRef, {
           reads: increment(readsToSync),
           writes: increment(writesToSync),
           lastUpdate: today
         });
-        console.log(`[Usage] Sincronizado: +${readsToSync}R, +${writesToSync}W (DB Sync)`);
+        batchSize++;
+        console.log(`[Usage] Batching: +${readsToSync}R, +${writesToSync}W (DB Sync)`);
       } else {
-        // Caso raro: o dia no banco é FUTURO (ex: alguém em fuso horário muito adiantado)
-        await updateDoc(usageRef, {
+        batch.update(usageRef, {
           reads: increment(readsToSync),
           writes: increment(writesToSync)
         });
-        console.log(`[Usage] Sincronizado em data futura: ${currentData.lastUpdate}`);
+        batchSize++;
       }
       cachedLastUpdate = today;
+    }
+
+    // Monthly usage
+    batch.set(monthlyUsageRef, {
+      reads: increment(readsToSync),
+      writes: increment(writesToSync),
+      lastUpdate: today
+    }, { merge: true });
+    batchSize++;
+
+    if (batchSize > 0) {
+      console.log(`[trackUsage] Enviando lote de uso: ${batchSize} operações.`);
+      await batch.commit();
     }
   } catch (e: any) {
     if (e?.code === 'resource-exhausted') {
@@ -432,18 +486,6 @@ export const trackUsage = async (reads: number, writes: number) => {
     }
     // Fallback silencioso para não interromper o app
     console.warn('Erro ao atualizar uso diário:', e);
-  }
-
-  try {
-    await updateDoc(monthlyUsageRef, {
-      reads: increment(readsToSync),
-      writes: increment(writesToSync),
-      lastUpdate: today
-    });
-  } catch (e: any) {
-    if (e.code === 'not-found') {
-      await setDoc(monthlyUsageRef, { reads: readsToSync, writes: writesToSync, aiCalls: 0, lastUpdate: today });
-    }
   }
 };
 
@@ -456,30 +498,21 @@ export const trackAIUsage = async (calls: number) => {
   const monthlyUsageRef = doc(db, 'metadata', `usage_${monthKey}`);
 
   try {
-    await updateDoc(usageRef, {
+    const batch = writeBatch(db);
+    batch.set(usageRef, {
       aiCalls: increment(calls),
       lastUpdate: today
-    });
-  } catch (e: any) {
-    try {
-      await setDoc(usageRef, {
-        aiCalls: calls,
-        lastUpdate: today
-      }, { merge: true });
-    } catch (err) {
-      console.error('Erro ao rastrear uso de IA:', err);
-    }
-  }
+    }, { merge: true });
+    
+    batch.set(monthlyUsageRef, {
+      aiCalls: increment(calls),
+      lastUpdate: today
+    }, { merge: true });
 
-  try {
-    await updateDoc(monthlyUsageRef, {
-      aiCalls: increment(calls),
-      lastUpdate: today
-    });
+    await batch.commit();
+    console.log(`[trackAIUsage] Uso de IA registrado: ${calls} chamadas.`);
   } catch (e: any) {
-    if (e.code === 'not-found') {
-      await setDoc(monthlyUsageRef, { reads: 0, writes: 0, aiCalls: calls, lastUpdate: today });
-    }
+    console.warn('Erro ao rastrear uso de IA:', e);
   }
 };
 
@@ -513,7 +546,12 @@ export {
   serverTimestamp,
   collectionGroup,
   clearIndexedDbPersistence,
-  deleteField
+  getDocsFromServer,
+  deleteField,
+  getStorage,
+  ref,
+  uploadBytes,
+  getDownloadURL
 };
 export type { User };
 

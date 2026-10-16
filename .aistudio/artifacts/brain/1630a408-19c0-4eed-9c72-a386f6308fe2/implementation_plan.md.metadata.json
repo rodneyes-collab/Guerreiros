@@ -1,0 +1,6 @@
+{
+  "summary": "Plano de implementação para refatorar o componente 'Status da Rodada' (RoundStatusCard), garantindo que os nomes completos de todos os atletas sejam sempre exibidos sem qualquer abreviação nos badges, integrando auto-scaling de fonte e container de rolagem horizontal suave no mobile e desktop.",
+  "updatedAt": "2026-10-13T23:56:44.986614887Z",
+  "requestFeedback": true,
+  "userFacing": true
+}

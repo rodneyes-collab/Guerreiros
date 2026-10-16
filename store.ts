@@ -1,8 +1,8 @@
 import { create } from 'zustand';
-import { Player, Payment, Match, GenerationResult, SystemMetadata, UsageStats, Expense, Tournament, BalancingStrategy } from './types';
+import { Player, Payment, Match, GenerationResult, SystemMetadata, UsageStats, Expense, Tournament, BalancingStrategy, SyncFrequencyMode } from './types';
 import { User } from './firebase';
 
-export type ViewMode = 'presence' | 'history' | 'generation' | 'members' | 'dashboard' | 'ranking' | 'rules' | 'payments' | 'admin' | 'tournament' | 'attendance_report' | 'intentions' | 'my_payments' | 'diagnostics';
+export type ViewMode = 'presence' | 'history' | 'generation' | 'members' | 'dashboard' | 'ranking' | 'rules' | 'payments' | 'admin' | 'tournament' | 'attendance_report' | 'intentions' | 'my_payments' | 'diagnostics' | 'court_tablet';
 
 interface AppState {
   // Data
@@ -21,6 +21,8 @@ interface AppState {
   viewMode: ViewMode;
   isInitialLoading: boolean;
   isSyncing: boolean;
+  isBackgroundSyncing: boolean;
+  syncError: string | null;
   dbStatus: 'idle' | 'reading' | 'writing';
   user: User | null;
   userRole: 'ADMIN' | 'MEMBER' | null;
@@ -31,10 +33,17 @@ interface AppState {
   usageStats: UsageStats;
   monthlyUsageStats: UsageStats;
   syncTrigger: number;
+  syncMode: SyncFrequencyMode;
+  lastSyncTimestamp: number | null;
+  isSyncSettingsOpen: boolean;
+  isSyncDebuggerOpen: boolean;
   dateKey: string;
+  idToCanonicalId: Record<string, string>;
   
   // Generation Result
   generationResult: GenerationResult | null;
+  nextMatchPreview: GenerationResult | null;
+  recentFormations: { setterA: string; playersA: string[]; setterB: string; playersB: string[] }[];
   teamGenerationMode: 'PURE_SKILLS' | 'TRUESKILL';
   balancingStrategy: BalancingStrategy;
   balancingRatingMode: 'HYBRID' | 'IC_ONLY';
@@ -111,6 +120,8 @@ interface AppState {
   setSelectedRankingPlayerId: (id: string | null) => void;
   setIsInitialLoading: (loading: boolean) => void;
   setIsSyncing: (syncing: boolean) => void;
+  setIsBackgroundSyncing: (is: boolean) => void;
+  setSyncError: (error: string | null) => void;
   setDbStatus: (status: 'idle' | 'reading' | 'writing') => void;
   setUser: (user: User | null) => void;
   setUserRole: (role: 'ADMIN' | 'MEMBER' | null) => void;
@@ -121,12 +132,20 @@ interface AppState {
   setUsageStats: (stats: UsageStats) => void;
   setMonthlyUsageStats: (stats: UsageStats) => void;
   setGenerationResult: (result: GenerationResult | null) => void;
+  setNextMatchPreview: (result: GenerationResult | null) => void;
+  addRecentFormation: (formation: { setterA: string; playersA: string[]; setterB: string; playersB: string[] }) => void;
+  clearRecentFormations: () => void;
   setTeamGenerationMode: (mode: 'PURE_SKILLS' | 'TRUESKILL') => void;
   setBalancingStrategy: (strategy: BalancingStrategy) => void;
   setBalancingRatingMode: (mode: 'HYBRID' | 'IC_ONLY') => void;
   setTournaments: (tournaments: Tournament[] | ((prev: Tournament[]) => Tournament[])) => void;
   setActiveTournament: (tournament: Tournament | null) => void;
   triggerSync: () => void;
+  setSyncMode: (mode: SyncFrequencyMode) => void;
+  setLastSyncTimestamp: (ts: number | null) => void;
+  setIsSyncSettingsOpen: (open: boolean) => void;
+  setIsSyncDebuggerOpen: (open: boolean) => void;
+  setIdToCanonicalId: (map: Record<string, string>) => void;
   
   setAnalysis: (analysis: string) => void;
   setRuleVerification: (verification: string) => void;
@@ -200,6 +219,8 @@ export const useStore = create<AppState>((set) => ({
   viewMode: (typeof window !== 'undefined' && localStorage.getItem('spikegen_viewMode') as ViewMode) || 'presence',
   isInitialLoading: true,
   isSyncing: false,
+  isBackgroundSyncing: false,
+  syncError: null,
   dbStatus: 'idle',
   user: null,
   userRole: null,
@@ -210,8 +231,15 @@ export const useStore = create<AppState>((set) => ({
   usageStats: { reads: 0, writes: 0, aiCalls: 0, lastUpdate: '' },
   monthlyUsageStats: { reads: 0, writes: 0, aiCalls: 0, lastUpdate: '' },
   syncTrigger: 0,
+  syncMode: (typeof window !== 'undefined' && (localStorage.getItem('guerreiros_sync_mode') as SyncFrequencyMode)) || 'realtime',
+  lastSyncTimestamp: null,
+  isSyncSettingsOpen: false,
+  isSyncDebuggerOpen: false,
   dateKey: '',
+  idToCanonicalId: {},
   generationResult: null,
+  nextMatchPreview: null,
+  recentFormations: [],
   teamGenerationMode: 'PURE_SKILLS',
   balancingStrategy: 'BOTH',
   balancingRatingMode: 'IC_ONLY',
@@ -298,6 +326,8 @@ export const useStore = create<AppState>((set) => ({
   setSelectedRankingPlayerId: (selectedRankingPlayerId) => set({ selectedRankingPlayerId }),
   setIsInitialLoading: (isInitialLoading) => set({ isInitialLoading }),
   setIsSyncing: (isSyncing) => set({ isSyncing }),
+  setIsBackgroundSyncing: (isBackgroundSyncing) => set({ isBackgroundSyncing }),
+  setSyncError: (syncError) => set({ syncError }),
   setDbStatus: (dbStatus) => set({ dbStatus }),
   setUser: (user) => set({ user }),
   setUserRole: (userRole) => set({ userRole }),
@@ -308,6 +338,22 @@ export const useStore = create<AppState>((set) => ({
   setUsageStats: (usageStats) => set({ usageStats }),
   setMonthlyUsageStats: (monthlyUsageStats) => set({ monthlyUsageStats }),
   setGenerationResult: (generationResult) => set({ generationResult }),
+  setNextMatchPreview: (nextMatchPreview) => set({ nextMatchPreview }),
+  addRecentFormation: (formation) => set((state) => {
+    // Avoid exact duplicate insertions
+    const sigA = `${formation.setterA}_${(formation.playersA || []).slice().sort().join('_')}`;
+    const sigB = `${formation.setterB}_${(formation.playersB || []).slice().sort().join('_')}`;
+    const exists = state.recentFormations.some(f => {
+      const fSigA = `${f.setterA}_${(f.playersA || []).slice().sort().join('_')}`;
+      const fSigB = `${f.setterB}_${(f.playersB || []).slice().sort().join('_')}`;
+      return (fSigA === sigA && fSigB === sigB) || (fSigA === sigB && fSigB === sigA);
+    });
+    if (exists) return state;
+    return {
+      recentFormations: [...state.recentFormations.slice(-20), formation]
+    };
+  }),
+  clearRecentFormations: () => set({ recentFormations: [] }),
   setTeamGenerationMode: (teamGenerationMode) => set({ teamGenerationMode }),
   setBalancingStrategy: (balancingStrategy) => set({ balancingStrategy }),
   setBalancingRatingMode: (balancingRatingMode) => set({ balancingRatingMode }),
@@ -315,7 +361,17 @@ export const useStore = create<AppState>((set) => ({
     tournaments: typeof tournaments === 'function' ? tournaments(state.tournaments) : tournaments 
   })),
   setActiveTournament: (activeTournament) => set({ activeTournament }),
-  triggerSync: () => set((state) => ({ syncTrigger: state.syncTrigger + 1, isSyncing: true })),
+  triggerSync: () => set((state) => ({ syncTrigger: state.syncTrigger + 1, isBackgroundSyncing: true })),
+  setSyncMode: (syncMode) => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('guerreiros_sync_mode', syncMode);
+    }
+    set({ syncMode, syncTrigger: Date.now(), isBackgroundSyncing: true });
+  },
+  setLastSyncTimestamp: (lastSyncTimestamp) => set({ lastSyncTimestamp }),
+  setIsSyncSettingsOpen: (isSyncSettingsOpen) => set({ isSyncSettingsOpen }),
+  setIsSyncDebuggerOpen: (isSyncDebuggerOpen) => set({ isSyncDebuggerOpen }),
+  setIdToCanonicalId: (idToCanonicalId) => set({ idToCanonicalId }),
   setAnalysis: (analysis) => set({ analysis }),
   setRuleVerification: (ruleVerification) => set({ ruleVerification }),
   

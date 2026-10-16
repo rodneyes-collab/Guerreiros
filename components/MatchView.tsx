@@ -1,15 +1,31 @@
-import React, { useState } from 'react';
-import { motion } from 'motion/react';
+import React, { useState, useMemo } from 'react';
+import { motion, AnimatePresence, LayoutGroup } from 'motion/react';
 import { useStore } from '../store';
+import { GenerationResult, Gender } from '../types';
 import { TeamCard } from './TeamCard';
+import { PreviewTeams } from './PreviewTeams';
 import { TeamBalancingSimulatorCard } from '../src/components/TeamBalancingSimulatorCard';
+import { RoundStatusCard } from '../src/components/RoundStatusCard';
 import { DepartureTimeModal } from './DepartureTimeModal';
-import { formatTime } from '../utils/helpers';
-import { getFirestoreDateKey } from '../firebase';
+import { QuickPlayerSwapModal } from '../src/components/QuickPlayerSwapModal';
+import { useMatchSwaps } from '../src/hooks/useMatchSwaps';
+import { formatTime, cleanObject } from '../utils/helpers';
+import { getFirestoreDateKey, db } from '../firebase';
+import { doc, setDoc, deleteDoc } from 'firebase/firestore';
 import { useNarration } from '../src/hooks/useNarration';
 import { useAIStatus } from '../src/hooks/useAIStatus';
 import { speakNarration } from '../services/geminiService';
 import { playSound } from '../src/utils/audio';
+import { 
+  generateTeams, 
+  optimizeTeamSynergyIteratively, 
+  findBestBalancingCombination, 
+  calculateTeamTotalIC, 
+  BalancingOptimizationResult,
+  enrichPlayerImmutably,
+  cloneGenerationResultImmutably,
+  verifyClubGenerationRules
+} from '../utils/teamLogic';
 import { 
   Swords, 
   Trophy,
@@ -26,6 +42,7 @@ import {
   VolumeX, 
   Megaphone, 
   ArrowLeftRight,
+  Replace,
   ShieldCheck,
   AlertTriangle,
   X,
@@ -44,9 +61,11 @@ import {
   Check,
   CheckCircle2,
   Sliders,
+  SlidersHorizontal,
   Mic,
   MicOff,
   ExternalLink,
+  Play,
   Undo,
   RotateCw,
   RotateCcw,
@@ -56,7 +75,9 @@ import {
 
 import { PlayerStatusCard } from '../src/components/PlayerStatusCard';
 import { HelpTooltip } from '../src/components/HelpTooltip';
+import { Tooltip } from '../src/components/Tooltip';
 import { MatchBalanceCharts } from '../src/components/MatchBalanceCharts';
+
 import { getPriorityQueue, calculateEffectiveElo, suggestPosition, calculateTeamPositions, runAutoCorrectionAgent, calculatePracticalSkillsSum, runCriticalSynergySolverAgent, calculateCompositePerformanceRating } from '../utils/teamLogic';
 import { Player, SystemMetadata } from '../types';
 import { APP_VERSION } from '../constants';
@@ -82,6 +103,7 @@ interface MatchViewProps {
   updateSystemMetadata: (metadata: Partial<SystemMetadata>) => void;
   updateDepartureTime?: (playerId: string, departureTime: string | null) => Promise<void>;
   userRole?: string;
+  onApplyPreview?: (result: any) => void;
 }
 
 export const MatchView: React.FC<MatchViewProps> = ({
@@ -104,12 +126,20 @@ export const MatchView: React.FC<MatchViewProps> = ({
   systemMetadata,
   updateSystemMetadata,
   updateDepartureTime: updateDepartureTimeProp,
-  userRole: userRoleProp
+  userRole: userRoleProp,
+  onApplyPreview
 }) => {
   const { announceWinner } = useNarration();
+  const {
+    quickSwapTarget,
+    isQuickSwapOpen,
+    openQuickSwap,
+    closeQuickSwap,
+    executeQuickSwap
+  } = useMatchSwaps();
   const { status: aiStatus } = useAIStatus();
   const { 
-    generationResult, 
+    generationResult: storeGenerationResult, 
     attendance: allAttendance, 
     userRole: storeUserRole, 
     matches,
@@ -141,18 +171,423 @@ export const MatchView: React.FC<MatchViewProps> = ({
     setBalancingRatingMode,
     players
   } = useStore();
+
+  // Memoize rule verification to prevent expensive recalculations on every render
+  const rules = useMemo(() => {
+    if (!storeGenerationResult) return null;
+    return verifyClubGenerationRules(storeGenerationResult);
+  }, [storeGenerationResult]);
+
   const userRole = userRoleProp || storeUserRole || 'ADMIN';
+  const isAdmin = userRole === 'ADMIN' || userRole === 'DIRETORIA';
   const updateDepartureTime = updateDepartureTimeProp;
   const attendance = React.useMemo(() => allAttendance.filter(p => p.status !== 'inactive'), [allAttendance]);
   const { currentPlayer } = useStore();
+
+  // Identificador único dos 12 jogadores escalados para a quadra (Fila de Prioridade)
+  // Utilizado como dependência estrita para garantir que a geração seja persistente e não resete
+  const courtPlayerIdsKey = React.useMemo(() => {
+    const present = attendance.filter(p => (!p.status || p.status === 'active') && !p.isDM);
+    const { topPlayers } = getPriorityQueue(present, 12, 2);
+    if (topPlayers.length < 12) return "";
+    return topPlayers.map(p => p.id).sort().join(',');
+  }, [attendance]);
+
+  const [previewResult, setPreviewResult] = useState<any>(null);
+  const [simulationCount, setSimulationCount] = useState(1);
+  const seenCombinationsHistoryRef = React.useRef<string[]>([]);
+
+  const previewUpdateTimerRef = React.useRef<any>(null);
+
+  // Sincroniza em tempo real o preview gerado pelo administrador para a coleção do Firestore
+  // Implementa debounce para evitar excesso de escritas (Resource Exhausted)
+  React.useEffect(() => {
+    if (isAdmin) {
+      if (previewUpdateTimerRef.current) clearTimeout(previewUpdateTimerRef.current);
+      
+      previewUpdateTimerRef.current = setTimeout(async () => {
+        try {
+          const previewRef = doc(db, 'metadata', 'nextMatchPreview');
+          if (previewResult) {
+            await setDoc(previewRef, cleanObject(previewResult));
+          } else {
+            await deleteDoc(previewRef);
+          }
+        } catch (e) {
+          console.error('[MatchView] Erro ao sincronizar próximo time com Firestore:', e);
+        }
+      }, 1500); // 1.5s debounce
+    }
+    return () => {
+      if (previewUpdateTimerRef.current) clearTimeout(previewUpdateTimerRef.current);
+    };
+  }, [previewResult, isAdmin]);
+
+  // Refatoração central do seletor de equipes para useMemo com dependência estrita dos IDs
+  // Garante que a pré-visualização seja persistente durante a transição para confirmação
+  const generationResult = storeGenerationResult;
+  const [isSimulating, setIsSimulating] = useState(false);
+  const [isAutoSimulating, setIsAutoSimulating] = useState(false);
+  const [analyzedCombinationsCount, setAnalyzedCombinationsCount] = useState(0);
+  const [bestOptimizationInfo, setBestOptimizationInfo] = useState<BalancingOptimizationResult | null>(null);
+  const [autoOptimizedSelection, setAutoOptimizedSelection] = useState<{
+    teamGenerationMode: 'PURE_SKILLS' | 'TRUESKILL';
+    balancingRatingMode: 'IC_ONLY' | 'HYBRID';
+    balancingStrategy: 'BOTH' | 'BOTTOM_TWO' | 'SYNERGY';
+    deltaIC: number;
+    teamAIC: number;
+    teamBIC: number;
+    isAutoSelected: boolean;
+  } | null>(null);
+  const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
+  const hasAutoSimulatedRef = React.useRef(false);
+  const prevStoreGenResultRef = React.useRef(storeGenerationResult);
+
+  // Auto-geração na primeira entrada, ao finalizar partida OU ao iniciar uma nova (para o próximo round)
+  React.useEffect(() => {
+    const wasActive = !!prevStoreGenResultRef.current;
+    const isActive = !!storeGenerationResult;
+    prevStoreGenResultRef.current = storeGenerationResult;
+
+    if (isActive) {
+      // Se acabou de iniciar uma partida, vamos gerar AUTOMATICAMENTE o preview da PRÓXIMA
+      // para que o telão (CourtTabletView) já exiba o "Em Breve" atendendo as regras do clube
+      if (!wasActive && attendance.length >= 12 && isAdmin) {
+        // Limpamos o preview atual imediatamente para não exibir o time que acabou de entrar na quadra como "próximo"
+        setPreviewResult(null);
+        
+        setTimeout(() => {
+          handleAutoOptimizeCombinations();
+        }, 800);
+      }
+    } else {
+      if (wasActive && !isActive) {
+        hasAutoSimulatedRef.current = false;
+        seenCombinationsHistoryRef.current = [];
+        setSimulationCount(1);
+      }
+
+      if (attendance.length >= 12 && !hasAutoSimulatedRef.current && isAdmin) {
+        hasAutoSimulatedRef.current = true;
+        setTeamGenerationMode('PURE_SKILLS');
+        setBalancingRatingMode('IC_ONLY');
+        setBalancingStrategy('BOTH');
+        setSimulationCount(1);
+        setTimeout(() => {
+          handleAutoOptimizeCombinations();
+        }, 50);
+      }
+    }
+
+    // Se a fila ficar insuficiente (< 12), limpamos o preview obrigatoriamente
+    if (isAdmin && previewResult && attendance.length < 12) {
+      setPreviewResult(null);
+    }
+    
+    // Se algum jogador que estava no preview foi removido da presença, limpamos o preview
+    if (isAdmin && previewResult) {
+      const previewIds = new Set([
+        previewResult.teamA.setter?.id,
+        ...previewResult.teamA.players.map(p => p.id),
+        previewResult.teamB.setter?.id,
+        ...previewResult.teamB.players.map(p => p.id)
+      ].filter(Boolean) as string[]);
+      
+      const attendanceIds = new Set(attendance.map(a => a.id));
+      const allStillPresent = Array.from(previewIds).every(id => attendanceIds.has(id));
+      
+      if (!allStillPresent) {
+        setPreviewResult(null);
+      }
+    }
+  }, [attendance.length, storeGenerationResult, isAdmin, attendance, previewResult]);
+
+  // Garante que SEMPRE haja uma próxima partida sorteada se houver jogo em andamento e estivermos sem preview
+  const retryCountRef = React.useRef(0);
+  React.useEffect(() => {
+    if (isAdmin && storeGenerationResult && !previewResult && attendance.length >= 12 && !isSimulating && !isAutoSimulating) {
+      if (retryCountRef.current > 5) return; // Evita loop infinito se realmente não houver combinação possível
+
+      const timer = setTimeout(() => {
+        if (!previewResult) {
+          retryCountRef.current++;
+          handleAutoOptimizeCombinations();
+        }
+      }, 4000);
+      return () => clearTimeout(timer);
+    } else if (previewResult) {
+      retryCountRef.current = 0;
+    }
+  }, [storeGenerationResult, previewResult, isAdmin, attendance.length, isSimulating, isAutoSimulating]);
 
   const [showAudit, setShowAudit] = useState(false);
   const [showAnalysis, setShowAnalysis] = useState(false);
   const [showActions, setShowActions] = useState(false);
   const [showSimulatorInMatch, setShowSimulatorInMatch] = useState(false);
+  const [hideSynergyAlerts, setHideSynergyAlerts] = useState(false);
   const [showDepartureModal, setShowDepartureModal] = useState(false);
   const [sessionDurationHours, setSessionDurationHours] = useState(3);
   const [customAvgDuration, setCustomAvgDuration] = useState<number | null>(null);
+
+  const handlePreviewGenerate = (customMode?: any, customRating?: any, customStrategy?: any) => {
+    setIsSimulating(true);
+    const { attendance, players, matches } = useStore.getState();
+    const modeToUse = customMode ?? teamGenerationMode;
+    const ratingToUse = customRating ?? balancingRatingMode;
+    const strategyToUse = customStrategy ?? balancingStrategy;
+
+    const present = (attendance || []).filter(p => (!p.status || p.status === 'active') && !p.isDM);
+    if (present.length < 12) {
+      setIsSimulating(false);
+      return;
+    }
+
+    const enrichedPresent = present.map(p => enrichPlayerImmutably(p, players, attendance));
+    
+    const now = Date.now();
+    const threshold = systemMetadata?.lastResetTimestamp || (now - (16 * 60 * 60 * 1000));
+    const sessionMatches = (matches || []).filter(m => m.timestamp > threshold);
+    const previousFormations = sessionMatches.map(m => ({
+      setterA: m.teamA[0],
+      playersA: m.teamA.slice(1),
+      setterB: m.teamB[0],
+      playersB: m.teamB.slice(1)
+    }));
+
+    const allMatchHistory = (matches || []).map(m => ({
+      teamA: m.teamA,
+      teamB: m.teamB,
+      winner: m.winner as 'A' | 'B',
+      timestamp: m.timestamp
+    }));
+
+    const useTrueSkill = modeToUse === 'TRUESKILL';
+    const result = generateTeams(enrichedPresent as any, previousFormations, useTrueSkill, false, allMatchHistory, strategyToUse, ratingToUse);
+    const optimized = optimizeTeamSynergyIteratively(result, allMatchHistory, useTrueSkill, strategyToUse, ratingToUse, previousFormations);
+    const immutableResult = cloneGenerationResultImmutably(optimized, players, attendance);
+    
+    // Armazena a assinatura no histórico para evitar repetições em recálculos
+    const comboKey = getTeamFormationKey(immutableResult);
+    if (comboKey && !seenCombinationsHistoryRef.current.includes(comboKey)) {
+      seenCombinationsHistoryRef.current.push(comboKey);
+    }
+
+    const tAIC = calculateTeamTotalIC(immutableResult.teamA);
+    const tBIC = calculateTeamTotalIC(immutableResult.teamB);
+    const dIC = Number(Math.abs(tAIC - tBIC).toFixed(1));
+
+    setAutoOptimizedSelection({
+      teamGenerationMode: modeToUse,
+      balancingRatingMode: ratingToUse,
+      balancingStrategy: strategyToUse,
+      deltaIC: dIC,
+      teamAIC: tAIC,
+      teamBIC: tBIC,
+      isAutoSelected: false
+    });
+
+    // Injetar metadados detalhados para exibição do cabeçalho e filtros no PreviewTeams
+    immutableResult.balancingStrategy = strategyToUse;
+    immutableResult.balancingRatingMode = ratingToUse;
+    immutableResult.teamGenerationMode = modeToUse;
+    immutableResult.appliedCascadeLevel = immutableResult.techTierIds?.cascadeLevel || 'PADRÃO';
+    immutableResult.combinationsCount = 50; // Número padrão de simulações do pipeline
+    immutableResult.simulationNumber = 1;
+
+    // Garantir mapeamento explícito do campo gender para todos os jogadores no estado da pré-visualização
+    const mapGender = (p: any) => p ? { ...p, gender: p.gender || (typeof Gender !== 'undefined' && Gender?.MALE ? Gender.MALE : 'MALE') } : null;
+    if (immutableResult.teamA) {
+      if (immutableResult.teamA.setter) immutableResult.teamA.setter = mapGender(immutableResult.teamA.setter);
+      if (immutableResult.teamA.players) immutableResult.teamA.players = immutableResult.teamA.players.map(mapGender).filter(Boolean);
+    }
+    if (immutableResult.teamB) {
+      if (immutableResult.teamB.setter) immutableResult.teamB.setter = mapGender(immutableResult.teamB.setter);
+      if (immutableResult.teamB.players) immutableResult.teamB.players = immutableResult.teamB.players.map(mapGender).filter(Boolean);
+    }
+    if (immutableResult.remainingPlayers) {
+      immutableResult.remainingPlayers = immutableResult.remainingPlayers.map(mapGender).filter(Boolean);
+    }
+
+    setSimulationCount(1);
+    setPreviewResult(immutableResult);
+    setIsSimulating(false);
+  };
+
+  const getTeamFormationKey = (res: GenerationResult | null): string => {
+    if (!res) return '';
+    const teamAIds = [res.teamA?.setter?.id, ...(res.teamA?.players || []).map(p => p.id)].filter(Boolean).sort().join('-');
+    const teamBIds = [res.teamB?.setter?.id, ...(res.teamB?.players || []).map(p => p.id)].filter(Boolean).sort().join('-');
+    return [teamAIds, teamBIds].sort().join('|');
+  };
+
+  const handleAutoOptimizeCombinations = () => {
+    const { attendance: storeAttendance, players, matches, generationResult: activeMatch } = useStore.getState();
+    
+    // Filtramos apenas os jogadores ativos/presentes que PODEM jogar
+    // Note: DMs também jogam se estiverem na lista de presença como ativos
+    let present = (storeAttendance || []).filter(p => p.status === 'active');
+    if (present.length < 12) {
+      return;
+    }
+
+    // CRÍTICO: Se há uma partida em andamento, precisamos marcar virtualmente esses jogadores como "já jogaram"
+    // para que o algoritmo de prioridade (getPriorityQueue) os coloque no final da fila da PRÓXIMA partida.
+    if (activeMatch) {
+      const activeIds = new Set([
+        activeMatch.teamA.setter?.id,
+        ...activeMatch.teamA.players.map(p => p.id),
+        activeMatch.teamB.setter?.id,
+        ...activeMatch.teamB.players.map(p => p.id)
+      ].filter(Boolean) as string[]);
+
+      present = present.map(p => ({
+        ...p,
+        playedLastMatch: activeIds.has(p.id) ? true : p.playedLastMatch,
+        consecutivePlayed: activeIds.has(p.id) ? (p.consecutivePlayed || 0) + 1 : 0,
+        dailyMatches: activeIds.has(p.id) ? (p.dailyMatches || 0) + 1 : p.dailyMatches,
+        consecutiveBenched: activeIds.has(p.id) ? 0 : (p.consecutiveBenched || 0) + 1
+      }));
+    }
+
+    const enrichedPresent = present.map(p => enrichPlayerImmutably(p, players, present));
+
+    setIsAutoSimulating(true);
+    setIsSimulating(true);
+    setAnalyzedCombinationsCount(1);
+
+    const comboInterval = setInterval(() => {
+      setAnalyzedCombinationsCount(prev => {
+        if (prev < 50) return prev + 2;
+        clearInterval(comboInterval);
+        return 50;
+      });
+    }, 12);
+
+    const nextCount = simulationCount + 1;
+    setSimulationCount(nextCount);
+
+    setTimeout(() => {
+      try {
+        const now = Date.now();
+        const threshold = systemMetadata?.lastResetTimestamp || (now - (16 * 60 * 60 * 1000));
+        const sessionMatches = (matches || []).filter(m => m.timestamp > threshold);
+        const previousFormations = sessionMatches.map(m => ({
+          setterA: m.teamA[0],
+          playersA: m.teamA.slice(1),
+          setterB: m.teamB[0],
+          playersB: m.teamB.slice(1)
+        }));
+
+        const allMatchHistory = (matches || []).map(m => ({
+          teamA: m.teamA,
+          teamB: m.teamB,
+          winner: m.winner as 'A' | 'B',
+          timestamp: m.timestamp
+        }));
+
+        // Passamos randomizeOthers=true para injetar variabilidade técnica de forma estocástica e obter novas opções reais
+        const optResult = findBestBalancingCombination(enrichedPresent as any, previousFormations, false, allMatchHistory, true);
+
+        if (optResult) {
+          // Ordena todas as combinações geradas pela menor diferença de IC (menor deltaIC primeiro)
+          const sortedCombos = [...optResult.allCombinations].sort((a, b) => a.deltaIC - b.deltaIC);
+          
+          // Encontra uma combinação que ainda não foi exibida nesta sessão e é diferente do time atual em QUADRA
+          const currentKey = getTeamFormationKey(activeMatch);
+          let chosen = sortedCombos.find(c => {
+            const key = getTeamFormationKey(c.result);
+            return key && key !== currentKey && !seenCombinationsHistoryRef.current.includes(key);
+          });
+
+          // Se não houver combinações totalmente novas não vistas, pelo menos seleciona uma que seja diferente da atual
+          if (!chosen) {
+            chosen = sortedCombos.find(c => {
+              const key = getTeamFormationKey(c.result);
+              return key && key !== currentKey;
+            });
+          }
+
+          // Se todas as 12 combinações já foram vistas (ou há apenas uma matematicamente viável), seleciona a melhor.
+          if (!chosen) {
+            chosen = sortedCombos[0];
+          }
+
+          if (chosen) {
+            const chosenKey = getTeamFormationKey(chosen.result);
+            if (chosenKey) {
+              seenCombinationsHistoryRef.current.push(chosenKey);
+              // Mantém um histórico circulante (Rolling Window) das últimas 12 combinações para garantir novidade
+              if (seenCombinationsHistoryRef.current.length > 12) {
+                 seenCombinationsHistoryRef.current = seenCombinationsHistoryRef.current.slice(-12);
+              }
+            }
+
+            const immutableChosenResult = cloneGenerationResultImmutably(chosen.result, players, attendance);
+            setBestOptimizationInfo({
+              ...optResult,
+              bestCombination: {
+                teamGenerationMode: chosen.teamGenerationMode,
+                balancingRatingMode: chosen.balancingRatingMode,
+                balancingStrategy: chosen.balancingStrategy,
+                useTrueSkill: chosen.teamGenerationMode === 'TRUESKILL'
+              },
+              bestGenerationResult: immutableChosenResult,
+              minDeltaIC: chosen.deltaIC,
+              teamAIC: chosen.teamAIC,
+              teamBIC: chosen.teamBIC
+            });
+
+            setAutoOptimizedSelection({
+              teamGenerationMode: chosen.teamGenerationMode,
+              balancingRatingMode: chosen.balancingRatingMode,
+              balancingStrategy: chosen.balancingStrategy,
+              deltaIC: chosen.deltaIC,
+              teamAIC: chosen.teamAIC,
+              teamBIC: chosen.teamBIC,
+              isAutoSelected: true
+            });
+
+            // Atualiza as opções no store para colorir os botões correspondentes automaticamente
+            setTeamGenerationMode(chosen.teamGenerationMode);
+            setBalancingRatingMode(chosen.balancingRatingMode);
+            setBalancingStrategy(chosen.balancingStrategy);
+
+            // Injetar metadados detalhados para o PreviewTeams renderizar filtros e número da simulação atual
+            immutableChosenResult.balancingStrategy = chosen.balancingStrategy;
+            immutableChosenResult.balancingRatingMode = chosen.balancingRatingMode;
+            immutableChosenResult.teamGenerationMode = chosen.teamGenerationMode;
+            immutableChosenResult.appliedCascadeLevel = immutableChosenResult.techTierIds?.cascadeLevel || 'PADRÃO';
+            immutableChosenResult.combinationsCount = optResult.allCombinations.length;
+            immutableChosenResult.simulationNumber = nextCount;
+
+            // Garantir mapeamento explícito do campo gender para todos os jogadores no estado da pré-visualização
+            const mapGender = (p: any) => p ? { ...p, gender: p.gender || (typeof Gender !== 'undefined' && Gender?.MALE ? Gender.MALE : 'MALE') } : null;
+            if (immutableChosenResult.teamA) {
+              if (immutableChosenResult.teamA.setter) immutableChosenResult.teamA.setter = mapGender(immutableChosenResult.teamA.setter);
+              if (immutableChosenResult.teamA.players) immutableChosenResult.teamA.players = immutableChosenResult.teamA.players.map(mapGender).filter(Boolean);
+            }
+            if (immutableChosenResult.teamB) {
+              if (immutableChosenResult.teamB.setter) immutableChosenResult.teamB.setter = mapGender(immutableChosenResult.teamB.setter);
+              if (immutableChosenResult.teamB.players) immutableChosenResult.teamB.players = immutableChosenResult.teamB.players.map(mapGender).filter(Boolean);
+            }
+            if (immutableChosenResult.remainingPlayers) {
+              immutableChosenResult.remainingPlayers = immutableChosenResult.remainingPlayers.map(mapGender).filter(Boolean);
+            }
+
+            // Atualiza a pré-visualização para o resultado otimizado estritamente imutável
+            setPreviewResult(immutableChosenResult);
+            playSound('announce');
+          }
+        }
+      } catch (err) {
+        console.error('Erro ao simular combinações de balanceamento:', err);
+      } finally {
+        setIsAutoSimulating(false);
+        setIsSimulating(false);
+        setAnalyzedCombinationsCount(50);
+      }
+    }, 250);
+  };
 
   // Estados para gravação de voz e registro rápido de placar
   const [voiceModalOpen, setVoiceModalOpen] = useState(false);
@@ -174,6 +609,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
     setCountdownVal(3);
     setCountdownProgress(0);
     setCountdownIteration(0);
+    setAnalyzedCombinationsCount(1);
     setCountdownStepText('⚡ Selecionando os 12 Sócios da Fila...');
 
     const duration = 2800; // ms
@@ -185,6 +621,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
       const progress = Math.min(100, Math.floor((elapsed / duration) * 100));
       setCountdownProgress(progress);
       setCountdownIteration(Math.floor((progress / 100) * 100));
+      setAnalyzedCombinationsCount(Math.min(12, Math.floor((progress / 100) * 11) + 1));
 
       if (progress < 30) {
         setCountdownVal(3);
@@ -202,10 +639,15 @@ export const MatchView: React.FC<MatchViewProps> = ({
 
       if (elapsed >= duration) {
         clearInterval(timer);
-        onGenerate(onlyCurrent);
-        setTimeout(() => {
-          setIsGeneratingCountdown(false);
-        }, 300);
+        try {
+          onGenerate(onlyCurrent);
+        } catch (e) {
+          console.error("Erro na geração de times:", e);
+        } finally {
+          setTimeout(() => {
+            setIsGeneratingCountdown(false);
+          }, 300);
+        }
       }
     }, intervalTime);
   };
@@ -457,11 +899,11 @@ export const MatchView: React.FC<MatchViewProps> = ({
     startVoiceListening();
   };
   
-  const showTeamCards = systemMetadata.showTeamCards !== false;
-  const showWaitlist = systemMetadata.showWaitlist !== false;
-  const showPerformance = systemMetadata.showPerformance !== false;
-  const showTelemetry = systemMetadata.showTelemetry !== false;
-  const showCourtForecast = systemMetadata.showCourtForecast !== false;
+  const showTeamCards = systemMetadata.showTeamCards ?? true;
+  const showWaitlist = systemMetadata.showWaitlist ?? true;
+  const showPerformance = systemMetadata.showPerformance ?? true;
+  const showTelemetry = systemMetadata.showTelemetry ?? true;
+  const showCourtForecast = systemMetadata.showCourtForecast ?? true;
 
   const toggleTeamCards = () => updateSystemMetadata({ showTeamCards: !showTeamCards });
   const toggleWaitlist = () => updateSystemMetadata({ showWaitlist: !showWaitlist });
@@ -473,12 +915,37 @@ export const MatchView: React.FC<MatchViewProps> = ({
   const sixteenHoursAgo = Date.now() - (16 * 60 * 60 * 1000);
   const resetThreshold = systemMetadata.lastResetTimestamp || sixteenHoursAgo;
   
-  const todayMatches = (matches || [])
-    .filter(m => m.date === today && m.timestamp > resetThreshold)
-    .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+  const matchesForToday = (matches || []).filter(m => {
+    const mDate = m.date ? (m.date.includes('T') ? m.date.split('T')[0] : m.date) : '';
+    return mDate === today && (m.timestamp || 0) > resetThreshold;
+  });
+
+  const activeSessionDate = useMemo(() => {
+    if (matchesForToday.length > 0) return today;
+    const dates = new Set<string>();
+    (matches || []).forEach(m => {
+      const d = m.date ? (m.date.includes('T') ? m.date.split('T')[0] : m.date) : '';
+      if (d) dates.add(d);
+    });
+    const sorted = Array.from(dates).sort((a, b) => b.localeCompare(a));
+    return sorted[0] || today;
+  }, [matches, matchesForToday.length, today]);
+
+  const todayMatches = useMemo(() => {
+    if (matchesForToday.length > 0) return matchesForToday;
+    return (matches || [])
+      .filter(m => {
+        const mDate = m.date ? (m.date.includes('T') ? m.date.split('T')[0] : m.date) : '';
+        return mDate === activeSessionDate;
+      })
+      .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+  }, [matches, matchesForToday, activeSessionDate]);
   
   const hiddenTodayMatches = (matches || [])
-    .filter(m => m.date === today && m.timestamp <= resetThreshold);
+    .filter(m => {
+      const mDate = m.date ? (m.date.includes('T') ? m.date.split('T')[0] : m.date) : '';
+      return mDate === today && (m.timestamp || 0) <= resetThreshold;
+    });
   
   // Usar o contador do sistema como fonte primária, com fallback para o cálculo local
   // Se não houver partida gerada, o próximo número será o contador atual + 1
@@ -550,7 +1017,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
   const handleRunSynergyAgent = () => {
     if (!generationResult) return;
     setIsSolvingSynergy(true);
-    setTimeout(() => {
+    setTimeout(async () => {
       try {
         const { updatedResult, resolvedPairsCount } = runCriticalSynergySolverAgent(
           generationResult,
@@ -559,7 +1026,10 @@ export const MatchView: React.FC<MatchViewProps> = ({
           balancingStrategy,
           balancingRatingMode
         );
-        setGenerationResult(updatedResult);
+        const { players, attendance } = useStore.getState();
+        const immutableResult = cloneGenerationResultImmutably(updatedResult, players, attendance);
+        setGenerationResult(immutableResult);
+        await setDoc(doc(db, 'metadata', 'currentMatch'), cleanObject(immutableResult));
         showNotification(
           `Guerreiros Intelligence: Agente de Sinergia realizou simulações e otimizou a formação! (${resolvedPairsCount} par(es) dissolvido(s))`,
           'success'
@@ -1384,8 +1854,8 @@ export const MatchView: React.FC<MatchViewProps> = ({
   const suggestedPositionsB = generationResult ? calculateTeamPositions(generationResult.teamB, generationResult.teamA) : {};
 
   // Função para retornar a cor do LED (5 níveis de IC) para todos os jogadores da partida baseada estritamente no IC
-  const getPlayerIcColor = (playerId: string) => {
-    if (!generationResult) return { color: 'bg-white/20', title: 'N/A' };
+  const getPlayerLedStatus = (playerId: string) => {
+    if (!generationResult) return { icColor: 'bg-white/20', icTitle: 'N/A', techTier: null };
     const allPlayers = [
       generationResult.teamA?.setter,
       ...(generationResult.teamA?.players || []),
@@ -1394,53 +1864,79 @@ export const MatchView: React.FC<MatchViewProps> = ({
     ].filter(Boolean) as Player[];
 
     const player = allPlayers.find(p => p.id === playerId);
-    if (!player) return { color: 'bg-white/20', title: 'N/A' };
+    if (!player) return { icColor: 'bg-white/20', icTitle: 'N/A', techTier: null };
 
+    // 1. LED para o Nível de IC (Índice Composto) - Cor Sólida
     const ic = calculateCompositePerformanceRating(player);
-    
-    // Ordena todos os atletas em quadra por IC (do maior para o menor)
     const sortedByIc = [...allPlayers].sort((a, b) => calculateCompositePerformanceRating(b) - calculateCompositePerformanceRating(a));
-    const rankIndex = sortedByIc.findIndex(p => p.id === playerId);
+    const icRankIndex = sortedByIc.findIndex(p => p.id === playerId);
     const totalOnCourt = sortedByIc.length;
+    const hasSkills = player.skills && Object.keys(player.skills).length > 0;
+    const skillsSum = calculatePracticalSkillsSum(player);
 
-    // Sinalização por LED baseada na classificação de IC da partida:
-    // Nível 1 (Verde) -> Top 2 de IC da Partida
-    if (rankIndex <= 1 || ic >= 55) {
-      return { 
-        color: 'bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.9)] animate-pulse', 
-        title: `Nível 1 (Verde) - Top IC (Rank #${rankIndex + 1} | IC ${ic})` 
-      };
+    let icColor = 'bg-yellow-400';
+    let icTitle = `IC Médio (Rank #${icRankIndex + 1} | IC ${ic.toFixed(1)})`;
+
+    // Trava: Se não tem skills, ou a soma é muito baixa (ex: recém criado), não pode ser Verde ou Azul
+    if (!hasSkills || skillsSum <= 5) {
+      icColor = 'bg-slate-400 shadow-[0_0_8px_rgba(148,163,184,0.4)]';
+      icTitle = `Nível Técnico Não Avaliado (IC Base ${ic.toFixed(1)})`;
+    } else if ((icRankIndex <= 1 || ic >= 65) && skillsSum >= 14) {
+      icColor = 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]';
+      icTitle = `Nível 1 (Verde) - Elite (Rank #${icRankIndex + 1} | IC ${ic.toFixed(1)})`;
+    } else if ((icRankIndex <= Math.floor(totalOnCourt * 0.35) || ic >= 45) && skillsSum >= 12) {
+      icColor = 'bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.6)]';
+      icTitle = `Nível 2 (Azul) - Forte (Rank #${icRankIndex + 1} | IC ${ic.toFixed(1)})`;
+    } else if (icRankIndex >= totalOnCourt - 2 || ic < 18) {
+      icColor = 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]';
+      icTitle = `Nível 5 (Vermelho) - Bottom 2 IC (Rank #${icRankIndex + 1} | IC ${ic.toFixed(1)})`;
+    } else if (icRankIndex >= totalOnCourt - 4 || ic < 30) {
+      icColor = 'bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.6)]';
+      icTitle = `Nível 4 (Laranja) - IC Baixo (Rank #${icRankIndex + 1} | IC ${ic.toFixed(1)})`;
+    } else {
+      icColor = 'bg-yellow-400 shadow-[0_0_8px_rgba(250,204,21,0.6)]';
     }
-    // Nível 2 (Azul) -> Alto IC
-    if (rankIndex <= Math.floor(totalOnCourt * 0.35) || ic >= 42) {
-      return { 
-        color: 'bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.9)] animate-pulse', 
-        title: `Nível 2 (Azul) - Alto IC (Rank #${rankIndex + 1} | IC ${ic})` 
-      };
+
+    // 2. LED para o Tier Técnico (Habilidades Puras) - Contorno/Pulsante ou Badge
+    let techTier: { label: string, colorClass: string, dotClass: string, title: string } | null = null;
+    
+    // Check if player is in top/bottom from generationResult
+    if (generationResult.topTwoIds && generationResult.topTwoIds.includes(playerId)) {
+      techTier = { label: 'TOP 2', colorClass: 'bg-green-500/20 text-green-300 border-green-500/40', dotClass: 'bg-green-400 animate-pulse', title: 'Top 2 Técnico (Maior soma de Habilidades Práticas)' };
+    } else if (generationResult.techTierIds?.top4Ids && generationResult.techTierIds.top4Ids.includes(playerId)) {
+      techTier = { label: 'TOP 4', colorClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40', dotClass: 'bg-emerald-400 animate-pulse', title: 'Top 4 Técnico (Habilidades Práticas)' };
+    } else if (generationResult.bottomTwoIds && generationResult.bottomTwoIds.includes(playerId)) {
+      techTier = { label: 'BOT 2', colorClass: 'bg-red-500/20 text-red-300 border-red-500/40', dotClass: 'bg-red-400 animate-pulse', title: 'Bottom 2 Técnico (Menor soma de Habilidades Práticas)' };
+    } else if (generationResult.techTierIds?.bottom4Ids && generationResult.techTierIds.bottom4Ids.includes(playerId)) {
+      techTier = { label: 'BOT 4', colorClass: 'bg-orange-500/20 text-orange-300 border-orange-500/40', dotClass: 'bg-orange-400 animate-pulse', title: 'Bottom 4 Técnico (Habilidades Práticas)' };
     }
-    // Nível 5 (Vermelho) -> Bottom 2 de IC da Partida (Menores ICs)
-    if (rankIndex >= totalOnCourt - 2 || ic < 18) {
-      return { 
-        color: 'bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.9)] animate-pulse', 
-        title: `Nível 5 (Vermelho) - Bottom 2 IC (Rank #${rankIndex + 1} | IC ${ic})` 
-      };
+
+    // Fallback se n tiver no generationResult
+    if (!techTier) {
+      const skillsSum = calculatePracticalSkillsSum(player);
+      const sortedBySkills = [...allPlayers].sort((a, b) => calculatePracticalSkillsSum(b) - calculatePracticalSkillsSum(a));
+      const skillRank = sortedBySkills.findIndex(p => p.id === playerId);
+      
+      if (skillRank <= 1) {
+         techTier = { label: 'TOP 2', colorClass: 'bg-green-500/20 text-green-300 border-green-500/40', dotClass: 'bg-green-400 animate-pulse', title: `Top 2 Técnico (Soma Hab: ${skillsSum})` };
+      } else if (skillRank <= 3) {
+         techTier = { label: 'TOP 4', colorClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40', dotClass: 'bg-emerald-400 animate-pulse', title: `Top 4 Técnico (Soma Hab: ${skillsSum})` };
+      } else if (skillRank >= totalOnCourt - 2) {
+         techTier = { label: 'BOT 2', colorClass: 'bg-red-500/20 text-red-300 border-red-500/40', dotClass: 'bg-red-400 animate-pulse', title: `Bottom 2 Técnico (Soma Hab: ${skillsSum})` };
+      } else if (skillRank >= totalOnCourt - 4) {
+         techTier = { label: 'BOT 4', colorClass: 'bg-orange-500/20 text-orange-300 border-orange-500/40', dotClass: 'bg-orange-400 animate-pulse', title: `Bottom 4 Técnico (Soma Hab: ${skillsSum})` };
+      }
     }
-    // Nível 4 (Laranja) -> IC Baixo
-    if (rankIndex >= totalOnCourt - 4 || ic < 30) {
-      return { 
-        color: 'bg-orange-500 shadow-[0_0_10px_rgba(249,115,22,0.9)] animate-pulse', 
-        title: `Nível 4 (Laranja) - IC Baixo (Rank #${rankIndex + 1} | IC ${ic})` 
-      };
-    }
-    // Nível 3 (Amarelo) -> IC Médio
-    return { 
-      color: 'bg-yellow-400 shadow-[0_0_10px_rgba(250,204,21,0.9)] animate-pulse', 
-      title: `Nível 3 (Amarelo) - IC Médio (Rank #${rankIndex + 1} | IC ${ic})` 
+
+    return {
+       icColor,
+       icTitle,
+       techTier
     };
   };
 
   const icColorsMap = React.useMemo(() => {
-    const map: Record<string, { color: string, title: string }> = {};
+    const map: Record<string, { icColor: string, icTitle: string, techTier: any }> = {};
     if (!generationResult) return map;
     const allPlayers = [
       generationResult.teamA?.setter,
@@ -1449,7 +1945,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
       ...(generationResult.teamB?.players || [])
     ].filter(Boolean) as Player[];
     allPlayers.forEach(p => {
-      map[p.id] = getPlayerIcColor(p.id);
+      map[p.id] = getPlayerLedStatus(p.id);
     });
     return map;
   }, [generationResult]);
@@ -1524,15 +2020,13 @@ export const MatchView: React.FC<MatchViewProps> = ({
             <X className="w-4 h-4" /> {isSyncing ? 'Sincronizando...' : 'Finalizar Dia'}
           </button>
           
-          {todayMatches.length > 0 && (
-            <button 
+          <button 
               onClick={() => onDeleteMatchesByDate(today)} 
-              disabled={isSyncing}
-              className={`flex-1 flex items-center justify-center gap-2 text-[10px] font-black uppercase px-6 py-4 rounded-2xl border transition-all shadow-lg ${isSyncing ? 'bg-black/50 border-white/5 text-white/20' : 'border-rose-500/30 bg-black text-rose-500 hover:bg-rose-500/10'}`}
+              disabled={isSyncing || todayMatches.length === 0}
+              className={`flex-1 flex items-center justify-center gap-2 text-[10px] font-black uppercase px-6 py-4 rounded-2xl border transition-all shadow-lg ${isSyncing || todayMatches.length === 0 ? 'bg-black/50 border-white/5 text-white/20' : 'border-rose-500/30 bg-black text-rose-500 hover:bg-rose-500/10'}`}
             >
               <Trash2 className="w-4 h-4" /> {isSyncing ? 'Excluindo...' : 'Excluir Partidas de Hoje'}
             </button>
-          )}
         </div>
       )}
 
@@ -1558,204 +2052,239 @@ export const MatchView: React.FC<MatchViewProps> = ({
       )}
 
       {!generationResult ? (
-        <div className="min-h-[600px] flex flex-col items-center justify-center text-center space-y-10 bg-black rounded-[3rem] border border-white/5 border-l-[8px] border-l-brand-primary p-10 py-20 shadow-2xl animate-in fade-in zoom-in duration-1000">
+        <>
+        <div className="min-h-[600px] flex flex-col items-center justify-center text-center space-y-8 bg-black rounded-[3rem] border border-white/5 border-l-[8px] border-l-brand-primary p-6 sm:p-10 py-16 shadow-2xl animate-in fade-in zoom-in duration-1000 w-full max-w-4xl mx-auto">
           <div className="relative">
             <div className="absolute inset-0 bg-brand-primary/20 blur-3xl rounded-full animate-pulse"></div>
-            <div className="bg-brand-secondary p-10 rounded-full relative z-10 border border-brand-primary/30 shadow-2xl">
-              <Swords className="w-20 h-20 text-brand-primary" />
+            <div className="bg-brand-secondary p-8 rounded-full relative z-10 border border-brand-primary/30 shadow-2xl">
+              <Swords className="w-16 h-16 text-brand-primary" />
             </div>
           </div>
-          <div className="space-y-4">
-            <h2 className="text-5xl font-black text-white uppercase tracking-tighter leading-none flex items-center justify-center gap-2">
+          <div className="space-y-3">
+            <h2 className="text-4xl sm:text-5xl font-black text-white uppercase tracking-tighter leading-none flex items-center justify-center gap-2">
               Pronto para a Batalha?
               <HelpTooltip 
                 title="Times Gerados" 
                 content="O sistema equilibra os times automaticamente com base no nível técnico (estrelas) e prioriza quem está há mais tempo sem jogar."
               />
             </h2>
-            {attendance.length < 12 && (
-              <p className="text-lg text-brand-primary max-w-md mx-auto font-black uppercase tracking-widest opacity-80">
+            {attendance.length < 12 ? (
+              <p className="text-base sm:text-lg text-brand-primary max-w-md mx-auto font-black uppercase tracking-widest opacity-80">
                 Convoque pelo menos 12 guerreiros. Atualmente: {attendance.length}
+              </p>
+            ) : isAutoSimulating ? (
+              <p className="text-xs sm:text-sm text-brand-primary font-black uppercase tracking-widest animate-pulse">
+                ⚡ Combinando... ({analyzedCombinationsCount} / 12 combinações analisadas)
+              </p>
+            ) : (
+              <p className="text-xs sm:text-sm text-white/60 font-medium uppercase tracking-wider">
+                Times otimizados automaticamente pelo pipeline. Revise o preview abaixo e confirme para entrar em quadra.
               </p>
             )}
           </div>
 
-          <div className="flex flex-col gap-6 w-full max-w-sm">
-            {userRole === 'ADMIN' ? (
-              <>
-                <div className="bg-brand-secondary/40 border border-brand-primary/20 p-4 rounded-2xl space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h4 className="text-xs font-black text-white uppercase tracking-widest">Algoritmo de Balanceamento</h4>
-                      <p className="text-[10px] text-brand-primary/70 tracking-wider uppercase font-black">
-                        {teamGenerationMode === 'TRUESKILL' ? 'Sorteio com TrueSkill' : 'Sorteio por Habilidades Puras'}
-                      </p>
-                    </div>
-                    <div className="bg-brand-primary/10 p-2 rounded-xl">
-                      <Scale className="w-5 h-5 text-brand-primary" />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-white/10">
-                    <button
-                      type="button"
-                      onClick={() => setTeamGenerationMode('PURE_SKILLS')}
-                      className={`py-2 px-3 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all ${
-                        teamGenerationMode === 'PURE_SKILLS'
-                          ? 'bg-brand-primary text-brand-secondary shadow-lg shadow-brand-primary/20'
-                          : 'bg-black/50 text-white/60 hover:text-white border border-white/10'
-                      }`}
-                    >
-                      Habilidades Puras
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setTeamGenerationMode('TRUESKILL')}
-                      className={`py-2 px-3 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all ${
-                        teamGenerationMode === 'TRUESKILL'
-                          ? 'bg-brand-primary text-brand-secondary shadow-lg shadow-brand-primary/20'
-                          : 'bg-black/50 text-white/60 hover:text-white border border-white/10'
-                      }`}
-                    >
-                      TrueSkill
-                    </button>
-                  </div>
-                </div>
+          
+          {/* Pré-visualização Automática Imediata - Exibida se houver previewResult */}
+          {previewResult && (
+            <div className="w-full max-w-2xl mx-auto my-6 animate-in fade-in zoom-in-95 duration-500">
+              <PreviewTeams 
+                result={previewResult} 
+                onConfirm={(res) => { 
+                  if (onApplyPreview) {
+                    onApplyPreview(res || previewResult);
+                  } else {
+                    handleTriggerGenerate();
+                  }
+                }}
+                onCancel={() => setPreviewResult(null)}
+                onRegenerate={() => setPreviewResult(null)}
+                onRecalculate={handleAutoOptimizeCombinations}
+                isRecalculating={isAutoSimulating}
+                recalcCount={analyzedCombinationsCount}
+              />
+            </div>
+          )}
 
-                {/* Base de Cálculo de Eficiência (Híbrido vs IC Puro) */}
-                <div className="bg-brand-secondary/40 border border-brand-primary/20 p-4 rounded-2xl space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h4 className="text-xs font-black text-white uppercase tracking-widest">Base de Cálculo do Sorteio</h4>
-                      <p className="text-[10px] text-brand-primary/70 tracking-wider uppercase font-black">
-                        {balancingRatingMode === 'IC_ONLY' ? 'Sorteio por IC Puro (100% Técnico)' : 'Sorteio Híbrido (50% ELO + 50% IC)'}
-                      </p>
-                    </div>
-                    <div className="bg-brand-primary/10 p-2 rounded-xl">
-                      <BarChart3 className="w-5 h-5 text-brand-primary" />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-white/10">
-                    <button
-                      type="button"
-                      onClick={() => setBalancingRatingMode('IC_ONLY')}
-                      className={`py-2 px-3 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all ${
-                        balancingRatingMode === 'IC_ONLY'
-                          ? 'bg-brand-primary text-brand-secondary shadow-lg shadow-brand-primary/20'
-                          : 'bg-black/50 text-white/60 hover:text-white border border-white/10'
-                      }`}
-                    >
-                      IC Puro
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setBalancingRatingMode('HYBRID')}
-                      className={`py-2 px-3 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all ${
-                        balancingRatingMode === 'HYBRID'
-                          ? 'bg-brand-primary text-brand-secondary shadow-lg shadow-brand-primary/20'
-                          : 'bg-black/50 text-white/60 hover:text-white border border-white/10'
-                      }`}
-                    >
-                      Híbrido
-                    </button>
-                  </div>
-                </div>
+          {/* Painel Central de Geração Manual (Posicionado abaixo do preview) */}
+          {userRole === 'ADMIN' && attendance.length >= 12 && (
+            <div className="w-full max-w-3xl mt-4 flex flex-col items-center gap-6">
+              
+              {/* Botão Geração Manual (Exibe/Oculta Opções Avançadas) */}
+              <button
+                type="button"
+                onClick={() => setShowAdvancedOptions(prev => !prev)}
+                disabled={attendance.length < 12 || isSyncing || isGeneratingCountdown || isSimulating || isAutoSimulating}
+                className={`px-5 py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95 border shadow-lg ${
+                  showAdvancedOptions 
+                     ? 'bg-brand-primary/20 text-brand-primary border-brand-primary' 
+                     : 'bg-black/60 text-white/70 hover:text-white border-white/10 hover:border-white/30'
+                }`}
+              >
+                <SlidersHorizontal className="w-4 h-4" />
+                <span>{showAdvancedOptions ? 'Ocultar Filtros Manuais' : 'Ajustes e Geração Manual'}</span>
+              </button>
 
-                <div className="bg-brand-secondary/40 border border-brand-primary/20 p-4 rounded-2xl space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h4 className="text-xs font-black text-white uppercase tracking-widest">Estratégia de Balanceamento</h4>
-                      <p className="text-[10px] text-brand-primary/70 tracking-wider uppercase font-black">
-                        {balancingStrategy === 'BOTH' ? 'Híbrido (Bottom 2 + Sinergia)' : balancingStrategy === 'BOTTOM_TWO' ? 'Separar Bottom 2' : 'Foco em Sinergia'}
-                      </p>
-                    </div>
-                    <div className="bg-brand-primary/10 p-2 rounded-xl">
-                      <Zap className="w-5 h-5 text-brand-primary" />
-                    </div>
+              {/* Filtros de Geração Manual (Expandido se showAdvancedOptions for true) */}
+              {showAdvancedOptions && (
+                <div className="flex flex-col gap-5 w-full bg-brand-secondary/40 border border-brand-primary/30 p-6 rounded-3xl shadow-2xl animate-in fade-in slide-in-from-top-4 duration-300">
+                  <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                    <span className="text-xs font-black text-white uppercase tracking-widest flex items-center gap-2">
+                      <SlidersHorizontal className="w-4 h-4 text-brand-primary" /> Parâmetros de Geração Manual
+                    </span>
+                    <span className="text-[10px] text-brand-primary/70 font-black uppercase tracking-wider">
+                      Filtros Ativos
+                    </span>
                   </div>
-                  <div className="grid grid-cols-3 gap-1.5 pt-2 border-t border-white/10">
-                    <button
-                      type="button"
-                      onClick={() => setBalancingStrategy('BOTH')}
-                      className={`py-2 px-1.5 rounded-xl text-[8.5px] font-black uppercase tracking-wider transition-all text-center ${
-                        balancingStrategy === 'BOTH'
-                          ? 'bg-brand-primary text-brand-secondary shadow-lg shadow-brand-primary/20'
-                          : 'bg-black/50 text-white/60 hover:text-white border border-white/10'
-                      }`}
-                      title="Separa os 2 menos experientes em times opostos E otimiza a sinergia total"
-                    >
-                      Ambos
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setBalancingStrategy('BOTTOM_TWO')}
-                      className={`py-2 px-1.5 rounded-xl text-[8.5px] font-black uppercase tracking-wider transition-all text-center ${
-                        balancingStrategy === 'BOTTOM_TWO'
-                          ? 'bg-brand-primary text-brand-secondary shadow-lg shadow-brand-primary/20'
-                          : 'bg-black/50 text-white/60 hover:text-white border border-white/10'
-                      }`}
-                      title="Garante estritamente os 2 menos experientes em equipes opostas"
-                    >
-                      Bottom 2
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setBalancingStrategy('SYNERGY')}
-                      className={`py-2 px-1.5 rounded-xl text-[8.5px] font-black uppercase tracking-wider transition-all text-center ${
-                        balancingStrategy === 'SYNERGY'
-                          ? 'bg-brand-primary text-brand-secondary shadow-lg shadow-brand-primary/20'
-                          : 'bg-black/50 text-white/60 hover:text-white border border-white/10'
-                      }`}
-                      title="Prioriza otimizar pares com baixa sinergia sem trava rígida de Bottom 2"
-                    >
-                      Sinergia
-                    </button>
-                  </div>
-                </div>
-                    <button 
-                      onClick={() => handleTriggerGenerate()} 
-                      disabled={attendance.length < 12 || isSyncing || isGeneratingCountdown}
-                      className="w-full bg-brand-primary hover:bg-brand-primary/90 disabled:bg-brand-secondary disabled:text-white/40 text-brand-secondary font-black py-6 rounded-3xl shadow-2xl shadow-brand-primary/20 transition-all flex items-center justify-center gap-4 uppercase tracking-[0.2em] text-sm hover:scale-105 active:scale-95 border border-brand-primary/40 disabled:border-brand-primary/40"
-                    >
-                      {isSyncing || isGeneratingCountdown ? 'Otimizando IC...' : 'Escalar Elite'} <ArrowRight className="w-5 h-5" />
-                    </button>
-              </>
-            ) : (
-              <div className="bg-brand-secondary/50 p-6 rounded-3xl border border-brand-primary/10">
-                <p className="text-xs font-black text-brand-primary uppercase tracking-[0.2em] animate-pulse">Aguardando comando do organizador...</p>
-              </div>
-            )}
-          </div>
 
+                  {/* 1. Algoritmo de Balanceamento */}
+                  <div className="bg-black/40 border border-brand-primary/20 p-4 rounded-2xl space-y-3 text-left">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h4 className="text-xs font-black text-white uppercase tracking-widest">Algoritmo de Balanceamento</h4>
+                        <p className="text-[10px] text-brand-primary/70 tracking-wider uppercase font-black">
+                          {teamGenerationMode === 'TRUESKILL' ? 'Sorteio com TrueSkill' : 'Sorteio por Habilidades Puras'}
+                        </p>
+                      </div>
+                      <div className="bg-brand-primary/10 p-2 rounded-xl">
+                        <Scale className="w-5 h-5 text-brand-primary" />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 pt-2 border-t border-white/10">
+                      <Tooltip 
+                        title="Habilidades Puras" 
+                        content="Foca exclusivamente na soma das habilidades técnicas (ataque, defesa, levantamento e saque) para equilibrar os times de forma técnica."
+                        className="w-full"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTeamGenerationMode('PURE_SKILLS');
+                          }}
+                          className={`w-full py-2.5 px-3 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer ${
+                            teamGenerationMode === 'PURE_SKILLS'
+                              ? 'bg-brand-primary text-black shadow-lg shadow-brand-primary/40 scale-105'
+                              : 'bg-black/50 text-white/60 hover:text-white border border-white/10'
+                          }`}
+                        >
+                          Habilidades Puras
+                        </button>
+                      </Tooltip>
+                      <Tooltip 
+                        title="TrueSkill" 
+                        content="Algoritmo estatístico que considera o histórico de vitórias and a consistência para prever a probabilidade de equilíbrio real entre as equipes."
+                        className="w-full"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTeamGenerationMode('TRUESKILL');
+                          }}
+                          className={`w-full py-2.5 px-3 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer ${
+                            teamGenerationMode === 'TRUESKILL'
+                              ? 'bg-brand-primary text-black shadow-lg shadow-brand-primary/40 scale-105'
+                              : 'bg-black/50 text-white/60 hover:text-white border border-white/10'
+                          }`}
+                        >
+                          TrueSkill
+                        </button>
+                      </Tooltip>
+                    </div>
+                  </div>
+
+                  {/* 2. Estratégia de Balanceamento */}
+                  <div className="bg-black/40 border border-brand-primary/20 p-4 rounded-2xl space-y-3 text-left">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h4 className="text-xs font-black text-white uppercase tracking-widest">Estratégia de Balanceamento</h4>
+                        <p className="text-[10px] text-brand-primary/70 tracking-wider uppercase font-black">
+                          {balancingStrategy === 'BOTH' ? 'Híbrido (Bottom 2 + Sinergia)' : balancingStrategy === 'BOTTOM_TWO' ? 'Separar Bottom 2' : 'Foco em Sinergia'}
+                        </p>
+                      </div>
+                      <div className="bg-brand-primary/10 p-2 rounded-xl">
+                        <Zap className="w-5 h-5 text-brand-primary" />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-1.5 pt-2 border-t border-white/10">
+                      <Tooltip 
+                        title="Estratégia: Ambos" 
+                        content="Aplica simultaneamente a separação dos dois jogadores menos experientes e a otimização baseada no histórico de sinergia entre duplas."
+                        className="w-full"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBalancingStrategy('BOTH');
+                          }}
+                          className={`w-full py-2 px-1.5 rounded-xl text-[8.5px] font-black uppercase tracking-wider transition-all text-center cursor-pointer ${
+                            balancingStrategy === 'BOTH'
+                              ? 'bg-brand-primary text-black shadow-lg shadow-brand-primary/40 scale-105'
+                              : 'bg-black/50 text-white/60 hover:text-white border border-white/10'
+                          }`}
+                        >
+                          Ambos
+                        </button>
+                      </Tooltip>
+                      <Tooltip 
+                        title="Estratégia: Bottom 2" 
+                        content="Garante que os dois jogadores com menor pontuação técnica da partida fiquem obrigatoriamente em times opostos."
+                        className="w-full"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBalancingStrategy('BOTTOM_TWO');
+                          }}
+                          className={`w-full py-2 px-1.5 rounded-xl text-[8.5px] font-black uppercase tracking-wider transition-all text-center cursor-pointer ${
+                            balancingStrategy === 'BOTTOM_TWO'
+                              ? 'bg-brand-primary text-black shadow-lg shadow-brand-primary/40 scale-105'
+                              : 'bg-black/50 text-white/60 hover:text-white border border-white/10'
+                          }`}
+                        >
+                          Bottom 2
+                        </button>
+                      </Tooltip>
+                      <Tooltip 
+                        title="Estratégia: Sinergia" 
+                        content="Prioriza o equilíbrio baseado no histórico de vitórias/derrotas de duplas, evitando 'panelas' ou atritos recorrentes."
+                        className="w-full"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBalancingStrategy('SYNERGY');
+                          }}
+                          className={`w-full py-2 px-1.5 rounded-xl text-[8.5px] font-black uppercase tracking-wider transition-all text-center cursor-pointer ${
+                            balancingStrategy === 'SYNERGY' 
+                              ? 'bg-brand-primary text-black shadow-lg shadow-brand-primary/40 scale-105' 
+                              : 'bg-black/50 text-white/60 hover:text-white border border-white/10'
+                          }`}
+                        >
+                          Sinergia
+                        </button>
+                      </Tooltip>
+                    </div>
+                  </div>
+
+                  {/* Botão de Geração Manual */}
+                  <button 
+                    onClick={() => handlePreviewGenerate()} 
+                    disabled={attendance.length < 12 || isSyncing || isGeneratingCountdown || isSimulating || isAutoSimulating}
+                    className="w-full bg-brand-primary hover:bg-brand-primary/90 disabled:bg-brand-secondary disabled:text-white/40 text-black font-black py-4 rounded-2xl shadow-xl shadow-brand-primary/20 transition-all flex items-center justify-center gap-3 uppercase tracking-[0.2em] text-xs cursor-pointer"
+                  >
+                    {isSyncing || isGeneratingCountdown || isSimulating ? "Otimizando IC..." : "⚡ APLICAR PARÂMETROS MANUAIS"} <ArrowRight className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+        </div>
           {/* Botão e Card do Simulador de Estratégias / Previsão / Saída Antecipada */}
           {attendance.length >= 12 && (
             <div className="w-full max-w-4xl my-6 flex flex-col items-center gap-4">
               <div className="flex flex-wrap items-center justify-center gap-3 w-full sm:w-auto">
-                {userRole === 'ADMIN' && (
-                  <button
-                    type="button"
-                    onClick={() => setShowDepartureModal(true)}
-                    className="px-6 py-3.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-2xl font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 active:scale-95 cursor-pointer shadow-lg hover:border-amber-500/50"
-                  >
-                    <Clock className="w-4 h-4 text-amber-400" />
-                    <span>Horários de Saída</span>
-                  </button>
-                )}
 
-                <button
-                  type="button"
-                  onClick={() => setShowSimulatorInMatch(!showSimulatorInMatch)}
-                  className="px-6 py-3.5 bg-brand-primary/10 hover:bg-brand-primary/20 text-brand-primary border border-brand-primary/30 rounded-2xl font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 active:scale-95 cursor-pointer shadow-lg hover:border-brand-primary/50"
-                >
-                  <Sliders className="w-4 h-4" />
-                  <span>{showSimulatorInMatch ? 'Ocultar Simulador de Balanceamento' : '⚡ Simulador de Estratégias & Previsão da Próxima Escalação'}</span>
-                </button>
               </div>
-
-              {showSimulatorInMatch && (
-                <div className="w-full mt-4 animate-in fade-in zoom-in-95 duration-300">
-                  <TeamBalancingSimulatorCard onApplyToMatch={() => setShowSimulatorInMatch(false)} />
-                </div>
-              )}
             </div>
           )}
 
@@ -1818,7 +2347,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
               </p>
             </div>
           )}
-        </div>
+        </>
       ) : (
         <>
           <div className="flex flex-col gap-6 mb-8">
@@ -1928,14 +2457,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
                       {isSyncing || isGeneratingCountdown ? 'Otimizando IC...' : 'Nova Escalação'}
                     </button>
 
-                    <button 
-                      onClick={() => setShowDepartureModal(true)}
-                      className="flex items-center gap-3 text-[10px] font-black uppercase px-6 py-4 rounded-2xl border border-amber-500/40 bg-black text-amber-300 hover:bg-amber-500/10 transition-all shadow-lg cursor-pointer"
-                      title="Visualizar e editar horários de saída antecipada dos sócios"
-                    >
-                      <Clock className="w-4 h-4 text-amber-400" />
-                      <span>Horários de Saída</span>
-                    </button>
+
 
                     <button 
                       onClick={() => setShowSimulatorInMatch(!showSimulatorInMatch)}
@@ -1947,25 +2469,33 @@ export const MatchView: React.FC<MatchViewProps> = ({
                     </button>
 
                     <button 
-                      onClick={onDiscard} 
+                      onClick={() => {
+                        console.log('Discard button clicked');
+                        onDiscard();
+                      }}
                       disabled={isSyncing}
                       className={`flex items-center gap-3 text-[10px] font-black uppercase px-6 py-4 rounded-2xl border transition-all shadow-lg ${isSyncing ? 'bg-black/50 border-white/5 text-white/20' : 'border-red-500/30 bg-black text-red-500 hover:bg-red-500/10'}`}
                     >
                       <Trash2 className="w-4 h-4" />
                       Descartar
                     </button>
+
+                    {/* Simulador da Próxima Partida em Andamento */}
+                    {userRole === 'ADMIN' && showSimulatorInMatch && (
+                      <div className="w-full mt-8 animate-in fade-in zoom-in-95 duration-300">
+                        <TeamBalancingSimulatorCard onApplyToMatch={(res) => {
+                          if (onApplyPreview) onApplyPreview(res);
+                          setShowSimulatorInMatch(false);
+                        }} />
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
             )}
           </div>
 
-          {/* Simulador da Próxima Partida em Andamento */}
-          {userRole === 'ADMIN' && showSimulatorInMatch && (
-            <div className="mb-8 animate-in fade-in zoom-in-95 duration-300">
-              <TeamBalancingSimulatorCard onApplyToMatch={() => setShowSimulatorInMatch(false)} />
-            </div>
-          )}
+
 
           {/* Análise IA */}
           {userRole === 'ADMIN' && showAnalysis && (analysis || isAnalyzing) && (
@@ -2058,8 +2588,8 @@ export const MatchView: React.FC<MatchViewProps> = ({
           )}
                {/* Monitor de Balanceamento do AI Agent (Visual LED - COCKPIT UNIVALENTE) */}
           {generationResult && showTelemetry && (() => {
-            const effA = generationResult?.teamA?.totalEfficiency || generationResult?.teamA?.totalElo || 0;
-            const effB = generationResult?.teamB?.totalEfficiency || generationResult?.teamB?.totalElo || 0;
+            const effA = generationResult?.teamA?.totalEfficiency || generationResult?.teamA?.totalIC || 0;
+            const effB = generationResult?.teamB?.totalEfficiency || generationResult?.teamB?.totalIC || 0;
             const diffEff = Math.abs(effA - effB);
             const percentDiff = Math.max(0.1, Math.round((diffEff / Math.max(1, Math.min(effA, effB))) * 1000) / 10);
             const balanceQuality = Math.max(0, 100 - Math.round(percentDiff * 4));
@@ -2435,184 +2965,365 @@ export const MatchView: React.FC<MatchViewProps> = ({
             <MatchBalanceCharts generationResult={generationResult} />
           )}
 
-          {/* Resumo dos Times Otimizado */}
-          <div className="bg-black backdrop-blur-md rounded-2xl sm:rounded-[2.5rem] p-4 sm:p-8 mb-8 border border-white/5 border-l-[6px] border-l-brand-primary flex flex-col gap-8 animate-in fade-in duration-700 shadow-2xl">
-            {/* Header Times */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/10 pb-3 mb-2">
-               <h3 className="text-[10px] sm:text-xs font-black text-white uppercase tracking-[0.3em] flex items-center gap-2">
-                 Escalação por <span className="text-brand-primary">Eficiência Técnica</span>
-                 <span className="text-white/40 text-[9px] font-medium ml-2">({generationResult?.combinationsCount || 0} simulações)</span>
-               </h3>
-               {(() => {
-                 if (!generationResult) return null;
-                 const sumA = [generationResult.teamA?.setter, ...(generationResult.teamA?.players || [])].filter(Boolean).reduce((acc, p) => acc + calculateCompositePerformanceRating(p), 0);
-                 const sumB = [generationResult.teamB?.setter, ...(generationResult.teamB?.players || [])].filter(Boolean).reduce((acc, p) => acc + calculateCompositePerformanceRating(p), 0);
-                 const mean = (sumA + sumB) / 2;
-                 const stdDev = Math.abs(sumA - sumB) / 2;
-                 const stdDevPercent = mean > 0 ? (stdDev / mean) * 100 : 0;
-                 return (
-                   <div className="flex items-center gap-2">
-                     <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-wider px-3 py-1 rounded-full bg-brand-primary/10 border border-brand-primary/40 text-brand-primary font-mono flex items-center gap-1.5" title={`Desvio Padrão do IC entre as equipes (±${stdDev.toFixed(1)} IC | Média: ${mean.toFixed(1)})`}>
-                       <span>DESVIO PADRÃO:</span>
-                       <span className="text-white font-bold">{stdDevPercent.toFixed(1)}%</span>
-                     </span>
-                   </div>
-                 );
-               })()}
-            </div>
-
-            {/* Time A */}
-            <div className="flex flex-col gap-4 w-full">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="w-2.5 h-2.5 rounded-full bg-brand-primary shadow-[0_0_10px_rgba(245,196,41,0.6)] animate-pulse" />
-                  <span className="text-xs sm:text-sm font-black text-brand-primary uppercase tracking-widest">Equipe A</span>
+          {/* LayoutGroup para transições suaves de layout entre equipes e banco */}
+          <LayoutGroup id="swaps-layout-group">
+            {swapSelection && (
+              <div className="bg-brand-primary p-6 sm:p-8 rounded-2xl sm:rounded-[2.5rem] mb-8 flex items-center justify-between shadow-2xl shadow-brand-primary/30 animate-pulse border border-white/5 border-l-[8px] border-l-brand-secondary">
+                <div className="flex items-center gap-4 sm:gap-5">
+                  <div className="p-2 sm:p-3 bg-black rounded-xl sm:rounded-2xl shadow-xl">
+                    <ArrowLeftRight className="w-5 h-5 sm:w-6 sm:h-6 text-brand-primary" />
+                  </div>
+                  <div>
+                    <p className="text-black text-xs sm:text-sm font-black uppercase tracking-[0.2em]">Troca Ativa de Elite</p>
+                    <p className="text-black/60 text-[9px] sm:text-[10px] font-black uppercase tracking-[0.1em] mt-0.5 sm:mt-1">Selecione o alvo para concluir a substituição tática</p>
+                  </div>
                 </div>
-                <span className="text-[10px] sm:text-xs font-black text-brand-primary uppercase tracking-widest italic bg-brand-primary/10 px-3 py-1 rounded-full border border-brand-primary/40">
-                  SOMA IC: {[generationResult?.teamA?.setter, ...(generationResult?.teamA?.players || [])].filter(Boolean).reduce((sum, p) => sum + calculateCompositePerformanceRating(p), 0).toFixed(1)}
-                </span>
+                <button 
+                  onClick={() => setSwapSelection(null)} 
+                  className="bg-black text-brand-primary px-6 py-2.5 sm:px-8 sm:py-3 rounded-xl text-[9px] sm:text-[10px] font-black uppercase tracking-widest hover:scale-105 transition-all shadow-xl cursor-pointer"
+                >
+                  Cancelar
+                </button>
               </div>
-              
-              <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-x-6 gap-y-4 py-2">
-                {[generationResult.teamA.setter, ...generationResult.teamA.players].filter(Boolean).map((p, idx) => {
-                  const isHovered = hoveredPlayerId === p?.id;
-                  const isRival = rivalId === p?.id;
-                  
-                  return (
-                    <div 
-                      key={p?.id || idx} 
-                      onMouseEnter={() => setHoveredPlayerId(p?.id || null)}
-                      onMouseLeave={() => setHoveredPlayerId(null)}
-                      onTouchStart={() => setHoveredPlayerId(p?.id || null)}
-                      onTouchEnd={() => setHoveredPlayerId(null)}
-                      className={`flex items-center gap-2 group/player transition-all duration-300 ${isHovered || isRival ? 'scale-105' : ''}`}
-                    >
-                      <motion.span 
-                        initial={{ scale: 0.8, opacity: 0 }}
-                        animate={{ scale: 1, opacity: 1 }}
-                        transition={{ 
-                          type: "spring",
-                          stiffness: 300,
-                          damping: 15,
-                          delay: idx * 0.05
-                        }}
-                        className={`text-base sm:text-lg font-black uppercase tracking-tight relative transition-colors ${
-                          isHovered 
-                            ? 'text-white' 
-                            : isRival 
-                              ? 'text-brand-primary drop-shadow-[0_0_15px_rgba(245,196,41,0.8)]'
-                              : (p?.isOfficialSetter 
-                                ? 'text-brand-primary drop-shadow-[0_0_8px_rgba(245,196,41,0.5)]' 
-                                : 'text-brand-primary drop-shadow-[0_0_5px_rgba(245,196,41,0.3)]')
-                        }`}
-                      >
-                        {p?.name}
-                        {(() => {
-                          const icInfo = getPlayerIcColor(p?.id || '');
+            )}
+
+            {/* Resumo dos Times Otimizado e Cards dos Times */}
+            <AnimatePresence mode="popLayout">
+              {generationResult && (
+                <motion.div 
+                  layout
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 20 }}
+                  className="flex flex-col gap-8 mb-8"
+                >
+                  {/* Resumo dos Times Otimizado */}
+                  <div className="bg-zinc-900/40 backdrop-blur-md rounded-2xl sm:rounded-[2.5rem] p-4 sm:p-8 border border-white/5 border-l-[6px] border-l-brand-primary flex flex-col gap-8 shadow-2xl">
+                    {/* Header Times */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/10 pb-3 mb-2">
+                       <h3 className="text-[10px] sm:text-xs font-black text-white uppercase tracking-[0.3em] flex items-center gap-2">
+                         Escalação por <span className="text-brand-primary">Eficiência Técnica</span>
+                         <span className="text-white/40 text-[9px] font-medium ml-2">({generationResult?.combinationsCount || 0} simulações)</span>
+                       </h3>
+                       {(() => {
+                         if (!generationResult) return null;
+                         const sumA = [generationResult.teamA?.setter, ...(generationResult.teamA?.players || [])].filter(Boolean).reduce((acc, p) => acc + calculateCompositePerformanceRating(p), 0);
+                         const sumB = [generationResult.teamB?.setter, ...(generationResult.teamB?.players || [])].filter(Boolean).reduce((acc, p) => acc + calculateCompositePerformanceRating(p), 0);
+                         const mean = (sumA + sumB) / 2;
+                         const stdDev = Math.abs(sumA - sumB) / 2;
+                         const stdDevPercent = mean > 0 ? (stdDev / mean) * 100 : 0;
+                         return (
+                           <div className="flex items-center gap-2">
+                             <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-wider px-3 py-1 rounded-full bg-brand-primary/10 border border-brand-primary/40 text-brand-primary font-mono flex items-center gap-1.5" title={`Desvio Padrão do IC entre as equipes (±${stdDev.toFixed(1)} IC | Média: ${mean.toFixed(1)})`}>
+                               <span>DESVIO PADRÃO:</span>
+                               <span className="text-white font-bold">{stdDevPercent.toFixed(1)}%</span>
+                             </span>
+                           </div>
+                         );
+                       })()}
+                    </div>
+
+                    {/* Verificação Estatutária das Regras do Clube (Levantadores, Gênero, Top/Bottom) */}
+                    {rules && (
+                      <div className="flex flex-wrap items-center gap-2 text-[9px] sm:text-[10px] font-black uppercase tracking-wider bg-black/40 p-2.5 sm:p-3 rounded-xl border border-white/10 -mt-4 mb-2">
+                        <span className={`px-2.5 py-1 rounded-lg border flex items-center gap-1.5 transition-all ${
+                          rules.setter.fulfilled 
+                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' 
+                            : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                        }`} title={rules.setter.description}>
+                          {rules.setter.fulfilled ? <Check className="w-3 h-3 text-emerald-400" /> : <AlertTriangle className="w-3 h-3 text-rose-400" />}
+                          Levantadores: <span className={rules.setter.fulfilled ? 'text-white' : 'text-rose-400 font-bold'}>{rules.setter.badgeLabel}</span>
+                        </span>
+
+                        <span className={`px-2.5 py-1 rounded-lg border flex items-center gap-1.5 transition-all ${
+                          rules.gender.fulfilled 
+                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' 
+                            : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                        }`} title={rules.gender.description}>
+                          {rules.gender.fulfilled ? <Check className="w-3 h-3 text-emerald-400" /> : <AlertTriangle className="w-3 h-3 text-rose-400" />}
+                          Gênero: <span className={rules.gender.fulfilled ? 'text-white' : 'text-rose-400 font-bold'}>{rules.gender.badgeLabel}</span>
+                        </span>
+
+                        <span className={`px-2.5 py-1 rounded-lg border flex items-center gap-1.5 transition-all ${
+                          rules.topBottom.fulfilled 
+                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' 
+                            : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                        }`} title={rules.topBottom.description}>
+                          {rules.topBottom.fulfilled ? <Check className="w-3 h-3 text-emerald-400" /> : <AlertTriangle className="w-3 h-3 text-rose-400" />}
+                          Top/Bottom: <span className="text-white">{rules.topBottom.badgeLabel}</span>
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Time A */}
+                    <div className="flex flex-col gap-4 w-full">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div className="w-2.5 h-2.5 rounded-full bg-brand-primary shadow-[0_0_10px_rgba(245,196,41,0.6)] animate-pulse" />
+                          <span className="text-xs sm:text-sm font-black text-brand-primary uppercase tracking-widest">Equipe A</span>
+                        </div>
+                        <span className="text-[10px] sm:text-xs font-black text-brand-primary uppercase tracking-widest italic bg-brand-primary/10 px-3 py-1 rounded-full border border-brand-primary/40">
+                          SOMA IC: {[generationResult?.teamA?.setter, ...(generationResult?.teamA?.players || [])].filter(Boolean).reduce((sum, p) => sum + calculateCompositePerformanceRating(p), 0).toFixed(1)}
+                        </span>
+                      </div>
+                      
+                      <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-x-6 gap-y-4 py-2">
+                        {[(generationResult?.teamA?.setter || null), ...(generationResult?.teamA?.players || [])].filter(Boolean).map((p, idx) => {
+                          const isHovered = hoveredPlayerId === p?.id;
+                          const isRival = rivalId === p?.id;
+                          
                           return (
-                            <div className="inline-block relative ml-2 align-middle -translate-y-[2px]" title={icInfo.title}>
-                              <div className={`w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full ${icInfo.color}`} />
+                            <div 
+                              key={p?.id || idx} 
+                              onMouseEnter={() => setHoveredPlayerId(p?.id || null)}
+                              onMouseLeave={() => setHoveredPlayerId(null)}
+                              onTouchStart={() => setHoveredPlayerId(p?.id || null)}
+                              onTouchEnd={() => setHoveredPlayerId(null)}
+                              className={`flex items-center gap-2 group/player transition-all duration-300 ${isHovered || isRival ? 'scale-105' : ''}`}
+                            >
+                              <motion.span 
+                                initial={{ scale: 0.8, opacity: 0 }}
+                                animate={{ scale: 1, opacity: 1 }}
+                                transition={{ 
+                                  type: "spring",
+                                  stiffness: 300,
+                                  damping: 15,
+                                  delay: idx * 0.05
+                                }}
+                                className={`text-base sm:text-lg font-black uppercase tracking-tight relative transition-colors ${
+                                  isHovered 
+                                    ? 'text-white' 
+                                    : isRival 
+                                      ? 'text-brand-primary drop-shadow-[0_0_15px_rgba(245,196,41,0.8)]'
+                                      : (p?.isOfficialSetter 
+                                        ? 'text-brand-primary drop-shadow-[0_0_8px_rgba(245,196,41,0.5)]' 
+                                        : 'text-brand-primary drop-shadow-[0_0_5px_rgba(245,196,41,0.3)]')
+                                }`}
+                              >
+                                {p?.name}
+                                {(() => {
+                                  const icInfo = getPlayerLedStatus(p?.id || '');
+                                  const isTop4 = generationResult?.techTierIds?.top4Ids?.includes(p?.id || '');
+                                  const isTop2 = generationResult?.topTwoIds?.includes(p?.id || '');
+                                  const isBottom4 = generationResult?.techTierIds?.bottom4Ids?.includes(p?.id || '');
+                                  const isBottom2 = generationResult?.bottomTwoIds?.includes(p?.id || '');
+                                  return (
+                                    <>
+                                      <div className="inline-block relative ml-2 align-middle -translate-y-[2px]" title={icInfo.icTitle}>
+                                        <div className={`w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full ${icInfo.icColor}`} />
+                                      </div>
+                                      {isTop4 && (
+                                        <span className="text-[8px] sm:text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 ml-1.5 align-middle" title="Top 4 Técnico (Habilidades Puras)">
+                                          TOP 4
+                                        </span>
+                                      )}
+                                      {isTop2 && !isTop4 && (
+                                        <span className="text-[8px] sm:text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-green-500/20 text-green-300 border border-green-500/30 ml-1.5 align-middle" title="Top 2 Técnico (Habilidades Puras)">
+                                          TOP 2
+                                        </span>
+                                      )}
+                                      {isBottom4 && (
+                                        <span className="text-[8px] sm:text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-400 border border-orange-500/30 ml-1.5 align-middle" title="Bottom 4 Técnico (Habilidades Puras)">
+                                          BOT 4
+                                        </span>
+                                      )}
+                                      {isBottom2 && !isBottom4 && (
+                                        <span className="text-[8px] sm:text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 border border-red-500/30 ml-1.5 align-middle" title="Bottom 2 Técnico (Habilidades Puras)">
+                                          BOT 2
+                                        </span>
+                                      )}
+                                    </>
+                                  );
+                                })()}
+                                <span className={`text-[11px] sm:text-[14px] font-black px-2.5 py-1 rounded border ml-2 transition-all ${
+                                  isHovered 
+                                    ? 'bg-brand-primary text-black border-brand-primary scale-110 shadow-lg' 
+                                    : isRival
+                                      ? 'bg-brand-primary border-brand-primary text-black'
+                                      : 'bg-brand-primary/20 text-brand-primary border-brand-primary/30'
+                                }`}>
+                                  P{suggestedPositionsA[p?.id || '']}
+                                </span>
+                                <span className="text-[9px] sm:text-[11px] font-black opacity-40 ml-1.5 sm:ml-2 tracking-widest" title={`Índice Composto (Técnica + WinRate): ${calculateCompositePerformanceRating(p).toFixed(1)}`}>
+                                  IC {calculateCompositePerformanceRating(p).toFixed(1)}
+                                </span>
+                                <span className={`absolute -bottom-0.5 left-0 h-0.5 bg-brand-primary transition-all duration-500 ${isHovered || isRival ? 'w-full' : 'w-0 group-hover/player:w-full'}`} />
+                              </motion.span>
+                              {p?.isOfficialSetter && <Sparkles className={`w-3.5 h-3.5 sm:w-5 sm:h-5 text-brand-primary shrink-0 transition-all ${isHovered ? 'animate-spin' : 'animate-pulse'}`} />}
                             </div>
                           );
-                        })()}
-                        <span className={`text-[11px] sm:text-[14px] font-black px-2.5 py-1 rounded border ml-2 transition-all ${
-                          isHovered 
-                            ? 'bg-brand-primary text-black border-brand-primary scale-110 shadow-lg' 
-                            : isRival
-                              ? 'bg-brand-primary border-brand-primary text-black'
-                              : 'bg-brand-primary/20 text-brand-primary border-brand-primary/30'
-                        }`}>
-                          P{suggestedPositionsA[p?.id || '']}
-                        </span>
-                        <span className="text-[9px] sm:text-[11px] font-black opacity-40 ml-1.5 sm:ml-2 tracking-widest" title={`Índice Composto (Técnica + WinRate): ${calculateCompositePerformanceRating(p).toFixed(1)}`}>
-                          IC {calculateCompositePerformanceRating(p).toFixed(1)}
-                        </span>
-                        <span className={`absolute -bottom-0.5 left-0 h-0.5 bg-brand-primary transition-all duration-500 ${isHovered || isRival ? 'w-full' : 'w-0 group-hover/player:w-full'}`} />
-                      </motion.span>
-                      {p?.isOfficialSetter && <Sparkles className={`w-3.5 h-3.5 sm:w-5 sm:h-5 text-brand-primary shrink-0 transition-all ${isHovered ? 'animate-spin' : 'animate-pulse'}`} />}
+                        })}
+                      </div>
                     </div>
-                  );
-                })}
-              </div>
-            </div>
 
-            <div className="h-px w-full bg-white/10" />
+                    <div className="h-px w-full bg-white/10" />
 
-            {/* Time B */}
-            <div className="flex flex-col gap-4 w-full">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="w-2.5 h-2.5 rounded-full bg-white shadow-[0_0_10px_rgba(255,255,255,0.6)] animate-pulse" />
-                  <span className="text-xs sm:text-sm font-black text-white uppercase tracking-widest">Equipe B</span>
-                </div>
-                <span className="text-[10px] sm:text-xs font-black text-white/80 uppercase tracking-widest italic bg-white/5 px-3 py-1 rounded-full border border-brand-primary/40">
-                  SOMA IC: {[generationResult?.teamB?.setter, ...(generationResult?.teamB?.players || [])].filter(Boolean).reduce((sum, p) => sum + calculateCompositePerformanceRating(p), 0).toFixed(1)}
-                </span>
-              </div>
+                    {/* Time B */}
+                    <div className="flex flex-col gap-4 w-full">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div className="w-2.5 h-2.5 rounded-full bg-white shadow-[0_0_10px_rgba(255,255,255,0.6)] animate-pulse" />
+                          <span className="text-xs sm:text-sm font-black text-white uppercase tracking-widest">Equipe B</span>
+                        </div>
+                        <span className="text-[10px] sm:text-xs font-black text-white/80 uppercase tracking-widest italic bg-white/5 px-3 py-1 rounded-full border border-brand-primary/40">
+                          SOMA IC: {[generationResult?.teamB?.setter, ...(generationResult?.teamB?.players || [])].filter(Boolean).reduce((sum, p) => sum + calculateCompositePerformanceRating(p), 0).toFixed(1)}
+                        </span>
+                      </div>
 
-              <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-x-6 gap-y-4 py-2">
-                {[generationResult.teamB.setter, ...generationResult.teamB.players].filter(Boolean).map((p, idx) => {
-                  const isHovered = hoveredPlayerId === p?.id;
-                  const isRival = rivalId === p?.id;
+                      <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-x-6 gap-y-4 py-2">
+                        {[(generationResult?.teamB?.setter || null), ...(generationResult?.teamB?.players || [])].filter(Boolean).map((p, idx) => {
+                          const isHovered = hoveredPlayerId === p?.id;
+                          const isRival = rivalId === p?.id;
 
-                  return (
-                    <div 
-                      key={p?.id || idx} 
-                      onMouseEnter={() => setHoveredPlayerId(p?.id || null)}
-                      onMouseLeave={() => setHoveredPlayerId(null)}
-                      onTouchStart={() => setHoveredPlayerId(p?.id || null)}
-                      onTouchEnd={() => setHoveredPlayerId(null)}
-                      className={`flex items-center gap-2 group/player transition-all duration-300 ${isHovered || isRival ? 'scale-105' : ''}`}
-                    >
-                      <motion.span 
-                        initial={{ scale: 0.8, opacity: 0 }}
-                        animate={{ scale: 1, opacity: 1 }}
-                        transition={{ 
-                          type: "spring",
-                          stiffness: 300,
-                          damping: 15,
-                          delay: idx * 0.05
-                        }}
-                        className={`text-base sm:text-lg font-black uppercase tracking-tight relative transition-colors ${
-                          isHovered 
-                            ? 'text-brand-primary' 
-                            : isRival
-                              ? 'text-white drop-shadow-[0_0_15px_rgba(255,255,255,0.8)]'
-                              : (p?.isOfficialSetter 
-                                ? 'text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.5)]' 
-                                : 'text-white/70 drop-shadow-[0_0_5px_rgba(255,255,255,0.3)]')
-                        }`}
-                      >
-                        {p?.name}
-                        {(() => {
-                          const icInfo = getPlayerIcColor(p?.id || '');
                           return (
-                            <div className="inline-block relative ml-2 align-middle -translate-y-[2px]" title={icInfo.title}>
-                              <div className={`w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full ${icInfo.color}`} />
+                            <div 
+                              key={p?.id || idx} 
+                              onMouseEnter={() => setHoveredPlayerId(p?.id || null)}
+                              onMouseLeave={() => setHoveredPlayerId(null)}
+                              onTouchStart={() => setHoveredPlayerId(p?.id || null)}
+                              onTouchEnd={() => setHoveredPlayerId(null)}
+                              className={`flex items-center gap-2 group/player transition-all duration-300 ${isHovered || isRival ? 'scale-105' : ''}`}
+                            >
+                              <motion.span 
+                                initial={{ scale: 0.8, opacity: 0 }}
+                                animate={{ scale: 1, opacity: 1 }}
+                                transition={{ 
+                                  type: "spring",
+                                  stiffness: 300,
+                                  damping: 15,
+                                  delay: idx * 0.05
+                                }}
+                                className={`text-base sm:text-lg font-black uppercase tracking-tight relative transition-colors ${
+                                  isHovered 
+                                    ? 'text-brand-primary' 
+                                    : isRival
+                                      ? 'text-white drop-shadow-[0_0_15px_rgba(255,255,255,0.8)]'
+                                      : (p?.isOfficialSetter 
+                                        ? 'text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.5)]' 
+                                        : 'text-white/70 drop-shadow-[0_0_5px_rgba(255,255,255,0.3)]')
+                                }`}
+                              >
+                                {p?.name}
+                                {(() => {
+                                  const icInfo = getPlayerLedStatus(p?.id || '');
+                                  const isTop4 = generationResult?.techTierIds?.top4Ids?.includes(p?.id || '');
+                                  const isTop2 = generationResult?.topTwoIds?.includes(p?.id || '');
+                                  const isBottom4 = generationResult?.techTierIds?.bottom4Ids?.includes(p?.id || '');
+                                  const isBottom2 = generationResult?.bottomTwoIds?.includes(p?.id || '');
+                                  return (
+                                    <>
+                                      <div className="inline-block relative ml-2 align-middle -translate-y-[2px]" title={icInfo.icTitle}>
+                                        <div className={`w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full ${icInfo.icColor}`} />
+                                      </div>
+                                      {isTop4 && (
+                                        <span className="text-[8px] sm:text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 ml-1.5 align-middle" title="Top 4 Técnico (Habilidades Puras)">
+                                          TOP 4
+                                        </span>
+                                      )}
+                                      {isTop2 && !isTop4 && (
+                                        <span className="text-[8px] sm:text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-green-500/20 text-green-300 border border-green-500/30 ml-1.5 align-middle" title="Top 2 Técnico (Habilidades Puras)">
+                                          TOP 2
+                                        </span>
+                                      )}
+                                      {isBottom4 && (
+                                        <span className="text-[8px] sm:text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-400 border border-orange-500/30 ml-1.5 align-middle" title="Bottom 4 Técnico (Habilidades Puras)">
+                                          BOT 4
+                                        </span>
+                                      )}
+                                      {isBottom2 && !isBottom4 && (
+                                        <span className="text-[8px] sm:text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 border border-red-500/30 ml-1.5 align-middle" title="Bottom 2 Técnico (Habilidades Puras)">
+                                          BOT 2
+                                        </span>
+                                      )}
+                                    </>
+                                  );
+                                })()}
+                                <span className={`text-[11px] sm:text-[14px] font-black px-2.5 py-1 rounded border ml-2 transition-all ${
+                                  isHovered 
+                                    ? 'bg-white text-black border-white scale-110 shadow-lg' 
+                                    : isRival
+                                      ? 'bg-white border-white text-black'
+                                      : 'bg-white/10 text-white border-white/20'
+                                }`}>
+                                  P{suggestedPositionsB[p?.id || '']}
+                                </span>
+                                <span className="text-[9px] sm:text-[11px] font-black opacity-40 ml-1.5 sm:ml-2 tracking-widest" title={`Índice Composto (Técnica + WinRate): ${calculateCompositePerformanceRating(p).toFixed(1)}`}>
+                                  IC {calculateCompositePerformanceRating(p).toFixed(1)}
+                                </span>
+                                <span className={`absolute -bottom-0.5 left-0 h-0.5 bg-white transition-all duration-500 ${isHovered || isRival ? 'w-full' : 'w-0 group-hover/player:w-full'}`} />
+                              </motion.span>
+                              {p?.isOfficialSetter && <Sparkles className={`w-3.5 h-3.5 sm:w-5 sm:h-5 text-white shrink-0 transition-all ${isHovered ? 'animate-spin' : 'animate-pulse'}`} />}
                             </div>
                           );
-                        })()}
-                        <span className={`text-[11px] sm:text-[14px] font-black px-2.5 py-1 rounded border ml-2 transition-all ${
-                          isHovered 
-                            ? 'bg-white text-black border-white scale-110 shadow-lg' 
-                            : isRival
-                              ? 'bg-white border-white text-black'
-                              : 'bg-white/10 text-white border-white/20'
-                        }`}>
-                          P{suggestedPositionsB[p?.id || '']}
-                        </span>
-                        <span className="text-[9px] sm:text-[11px] font-black opacity-40 ml-1.5 sm:ml-2 tracking-widest" title={`Índice Composto (Técnica + WinRate): ${calculateCompositePerformanceRating(p).toFixed(1)}`}>
-                          IC {calculateCompositePerformanceRating(p).toFixed(1)}
-                        </span>
-                        <span className={`absolute -bottom-0.5 left-0 h-0.5 bg-white transition-all duration-500 ${isHovered || isRival ? 'w-full' : 'w-0 group-hover/player:w-full'}`} />
-                      </motion.span>
-                      {p?.isOfficialSetter && <Sparkles className={`w-3.5 h-3.5 sm:w-5 sm:h-5 text-white shrink-0 transition-all ${isHovered ? 'animate-spin' : 'animate-pulse'}`} />}
+                        })}
+                      </div>
                     </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
+                  </div>
+
+                  {/* Cards Detalhados dos Times A e B (Ocultáveis) */}
+                  <AnimatePresence>
+                    {showTeamCards && (
+                      <motion.div 
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="grid grid-cols-1 lg:grid-cols-2 gap-8 sm:gap-10 overflow-hidden"
+                      >
+                        <TeamCard 
+                          title="Time A" 
+                          team={generationResult.teamA} 
+                          opponent={generationResult.teamB}
+                          color="green" 
+                          attendance={attendance}
+                          userRole={userRole}
+                          onSwap={(pid) => onSwapClick('A', pid)}
+                          onRemove={(pid) => onRemovePlayer('A', pid)}
+                          onPromote={(pid) => onPromoteToSetter('A', pid)}
+                          onQuickSelectSlot={openQuickSwap}
+                          activeSwapId={swapSelection?.playerId}
+                          hoveredPlayerId={hoveredPlayerId}
+                          setHoveredPlayerId={setHoveredPlayerId}
+                          rivalId={rivalId}
+                          bottomTwoIds={new Set(generationResult.bottomTwoIds || [])}
+                          topTwoIds={new Set(generationResult.topTwoIds || [])}
+                          techTierIds={generationResult.techTierIds}
+                          icColors={icColorsMap}
+                        />
+                        <TeamCard 
+                          title="Time B" 
+                          team={generationResult.teamB} 
+                          opponent={generationResult.teamA}
+                          color="blue" 
+                          attendance={attendance}
+                          userRole={userRole}
+                          onSwap={(pid) => onSwapClick('B', pid)}
+                          onRemove={(pid) => onRemovePlayer('B', pid)}
+                          onPromote={(pid) => onPromoteToSetter('B', pid)}
+                          onQuickSelectSlot={openQuickSwap}
+                          activeSwapId={swapSelection?.playerId}
+                          hoveredPlayerId={hoveredPlayerId}
+                          setHoveredPlayerId={setHoveredPlayerId}
+                          rivalId={rivalId}
+                          bottomTwoIds={new Set(generationResult.bottomTwoIds || [])}
+                          topTwoIds={new Set(generationResult.topTwoIds || [])}
+                          techTierIds={generationResult.techTierIds}
+                          icColors={icColorsMap}
+                        />
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  {/* Status da Rodada (Feedback Imediato de Regras e Equilíbrio de ELO) */}
+                  <div className="mt-8">
+                    <RoundStatusCard 
+                      generationResult={generationResult}
+                      onAutoFix={onAutoFixInconsistencies}
+                      isSyncing={isSyncing}
+                    />
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
           {/* Placar e Ações de Partida */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-10">
@@ -3136,16 +3847,30 @@ export const MatchView: React.FC<MatchViewProps> = ({
                             initial={{ opacity: 0, scale: 0.95 }}
                             animate={{ opacity: 1, scale: 1 }}
                             type="button"
+                            disabled={isSyncing}
                             onClick={() => {
                               const winner = scoreA > scoreB ? 'A' : 'B';
                               onFinishMatch(winner, scoreA, scoreB, playEvents);
                               announceWinner(winner, scoreA, scoreB);
                               playSound(winner === 'A' ? 'winA' : 'winB');
                             }}
-                            className="w-full py-4 bg-brand-primary text-black font-black uppercase text-xs tracking-widest rounded-2xl hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-brand-primary/20 transition-all flex items-center justify-center gap-2 relative overflow-hidden"
+                            className={`w-full py-4 font-black uppercase text-xs tracking-widest rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2 relative overflow-hidden ${
+                              isSyncing 
+                                ? 'bg-zinc-800 text-white/30 cursor-not-allowed border border-white/5' 
+                                : 'bg-brand-primary text-black hover:scale-[1.02] active:scale-[0.98] shadow-brand-primary/20'
+                            }`}
                           >
-                            <Trophy className="w-4 h-4 animate-bounce" />
-                            <span>FINALIZAR PARTIDA ({scoreA} x {scoreB})</span>
+                            {isSyncing ? (
+                              <>
+                                <RefreshCw className="w-4 h-4 animate-spin" />
+                                <span>SINCRONIZANDO...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Trophy className="w-4 h-4 animate-bounce" />
+                                <span>FINALIZAR PARTIDA ({scoreA} x {scoreB})</span>
+                              </>
+                            )}
                           </motion.button>
                         )}
                       </div>
@@ -3268,202 +3993,160 @@ export const MatchView: React.FC<MatchViewProps> = ({
             </div>
           )}
 
-          {/* Lista de Espera */}
-          {showWaitlist && (
-            <div className="bg-black rounded-[2rem] sm:rounded-[3rem] p-6 sm:p-10 mb-10 border border-white/5 border-l-[8px] border-l-brand-primary shadow-2xl relative overflow-hidden">
-              <div className="absolute top-0 right-0 p-6 sm:p-10 opacity-5 pointer-events-none">
-                <Clock className="w-20 h-20 sm:w-40 sm:h-40 text-brand-primary" />
-              </div>
-              
-              <div className="flex items-center justify-between mb-6 sm:mb-10 relative z-10">
-                <div className="flex items-center gap-3 sm:gap-4">
-                  <div className="p-2 sm:p-3 bg-brand-secondary rounded-xl sm:rounded-2xl border border-brand-primary/40">
-                    <Clock className="w-5 h-5 sm:w-6 sm:h-6 text-brand-primary" />
-                  </div>
-                  <div>
-                    <h3 className="text-xs font-black text-white uppercase tracking-[0.3em]">Guerreiros em Espera</h3>
-                    <p className="text-[10px] font-black text-white uppercase tracking-[0.2em] mt-1">Fila de Prioridade Dinâmica</p>
-                  </div>
+            {/* Lista de Espera */}
+            {showWaitlist && (
+              <div className="bg-black rounded-[2rem] sm:rounded-[3rem] p-6 sm:p-10 mb-10 border border-white/5 border-l-[8px] border-l-brand-primary shadow-2xl relative overflow-hidden">
+                <div className="absolute top-0 right-0 p-6 sm:p-10 opacity-5 pointer-events-none">
+                  <Clock className="w-20 h-20 sm:w-40 sm:h-40 text-brand-primary" />
                 </div>
-                <div className="bg-brand-primary/10 text-brand-primary px-3 py-1.5 sm:px-6 sm:py-2 rounded-xl sm:rounded-2xl border border-brand-primary/30 shadow-xl">
-                  <span className="text-xs font-black uppercase tracking-widest">{(generationResult?.remainingPlayers?.length || 0)} Na Fila</span>
-                </div>
-              </div>
-              
-              {generationResult?.remainingPlayers && generationResult.remainingPlayers.length > 0 ? (
-                <div className="grid grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3 relative z-10">
-                  {generationResult.remainingPlayers.map((player, idx) => (
-                    <div 
-                      key={player.id || `remaining-${idx}`} 
-                      className={`relative flex items-center justify-between p-2 sm:p-4 rounded-2xl sm:rounded-3xl border-2 transition-all duration-500 group hover:-translate-y-1 ${swapSelection?.playerId === player.id ? 'border-brand-primary bg-brand-primary/10 shadow-xl z-10' : 'border-transparent bg-white/5 hover:bg-white/10 hover:shadow-md'}`}
-                    >
-                      <div className="flex items-center gap-3 sm:gap-4 min-w-0">
-                        <div className={`w-8 h-8 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center text-xs sm:text-base font-black shrink-0 shadow-lg transition-all duration-500 ${
-                          idx < 12 
-                            ? 'bg-brand-primary text-brand-secondary group-hover:scale-110' 
-                            : idx < 24 
-                              ? 'bg-white text-black' 
-                              : 'bg-black border border-brand-primary/40 text-white'
-                        }`}>
-                          {idx + 1}º
-                        </div>
-                        <div className="min-w-0">
-                          <motion.p 
-                            initial={{ scale: 0.8, opacity: 0 }}
-                            whileInView={{ scale: 1, opacity: 1 }}
-                            viewport={{ once: true }}
-                            transition={{ 
-                              type: "spring",
-                              stiffness: 300,
-                              damping: 15,
-                              delay: (idx % 6) * 0.05
-                            }}
-                            className={`text-sm sm:text-2xl font-black flex items-center gap-2 tracking-tight leading-none truncate ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}
-                          >
-                            {player.name}
-                            {player.departureTime && (
-                              <span className="inline-flex items-center gap-1 text-[8px] sm:text-[10px] font-black text-amber-300 bg-amber-500/20 border border-amber-500/40 px-1.5 py-0.5 rounded shadow-sm" title={`Horário de saída antecipada agendado para ${player.departureTime}`}>
-                                <Clock className="w-2.5 h-2.5 text-amber-400 animate-pulse" />
-                                Out: {player.departureTime}
-                              </span>
-                            )}
-                            {player.timestamp && (
-                              <span className="text-[10px] text-white/30 font-medium lowercase tracking-normal">
-                                {new Date(player.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                              </span>
-                            )}
-                          </motion.p>
-                          <div className="flex flex-wrap items-center gap-2 mt-1 sm:mt-2">
-                            <span className={`text-[9px] sm:text-[11px] font-black uppercase ${
-                              (player.consecutiveBenched || 0) >= 0 
-                                ? 'text-brand-primary animate-pulse' 
-                                : 'text-white/40'
-                            }`}>
-                              {(player.consecutiveBenched || 0) + 1} fora
-                            </span>
-                            <span className="text-white/30 text-[9px]">•</span>
-                            <span className="text-[9px] sm:text-[11px] text-white font-bold uppercase tracking-widest">
-                              Hoje: {player.dailyMatches}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                      {userRole === 'ADMIN' && (
-                        <button 
-                          onClick={() => onSwapClick('Bench', player.id)}
-                          className={`p-1.5 sm:p-3 rounded-lg sm:rounded-xl transition-all shrink-0 ${swapSelection?.playerId === player.id ? 'bg-brand-primary text-brand-secondary shadow-2xl' : 'text-white/40 hover:text-brand-primary hover:bg-brand-primary/10'}`}
-                        >
-                          <ArrowLeftRight className="w-3 h-3 sm:w-5 sm:h-5" />
-                        </button>
-                      )}
+                
+                <div className="flex items-center justify-between mb-6 sm:mb-10 relative z-10">
+                  <div className="flex items-center gap-3 sm:gap-4">
+                    <div className="p-2 sm:p-3 bg-brand-secondary rounded-xl sm:rounded-2xl border border-brand-primary/40">
+                      <Clock className="w-5 h-5 sm:w-6 sm:h-6 text-brand-primary" />
                     </div>
-                  ))}
+                    <div>
+                      <h3 className="text-xs font-black text-white uppercase tracking-[0.3em]">Guerreiros em Espera</h3>
+                      <p className="text-[10px] font-black text-white uppercase tracking-[0.2em] mt-1">Fila de Prioridade Dinâmica</p>
+                    </div>
+                  </div>
+                  <div className="bg-brand-primary/10 text-brand-primary px-3 py-1.5 sm:px-6 sm:py-2 rounded-xl sm:rounded-2xl border border-brand-primary/30 shadow-xl">
+                    <span className="text-xs font-black uppercase tracking-widest">{(generationResult?.remainingPlayers?.length || 0)} Na Fila</span>
+                  </div>
                 </div>
-              ) : (
-                <div className="text-center py-10 sm:py-20 bg-brand-secondary/50 rounded-[2rem] sm:rounded-[3rem] border border-white/5 border-l-[8px] border-l-brand-primary relative z-10">
-                  <p className="text-[10px] sm:text-xs font-black text-white/40 uppercase tracking-[0.2em] sm:tracking-[0.3em]">Nenhum guerreiro aguardando no momento</p>
+                
+                {generationResult?.remainingPlayers && generationResult.remainingPlayers.length > 0 ? (
+                  <div className="grid grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3 relative z-10">
+                    <AnimatePresence mode="popLayout">
+                      {generationResult.remainingPlayers.map((player, idx) => (
+                        <motion.div 
+                          layout
+                          key={player.id || `remaining-${idx}`} 
+                          layoutId={`player-card-${player.id}`}
+                          transition={{ type: "spring", stiffness: 320, damping: 28 }}
+                          onClick={() => {
+                            if (userRole === 'ADMIN') {
+                              if (swapSelection) {
+                                onSwapClick('Bench', player.id);
+                              } else {
+                                openQuickSwap({ player, team: 'Bench', role: player.isOfficialSetter ? 'setter' : 'player' });
+                              }
+                            }
+                          }}
+                          className={`relative flex items-center justify-between p-2 sm:p-4 rounded-2xl sm:rounded-3xl border-2 transition-all duration-300 group cursor-pointer ${
+                            swapSelection?.playerId === player.id 
+                              ? 'border-brand-primary bg-brand-primary/20 shadow-[0_0_25px_rgba(245,196,41,0.5)] ring-4 ring-brand-primary/50 scale-[1.02] z-20' 
+                              : 'border-transparent bg-white/5 hover:bg-white/10 hover:shadow-md'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3 sm:gap-4 min-w-0">
+                            <div className={`w-8 h-8 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center text-xs sm:text-base font-black shrink-0 shadow-lg transition-all duration-500 ${
+                              idx < 12 
+                                ? 'bg-brand-primary text-brand-secondary group-hover:scale-110' 
+                                : idx < 24 
+                                  ? 'bg-white text-black' 
+                                  : 'bg-black border border-brand-primary/40 text-white'
+                            }`}>
+                              {idx + 1}º
+                            </div>
+                            <div className="min-w-0">
+                              <motion.p 
+                                initial={{ scale: 0.8, opacity: 0 }}
+                                whileInView={{ scale: 1, opacity: 1 }}
+                                viewport={{ once: true }}
+                                transition={{ 
+                                  type: "spring",
+                                  stiffness: 300,
+                                  damping: 15,
+                                  delay: (idx % 6) * 0.05
+                                }}
+                                className={`text-sm sm:text-2xl font-black flex items-center gap-2 tracking-tight leading-none truncate ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}
+                              >
+                                {player.name}
+                                {swapSelection?.playerId === player.id && (
+                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-brand-primary text-black font-black text-[8px] sm:text-[9px] uppercase tracking-wider shadow-md border border-brand-primary/60 shrink-0 animate-pulse">
+                                    <Replace className="w-2.5 h-2.5 text-black" />
+                                    <span>Selecionado</span>
+                                  </span>
+                                )}
+                                {player.departureTime && (
+                                  <span className="inline-flex items-center gap-1 text-[8px] sm:text-[10px] font-black text-amber-300 bg-amber-500/20 border border-amber-500/40 px-1.5 py-0.5 rounded shadow-sm" title={`Horário de saída antecipada agendado para ${player.departureTime}`}>
+                                    <Clock className="w-2.5 h-2.5 text-amber-400 animate-pulse" />
+                                    Out: {player.departureTime}
+                                  </span>
+                                )}
+                                {player.timestamp && (
+                                  <span className="text-[10px] text-white/30 font-medium lowercase tracking-normal">
+                                    {new Date(player.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                  </span>
+                                )}
+                              </motion.p>
+                              <div className="flex flex-wrap items-center gap-2 mt-1 sm:mt-2">
+                                <span className={`text-[9px] sm:text-[11px] font-black uppercase ${
+                                  (player.consecutiveBenched || 0) >= 0 
+                                    ? 'text-brand-primary animate-pulse' 
+                                    : 'text-white/40'
+                                }`}>
+                                  {(player.consecutiveBenched || 0) + 1} fora
+                                </span>
+                                <span className="text-white/30 text-[9px]">•</span>
+                                <span className="text-[9px] sm:text-[11px] text-white font-bold uppercase tracking-widest">
+                                  Hoje: {player.dailyMatches}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                          {userRole === 'ADMIN' && (
+                            <button 
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (swapSelection) {
+                                  onSwapClick('Bench', player.id);
+                                } else {
+                                  openQuickSwap({ player, team: 'Bench', role: player.isOfficialSetter ? 'setter' : 'player' });
+                                }
+                              }}
+                              className={`p-2 sm:p-3 rounded-xl transition-all shrink-0 flex items-center gap-1.5 ${swapSelection?.playerId === player.id ? 'bg-brand-primary text-brand-secondary shadow-2xl ring-2 ring-brand-primary' : 'bg-brand-primary/25 border border-brand-primary/50 text-brand-primary hover:bg-brand-primary hover:text-black shadow-md cursor-pointer'}`}
+                              title="Substituição Rápida de Jogador do Banco / Fila"
+                            >
+                              <ArrowLeftRight className="w-4 h-4 sm:w-5 sm:h-5" />
+                              <span className="text-[9px] font-black uppercase tracking-tighter hidden sm:inline">Trocar</span>
+                            </button>
+                          )}
+                        </motion.div>
+                      ))}
+                    </AnimatePresence>
+                  </div>
+                ) : (
+                  <div className="text-center py-10 sm:py-20 bg-brand-secondary/50 rounded-[2rem] sm:rounded-[3rem] border border-white/5 border-l-[8px] border-l-brand-primary relative z-10">
+                    <p className="text-[10px] sm:text-xs font-black text-white/40 uppercase tracking-[0.2em] sm:tracking-[0.3em]">Nenhum guerreiro aguardando no momento</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </LayoutGroup>
+
+          {/* Botão e Card do Simulador da Próxima Partida (Abaixo da Fila de Espera) */}
+          {userRole === 'ADMIN' && attendance.length >= 12 && (
+            <div className="w-full mb-10 flex flex-col items-center gap-4">
+              <button
+                type="button"
+                onClick={() => setShowSimulatorInMatch(!showSimulatorInMatch)}
+                className="w-full max-w-md px-6 py-4 bg-brand-primary/15 hover:bg-brand-primary/25 text-brand-primary border border-brand-primary/40 rounded-2xl font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-3 active:scale-95 cursor-pointer shadow-xl"
+              >
+                <Sliders className="w-4 h-4 text-brand-primary" />
+                <span>{showSimulatorInMatch ? 'Ocultar Simulador da Próxima Partida' : '⚡ Simular Próxima Partida (Painel)'}</span>
+              </button>
+
+              {showSimulatorInMatch && (
+                <div className="w-full mt-4 animate-in fade-in zoom-in-95 duration-300">
+                  <TeamBalancingSimulatorCard onApplyToMatch={(res) => {
+                    if (onApplyPreview) onApplyPreview(res);
+                    setShowSimulatorInMatch(false);
+                  }} />
                 </div>
               )}
-            </div>
-          )}
-
-          {swapSelection && (
-            <div className="bg-brand-primary p-8 rounded-[2.5rem] mb-10 flex items-center justify-between shadow-2xl shadow-brand-primary/30 animate-pulse border border-white/5 border-l-[8px] border-l-brand-secondary">
-              <div className="flex items-center gap-5">
-                <div className="p-3 bg-black rounded-2xl shadow-xl">
-                  <ArrowLeftRight className="w-6 h-6 text-brand-primary" />
-                </div>
-                <div>
-                  <p className="text-black text-sm font-black uppercase tracking-[0.2em]">Troca Ativa de Elite</p>
-                  <p className="text-black/60 text-[10px] font-black uppercase tracking-[0.1em] mt-1">Selecione o alvo para concluir a substituição tática</p>
-                </div>
-              </div>
-              <button 
-                onClick={() => setSwapSelection(null)} 
-                className="bg-black text-brand-primary px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:scale-105 transition-all shadow-xl"
-              >
-                Cancelar
-              </button>
-            </div>
-          )}
-
-          {userRole === 'ADMIN' && lowSynergyAlerts.length > 0 && (
-            <div className="bg-rose-500/10 border border-rose-500/30 rounded-[2.5rem] p-6 mb-8 text-white relative overflow-hidden shadow-2xl animate-in fade-in duration-500">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-5 pb-4 border-b border-rose-500/20">
-                <div className="flex items-center gap-4">
-                  <div className="p-3 bg-rose-500/20 rounded-2xl border border-rose-500/40 text-rose-400">
-                    <AlertTriangle className="w-6 h-6 animate-pulse" />
-                  </div>
-                  <div>
-                    <h4 className="text-xs font-black uppercase tracking-[0.25em] text-rose-300">Alerta de Sinergia Crítica Detectada</h4>
-                    <p className="text-[10px] font-black text-rose-400/80 uppercase tracking-widest mt-0.5">Pares com histórico desfavorável agrupados na mesma equipe</p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleRunSynergyAgent}
-                  disabled={isSolvingSynergy}
-                  className="bg-brand-primary hover:bg-brand-primary/90 text-brand-secondary px-5 py-3 rounded-2xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2.5 shadow-xl hover:scale-105 active:scale-95 transition-all shrink-0 border border-brand-primary/40 disabled:opacity-50"
-                >
-                  <Bot className={`w-4 h-4 ${isSolvingSynergy ? 'animate-spin' : 'animate-bounce'}`} />
-                  <span>{isSolvingSynergy ? 'Executando 50 Simulações...' : 'Invocar Agente de Solução de Sinergia'}</span>
-                </button>
-              </div>
-              <div className="space-y-3">
-                {lowSynergyAlerts.map((alert, idx) => (
-                  <div key={`alert-${idx}`} className="bg-black/60 border border-rose-500/20 p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <span className="text-xs font-black bg-rose-500/20 text-rose-300 px-2.5 py-1 rounded-lg">Time {alert.team}</span>
-                      <span className="text-sm font-black text-white uppercase tracking-tight">
-                        {alert.p1.name} & {alert.p2.name}
-                      </span>
-                      <span className="text-xs font-bold text-rose-400">({Math.round(alert.winRate * 100)}% vitórias em {alert.games} jogos)</span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-[10px] font-black text-white/50 uppercase tracking-widest">Ação do Agente: Troca focada de par problemático</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {showTeamCards && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 mb-10">
-              <TeamCard 
-                title="Time A" 
-                team={generationResult.teamA} 
-                opponent={generationResult.teamB}
-                color="green" 
-                attendance={attendance}
-                userRole={userRole}
-                onSwap={(pid) => onSwapClick('A', pid)}
-                onRemove={(pid) => onRemovePlayer('A', pid)}
-                onPromote={(pid) => onPromoteToSetter('A', pid)}
-                activeSwapId={swapSelection?.playerId}
-                hoveredPlayerId={hoveredPlayerId}
-                setHoveredPlayerId={setHoveredPlayerId}
-                rivalId={rivalId}
-                bottomTwoIds={new Set(generationResult.bottomTwoIds || [])}
-                icColors={icColorsMap}
-              />
-              <TeamCard 
-                title="Time B" 
-                team={generationResult.teamB} 
-                opponent={generationResult.teamA}
-                color="blue" 
-                attendance={attendance}
-                userRole={userRole}
-                onSwap={(pid) => onSwapClick('B', pid)}
-                onRemove={(pid) => onRemovePlayer('B', pid)}
-                onPromote={(pid) => onPromoteToSetter('B', pid)}
-                activeSwapId={swapSelection?.playerId}
-                hoveredPlayerId={hoveredPlayerId}
-                setHoveredPlayerId={setHoveredPlayerId}
-                rivalId={rivalId}
-                bottomTwoIds={new Set(generationResult.bottomTwoIds || [])}
-                icColors={icColorsMap}
-              />
             </div>
           )}
 
@@ -3478,7 +4161,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
                   </div>
                   <div>
                     <h3 className="text-xs font-black text-white uppercase tracking-[0.3em]">Performance do Dia</h3>
-                    <p className="text-[10px] font-black text-white uppercase tracking-[0.2em] mt-1">Histórico de Batalhas do Dia</p>
+                    <p className="text-[10px] font-black text-white uppercase tracking-[0.2em] mt-1">Histórico de Partidas do Dia</p>
                   </div>
                 </div>
               </div>
@@ -3489,17 +4172,22 @@ export const MatchView: React.FC<MatchViewProps> = ({
                   <thead>
                     <tr>
                       <th className="text-left py-4 px-6 text-[10px] font-black text-white/40 uppercase tracking-[0.2em] sticky left-0 bg-black z-20">Guerreiro</th>
-                      {todayMatches.map((_, i) => (
-                        <th key={i} className="py-4 px-2 text-center min-w-[60px]">
-                          <div className="mx-auto w-10 h-10 rounded-xl bg-black border border-brand-primary/40 text-brand-primary flex items-center justify-center text-[10px] font-black shadow-lg uppercase tracking-widest">
-                            B{i + 1}
+                      {todayMatches.map((match, i) => (
+                        <th key={match.id || i} className="py-4 px-2 text-center min-w-[64px]">
+                          <div 
+                            className="mx-auto px-2 h-10 rounded-xl bg-black border border-brand-primary/40 text-brand-primary flex flex-col items-center justify-center text-[10px] font-black shadow-lg uppercase tracking-wider"
+                            title={`Partida #${match.dailyNumber || (i + 1)}`}
+                          >
+                            <span className="text-[7.5px] text-white/50 leading-tight">PARTIDA</span>
+                            <span className="leading-tight text-brand-primary">#{match.dailyNumber || (i + 1)}</span>
                           </div>
                         </th>
                       ))}
                       {todayMatches.length === 0 && (
-                        <th className="py-4 px-2 text-center min-w-[60px]">
-                          <div className="mx-auto w-10 h-10 rounded-xl bg-black border border-brand-primary/40 text-brand-primary flex items-center justify-center text-[10px] font-black shadow-lg uppercase tracking-widest">
-                            B1
+                        <th className="py-4 px-2 text-center min-w-[64px]">
+                          <div className="mx-auto px-2 h-10 rounded-xl bg-black border border-brand-primary/40 text-brand-primary flex flex-col items-center justify-center text-[10px] font-black shadow-lg uppercase tracking-wider">
+                            <span className="text-[7.5px] text-white/50 leading-tight">PARTIDA</span>
+                            <span className="leading-tight text-brand-primary">#1</span>
                           </div>
                         </th>
                       )}
@@ -4038,7 +4726,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
                 </h3>
 
                 <p className="text-xs text-white/50 font-mono">
-                  Iteração <span className="text-brand-primary font-bold">{countdownIteration}</span>/100 • Minimizando Desvio Padrão do IC
+                  Combinando... (<span className="text-brand-primary font-bold">{analyzedCombinationsCount}</span> / 12 combinações analisadas) • Iteração <span className="text-brand-primary font-bold">{countdownIteration}</span>/100
                 </p>
 
                 {/* Progress Bar */}
@@ -4060,6 +4748,16 @@ export const MatchView: React.FC<MatchViewProps> = ({
             players={players}
             updateDepartureTime={updateDepartureTime}
             showNotification={showNotification}
+          />
+          {/* Modal de Substituição Rápida de Atletas */}
+          <QuickPlayerSwapModal
+            isOpen={isQuickSwapOpen}
+            onClose={closeQuickSwap}
+            target={quickSwapTarget}
+            generationResult={generationResult}
+            allMembers={players}
+            attendance={attendance}
+            onSelectReplacement={executeQuickSwap}
           />
         </>
       )}

@@ -41,5 +41,13 @@ service cloud.firestore {
     match /users/{id} {
       allow read, write: if true;
     }
+
+    match /payments/{id} {
+      allow read, write: if true;
+    }
+
+    match /expenses/{id} {
+      allow read, write: if true;
+    }
   }
 }

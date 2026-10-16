@@ -1,12 +1,13 @@
-import React from 'react';
-import { motion } from 'motion/react';
+import React, { useEffect, useRef } from 'react';
+import { motion, AnimatePresence, useAnimation } from 'motion/react';
 import { Player, Team } from '../types';
 import { PlayerRow } from './PlayerRow';
 import { suggestPosition, calculateTeamPositions } from '../utils/teamLogic';
 import { useStore } from '../store';
 import { 
   Swords, 
-  Sparkles 
+  Sparkles, 
+  Plus 
 } from 'lucide-react';
 
 interface TeamCardProps {
@@ -19,15 +20,22 @@ interface TeamCardProps {
   onSwap: (pid: string) => void;
   onRemove: (pid: string) => void;
   onPromote: (pid: string) => void;
+  onQuickSelectSlot?: (target: { player: Player | null; team: 'A' | 'B'; role: 'setter' | 'player'; slotIndex?: number }) => void;
   activeSwapId: string | undefined;
   hoveredPlayerId: string | null;
   setHoveredPlayerId: (id: string | null) => void;
   rivalId: string | null;
   bottomTwoIds?: Set<string>;
-  icColors?: Record<string, { color: string, title: string }>;
+  topTwoIds?: Set<string>;
+  techTierIds?: {
+    top4Ids?: string[];
+    bottom4Ids?: string[];
+    cascadeLevel?: 'TOP4_BOTTOM4' | 'TOP2_BOTTOM4' | 'TOP2_BOTTOM2';
+  };
+  icColors?: Record<string, { icColor: string, icTitle: string, techTier: any }>;
 }
 
-export const TeamCard: React.FC<TeamCardProps> = ({ 
+export const TeamCardComponent: React.FC<TeamCardProps> = ({ 
   title, 
   team, 
   opponent,
@@ -36,16 +44,63 @@ export const TeamCard: React.FC<TeamCardProps> = ({
   userRole,
   onSwap, 
   onRemove, 
-  onPromote, 
+  onPromote,
+  onQuickSelectSlot, 
   activeSwapId,
   hoveredPlayerId,
   setHoveredPlayerId,
   rivalId,
   bottomTwoIds,
+  topTwoIds,
+  techTierIds,
   icColors
 }) => {
   const teamGenerationMode = useStore(state => state.teamGenerationMode);
   const matches = useStore(state => state.matches);
+
+  const getPlayerTechTier = (playerId: string): 'TOP4' | 'BOTTOM4' | 'TOP2' | 'BOTTOM2' | undefined => {
+    if (topTwoIds?.has(playerId)) return 'TOP2';
+    if (techTierIds?.top4Ids?.includes(playerId)) return 'TOP4';
+    if (bottomTwoIds?.has(playerId)) return 'BOTTOM2';
+    if (techTierIds?.bottom4Ids?.includes(playerId)) return 'BOTTOM4';
+    return undefined;
+  };
+
+  const controls = useAnimation();
+  const isFirstMount = useRef(true);
+  const prevTeamPlayers = useRef([team?.setter?.id, ...(team?.players || []).map(p => p.id)].filter(Boolean).join(','));
+
+  useEffect(() => {
+    if (!team) return;
+    if (isFirstMount.current) {
+      isFirstMount.current = false;
+      controls.start({ opacity: 1, y: 0, scale: 1, transition: { duration: 0.8, ease: [0.16, 1, 0.3, 1], delay: title.includes('A') ? 0.1 : 0.2 } });
+      return;
+    }
+
+    const currentTeamPlayers = [team.setter?.id, ...(team.players || []).map(p => p.id)].filter(Boolean).join(',');
+    
+    if (currentTeamPlayers !== prevTeamPlayers.current) {
+      // Trigger highlight/shake animation
+      controls.start({
+        scale: [1, 1.01, 1],
+        boxShadow: [
+          "0px 0px 0px rgba(234, 179, 8, 0)",
+          "0px 0px 20px rgba(234, 179, 8, 0.4)",
+          "0px 0px 0px rgba(234, 179, 8, 0)"
+        ],
+        borderColor: [
+          "rgba(255, 255, 255, 0.05)",
+          "rgba(234, 179, 8, 0.5)",
+          "rgba(255, 255, 255, 0.05)"
+        ],
+        transition: { duration: 0.4, ease: "easeInOut" }
+      });
+      prevTeamPlayers.current = currentTeamPlayers;
+    }
+  }, [team, controls, title]);
+
+  if (!team) return null;
 
   const getPlayerSynergyInfo = (playerId: string) => {
     const allTeammates = [team.setter, ...team.players].filter((p): p is Player => p !== null && p.id !== playerId);
@@ -80,8 +135,8 @@ export const TeamCard: React.FC<TeamCardProps> = ({
   const textColorClass = color === 'blue' ? 'text-brand-primary' : 'text-brand-secondary';
   const iconColorClass = color === 'blue' ? 'text-brand-primary' : 'text-brand-secondary';
 
-  const teamEff = team.totalEfficiency || team.totalElo || 0;
-  const oppEff = opponent ? (opponent.totalEfficiency || opponent.totalElo || 0) : teamEff;
+  const teamEff = team.totalEfficiency || team.totalIC || 0;
+  const oppEff = opponent ? (opponent.totalEfficiency || opponent.totalIC || 0) : teamEff;
   const diff = Math.abs(teamEff - oppEff);
   const avgEff = (teamEff + oppEff) / 2 || 1;
   const diffRatio = diff / avgEff;
@@ -124,21 +179,17 @@ export const TeamCard: React.FC<TeamCardProps> = ({
 
   return (
     <motion.div 
-      initial={{ opacity: 0, y: 30, scale: 0.95 }}
+      initial={{ opacity: 0, y: 20, scale: 0.98 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ 
-        duration: 0.8, 
-        ease: [0.16, 1, 0.3, 1],
-        delay: title.includes('A') ? 0.1 : 0.2
-      }}
-      className="bg-brand-light rounded-[2rem] sm:rounded-[3rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-2xl overflow-hidden flex flex-col h-full hover:border-brand-primary/40 transition-all team-card-container"
+      transition={{ duration: 0.5, ease: "easeOut", delay: title.includes('A') ? 0.1 : 0.2 }}
+      className="bg-brand-secondary/40 backdrop-blur-md rounded-[2rem] sm:rounded-[3rem] border border-white/5 border-l-[8px] border-l-brand-primary shadow-2xl overflow-hidden flex flex-col h-full hover:border-brand-primary/40 transition-all team-card-container"
     >
-      <div className={`p-6 sm:p-8 bg-brand-light ${textColorClass} relative border-b border-brand-primary/10`}>
+      <div className={`p-6 sm:p-8 bg-white/5 ${textColorClass} relative border-b border-brand-primary/10`}>
         <div className="absolute top-0 right-0 p-4 sm:p-8 opacity-10">
           <Swords className={`w-12 h-12 sm:w-20 h-20 text-brand-primary`} />
         </div>
         <div className="flex justify-between items-center mb-2 sm:mb-3">
-          <p className="text-[8px] sm:text-sm font-black uppercase opacity-70 tracking-[0.2em] sm:tracking-[0.3em] text-brand-primary">Eficiência Total</p>
+          <p className="text-[8px] sm:text-sm font-black uppercase opacity-70 tracking-[0.2em] sm:tracking-[0.3em] text-brand-primary">IC Total</p>
         </div>
         <div className="flex justify-between items-end mb-4">
           <h3 className={`font-black text-4xl sm:text-8xl tracking-tighter uppercase ${title.includes('A') ? 'text-brand-primary' : 'text-white'}`}>{title}</h3>
@@ -170,7 +221,9 @@ export const TeamCard: React.FC<TeamCardProps> = ({
               Cérebro da Equipe
             </h4>
             {team.setter ? (
-              <div 
+              <motion.div 
+                layout
+                key={team.setter.id}
                 onMouseEnter={() => setHoveredPlayerId(team.setter!.id)}
                 onMouseLeave={() => setHoveredPlayerId(null)}
                 onTouchStart={() => setHoveredPlayerId(team.setter!.id)}
@@ -186,17 +239,31 @@ export const TeamCard: React.FC<TeamCardProps> = ({
                   suggestedPosition={suggestedPositions[team.setter.id]}
                   userRole={userRole}
                   onSwap={onSwap} 
+                  onQuickSwap={(pl) => onQuickSelectSlot?.({ player: pl, team: color === 'green' ? 'A' : 'B', role: 'setter' })}
                   onRemove={onRemove}
                   isRival={rivalId === team.setter.id}
                   isHovered={hoveredPlayerId === team.setter.id}
                   isBottomTwo={bottomTwoIds?.has(team.setter.id)}
+                  techTier={getPlayerTechTier(team.setter.id)}
                   icColorInfo={icColors?.[team.setter.id]}
                   synergyInfo={getPlayerSynergyInfo(team.setter.id)}
                 />
-              </div>
+              </motion.div>
             ) : (
-              <div className="p-4 sm:p-8 rounded-2xl sm:rounded-3xl border-2 border-dashed border-brand-primary/40 bg-white/5 text-center">
-                <p className="text-[10px] sm:text-sm font-black text-white/40 uppercase tracking-widest italic">Aguardando Levantador</p>
+              <div 
+                onClick={() => {
+                  if (userRole === 'ADMIN') {
+                    onQuickSelectSlot?.({ player: null, team: color === 'green' ? 'A' : 'B', role: 'setter' });
+                  }
+                }}
+                className={`p-4 sm:p-6 rounded-2xl sm:rounded-3xl border-2 border-dashed border-brand-primary/40 bg-white/5 text-center transition-all ${userRole === 'ADMIN' ? 'cursor-pointer hover:bg-brand-primary/10 hover:border-brand-primary group' : ''}`}
+              >
+                <div className="flex items-center justify-center gap-2">
+                  <Plus className="w-4 h-4 text-brand-primary group-hover:scale-125 transition-transform" />
+                  <p className="text-[10px] sm:text-xs font-black text-brand-primary uppercase tracking-widest">
+                    {userRole === 'ADMIN' ? 'Clique para Definir Levantador' : 'Aguardando Levantador'}
+                  </p>
+                </div>
               </div>
             )}
           </div>
@@ -207,33 +274,55 @@ export const TeamCard: React.FC<TeamCardProps> = ({
               Atacantes e Defesa
             </h4>
             <div className="flex flex-col gap-2 sm:gap-3">
-              {team.players.map((p: Player) => (
-                <div 
-                  key={p.id}
-                  onMouseEnter={() => setHoveredPlayerId(p.id)}
-                  onMouseLeave={() => setHoveredPlayerId(null)}
-                  onTouchStart={() => setHoveredPlayerId(p.id)}
-                  onTouchEnd={() => setHoveredPlayerId(null)}
-                  onTouchCancel={() => setHoveredPlayerId(null)}
-                >
-                  <PlayerRow 
-                    p={p} 
-                    isActive={activeSwapId === p.id} 
-                    isTimeA={color === 'green'}
-                    attendancePosition={getPos(p.id)}
-                    suggestedPosition={suggestedPositions[p.id]}
-                    userRole={userRole}
-                    onSwap={onSwap} 
-                    onRemove={onRemove}
-                    onPromote={onPromote}
-                    isRival={rivalId === p.id}
-                    isHovered={hoveredPlayerId === p.id}
-                    isBottomTwo={bottomTwoIds?.has(p.id)}
-                    icColorInfo={icColors?.[p.id]}
-                    synergyInfo={getPlayerSynergyInfo(p.id)}
-                  />
-                </div>
-              ))}
+              <AnimatePresence mode="popLayout">
+                {(team.players || []).map((p: Player) => (
+                  <motion.div 
+                    layout
+                    key={p.id}
+                    onMouseEnter={() => setHoveredPlayerId(p.id)}
+                    onMouseLeave={() => setHoveredPlayerId(null)}
+                    onTouchStart={() => setHoveredPlayerId(p.id)}
+                    onTouchEnd={() => setHoveredPlayerId(null)}
+                    onTouchCancel={() => setHoveredPlayerId(null)}
+                  >
+                    <PlayerRow 
+                      p={p} 
+                      isActive={activeSwapId === p.id} 
+                      isTimeA={color === 'green'}
+                      attendancePosition={getPos(p.id)}
+                      suggestedPosition={suggestedPositions[p.id]}
+                      userRole={userRole}
+                      onSwap={onSwap} 
+                      onQuickSwap={(pl) => onQuickSelectSlot?.({ player: pl, team: color === 'green' ? 'A' : 'B', role: 'player' })}
+                      onRemove={onRemove}
+                      onPromote={onPromote}
+                      isRival={rivalId === p.id}
+                      isHovered={hoveredPlayerId === p.id}
+                      isBottomTwo={bottomTwoIds?.has(p.id)}
+                      techTier={getPlayerTechTier(p.id)}
+                      icColorInfo={icColors?.[p.id]}
+                      synergyInfo={getPlayerSynergyInfo(p.id)}
+                    />
+                  </motion.div>
+                ))}
+                {userRole === 'ADMIN' && Array.from({ length: Math.max(0, 5 - (team.players || []).length) }).map((_, emptyIdx) => {
+                  const slotIdx = (team.players || []).length + emptyIdx;
+                  return (
+                    <div
+                      key={`empty-slot-${slotIdx}`}
+                      onClick={() => onQuickSelectSlot?.({ player: null, team: color === 'green' ? 'A' : 'B', role: 'player', slotIndex: slotIdx })}
+                      className="p-3 sm:p-4 rounded-xl sm:rounded-2xl border-2 border-dashed border-white/10 hover:border-brand-primary/60 bg-white/[0.02] hover:bg-brand-primary/10 text-center transition-all cursor-pointer group"
+                    >
+                      <div className="flex items-center justify-center gap-2">
+                        <Plus className="w-3.5 h-3.5 text-brand-primary/60 group-hover:scale-125 transition-transform" />
+                        <span className="text-[11px] font-black text-white/50 group-hover:text-brand-primary uppercase tracking-wider">
+                          Slot Vazio • Clique para Adicionar Atleta
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </AnimatePresence>
             </div>
           </div>
         </div>
@@ -241,3 +330,21 @@ export const TeamCard: React.FC<TeamCardProps> = ({
     </motion.div>
   );
 };
+
+export const TeamCard = React.memo(TeamCardComponent, (prevProps, nextProps) => {
+  const prevTeamPlayers = [prevProps.team?.setter?.id, ...(prevProps.team?.players || []).map(p => p.id)].join(',');
+  const nextTeamPlayers = [nextProps.team?.setter?.id, ...(nextProps.team?.players || []).map(p => p.id)].join(',');
+
+  return (
+    prevProps.title === nextProps.title &&
+    prevProps.color === nextProps.color &&
+    prevProps.userRole === nextProps.userRole &&
+    prevProps.activeSwapId === nextProps.activeSwapId &&
+    prevProps.hoveredPlayerId === nextProps.hoveredPlayerId &&
+    prevProps.rivalId === nextProps.rivalId &&
+    prevProps.team?.totalEfficiency === nextProps.team?.totalEfficiency &&
+    prevTeamPlayers === nextTeamPlayers &&
+    prevProps.attendance?.length === nextProps.attendance?.length &&
+    prevProps.bottomTwoIds?.size === nextProps.bottomTwoIds?.size
+  );
+});

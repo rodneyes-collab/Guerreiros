@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { getToken } from 'firebase/messaging';
+import { getToken, onMessage } from 'firebase/messaging';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db, messaging } from '../../firebase';
 import { useStore } from '../../store';
@@ -11,13 +11,35 @@ export const usePushNotifications = () => {
   const showNotification = useStore(state => state.showNotification);
 
   useEffect(() => {
+    if (!messaging) return;
+
+    // Listen for foreground messages
+    const unsubscribe = onMessage(messaging, (payload) => {
+      console.log('Mensagem recebida em primeiro plano:', payload);
+      if (payload.notification) {
+        showNotification(
+          payload.notification.body || payload.notification.title || 'Nova mensagem recebida',
+          'info'
+        );
+      }
+    });
+
     const requestPermission = async () => {
-      if (!messaging || !currentPlayer) return;
+      if (!currentPlayer) return;
 
       try {
         const permission = await Notification.requestPermission();
         if (permission === 'granted') {
-          const token = await getToken(messaging, { vapidKey: VAPID_KEY });
+          // Register Service Worker explicitly for FCM
+          const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js', {
+            scope: '/firebase-cloud-messaging-push-scope',
+          });
+
+          const token = await getToken(messaging, { 
+            vapidKey: VAPID_KEY,
+            serviceWorkerRegistration: registration
+          });
+          
           if (token) {
             // Only update if the token is different
             if (currentPlayer.fcmToken !== token) {
@@ -37,9 +59,10 @@ export const usePushNotifications = () => {
     };
 
     // Only request if the user is logged in and hasn't explicitly disabled it
-    // If pushEnabled is undefined, we assume it's okay to try for first-time or legacy users
     if (currentPlayer && currentPlayer.pushEnabled !== false && !currentPlayer.fcmToken) {
       requestPermission();
     }
+
+    return () => unsubscribe();
   }, [currentPlayer, showNotification]);
 };

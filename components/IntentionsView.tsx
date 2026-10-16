@@ -2,8 +2,12 @@ import React from 'react';
 import confetti from 'canvas-confetti';
 import { motion, AnimatePresence } from 'motion/react';
 import { useIntentions } from '../src/hooks/useIntentions';
+import { useBirthdays } from '../src/hooks/useBirthdays';
 import { useStore } from '../store';
-import { CalendarCheck, Copy, BellRing, Settings, UserCheck, UserX, Clock, ArrowRight, RotateCcw, Zap, Star, Shield, Trash2, CheckCircle2, AlertTriangle, Flame, AlertCircle, MessageCircle, LogOut } from 'lucide-react';
+import { Logo } from '../src/components/Logo';
+import { PlayerAvatar } from '../src/components/PlayerAvatar';
+import { ConfirmedPlayerItem, UndecidedPlayerItem, NotGoingPlayerItem } from '../src/components/IntentionPlayerItem';
+import { CalendarCheck, Copy, BellRing, Settings, UserCheck, UserX, Clock, ArrowRight, RotateCcw, Zap, Star, Shield, Trash2, CheckCircle2, AlertTriangle, Flame, AlertCircle, MessageCircle, LogOut, RefreshCw } from 'lucide-react';
 import { EvasionIcon } from './EvasionIcon';
 import { calculateEvasionLevel } from '../utils/evasion';
 import { Player } from '../types';
@@ -12,6 +16,9 @@ import { capitalizeName } from '../utils/helpers';
 import { fetchAttendanceHistory, calculateAttendanceStats } from '../src/services/attendanceService';
 
 import { HelpTooltip } from '../src/components/HelpTooltip';
+import { playFeedbackSound, triggerHaptic } from '../src/utils/feedback';
+import { sendIntentionConfirmationPush } from '../src/utils/pushNotificationHelper';
+import { useIntentionsReminderSchedule } from '../src/hooks/useIntentionsReminderSchedule';
 
 interface IntentionsViewProps {
   userRole: 'ADMIN' | 'MEMBER' | null;
@@ -21,8 +28,78 @@ interface IntentionsViewProps {
 }
 
 export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, currentPlayer, onMoveToAttendance, showNotification }) => {
-  const { intentions, isLoaded, setIntent, resetIntent, clearIntentions, toggleAutomation, sendReminders, copyToWhatsApp, copyReminder } = useIntentions();
-  const { players, attendance, showConfirmModal, isInitialLoading } = useStore();
+  const { intentions, isLoaded, setIntent, resetIntent, clearIntentions, toggleAutomation, sendReminders, copyToWhatsApp, copyReminder, getPlayerConfirmationTime, refreshIntentions } = useIntentions();
+  const { players, attendance, preConfirmations, idToCanonicalId, showConfirmModal, isInitialLoading } = useStore();
+  const { monthBirthdays, getBirthdaysByMonth } = useBirthdays(players);
+  const [selectedMonth, setSelectedMonth] = React.useState<number>(0);
+  const [isRefreshing, setIsRefreshing] = React.useState(false);
+  const [pullStartY, setPullStartY] = React.useState(0);
+  const [pullDist, setPullDist] = React.useState(0);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await refreshIntentions();
+      showNotification('Lista de intenções atualizada com sucesso!', 'success');
+    } catch (err) {
+      showNotification('Erro ao atualizar intenções.', 'error');
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (window.scrollY === 0) {
+      setPullStartY(e.touches[0].clientY);
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (pullStartY > 0 && window.scrollY === 0) {
+      const currentY = e.touches[0].clientY;
+      const diff = currentY - pullStartY;
+      if (diff > 0) {
+        setPullDist(Math.min(diff * 0.5, 100));
+      }
+    }
+  };
+
+  const handleTouchEnd = async () => {
+    if (pullDist > 60 && !isRefreshing) {
+      await handleRefresh();
+    }
+    setPullStartY(0);
+    setPullDist(0);
+  };
+
+  React.useEffect(() => {
+    if (monthBirthdays.month && selectedMonth === 0) {
+      setSelectedMonth(monthBirthdays.month);
+    }
+  }, [monthBirthdays.month, selectedMonth]);
+
+  const activeMonthBirthdays = React.useMemo(() => {
+    const m = selectedMonth || monthBirthdays.month;
+    const list = getBirthdaysByMonth(m);
+    return list.filter(p => !p.status || p.status === 'active');
+  }, [selectedMonth, monthBirthdays.month, getBirthdaysByMonth]);
+
+  const {
+    isGameDay,
+    morningSentToday,
+    afternoonSentToday,
+    undecidedActiveCount,
+    isSending: isReminderSending,
+    triggerManualReminder
+  } = useIntentionsReminderSchedule({
+    players,
+    attendance,
+    intentions,
+    sendReminders,
+    userRole,
+    currentPlayer,
+    showNotification
+  });
 
   const getWhatsAppLink = (player: Player) => {
     let clean = (player.phone || '').replace(/\D/g, '');
@@ -34,71 +111,9 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
     return `https://api.whatsapp.com/send?phone=${clean}&text=${encodeURIComponent(msg)}`;
   };
 
-  // --- WhatsApp & Evolution API Integration State ---
-  const [isPnSending, setIsPnSending] = React.useState(false);
-  const [isGroupSending, setIsGroupSending] = React.useState(false);
   const [isConfirming, setIsConfirming] = React.useState(false);
   const [isDeclining, setIsDeclining] = React.useState(false);
   const [processingId, setProcessingId] = React.useState<string | null>(null);
-  const [waSteps, setWaSteps] = React.useState<{ id: string; name: string; status: string; details: string; }[] | null>(null);
-  const [waTaskType, setWaTaskType] = React.useState<'group' | 'direct' | null>(null);
-
-  const handleSendWaPrompts = async () => {
-    setIsPnSending(true);
-    setWaTaskType('direct');
-    setWaSteps([
-      { id: "load_config", name: "Carregar Configurações", status: "pending", details: "Buscando whatsapp_config no banco..." },
-      { id: "validate_creds", name: "Validar Credenciais WhatsApp", status: "pending", details: "Aguardando etapa anterior..." },
-      { id: "fetch_data", name: "Baixar Sócios do Clube", status: "pending", details: "Aguardando etapa anterior..." },
-      { id: "filter_eligible", name: "Selecionar Ausentes", status: "pending", details: "Aguardando etapa anterior..." },
-      { id: "dispatch_all", name: "Disparar Lembretes Individuais", status: "pending", details: "Aguardando etapa anterior..." },
-    ]);
-    try {
-      const res = await fetch('/api/whatsapp/send-all', { method: 'POST' });
-      const data = await res.json();
-      if (data.steps) {
-        setWaSteps(data.steps);
-      }
-      if (data.success) {
-        showNotification(`Lembretes enviados com sucesso para ${data.count} sócios via WhatsApp!`, 'success');
-      } else {
-        showNotification(`Erro ao disparar lembretes: ${data.error || 'Falha na execução'}`, 'error');
-      }
-    } catch (err: any) {
-      showNotification(`Erro: ${err.message}`, 'error');
-    } finally {
-      setIsPnSending(false);
-    }
-  };
-
-  const handleSendWaGroup = async () => {
-    setIsGroupSending(true);
-    setWaTaskType('group');
-    setWaSteps([
-      { id: "load_config", name: "Carregar Configurações", status: "pending", details: "Buscando whatsapp_config no banco..." },
-      { id: "validate_creds", name: "Validar Credenciais WhatsApp", status: "pending", details: "Aguardando etapa anterior..." },
-      { id: "fetch_data", name: "Baixar Intenções & Jogadores", status: "pending", details: "Aguardando etapa anterior..." },
-      { id: "format_message", name: "Gerar Texto da Lista", status: "pending", details: "Aguardando etapa anterior..." },
-      { id: "send_message", name: "Disparar p/ Grupo WhatsApp", status: "pending", details: "Aguardando etapa anterior..." },
-      { id: "save_tracking", name: "Persistir Data de Envio", status: "pending", details: "Aguardando etapa anterior..." },
-    ]);
-    try {
-      const res = await fetch('/api/whatsapp/send-group', { method: 'POST' });
-      const data = await res.json();
-      if (data.steps) {
-        setWaSteps(data.steps);
-      }
-      if (data.success) {
-        showNotification('Lista de intenção atualizada enviada para o grupo do WhatsApp!', 'success');
-      } else {
-        showNotification(`Erro ao enviar lista: ${data.error || 'Falha no envio'}`, 'error');
-      }
-    } catch (err: any) {
-      showNotification(`Erro: ${err.message}`, 'error');
-    } finally {
-      setIsGroupSending(false);
-    }
-  };
 
   // Create confetti instance
   const fireConfetti = React.useMemo(() => confetti.create(undefined, { useWorker: false, resize: true }), []);
@@ -139,18 +154,49 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
 
   const [showSuccessOverlay, setShowSuccessOverlay] = React.useState(false);
 
+  const getConfirmationPosition = (playerId: string) => {
+    const existingIndex = goingPlayers.findIndex(gp => gp.id === playerId);
+    if (existingIndex >= 0) {
+      return {
+        positionNumber: existingIndex + 1,
+        totalConfirmed: goingPlayers.length
+      };
+    }
+    return {
+      positionNumber: goingPlayers.length + 1,
+      totalConfirmed: goingPlayers.length + 1
+    };
+  };
+
   const handleConfirm = async () => {
     if (currentPlayer && !isConfirming && !isDeclining) {
       setIsConfirming(true);
       setProcessingId(currentPlayer.id);
       try {
         await setIntent(currentPlayer.id, 'GOING');
+        
+        // Feedback sensorial
+        triggerHaptic('success');
+        playFeedbackSound('success');
+        
         const firstName = currentPlayer.name.split(' ')[0];
         showNotification(`Bora pra cima, ${firstName}! Sua presença foi confirmada com sucesso! 🏐🔥`, 'success');
         celebratePresence();
+
+        // Dispara notificação push nativa com a posição ordinal e o total da lista
+        const { positionNumber, totalConfirmed } = getConfirmationPosition(currentPlayer.id);
+        sendIntentionConfirmationPush({
+          playerName: capitalizeName(currentPlayer.name),
+          positionNumber,
+          totalConfirmed,
+          isSelf: true
+        });
+
         setShowSuccessOverlay(true);
-        setTimeout(() => setShowSuccessOverlay(false), 3000);
+        setTimeout(() => setShowSuccessOverlay(false), 3500);
       } catch (err: any) {
+        triggerHaptic('error');
+        playFeedbackSound('error');
         showNotification(err.message || 'Erro ao confirmar presença. Tente novamente.', 'error');
       } finally {
         setIsConfirming(false);
@@ -161,13 +207,38 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
 
   const handleConfirmPlayer = async (p: Player) => {
     if (isConfirming || isDeclining || processingId) return;
+    
+    // Validação de segurança: se o sócio já estiver confirmado, não prossegue
+    if (checkPlayerIntent(p) === 'GOING') {
+      showNotification(`${capitalizeName(p.name)} já está confirmado(a)! 🏐`, 'info');
+      return;
+    }
+
     setProcessingId(p.id);
     try {
       setIsConfirming(true);
       await setIntent(p.id, 'GOING');
+      
+      triggerHaptic('success');
+      playFeedbackSound('success');
+      
       showNotification(`Presença de ${capitalizeName(p.name)} confirmada com sucesso! 🏐🔥`, 'success');
       celebratePresence();
+
+      // Dispara notificação push nativa com a posição ordinal e o total da lista
+      const { positionNumber, totalConfirmed } = getConfirmationPosition(p.id);
+      sendIntentionConfirmationPush({
+        playerName: capitalizeName(p.name),
+        positionNumber,
+        totalConfirmed,
+        isSelf: currentPlayer?.id === p.id
+      });
+
+      setShowSuccessOverlay(true);
+      setTimeout(() => setShowSuccessOverlay(false), 3500);
     } catch (err: any) {
+      triggerHaptic('error');
+      playFeedbackSound('error');
       console.error(err);
       showNotification(err.message || 'Erro ao registrar presença.', 'error');
     } finally {
@@ -182,7 +253,19 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
     try {
       await setIntent(pId, status);
       showNotification(status === 'GOING' ? 'Presença confirmada!' : 'Ausência registrada.', 'success');
-      if (status === 'GOING') celebratePresence();
+      if (status === 'GOING') {
+        celebratePresence();
+        const player = (players || []).find(p => p.id === pId);
+        if (player) {
+          const { positionNumber, totalConfirmed } = getConfirmationPosition(pId);
+          sendIntentionConfirmationPush({
+            playerName: capitalizeName(player.name),
+            positionNumber,
+            totalConfirmed,
+            isSelf: currentPlayer?.id === pId
+          });
+        }
+      }
     } catch (err: any) {
       showNotification(err.message || 'Erro ao atualizar.', 'error');
     } finally {
@@ -190,16 +273,27 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
     }
   };
 
+  const handleDeclinePlayer = React.useCallback((playerId: string) => {
+    handleConfirmIntent(playerId, 'NOT_GOING');
+  }, []);
+
   const handleDecline = async () => {
     if (currentPlayer && !isConfirming && !isDeclining) {
       setIsDeclining(true);
       setProcessingId(currentPlayer.id);
       try {
         await setIntent(currentPlayer.id, 'NOT_GOING');
+        
+        // Feedback sensorial
+        triggerHaptic('light');
+        playFeedbackSound('success');
+        
         showNotification('Entendido. Sentiremos sua falta nessa quinta!', 'info');
         setShowSuccessOverlay(true);
-        setTimeout(() => setShowSuccessOverlay(false), 3000);
+        setTimeout(() => setShowSuccessOverlay(false), 3500);
       } catch (err: any) {
+        triggerHaptic('error');
+        playFeedbackSound('error');
         showNotification(err.message || 'Erro ao informar ausência. Tente novamente.', 'error');
       } finally {
         setIsDeclining(false);
@@ -323,37 +417,106 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
 
   const [searchTerm, setSearchTerm] = React.useState('');
 
-  if (!isLoaded || isInitialLoading || (players.length === 0 && Object.keys(intentions?.responses || {}).length > 0)) {
-    return (
-      <div className="flex flex-col items-center justify-center py-20 space-y-4">
-        <div className="w-12 h-12 border-4 border-brand-primary border-t-transparent rounded-full animate-spin"></div>
-        <p className="text-white font-black uppercase tracking-widest text-xs animate-pulse">Carregando Lista de Sócios...</p>
-      </div>
-    );
-  }
-
   const isActiveStatus = (p: Player) => (p.status === 'active' || p.status === 'guest' || !p.status || p.status === '') && !p.isDM && p.status !== 'dm';
 
-  const goingPlayers = players
-    .filter(p => intentions.responses[p.id] === 'GOING')
-    .sort((a, b) => {
-      const timeA = intentions.confirmationTimestamps?.[a.id] || 0;
-      const timeB = intentions.confirmationTimestamps?.[b.id] || 0;
+  const checkPlayerIntent = React.useCallback((p: Player) => {
+    if (!intentions.responses) return null;
+    if (intentions.responses[p.id]) return intentions.responses[p.id];
+    if (p.uid && intentions.responses[p.uid]) return intentions.responses[p.uid];
+    if (p.email && intentions.responses[p.email.toLowerCase()]) return intentions.responses[p.email.toLowerCase()];
+    if (idToCanonicalId?.[p.id] && intentions.responses[idToCanonicalId[p.id]]) return intentions.responses[idToCanonicalId[p.id]];
+    return null;
+  }, [intentions.responses, idToCanonicalId]);
+
+  const formatConfirmationTime = React.useCallback((timestamp?: number | null) => {
+    if (!timestamp || isNaN(timestamp) || timestamp <= 0) return null;
+    const date = new Date(timestamp);
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const weekdays = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+    const weekDay = weekdays[date.getDay()];
+    return `${weekDay}, ${day}/${month} às ${hours}:${minutes}`;
+  }, []);
+
+  const goingPlayers = React.useMemo(() => {
+    const confirmed: Player[] = [];
+    const addedIds = new Set<string>();
+
+    // 1. Check known active players
+    (players || []).filter(p => p.status === 'active' || (!p.status && p.status !== 'inactive')).forEach(p => {
+      const intent = checkPlayerIntent(p);
+      if (intent === 'GOING' && !addedIds.has(p.id)) {
+        addedIds.add(p.id);
+        confirmed.push(p);
+      }
+    });
+
+    // 2. Include any responses where GOING is recorded for IDs not yet matching known players (e.g. guests / newly added mobile users)
+    Object.entries(intentions.responses || {}).forEach(([respId, status]) => {
+      if (status === 'GOING' && !addedIds.has(respId)) {
+        const canonical = idToCanonicalId?.[respId];
+        if (canonical && addedIds.has(canonical)) return;
+
+        // Check if player exists in preConfirmations
+        const prePlayer = (preConfirmations || []).find(pc => pc.id === respId);
+        if (prePlayer) {
+          addedIds.add(respId);
+          confirmed.push(prePlayer);
+          return;
+        }
+
+        // Synthesize guest or member
+        const guestName = respId.startsWith('guest_') ? respId.replace('guest_', 'Convidado ') : respId;
+        addedIds.add(respId);
+        confirmed.push({
+          id: respId,
+          name: guestName,
+          status: 'guest',
+          elo: 1200,
+          matchesPlayed: 0
+        } as Player);
+      }
+    });
+
+    return confirmed.sort((a, b) => {
+      const timeA = getPlayerConfirmationTime(a) || 0;
+      const timeB = getPlayerConfirmationTime(b) || 0;
       return timeA - timeB;
     });
-  const notGoingPlayers = players.filter(p => intentions.responses[p.id] === 'NOT_GOING');
-  const undecidedPlayers = players.filter(p => !intentions.responses[p.id] && isActiveStatus(p));
+  }, [players, intentions.responses, idToCanonicalId, preConfirmations, checkPlayerIntent, getPlayerConfirmationTime]);
+
+  const notGoingPlayers = React.useMemo(() => {
+    return (players || []).filter(p => checkPlayerIntent(p) === 'NOT_GOING');
+  }, [players, checkPlayerIntent]);
+
+  const undecidedPlayers = React.useMemo(() => {
+    const goingSet = new Set(goingPlayers.map(p => {
+      // Usar o ID canônico se disponível para garantir que sócios confirmados via alias sumam da lista
+      return idToCanonicalId?.[p.id] || p.id;
+    }));
+    const notGoingSet = new Set(notGoingPlayers.map(p => idToCanonicalId?.[p.id] || p.id));
+    
+    return (players || []).filter(p => {
+      const canonicalId = idToCanonicalId?.[p.id] || p.id;
+      return !goingSet.has(canonicalId) && !notGoingSet.has(canonicalId) && isActiveStatus(p);
+    });
+  }, [players, goingPlayers, notGoingPlayers, idToCanonicalId]);
 
   const waitlistPlayers = players
     .filter(p => p.status === 'waitlist')
     .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
 
+  const norm = (str: string) => str.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const searchNorm = norm(searchTerm);
+
   const filteredUndecided = undecidedPlayers.filter(p => 
-    p.name.toLowerCase().includes(searchTerm.toLowerCase())
+    norm(p.name).includes(searchNorm) || (p.email && norm(p.email).includes(searchNorm))
   );
 
-  const isGoing = currentPlayer ? intentions.responses[currentPlayer.id] === 'GOING' : false;
-  const isNotGoing = currentPlayer ? intentions.responses[currentPlayer.id] === 'NOT_GOING' : false;
+  const isGoing = currentPlayer ? checkPlayerIntent(currentPlayer) === 'GOING' : false;
+  const isNotGoing = currentPlayer ? checkPlayerIntent(currentPlayer) === 'NOT_GOING' : false;
 
   const getNextThursday = () => {
     const todayStr = getFirestoreDateKey();
@@ -371,8 +534,39 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
   const displayDate = intentions.targetDate || getNextThursday();
   const formattedDate = displayDate.split('-').reverse().slice(0, 2).join('/');
 
+  if (!isLoaded || isInitialLoading || (players.length === 0 && Object.keys(intentions?.responses || {}).length > 0)) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 space-y-4">
+        <div className="w-12 h-12 border-4 border-brand-primary border-t-transparent rounded-full animate-spin"></div>
+        <p className="text-white font-black uppercase tracking-widest text-xs animate-pulse">Carregando Lista de Sócios...</p>
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-8 duration-700 relative">
+    <div 
+      className="space-y-8 animate-in fade-in slide-in-from-bottom-8 duration-700 relative"
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+    >
+      {(pullDist > 0 || isRefreshing) && (
+        <div className="flex items-center justify-center py-3 text-xs font-black uppercase text-amber-400 bg-zinc-900 border-b border-zinc-800 transition-all rounded-2xl">
+          <RefreshCw className={`w-4 h-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
+          {isRefreshing ? 'Sincronizando intenções...' : pullDist > 60 ? 'Solte para atualizar!' : 'Puxe para baixo para atualizar...'}
+        </div>
+      )}
+      
+      <div className="flex justify-end mb-2">
+        <button
+          onClick={handleRefresh}
+          disabled={isRefreshing}
+          className="flex items-center gap-2 px-4 py-2 bg-brand-primary/10 border border-brand-primary/30 rounded-2xl text-brand-primary text-xs font-black uppercase tracking-widest hover:bg-brand-primary hover:text-black transition-all shadow-lg active:scale-95 disabled:opacity-50"
+        >
+          <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+          {isRefreshing ? 'Atualizando...' : 'Atualizar / Sincronizar Intenções'}
+        </button>
+      </div>
       
       {/* Success Animation Overlay */}
       {showSuccessOverlay && (
@@ -496,7 +690,101 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
         </div>
       </div>
 
-      {/* Admin Controls - Strictly for ADMIN role */}
+      {/* Club Logo Display */}
+      <div className="flex justify-center -mt-6 sm:-mt-10 relative z-20">
+        <Logo size="lg" className="border-4 border-black ring-8 ring-black" />
+      </div>
+      <div className="bg-zinc-900 border-2 border-brand-primary/20 rounded-[2.5rem] p-6 sm:p-8">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6 mb-8">
+
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 bg-amber-500/10 rounded-2xl flex items-center justify-center">
+              <Flame className="w-7 h-7 text-amber-500 animate-pulse" />
+            </div>
+            <div>
+              <h3 className="text-base font-black text-white uppercase tracking-[0.2em]">
+                Aniversariantes
+              </h3>
+              <p className="text-[10px] text-white/40 font-bold uppercase tracking-widest">Celebrando os Guerreiros</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 w-full sm:w-auto">
+            <div className="relative flex-1 sm:flex-none min-w-[160px]">
+              <select 
+                value={selectedMonth}
+                onChange={(e) => setSelectedMonth(Number(e.target.value))}
+                className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2.5 text-white text-xs font-black uppercase tracking-widest focus:border-brand-primary outline-none transition-all appearance-none cursor-pointer"
+              >
+                {Array.from({ length: 12 }, (_, i) => (
+                  <option key={i + 1} value={i + 1}>
+                    {new Intl.DateTimeFormat('pt-BR', { month: 'long' }).format(new Date(2024, i))}
+                  </option>
+                ))}
+              </select>
+              <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-white/40">
+                <ArrowRight className="w-3 h-3 rotate-90" />
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-2 px-3 py-2 bg-white/5 rounded-xl border border-white/10">
+              <Star className="w-3 h-3 text-amber-500" />
+              <span className="text-[10px] font-black text-white/60 uppercase tracking-widest">
+                {activeMonthBirthdays.length} Sócios
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {activeMonthBirthdays.length > 0 ? (
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-4">
+            {activeMonthBirthdays.map(player => {
+              if (!player || !player.id) return null;
+              return (
+                <div 
+                  key={player.id} 
+                  className="group relative bg-black/40 border border-white/5 rounded-[2rem] p-4 flex flex-col items-center text-center transition-all hover:border-amber-500/30 hover:bg-amber-500/[0.02]"
+                >
+                  {/* Date Badge */}
+                  <div className="absolute -top-2 -right-1 z-10 bg-amber-500 text-black px-2.5 py-1 rounded-xl text-[10px] font-black shadow-lg transform rotate-3 group-hover:rotate-0 transition-transform">
+                    {player.birthDate ? (
+                      player.birthDate.split(/[-/]/)[0].length === 4 
+                        ? player.birthDate.split(/[-/]/)[2]?.substring(0, 2) 
+                        : player.birthDate.split(/[-/]/)[0]
+                    ) : '??'} / {String(selectedMonth).padStart(2, '0')}
+                  </div>
+
+                  <div className="relative mb-3">
+                    <PlayerAvatar player={player} size="lg" />
+                    <div className="absolute -bottom-1 -right-1 bg-black rounded-full p-1.5 shadow-xl">
+                      <div className="w-5 h-5 bg-amber-500 rounded-full flex items-center justify-center text-[10px] text-black">
+                        🎂
+                      </div>
+                    </div>
+                  </div>
+
+                  <span className="text-xs font-black text-white uppercase tracking-tight line-clamp-1 group-hover:text-amber-500 transition-colors">
+                    {player.name ? player.name.split(' ')[0] : 'Sócio'}
+                  </span>
+                  <span className="text-[9px] font-bold text-white/30 uppercase tracking-widest mt-1">
+                    Guerreiro
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="py-12 flex flex-col items-center justify-center bg-black/20 rounded-3xl border border-dashed border-white/5">
+            <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mb-4">
+              <UserX className="w-8 h-8 text-white/20" />
+            </div>
+            <p className="text-xs font-black text-white/30 uppercase tracking-widest">Nenhum aniversariante neste mês</p>
+          </div>
+        )}
+      </div>
+
+
+      {/* WhatsApp / Evolution API Action Buttons */}
       {userRole === 'ADMIN' && (
             <div className="bg-black rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary p-6 sm:p-8">
           <div className="flex items-center justify-between mb-6">
@@ -549,19 +837,43 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
 
             <div className="bg-brand-primary/5 p-5 rounded-2xl border border-brand-primary/40 flex flex-col justify-between gap-4">
               <div>
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Cobrar Indecisos</p>
-                <p className="text-[10px] text-slate-500">Envia notificação Push agora para quem não respondeu.</p>
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Push Automático (Dia de Jogo)</p>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-brand-primary/20 text-brand-primary border border-brand-primary/30">
+                    {undecidedActiveCount} indeciso(s)
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-400 mb-2">
+                  Disparo automático pela manhã (10h) e à tarde (16h - última chamada).
+                </p>
+                <div className="flex items-center gap-2 text-[10px] font-semibold text-zinc-300">
+                  <span className="flex items-center gap-1">
+                    {morningSentToday ? '🟢 Manhã enviada' : '⚪ Manhã pendente'}
+                  </span>
+                  <span>•</span>
+                  <span className="flex items-center gap-1">
+                    {afternoonSentToday ? '🟢 Tarde enviada' : '⚪ Tarde pendente'}
+                  </span>
+                </div>
               </div>
-              <button
-                onClick={() => {
-                  sendReminders();
-                  showNotification('Lembretes enviados com sucesso!', 'success');
-                }}
-                className="w-full py-3 rounded-xl font-black uppercase tracking-widest text-[10px] bg-white/5 text-white border border-brand-primary/40 hover:bg-brand-primary hover:text-black hover:border-brand-primary transition-all flex items-center justify-center gap-2"
-              >
-                <BellRing className="w-3 h-3" />
-                Notificar Agora
-              </button>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  disabled={isReminderSending || undecidedActiveCount === 0}
+                  onClick={() => triggerManualReminder('morning')}
+                  className="py-2.5 px-2 rounded-xl font-black uppercase tracking-wider text-[9px] bg-white/5 text-white border border-brand-primary/40 hover:bg-brand-primary hover:text-black hover:border-brand-primary transition-all disabled:opacity-40 flex items-center justify-center gap-1"
+                >
+                  <BellRing className="w-3 h-3" />
+                  Push Manhã
+                </button>
+                <button
+                  disabled={isReminderSending || undecidedActiveCount === 0}
+                  onClick={() => triggerManualReminder('afternoon')}
+                  className="py-2.5 px-2 rounded-xl font-black uppercase tracking-wider text-[9px] bg-brand-primary/20 text-brand-primary border border-brand-primary/40 hover:bg-brand-primary hover:text-black transition-all disabled:opacity-40 flex items-center justify-center gap-1"
+                >
+                  <Clock className="w-3 h-3" />
+                  Push Tarde
+                </button>
+              </div>
             </div>
 
             <div className="bg-brand-primary/5 p-5 rounded-2xl border border-brand-primary/40 flex flex-col justify-between gap-4">
@@ -640,97 +952,6 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
               </button>
             </div>
           </div>
-
-          {/* WhatsApp / Evolution API Action Buttons */}
-          <div className="mt-8 pt-6 border-t border-white/5 space-y-6">
-             <div className="flex flex-col md:flex-row gap-4">
-                <button
-                  onClick={handleSendWaPrompts}
-                  disabled={isPnSending}
-                  className="flex-1 py-4 px-6 rounded-2xl font-black uppercase tracking-widest text-[10px] bg-white/5 hover:bg-white/10 text-white border border-brand-primary/40 transition-all disabled:opacity-50"
-                >
-                  {isPnSending ? 'Disparando...' : 'Perguntar Prontidão p/ Sócio (Direct)'}
-                </button>
-
-                <button
-                  onClick={handleSendWaGroup}
-                  disabled={isGroupSending}
-                  className="flex-1 py-4 px-6 rounded-2xl font-black uppercase tracking-widest text-[10px] bg-green-500/10 text-green-400 hover:bg-green-500 hover:text-black border border-green-500/40 transition-all disabled:opacity-50"
-                >
-                  {isGroupSending ? 'Enviando...' : 'Enviar Lista Atual p/ Grupo'}
-                </button>
-             </div>
-
-             {/* Monitoramento de Envio por Etapas com Pequenos LEDs */}
-                    {waSteps && (
-                      <div className="mt-6 p-5 rounded-2xl border border-white/10 bg-white/[0.02] animate-in fade-in slide-in-from-top-4 duration-300">
-                        <div className="flex items-center justify-between mb-4 pb-2 border-b border-white/5">
-                          <div className="flex items-center gap-2">
-                            <span className="relative flex h-2 w-2">
-                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-brand-primary opacity-75"></span>
-                              <span className="relative inline-flex rounded-full h-2 w-2 bg-brand-primary"></span>
-                            </span>
-                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-300">
-                              Etapas de Rastreio ({waTaskType === 'group' ? 'Lista do Grupo' : 'Lembretes Direct'})
-                            </span>
-                          </div>
-                          <button 
-                            onClick={() => setWaSteps(null)} 
-                            className="text-[9px] font-black text-rose-400 hover:text-rose-300 uppercase tracking-wider transition-all"
-                          >
-                            Recolher Monitor
-                          </button>
-                        </div>
-
-                        <div className="space-y-3.5">
-                          {waSteps.map((step, idx) => {
-                            let ledColor = 'bg-slate-700 shadow-none';
-                            let textColor = 'text-slate-500';
-                            let pulseClass = '';
-
-                            if (step.status === 'success') {
-                              ledColor = 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.7)]';
-                              textColor = 'text-emerald-400';
-                            } else if (step.status === 'failed') {
-                              ledColor = 'bg-rose-500 shadow-[0_0_10px_rgba(239,68,68,0.8)]';
-                              textColor = 'text-rose-400';
-                              pulseClass = 'animate-pulse';
-                            } else if (step.status === 'pending') {
-                              ledColor = 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.6)]';
-                              textColor = 'text-amber-400';
-                              pulseClass = 'animate-pulse';
-                            } else if (step.status === 'skipped') {
-                              ledColor = 'bg-slate-600';
-                              textColor = 'text-slate-400 opacity-60';
-                            }
-
-                            return (
-                              <div key={step.id || idx} className="flex items-start gap-4 p-2.5 rounded-xl bg-black/40 border border-white/[0.02] hover:border-white/5 transition-all">
-                                <div className="pt-1 flex-shrink-0">
-                                  <div className={`w-3 h-3 rounded-full transition-all duration-300 ${ledColor} ${pulseClass}`} />
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex justify-between items-center">
-                                    <p className={`text-[10px] font-black uppercase tracking-wider ${textColor}`}>
-                                      {step.name}
-                                    </p>
-                                    <span className="text-[8px] font-mono uppercase px-1.5 py-0.5 rounded bg-black text-slate-400 tracking-wider">
-                                      {step.status}
-                                    </span>
-                                  </div>
-                                  {step.details && (
-                                    <p className="mt-1 text-[9px] font-mono text-slate-400 lowercase italic break-all leading-relaxed">
-                                      → {step.details}
-                                    </p>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-          </div>
         </div>
       )}
 
@@ -751,70 +972,22 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
               {goingPlayers.map((p, i) => {
                 const isCheckedIn = (attendance || []).some(a => a.id === p.id);
                 const canReset = !isCheckedIn && (currentPlayer?.id === p.id || userRole === 'ADMIN');
+                const timeStr = formatConfirmationTime(getPlayerConfirmationTime(p));
                 return (
-                  <motion.div 
-                    layout
-                    initial={{ opacity: 0, scale: 0.9 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.9 }}
-                    transition={{ duration: 0.2 }}
-                    key={p.id} 
-                    onClick={() => {
-                      if (canReset && !processingId) {
-                        handleResetIntent(p.id);
-                      }
-                    }}
-                    className={`flex items-center justify-between bg-brand-primary/5 p-4 rounded-2xl border border-brand-primary/20 hover:border-brand-primary/50 transition-all duration-300 gap-2 min-w-0 group/player hover:scale-[1.02] active:scale-[0.98] ${canReset ? 'cursor-pointer hover:bg-brand-primary/10 hover:shadow-[0_0_20px_rgba(245,196,41,0.15)]' : 'opacity-85'} ${(processingId && processingId !== p.id) ? 'opacity-40 grayscale pointer-events-none' : ''}`}
-                    title={canReset ? (currentPlayer?.id === p.id ? "Clique para sair da lista" : "Clique para remover presença") : undefined}
-                  >
-                    <div className="flex items-center gap-2 min-w-0 flex-1">
-                      <span className="text-brand-primary font-black text-xs w-5 shrink-0">{i + 1}.</span>
-                      <span className="text-white text-[13px] font-black uppercase tracking-tighter leading-tight relative py-0.5 flex items-center gap-1.5 min-w-0 flex-wrap">
-                        <span className="break-words font-black">{capitalizeName(p.name)}</span>
-                        {p.status === 'guest' && (
-                          <span className="text-[8px] font-black uppercase tracking-wider text-brand-primary bg-brand-primary/10 border border-brand-primary/30 px-1.5 py-0.5 rounded leading-none shrink-0">
-                            Convidado
-                          </span>
-                        )}
-                        <span className="absolute -bottom-0.5 left-0 h-0.5 bg-brand-primary transition-all duration-300 w-0 group-hover/player:w-full group-active/player:w-full" />
-                      </span>
-                    </div>
-                    {isCheckedIn && (
-                      <div title="Na Quadra" className="p-2 text-green-400 bg-green-500/10 rounded-lg shrink-0">
-                        <UserCheck className="w-4 h-4" />
-                      </div>
-                    )}
-                    {userRole === 'ADMIN' && !isCheckedIn && (
-                      <button
-                        disabled={!!processingId}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onMoveToAttendance(p.id);
-                        }}
-                        className="p-2.5 bg-brand-primary text-black rounded-xl hover:scale-110 active:scale-90 transition-all shadow-lg shadow-brand-primary/20 shrink-0"
-                        title="Mover para Quadra"
-                      >
-                        <UserCheck className="w-4 h-4" />
-                      </button>
-                    )}
-                    {((!isCheckedIn && currentPlayer?.id === p.id) || userRole === 'ADMIN') && (
-                      <button
-                        disabled={!!processingId}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleResetIntent(p.id);
-                        }}
-                        className={`p-2.5 rounded-xl transition-all shadow-lg shrink-0 disabled:opacity-50 ${currentPlayer?.id === p.id ? 'bg-red-500 text-white shadow-red-500/20' : 'bg-brand-primary text-black shadow-brand-primary/20 hover:scale-110 active:scale-90'}`}
-                        title={currentPlayer?.id === p.id ? "Sair da Lista" : "Remover da Lista"}
-                      >
-                        {processingId === p.id ? (
-                          <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                        ) : (
-                          <Trash2 className="w-4 h-4" />
-                        )}
-                      </button>
-                    )}
-                  </motion.div>
+                  <ConfirmedPlayerItem
+                    key={p.id}
+                    player={p}
+                    index={i}
+                    isCheckedIn={isCheckedIn}
+                    canReset={canReset}
+                    isCurrentPlayer={currentPlayer?.id === p.id}
+                    userRole={userRole}
+                    isProcessing={processingId === p.id}
+                    isOtherProcessing={Boolean(processingId && processingId !== p.id)}
+                    confirmationTimeStr={timeStr}
+                    onReset={handleResetIntent}
+                    onMoveToAttendance={onMoveToAttendance}
+                  />
                 );
               })}
             </AnimatePresence>
@@ -835,65 +1008,23 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
             <AnimatePresence mode="popLayout">
               {filteredUndecided.map((p, i) => {
                 const canConfirm = userRole === 'ADMIN' || currentPlayer?.id === p.id || !currentPlayer;
+                const reminderSent = Boolean(intentions.remindersSent?.[p.id]);
+                const hasPushToken = Boolean(p.fcmToken);
+                const isAlreadyConfirmed = checkPlayerIntent(p) === 'GOING';
                 return (
-                  <motion.div 
-                    layout
-                    initial={{ opacity: 0, scale: 0.9 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.9 }}
-                    transition={{ duration: 0.2 }}
-                    key={p.id} 
-                    onClick={() => {
-                      if (canConfirm && !processingId) {
-                        handleConfirmPlayer(p);
-                      }
-                    }}
-                    className={`flex items-center justify-between bg-slate-500/5 p-4 rounded-2xl border border-white/5 hover:border-brand-primary/40 transition-all duration-300 gap-2 min-w-0 group/player hover:scale-[1.02] active:scale-[0.98] ${canConfirm ? 'cursor-pointer hover:bg-brand-primary/10 hover:border-brand-primary/30 hover:shadow-[0_0_20px_rgba(245,196,41,0.15)]' : 'opacity-85'} ${(processingId && processingId !== p.id) ? 'opacity-40 grayscale pointer-events-none' : ''}`}
-                    title={canConfirm ? "Clique para confirmar presença" : undefined}
-                  >
-                    <div className="flex items-center gap-2 min-w-0 flex-1">
-                      <span className="text-slate-500 font-black text-xs w-5 shrink-0">{i + 1}.</span>
-                      <span className="text-white text-[13px] font-black uppercase tracking-tighter leading-tight relative py-0.5 flex items-center gap-1.5 min-w-0 flex-wrap">
-                        <span className="break-words font-black">{capitalizeName(p.name)}</span>
-                        {p.status === 'guest' && (
-                          <span className="text-[8px] font-black uppercase tracking-wider text-brand-primary bg-brand-primary/10 border border-brand-primary/30 px-1.5 py-0.5 rounded leading-none shrink-0">
-                            Convidado
-                          </span>
-                        )}
-                        <span className="absolute -bottom-0.5 left-0 h-0.5 bg-brand-primary transition-all duration-300 w-0 group-hover/player:w-full group-active/player:w-full" />
-                      </span>
-                    </div>
-                    {canConfirm && (
-                      <div className="flex items-center gap-2 shrink-0">
-                        <button
-                          disabled={!!processingId}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleConfirmPlayer(p);
-                          }}
-                          className="p-3 bg-brand-primary text-black rounded-xl hover:scale-110 active:scale-90 transition-all shadow-lg shadow-brand-primary/20 shrink-0 disabled:opacity-50 border-2 border-black"
-                          title="Vou Jogar!"
-                        >
-                          {processingId === p.id ? (
-                            <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
-                          ) : (
-                            <UserCheck className="w-5 h-5" />
-                          )}
-                        </button>
-                        <button
-                          disabled={!!processingId}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleConfirmIntent(p.id, 'NOT_GOING');
-                          }}
-                          className="p-3 bg-red-500/20 text-red-500 border border-red-500/40 rounded-xl hover:bg-red-500 hover:text-white transition-all shadow-lg shrink-0 disabled:opacity-50"
-                          title="Não Vou"
-                        >
-                          <UserX className="w-5 h-5" />
-                        </button>
-                      </div>
-                    )}
-                  </motion.div>
+                  <UndecidedPlayerItem
+                    key={p.id}
+                    player={p}
+                    index={i}
+                    canConfirm={canConfirm}
+                    isProcessing={processingId === p.id}
+                    isOtherProcessing={Boolean(processingId && processingId !== p.id)}
+                    onConfirm={handleConfirmPlayer}
+                    onDecline={handleDeclinePlayer}
+                    reminderSent={reminderSent}
+                    hasPushToken={hasPushToken}
+                    isAlreadyConfirmed={isAlreadyConfirmed}
+                  />
                 );
               })}
             </AnimatePresence>
@@ -920,53 +1051,16 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
                 {notGoingPlayers.map((p, i) => {
                   const canReset = currentPlayer?.id === p.id || userRole === 'ADMIN';
                   return (
-                    <motion.div 
-                      layout
-                      initial={{ opacity: 0, scale: 0.9 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0, scale: 0.9 }}
-                      transition={{ duration: 0.2 }}
-                      key={p.id} 
-                      onClick={() => {
-                        if (canReset && !processingId) {
-                          handleResetIntent(p.id);
-                        }
-                      }}
-                      className={`flex items-center justify-between bg-red-500/5 p-4 rounded-2xl border border-red-500/20 hover:border-red-500/50 transition-all duration-300 gap-2 min-w-0 group/player hover:scale-[1.02] active:scale-[0.98] ${canReset ? 'cursor-pointer hover:bg-red-500/10 hover:border-red-500/30 hover:shadow-[0_0_20px_rgba(239,68,68,0.15)]' : 'opacity-85'} ${(processingId && processingId !== p.id) ? 'opacity-40 grayscale pointer-events-none' : ''}`}
-                      title={canReset ? "Clique para voltar para a lista de indecisos" : undefined}
-                    >
-                      <div className="flex items-center gap-2 opacity-50 min-w-0 flex-1">
-                        <span className="text-red-500/50 font-black text-xs w-5 shrink-0">{i + 1}.</span>
-                        <span className="text-white text-[13px] font-black uppercase tracking-tighter leading-tight relative py-0.5 flex items-center gap-1.5 min-w-0 flex-wrap">
-                          <span className="break-words font-black">{capitalizeName(p.name)}</span>
-                          {p.status === 'guest' && (
-                            <span className="text-[8px] font-black uppercase tracking-wider text-red-500 bg-red-500/10 border border-red-500/30 px-1.5 py-0.5 rounded leading-none shrink-0">
-                              Convidado
-                            </span>
-                          )}
-                          <span className="absolute -bottom-0.5 left-0 h-0.5 bg-red-500 transition-all duration-300 w-0 group-hover/player:w-full group-active/player:w-full" />
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1 shrink-0">
-                        {canReset && (
-                          <button
-                            disabled={!!processingId}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleResetIntent(p.id);
-                            }}
-                            className={`p-2.5 rounded-xl transition-all shadow-lg shrink-0 disabled:opacity-50 ${currentPlayer?.id === p.id ? 'bg-red-500 text-white shadow-red-500/20' : 'bg-brand-primary text-black shadow-brand-primary/20 hover:scale-110 active:scale-90'}`}
-                            title={currentPlayer?.id === p.id ? "Voltar para a Lista" : "Remover da Lista"}
-                          >
-                            {processingId === p.id ? (
-                              <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                            ) : (
-                              <Trash2 className="w-4 h-4" />
-                            )}
-                          </button>
-                        )}
-                      </div>
-                    </motion.div>
+                    <NotGoingPlayerItem
+                      key={p.id}
+                      player={p}
+                      index={i}
+                      canReset={canReset}
+                      isCurrentPlayer={currentPlayer?.id === p.id}
+                      isProcessing={processingId === p.id}
+                      isOtherProcessing={Boolean(processingId && processingId !== p.id)}
+                      onReset={handleResetIntent}
+                    />
                   );
                 })}
               </AnimatePresence>
