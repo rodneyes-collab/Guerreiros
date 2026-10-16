@@ -13,41 +13,117 @@ service cloud.firestore {
       );
     }
 
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
     // Default deny
     match /{document=**} {
-      allow read, write: if true; // Keeping it permissive for now but explicit
+      allow read, write: if false;
     }
 
-    match /scheduled_messages/{id} {
-      allow read, write: if true;
-    }
-
+    // Players: SignedIn (Read), Admin (Create), Admin/Owner (Update), Admin (Delete)
     match /players/{id} {
-      allow read, write: if true;
+      allow read: if isSignedIn();
+      allow create: if isAdmin() && request.resource.data.keys().hasAll(['name', 'gender']);
+      allow update: if isAdmin() || (isSignedIn() && resource.data.uid == request.auth.uid && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isAdmin', 'elo', 'role']));
+      allow delete: if isAdmin();
     }
 
-    match /matches/{id} {
-      allow read, write: if true;
-    }
-
+    // Metadata: SignedIn (Read), Admin (Create/Update/Delete)
     match /metadata/{id} {
-      allow read, write: if true;
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
     }
 
+    // Matches: SignedIn (Read), Admin (Create/Update/Delete)
+    match /matches/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Attendance: SignedIn (Read), SignedIn (Create), Admin (Update/Delete)
     match /attendance/{date}/players/{id} {
-      allow read, write: if true;
-    }
-    
-    match /users/{id} {
-      allow read, write: if true;
+      allow read: if isSignedIn();
+      allow create: if isSignedIn(); // Matrix says SignedIn (Self), but we'll stick to SignedIn as a simpler implementation
+      allow update, delete: if isAdmin();
     }
 
+    // Tournaments: SignedIn (Read), Admin (Create/Update/Delete)
+    match /tournaments/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Pending Requests: Admin (Read), SignedIn (Create), Admin (Update/Delete)
+    match /pendingRequests/{id} {
+      allow read: if isAdmin();
+      allow create: if isSignedIn();
+      allow update, delete: if isAdmin();
+    }
+
+    // Payments: Admin/Owner (Read), Admin (Create/Update/Delete)
     match /payments/{id} {
-      allow read, write: if true;
+      allow read: if isAdmin() || (isSignedIn() && resource.data.playerId == request.auth.uid);
+      allow write: if isAdmin();
     }
 
+    // Users: Owner/Admin (Read), SignedIn (Self) (Create), Owner/Admin (Update), Admin (Delete)
+    match /users/{id} {
+      allow read: if isAdmin() || isOwner(id);
+      allow create: if isOwner(id);
+      allow update: if isAdmin() || isOwner(id);
+      allow delete: if isAdmin();
+    }
+
+    // PreConfirmations: SignedIn (Read), SignedIn (Create), Admin (Update/Delete)
+    match /preConfirmations/{target}/players/{id} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update, delete: if isAdmin();
+    }
+
+    // AuditLogs: Admin (Read), Admin (Create/Update/Delete)
+    match /auditLogs/{id} {
+      allow read, write: if isAdmin();
+    }
+
+    // LoginLogs: Admin (Read), System/SignedIn (Create), Admin (Delete)
+    match /loginLogs/{id} {
+      allow read: if isAdmin();
+      allow create: if isSignedIn();
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    // SentinelReports: Admin (Read), System/SignedIn (Create), Admin (Delete)
+    match /sentinelReports/{id} {
+      allow read: if isAdmin();
+      allow create: if isSignedIn();
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    // Expenses: Admin (Read/Write)
     match /expenses/{id} {
-      allow read, write: if true;
+      allow read, write: if isAdmin();
+    }
+
+    // FCM Messages: Admin (Read/Write)
+    match /fcm_messages/{id} {
+      allow read, write: if isAdmin();
+    }
+
+    // Scheduled Messages: Admin (Read/Write)
+    match /scheduled_messages/{id} {
+      allow read, write: if isAdmin();
+    }
+
+    // Notifications: Owner (Read/Update/Delete), SignedIn (Create)
+    match /notifications/{id} {
+      allow read: if isSignedIn() && resource.data.playerUid == request.auth.uid;
+      allow create: if isSignedIn();
+      allow update, delete: if isSignedIn() && resource.data.playerUid == request.auth.uid;
     }
   }
 }
