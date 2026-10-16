@@ -23,6 +23,7 @@ import {
   handleFirestoreError, 
   OperationType 
 } from '../firebase';
+import { translatePaymentStatus } from '../utils/helpers';
 
 interface MyPaymentsViewProps {
   playerId: string;
@@ -98,14 +99,6 @@ export const MyPaymentsView: React.FC<MyPaymentsViewProps> = ({ playerId }) => {
       case PaymentStatus.PAID: return 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20';
       case PaymentStatus.PENDING: return 'bg-amber-500/10 text-amber-500 border-amber-500/20';
       case PaymentStatus.OVERDUE: return 'bg-rose-500/10 text-rose-500 border-rose-500/20';
-    }
-  };
-
-  const translateStatus = (status: PaymentStatus) => {
-    switch (status) {
-      case PaymentStatus.PAID: return 'Pago';
-      case PaymentStatus.PENDING: return 'Pendente';
-      case PaymentStatus.OVERDUE: return 'Atrasado';
     }
   };
 
@@ -186,7 +179,7 @@ export const MyPaymentsView: React.FC<MyPaymentsViewProps> = ({ playerId }) => {
                       <div className="flex items-center justify-end gap-2">
                         <span className={`inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border ${getStatusColor(payment.status)}`}>
                           {getStatusIcon(payment.status)}
-                          {translateStatus(payment.status)}
+                          {translatePaymentStatus(payment.status)}
                         </span>
                         {userRole === 'ADMIN' && (
                           <button 

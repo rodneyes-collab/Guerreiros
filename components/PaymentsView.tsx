@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 
 import { HelpTooltip } from '../src/components/HelpTooltip';
-import { capitalizeName } from '../utils/helpers';
+import { capitalizeName, translatePaymentStatus } from '../utils/helpers';
 
 interface PaymentsViewProps {
   deletePayment: (id: string) => void;
@@ -534,14 +534,6 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
     }
   };
 
-  const translateStatus = (status: PaymentStatus) => {
-    switch (status) {
-      case PaymentStatus.PAID: return 'Pago';
-      case PaymentStatus.PENDING: return 'Pendente';
-      case PaymentStatus.OVERDUE: return 'Atrasado';
-    }
-  };
-
   return (
     <div 
       className="space-y-8 animate-in fade-in duration-500 relative"
@@ -897,7 +889,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                     <td className="px-8 py-5 text-center">
                       <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border ${getStatusColor(status)}`}>
                         {getStatusIcon(status)}
-                        {translateStatus(status)}
+                        {translatePaymentStatus(status)}
                       </span>
                     </td>
                     <td className="px-8 py-5 text-center text-[10px] font-bold text-white/40 uppercase">
@@ -949,7 +941,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                 <div className="flex flex-wrap gap-2">
                   <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[9px] font-black uppercase tracking-widest border ${getStatusColor(status)}`}>
                     {getStatusIcon(status)}
-                    {translateStatus(status)}
+                    {translatePaymentStatus(status)}
                   </span>
                   <span className="bg-white/5 text-white/60 px-2.5 py-1 rounded-xl text-[9px] font-black uppercase tracking-widest border border-brand-primary/40">
                     Vence: {new Date(payment.dueDate + 'T00:00:00').toLocaleDateString('pt-BR')}
@@ -1203,7 +1195,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                           <td className="px-8 py-5 text-center">
                             <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border ${getStatusColor(status)}`}>
                               {getStatusIcon(status)}
-                              {translateStatus(status)}
+                              {translatePaymentStatus(status)}
                             </span>
                           </td>
                           <td className="px-8 py-5 text-center font-mono text-sm font-black text-white">
@@ -1261,7 +1253,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                         <div className="flex items-center gap-2 mt-1">
                           <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[8px] font-black uppercase tracking-widest border ${getStatusColor(status)}`}>
                             {getStatusIcon(status)}
-                            {translateStatus(status)}
+                            {translatePaymentStatus(status)}
                           </span>
                           {payment?.paymentDate && (
                             <span className="text-[9px] font-bold text-white/40 uppercase">
