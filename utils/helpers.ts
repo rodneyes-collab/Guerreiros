@@ -1,5 +1,5 @@
 
-import { Player, Gender } from '../types';
+import { Player, Gender, PaymentStatus } from '../types';
 import { getFirestoreDateKey } from '../firebase';
 
 export const capitalizeName = (name: string): string => {
@@ -173,4 +173,12 @@ export const getSafePlayer = (playerId: string, players: Player[]): Player => {
     arrivalOrder: 999,
     status: 'inactive'
   } as Player;
+};
+
+export const translatePaymentStatus = (status: PaymentStatus) => {
+  switch (status) {
+    case PaymentStatus.PAID: return 'Pago';
+    case PaymentStatus.PENDING: return 'Pendente';
+    case PaymentStatus.OVERDUE: return 'Atrasado';
+  }
 };
