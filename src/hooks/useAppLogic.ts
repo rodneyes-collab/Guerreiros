@@ -4825,8 +4825,9 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
         const teamB = activeTournament.teams.find(t => t.id === match.teamBId);
 
         if (teamA && teamB) {
-          const playersA = teamA.players.map(id => players.find(p => p.id === id)).filter(Boolean) as Player[];
-          const playersB = teamB.players.map(id => players.find(p => p.id === id)).filter(Boolean) as Player[];
+          const playerMap = new Map(players.map(p => [p.id, p]));
+          const playersA = teamA.players.map(id => playerMap.get(id)).filter(Boolean) as Player[];
+          const playersB = teamB.players.map(id => playerMap.get(id)).filter(Boolean) as Player[];
 
           if (playersA.length > 0 && playersB.length > 0) {
             let actualA = 0.5; // Draw
