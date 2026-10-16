@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { defineConfig, loadEnv } from 'vite';
@@ -65,6 +66,11 @@ export default defineConfig(({ mode }) => {
         alias: {
           '@': path.resolve(__dirname, 'src')
         }
+      },
+      test: {
+        environment: 'jsdom',
+        globals: true,
+        include: ['src/**/*.test.ts', 'src/**/*.spec.ts', 'src/**/*.test.tsx', 'src/**/*.spec.tsx']
       }
     };
 });
