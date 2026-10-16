@@ -48,7 +48,7 @@ import {
   disableNetwork,
   deleteField 
 } from 'firebase/firestore';
-import { getMessaging, getToken, onMessage } from 'firebase/messaging';
+import { getMessaging } from 'firebase/messaging';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import firebaseConfig from './firebase-applet-config.json';
 
