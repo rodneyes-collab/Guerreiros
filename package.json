@@ -10,8 +10,9 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "test": "npm run test:rules",
+    "test": "npm run test:rules && npm run test:trueskill",
     "test:rules": "tsx scripts/verify-team-rules.ts",
+    "test:trueskill": "tsx src/utils/__tests__/trueSkill.test.ts",
     "test:load": "tsx scripts/teamLogic.test.ts",
     "prepare": "husky"
   },
