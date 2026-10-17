@@ -17,7 +17,9 @@ interface PlayerStatusCardProps {
   activeTournament?: Tournament | null;
 }
 
-export const PlayerStatusCard: React.FC<PlayerStatusCardProps> = ({
+// ⚡ Bolt: Added React.memo to prevent unnecessary re-renders of this complex component
+// when ViewManager state updates. Reduces main thread blocking during updates.
+export const PlayerStatusCard = React.memo<PlayerStatusCardProps>(({
   currentPlayer,
   attendance,
   generationResult,
@@ -287,4 +289,4 @@ export const PlayerStatusCard: React.FC<PlayerStatusCardProps> = ({
       )}
     </div>
   );
-};
+});
