@@ -46,6 +46,8 @@ interface MembersViewProps {
   savePlayer: (player: any) => Promise<void>;
 }
 
+const ptBRMonthFormatter = new Intl.DateTimeFormat('pt-BR', { month: 'long' });
+
 export const MembersView: React.FC<MembersViewProps> = ({
   clearAllPlayers,
   deletePlayer,
@@ -924,7 +926,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
                   const m = String(i + 1).padStart(2, '0');
                   return (
                     <option key={m} value={m}>
-                      {new Intl.DateTimeFormat('pt-BR', { month: 'long' }).format(new Date(2024, i))}
+                      {ptBRMonthFormatter.format(new Date(2024, i))}
                     </option>
                   );
                 })}

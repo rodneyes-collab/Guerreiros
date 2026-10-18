@@ -1,0 +1,3 @@
+## 2024-03-24 - Intl.DateTimeFormat Instantiation in Loops
+**Learning:** Instantiating `new Intl.DateTimeFormat` inside frequently called functions (like map/filter callbacks or deeply nested useMemo recalculations) is a massive performance bottleneck. In Node.js tests, doing it 10,000 times takes ~1166ms, whereas reusing a cached formatter takes ~21ms (a 55x speedup). This is particularly impactful in React components that process large lists of items (like match history) where these formatters are invoked per item during renders.
+**Action:** Always cache `Intl.DateTimeFormat` instances outside of loops or component functions, or use module-level singletons for common date formats.

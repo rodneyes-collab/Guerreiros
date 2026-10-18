@@ -41,6 +41,13 @@ interface HistoryViewProps {
   onReprocessAllMatches?: () => Promise<void>;
 }
 
+const brDateFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Sao_Paulo',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit'
+});
+
 export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDeleteMatchesByDate, onUpdateMatchResult, onReprocessAllMatches }) => {
   const [editingMatch, setEditingMatch] = useState<Match | null>(null);
   const [isReprocessing, setIsReprocessing] = useState(false);
@@ -50,12 +57,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
   
   const getMatchStandardDate = (m: { date?: string; timestamp?: number }): string => {
     if (m.timestamp) {
-      return new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'America/Sao_Paulo',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit'
-      }).format(new Date(m.timestamp));
+      return brDateFormatter.format(new Date(m.timestamp));
     }
     return m.date ? toStandardDateKey(m.date) : '';
   };
