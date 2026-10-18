@@ -20,6 +20,8 @@ import { playFeedbackSound, triggerHaptic } from '../src/utils/feedback';
 import { sendIntentionConfirmationPush } from '../src/utils/pushNotificationHelper';
 import { useIntentionsReminderSchedule } from '../src/hooks/useIntentionsReminderSchedule';
 
+const ptBRMonthFormatter = new Intl.DateTimeFormat('pt-BR', { month: 'long' });
+
 interface IntentionsViewProps {
   userRole: 'ADMIN' | 'MEMBER' | null;
   currentPlayer: Player | null;
@@ -718,7 +720,7 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
               >
                 {Array.from({ length: 12 }, (_, i) => (
                   <option key={i + 1} value={i + 1}>
-                    {new Intl.DateTimeFormat('pt-BR', { month: 'long' }).format(new Date(2024, i))}
+                    {ptBRMonthFormatter.format(new Date(2024, i))}
                   </option>
                 ))}
               </select>
