@@ -5,6 +5,14 @@ import { useStore } from '../../store';
 import { db, collection, getDocs, doc, deleteDoc } from '../../firebase';
 import { Match, Player } from '../../types';
 
+// Cache the Intl formatter at the module level for performance
+const saoPauloDateFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Sao_Paulo',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit'
+});
+
 export const SyncDebuggerModal: React.FC = () => {
   const isOpen = useStore(state => state.isSyncDebuggerOpen);
   const setIsOpen = useStore(state => state.setIsSyncDebuggerOpen);
@@ -55,12 +63,7 @@ export const SyncDebuggerModal: React.FC = () => {
   const getDateKey = (m: Match) => {
     if (m.date) return m.date;
     if (m.timestamp) {
-      return new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'America/Sao_Paulo',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit'
-      }).format(new Date(m.timestamp));
+      return saoPauloDateFormatter.format(new Date(m.timestamp));
     }
     return 'UNKNOWN';
   };

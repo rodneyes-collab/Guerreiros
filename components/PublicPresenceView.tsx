@@ -29,6 +29,9 @@ import { playFeedbackSound, triggerHaptic } from '../src/utils/feedback';
 import { getPriorityQueue } from '../utils/teamLogic';
 import { Flame, Star, ArrowRight } from 'lucide-react';
 
+// Cache the Intl formatter at the module level for performance
+const ptBRMonthFormatter = new Intl.DateTimeFormat('pt-BR', { month: 'long' });
+
 interface PublicPresenceViewProps {
   onBackToLogin: () => void;
   handleGoogleLogin: () => void;
@@ -280,7 +283,7 @@ export const PublicPresenceView: React.FC<PublicPresenceViewProps> = ({ onBackTo
               >
                 {Array.from({ length: 12 }, (_, i) => (
                   <option key={i + 1} value={i + 1}>
-                    {new Intl.DateTimeFormat('pt-BR', { month: 'long' }).format(new Date(2024, i))}
+                    {ptBRMonthFormatter.format(new Date(2024, i))}
                   </option>
                 ))}
               </select>

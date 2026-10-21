@@ -78,6 +78,23 @@ import { GlobalStats } from './DashboardView';
 import { EvasionIcon } from './EvasionIcon';
 import { calculateEvasionLevel } from '../utils/evasion';
 
+// Cache the Intl formatter at the module level for performance
+const saoPauloDateFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Sao_Paulo',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit'
+});
+
+// Cache the Intl formatter at the module level for performance
+const ptBRSaoPauloDayMonthFormatter = new Intl.DateTimeFormat('pt-BR', {
+  timeZone: 'America/Sao_Paulo',
+  day: '2-digit',
+  month: '2-digit'
+});
+
+
+
 interface RankingViewProps {
   userRole: 'ADMIN' | 'MEMBER';
   refreshPlayers: () => Promise<void>;
@@ -174,12 +191,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
   // Helper to extract standard Brasília date from a match (resilient to UTC/local timezones)
   const getMatchDate = useCallback((m: { date?: string; timestamp?: number }): string => {
     if (m.timestamp) {
-      return new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'America/Sao_Paulo',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit'
-      }).format(new Date(m.timestamp));
+      return saoPauloDateFormatter.format(new Date(m.timestamp));
     }
     return m.date ? (m.date.includes('T') ? m.date.split('T')[0] : m.date) : '';
   }, []);
@@ -264,11 +276,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
         dateObj = new Date(dateString); // Timestamp number
       }
 
-      return new Intl.DateTimeFormat('pt-BR', { 
-        timeZone: 'America/Sao_Paulo', 
-        day: '2-digit', 
-        month: '2-digit' 
-      }).format(dateObj);
+      return ptBRSaoPauloDayMonthFormatter.format(dateObj);
     } catch {
       return 'Data';
     }
