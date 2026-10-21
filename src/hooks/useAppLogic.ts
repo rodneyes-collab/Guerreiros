@@ -1905,9 +1905,12 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Total de documentos retornados após a busca: ${filteredSnap.size}`);
       console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] --------------------------------------------------`);
 
-      filteredSnap.forEach((docSnap, idx) => {
+      // Use an external counter since QuerySnapshot.forEach callback doesn't provide an index in Firebase v9+
+      let idx = 0;
+      filteredSnap.forEach((docSnap) => {
         const m = docSnap.data();
         console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Documento retornado [${idx + 1}]: ID=${docSnap.id}, date=${m.date}, timestamp=${m.timestamp}, dailyNumber=${m.dailyNumber}`);
+        idx++;
       });
 
       if (filteredSnap.size <= 1 && matchesSnap.size > 1) {
@@ -1929,7 +1932,8 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Nenhuma paginação ou limite restritivo detectado. Total exato de partidas validadas: ${fetchedMatches.length}`);
 
       const matchesToUse = fetchedMatches.length > 0 ? fetchedMatches : matches;
-      const recalculatedPlayers = recalculateAllStatsFromMatches(players, matchesToUse, todayDateKey);
+      const localTodayDateKey = getFirestoreDateKey();
+      const recalculatedPlayers = recalculateAllStatsFromMatches(players, matchesToUse, localTodayDateKey);
 
       const batch = writeBatch(db);
       recalculatedPlayers.forEach(p => {
@@ -1953,7 +1957,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
         batch.set(doc(db, 'players', p.id), cleanObject(playerUpdates), { merge: true });
         
         // Sempre atualiza o documento na lista de presença do dia atual para manter consistência no Ranking Diário
-        batch.set(doc(db, 'attendance', todayDateKey, 'players', p.id), cleanObject(playerUpdates), { merge: true });
+        batch.set(doc(db, 'attendance', localTodayDateKey, 'players', p.id), cleanObject(playerUpdates), { merge: true });
       });
 
       await batch.commit();
@@ -2208,7 +2212,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
             const snapshot = await getDocs(collection(db, collName));
             
             if (collName === 'attendance') {
-              for (const dateDoc of snapshot.docs) {
+              await Promise.all(snapshot.docs.map(async (dateDoc) => {
                 const playersSnapshot = await getDocs(collection(db, `attendance/${dateDoc.id}/players`));
                 const subBatch = writeBatch(db);
                 playersSnapshot.forEach(p => subBatch.delete(p.ref));
@@ -2217,7 +2221,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
                 const dateBatch = writeBatch(db);
                 dateBatch.delete(dateDoc.ref);
                 await dateBatch.commit();
-              }
+              }));
             } else {
               const batch = writeBatch(db);
               snapshot.forEach(doc => {
