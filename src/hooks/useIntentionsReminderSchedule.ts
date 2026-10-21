@@ -3,6 +3,12 @@ import { db, doc, updateDoc, getFirestoreDateKey, getBrazilDay } from '../../fir
 import { Player } from '../../types';
 import { getIntentionReminderText, sendIntentionReminderPush } from '../utils/pushNotificationHelper';
 
+const hourFormatter = new Intl.DateTimeFormat('pt-BR', {
+  timeZone: 'America/Sao_Paulo',
+  hour: 'numeric',
+  hour12: false
+});
+
 export interface UseIntentionsReminderScheduleProps {
   players: Player[];
   attendance?: Player[];
@@ -46,11 +52,7 @@ export const useIntentionsReminderSchedule = ({
   const getBrazilHour = useCallback(() => {
     try {
       const now = new Date();
-      const str = new Intl.DateTimeFormat('pt-BR', {
-        timeZone: 'America/Sao_Paulo',
-        hour: 'numeric',
-        hour12: false
-      }).format(now);
+      const str = hourFormatter.format(now);
       return parseInt(str, 10);
     } catch {
       return new Date().getHours();

@@ -50,6 +50,13 @@ import { playFeedbackSound, triggerHaptic } from '../utils/feedback';
 let activeBirthdaysSyncId: string | null = null;
 let activeGuardianId: string | null = null;
 
+const dateCache = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Sao_Paulo',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
 export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, size: number) => Promise<void>) => {
   const [instanceId] = useState(() => generateUUID());
   const MAX_ACTIVE_MEMBERS = 32;
@@ -289,12 +296,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
         const sortedByTime = [...sessionMatches].sort((a, b) => a.timestamp - b.timestamp);
         
         const getCorrectDate = (ts: number) => {
-          return new Intl.DateTimeFormat('en-CA', {
-            timeZone: 'America/Sao_Paulo',
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit'
-          }).format(new Date(ts));
+          return dateCache.format(new Date(ts));
         };
 
         const sessionBaseDate = sortedByTime.length > 0 ? getCorrectDate(sortedByTime[0].timestamp) : getCorrectDate(now);
@@ -1905,7 +1907,10 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Total de documentos retornados após a busca: ${filteredSnap.size}`);
       console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] --------------------------------------------------`);
 
-      filteredSnap.forEach((docSnap, idx) => {
+      let iterIdx = 0;
+      filteredSnap.forEach((docSnap) => {
+        iterIdx++;
+        let idx = iterIdx;
         const m = docSnap.data();
         console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Documento retornado [${idx + 1}]: ID=${docSnap.id}, date=${m.date}, timestamp=${m.timestamp}, dailyNumber=${m.dailyNumber}`);
       });
@@ -1929,7 +1934,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Nenhuma paginação ou limite restritivo detectado. Total exato de partidas validadas: ${fetchedMatches.length}`);
 
       const matchesToUse = fetchedMatches.length > 0 ? fetchedMatches : matches;
-      const recalculatedPlayers = recalculateAllStatsFromMatches(players, matchesToUse, todayDateKey);
+      const recalculatedPlayers = recalculateAllStatsFromMatches(players, matchesToUse, dateKey);
 
       const batch = writeBatch(db);
       recalculatedPlayers.forEach(p => {
@@ -1953,7 +1958,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
         batch.set(doc(db, 'players', p.id), cleanObject(playerUpdates), { merge: true });
         
         // Sempre atualiza o documento na lista de presença do dia atual para manter consistência no Ranking Diário
-        batch.set(doc(db, 'attendance', todayDateKey, 'players', p.id), cleanObject(playerUpdates), { merge: true });
+        batch.set(doc(db, 'attendance', dateKey, 'players', p.id), cleanObject(playerUpdates), { merge: true });
       });
 
       await batch.commit();
@@ -2655,12 +2660,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       const allSortedMatches = [...(matches || [])].sort((a, b) => a.timestamp - b.timestamp);
       
       const getCorrectDate = (ts: number) => {
-        return new Intl.DateTimeFormat('en-CA', {
-          timeZone: 'America/Sao_Paulo',
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit'
-        }).format(new Date(ts));
+        return dateCache.format(new Date(ts));
       };
 
       const dateMapping = new Map<string, string>(); // Maps old match dates to clean session dates
