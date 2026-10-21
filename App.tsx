@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo, useEffect, Suspense } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { playSound } from './src/utils/audio';
 import { 
