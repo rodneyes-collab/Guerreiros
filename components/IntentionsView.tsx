@@ -7,7 +7,7 @@ import { useStore } from '../store';
 import { Logo } from '../src/components/Logo';
 import { PlayerAvatar } from '../src/components/PlayerAvatar';
 import { ConfirmedPlayerItem, UndecidedPlayerItem, NotGoingPlayerItem } from '../src/components/IntentionPlayerItem';
-import { CalendarCheck, Copy, BellRing, Settings, UserCheck, UserX, Clock, ArrowRight, RotateCcw, Zap, Star, Shield, Trash2, CheckCircle2, AlertTriangle, Flame, AlertCircle, MessageCircle, LogOut, RefreshCw } from 'lucide-react';
+import { CalendarCheck, Copy, BellRing, Settings, UserCheck, UserX, Clock, ArrowRight, Zap, Star, Shield, Trash2, AlertTriangle, Flame, AlertCircle, RefreshCw } from 'lucide-react';
 import { EvasionIcon } from './EvasionIcon';
 import { calculateEvasionLevel } from '../utils/evasion';
 import { Player } from '../types';
