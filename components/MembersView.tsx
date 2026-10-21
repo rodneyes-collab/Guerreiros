@@ -36,6 +36,9 @@ import { getFirestoreDateKey } from '../firebase';
 import { useIntentions } from '../src/hooks/useIntentions';
 import { useBirthdays } from '../src/hooks/useBirthdays';
 
+// Cache the Intl formatter at the module level for performance
+const ptBRMonthFormatter = new Intl.DateTimeFormat('pt-BR', { month: 'long' });
+
 interface MembersViewProps {
   clearAllPlayers: () => void;
   deletePlayer: (id: string) => void;
@@ -924,7 +927,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
                   const m = String(i + 1).padStart(2, '0');
                   return (
                     <option key={m} value={m}>
-                      {new Intl.DateTimeFormat('pt-BR', { month: 'long' }).format(new Date(2024, i))}
+                      {ptBRMonthFormatter.format(new Date(2024, i))}
                     </option>
                   );
                 })}

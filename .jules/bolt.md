@@ -1,0 +1,3 @@
+## 2024-05-24 - [Intl.DateTimeFormat Instantiation inside React components]
+**Learning:** The codebase was frequently instantiating `Intl.DateTimeFormat` inside the render body or within `.map` loops inside React components (like `BirthdayList`, `SyncDebuggerModal`, `DashboardView`, etc). Because `Intl.DateTimeFormat` constructors are computationally expensive, repeatedly creating them during the render cycle or in lists degrades performance significantly.
+**Action:** Always cache `Intl.DateTimeFormat` objects at the module level (outside the component function) so they are instantiated only once per file and efficiently reused across renders.
