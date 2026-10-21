@@ -284,7 +284,21 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(cors());
+  const allowedOrigins = [
+    process.env.VITE_APP_URL,
+    'https://guerreiros-volleyball-club-238897290870.us-west1.run.app',
+    'http://localhost:3000'
+  ].filter(Boolean) as string[];
+
+  app.use(cors({
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin) || (process.env.NODE_ENV !== "production" && origin?.startsWith("http://localhost:"))) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    }
+  }));
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
   
