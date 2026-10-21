@@ -88,6 +88,12 @@ interface RankingViewProps {
   isDark?: boolean;
 }
 
+const brazilianDateFormatter = new Intl.DateTimeFormat('pt-BR', {
+  timeZone: 'America/Sao_Paulo',
+  day: '2-digit',
+  month: '2-digit'
+});
+
 export const RankingView: React.FC<RankingViewProps> = ({
   userRole,
   refreshPlayers,
@@ -264,11 +270,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
         dateObj = new Date(dateString); // Timestamp number
       }
 
-      return new Intl.DateTimeFormat('pt-BR', { 
-        timeZone: 'America/Sao_Paulo', 
-        day: '2-digit', 
-        month: '2-digit' 
-      }).format(dateObj);
+      return brazilianDateFormatter.format(dateObj);
     } catch {
       return 'Data';
     }
