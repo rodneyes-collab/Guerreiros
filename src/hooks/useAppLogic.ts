@@ -50,6 +50,64 @@ import { playFeedbackSound, triggerHaptic } from '../utils/feedback';
 let activeBirthdaysSyncId: string | null = null;
 let activeGuardianId: string | null = null;
 
+const getUnreadNotificationCounts = async (players: any[]) => {
+  const result = new Map<string, number>();
+
+  // Default to 1 unread count for everyone
+  players.forEach(p => {
+    if (p && p.id) {
+      result.set(p.id, 1);
+    }
+  });
+
+  const uidsToQuery = players.filter(p => p && p.id && p.uid && p.fcmToken).map(p => p.uid);
+
+  if (uidsToQuery.length > 0) {
+    // Unique UIDs
+    const uniqueUids = Array.from(new Set(uidsToQuery));
+
+    try {
+      const promises = [];
+      // Firestore 'in' limit is 30
+      for (let i = 0; i < uniqueUids.length; i += 30) {
+        const chunk = uniqueUids.slice(i, i + 30);
+        const q = query(
+          collection(db, 'notifications'),
+          where('playerUid', 'in', chunk),
+          where('read', '==', false)
+        );
+        promises.push(getDocs(q));
+      }
+
+      const snaps = await Promise.all(promises);
+      const countsByUid = new Map<string, number>();
+
+      snaps.forEach(snap => {
+        snap.forEach(doc => {
+          const data = doc.data();
+          if (data && data.playerUid) {
+            countsByUid.set(data.playerUid, (countsByUid.get(data.playerUid) || 0) + 1);
+          }
+        });
+      });
+
+      players.forEach(p => {
+        if (p && p.id && p.uid && countsByUid.has(p.uid)) {
+          // +1 because it includes the notification being sent right now
+          result.set(p.id, countsByUid.get(p.uid)! + 1);
+        }
+      });
+    } catch (e) {
+      console.error('Error fetching unread counts', e);
+    }
+  }
+
+  return players.map(p => ({
+    id: p?.id,
+    unreadCount: p?.id ? result.get(p.id) || 1 : 1
+  }));
+};
+
 export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, size: number) => Promise<void>) => {
   const [instanceId] = useState(() => generateUUID());
   const MAX_ACTIVE_MEMBERS = 32;
@@ -806,16 +864,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
 
       // Notificar jogadores sobre o resultado da partida
       const playersToNotify = [...teamA, ...teamB];
-      const notificationData = await Promise.all(playersToNotify.map(async (p) => {
-        if (!p.id || !p.fcmToken) return { id: p.id, unreadCount: 1 };
-        try {
-          const q = query(collection(db, 'notifications'), where('playerUid', '==', p.uid), where('read', '==', false));
-          const snap = await getDocs(q);
-          return { id: p.id, unreadCount: snap.size + 1 };
-        } catch (e) {
-          return { id: p.id, unreadCount: 1 };
-        }
-      }));
+      const notificationData = await getUnreadNotificationCounts(playersToNotify);
 
       const notifyResult = (p: Player, isTeamA: boolean) => {
         const isWinner = (isTeamA && winner === 'A') || (!isTeamA && winner === 'B');
@@ -1898,20 +1947,23 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Total de documentos recuperados sem filtro de collection(db, 'matches'): ${matchesSnap.size}`);
 
       // 2. Consulta direta filtrada por data usando a chave construída dateKey
-      const qFiltered = query(collection(db, 'matches'), where('date', '==', dateKey));
+      const dateKeyForDiag = getFirestoreDateKey();
+      const qFiltered = query(collection(db, 'matches'), where('date', '==', dateKeyForDiag));
       const filteredSnap = await getDocs(qFiltered);
       console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] --- QUERY FIRESTORE FILTRADA POR DATA ---`);
-      console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Query parameters: collection('matches').where('date', '==', '${dateKey}')`);
+      console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Query parameters: collection('matches').where('date', '==', '${dateKeyForDiag}')`);
       console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Total de documentos retornados após a busca: ${filteredSnap.size}`);
       console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] --------------------------------------------------`);
 
-      filteredSnap.forEach((docSnap, idx) => {
+      let diagIdx = 0;
+      filteredSnap.forEach((docSnap) => {
         const m = docSnap.data();
-        console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Documento retornado [${idx + 1}]: ID=${docSnap.id}, date=${m.date}, timestamp=${m.timestamp}, dailyNumber=${m.dailyNumber}`);
+        diagIdx++;
+        console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Documento retornado [${diagIdx}]: ID=${docSnap.id}, date=${m.date}, timestamp=${m.timestamp}, dailyNumber=${m.dailyNumber}`);
       });
 
       if (filteredSnap.size <= 1 && matchesSnap.size > 1) {
-        console.warn(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] ANÁLISE: A query filtrada por dateKey ("${dateKey}") retornou ${filteredSnap.size} partida(s), enquanto o total geral na coleção é ${matchesSnap.size}. Isso indica que o filtro por data restringe o resultado caso a data corrente não coincida com os dias em que houve partidas.`);
+        console.warn(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] ANÁLISE: A query filtrada por dateKey ("${dateKeyForDiag}") retornou ${filteredSnap.size} partida(s), enquanto o total geral na coleção é ${matchesSnap.size}. Isso indica que o filtro por data restringe o resultado caso a data corrente não coincida com os dias em que houve partidas.`);
       }
 
       const fetchedMatches: Match[] = [];
@@ -1929,7 +1981,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Nenhuma paginação ou limite restritivo detectado. Total exato de partidas validadas: ${fetchedMatches.length}`);
 
       const matchesToUse = fetchedMatches.length > 0 ? fetchedMatches : matches;
-      const recalculatedPlayers = recalculateAllStatsFromMatches(players, matchesToUse, todayDateKey);
+      const recalculatedPlayers = recalculateAllStatsFromMatches(players, matchesToUse, dateKeyForDiag);
 
       const batch = writeBatch(db);
       recalculatedPlayers.forEach(p => {
@@ -1953,7 +2005,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
         batch.set(doc(db, 'players', p.id), cleanObject(playerUpdates), { merge: true });
         
         // Sempre atualiza o documento na lista de presença do dia atual para manter consistência no Ranking Diário
-        batch.set(doc(db, 'attendance', todayDateKey, 'players', p.id), cleanObject(playerUpdates), { merge: true });
+        batch.set(doc(db, 'attendance', dateKeyForDiag, 'players', p.id), cleanObject(playerUpdates), { merge: true });
       });
 
       await batch.commit();
@@ -3215,15 +3267,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
         ...(result.remainingPlayers ? result.remainingPlayers.slice(0, 12) : [])
       ].filter(p => p && p.id && p.fcmToken);
 
-      const notificationData = await Promise.all(playersToNotifyWithTokens.map(async (p) => {
-        try {
-          const q = query(collection(db, 'notifications'), where('playerUid', '==', p!.uid), where('read', '==', false));
-          const snap = await getDocs(q);
-          return { id: p!.id, unreadCount: snap.size + 1 };
-        } catch (e) {
-          return { id: p!.id, unreadCount: 1 };
-        }
-      }));
+      const notificationData = await getUnreadNotificationCounts(playersToNotifyWithTokens);
 
       const queueNotification = (player: Player | null | undefined, title: string, body: string) => {
         if (player) {
@@ -3456,15 +3500,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
             ...result.remainingPlayers.slice(0, 12)
           ].filter(p => p && p.id && p.fcmToken);
 
-          const notificationData = await Promise.all(playersToNotify.map(async (p) => {
-            try {
-              const q = query(collection(db, 'notifications'), where('playerUid', '==', p!.uid), where('read', '==', false));
-              const snap = await getDocs(q);
-              return { id: p!.id, unreadCount: snap.size + 1 };
-            } catch (e) {
-              return { id: p!.id, unreadCount: 1 };
-            }
-          }));
+          const notificationData = await getUnreadNotificationCounts(playersToNotify);
 
           // Função auxiliar para enfileirar notificação
           const queueNotification = (player: Player | null | undefined, title: string, body: string) => {
