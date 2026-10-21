@@ -3165,7 +3165,14 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
     triggerDbStatus('writing');
 
     const now = Date.now();
-    const threshold = systemMetadata.lastResetTimestamp || (now - (16 * 60 * 60 * 1000));
+    const sixteenHoursAgo = now - (16 * 60 * 60 * 1000);
+    let threshold = systemMetadata.lastResetTimestamp || sixteenHoursAgo;
+
+    // Fix for future date anomalies (e.g. 2026 dates in DB while user is in 2024)
+    if (threshold > now) {
+      threshold = sixteenHoursAgo;
+    }
+
     const sessionMatches = (matches || []).filter(m => m.timestamp > threshold);
 
     try {
@@ -3388,7 +3395,14 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
 
         let result: any = null;
         const now = Date.now();
-        const threshold = systemMetadata.lastResetTimestamp || (now - (16 * 60 * 60 * 1000));
+        const sixteenHoursAgo = now - (16 * 60 * 60 * 1000);
+        let threshold = systemMetadata.lastResetTimestamp || sixteenHoursAgo;
+
+        // Fix for future date anomalies (e.g. 2026 dates in DB while user is in 2024)
+        if (threshold > now) {
+          threshold = sixteenHoursAgo;
+        }
+
         const sessionMatches = (matches || []).filter(m => m.timestamp > threshold);
 
         try {
@@ -3656,7 +3670,14 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
         
         // Recalculate daily match count based on actual matches
         const now = Date.now();
-        const threshold = systemMetadata.lastResetTimestamp || (now - (16 * 60 * 60 * 1000));
+        const sixteenHoursAgo = now - (16 * 60 * 60 * 1000);
+        let threshold = systemMetadata.lastResetTimestamp || sixteenHoursAgo;
+
+        // Fix for future date anomalies (e.g. 2026 dates in DB while user is in 2024)
+        if (threshold > now) {
+          threshold = sixteenHoursAgo;
+        }
+
         const sessionMatches = (matches || []).filter(m => m.timestamp > threshold);
         const maxDailyNumber = sessionMatches.reduce((max, m) => Math.max(max, m.dailyNumber || 0), 0);
         
