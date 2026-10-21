@@ -1,0 +1,3 @@
+## 2024-05-15 - [useStore and React Re-renders]
+**Learning:** React components using `useStore()` directly subscribe to *all* changes in the Zustand store. The store is frequently updated (e.g. `elapsedTime` increments every second). This means many major view components like `MatchView`, `RankingView`, etc., re-render completely every single second when the match timer is running.
+**Action:** Replace `useStore()` with `useShallow` from `zustand/react/shallow` to only subscribe to specific properties, OR select specific properties directly like `useStore(state => state.property)` in these major components.
