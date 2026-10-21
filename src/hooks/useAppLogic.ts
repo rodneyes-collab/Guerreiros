@@ -341,6 +341,8 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
               // specifically fix the 17th bug
               if (h.date === '2026-04-17' && sessionBaseDate === '2026-04-16') {
                  return { ...h, date: sessionBaseDate };
+              } else if (h.date === '2026-04-17' && sortedByTime.length > 0 && getCorrectDate(sortedByTime[sortedByTime.length - 1].timestamp) === '2026-04-16') {
+                 return { ...h, date: '2026-04-16' };
               }
               return h;
             });
@@ -1905,9 +1907,9 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Total de documentos retornados após a busca: ${filteredSnap.size}`);
       console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] --------------------------------------------------`);
 
-      filteredSnap.forEach((docSnap, idx) => {
+      let idx = 0; filteredSnap.forEach((docSnap) => {
         const m = docSnap.data();
-        console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Documento retornado [${idx + 1}]: ID=${docSnap.id}, date=${m.date}, timestamp=${m.timestamp}, dailyNumber=${m.dailyNumber}`);
+        console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Documento retornado [${idx + 1}]: ID=${docSnap.id}, date=${m.date}, timestamp=${m.timestamp}, dailyNumber=${m.dailyNumber}`); idx++;
       });
 
       if (filteredSnap.size <= 1 && matchesSnap.size > 1) {
@@ -1929,7 +1931,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Nenhuma paginação ou limite restritivo detectado. Total exato de partidas validadas: ${fetchedMatches.length}`);
 
       const matchesToUse = fetchedMatches.length > 0 ? fetchedMatches : matches;
-      const recalculatedPlayers = recalculateAllStatsFromMatches(players, matchesToUse, todayDateKey);
+      const recalculatedPlayers = recalculateAllStatsFromMatches(players, matchesToUse, dateKey);
 
       const batch = writeBatch(db);
       recalculatedPlayers.forEach(p => {
@@ -1953,7 +1955,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
         batch.set(doc(db, 'players', p.id), cleanObject(playerUpdates), { merge: true });
         
         // Sempre atualiza o documento na lista de presença do dia atual para manter consistência no Ranking Diário
-        batch.set(doc(db, 'attendance', todayDateKey, 'players', p.id), cleanObject(playerUpdates), { merge: true });
+        batch.set(doc(db, 'attendance', dateKey, 'players', p.id), cleanObject(playerUpdates), { merge: true });
       });
 
       await batch.commit();
@@ -2685,13 +2687,26 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
           let hDate = h.date;
           // Fix ISO strings
           if (hDate.includes('T')) {
-            hDate = getCorrectDate(new Date(hDate).getTime());
+            const ts = new Date(hDate).getTime();
+            hDate = ts > (newResetThreshold || 0) ? getCorrectDate(Date.now()) : getCorrectDate(ts);
             historyChanged = true;
           }
           // Align with session dates
           if (dateMapping.has(hDate) && dateMapping.get(hDate) !== hDate) {
             hDate = dateMapping.get(hDate)!;
             historyChanged = true;
+          }
+
+          // specifically fix the 17th bug
+          if (hDate === '2026-04-17' && dateMapping.has('2026-04-16') && dateMapping.get('2026-04-16') === '2026-04-16') {
+              hDate = '2026-04-16';
+              historyChanged = true;
+          } else if (hDate === '2026-04-17' && dateMapping.has('2026-04-17')) {
+             const mappedDate = dateMapping.get('2026-04-17');
+             if (mappedDate === '2026-04-16') {
+               hDate = '2026-04-16';
+               historyChanged = true;
+             }
           }
 
           return { ...h, date: hDate };
