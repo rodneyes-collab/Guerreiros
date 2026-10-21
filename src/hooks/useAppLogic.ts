@@ -2328,7 +2328,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
             }
 
             // Fix missing or zero arrivalOrder
-            if (!attData.arrivalOrder || attData.arrivalOrder === 0) {
+            if (!attData.arrivalOrder || attData.arrivalOrder === 0 || attData.arrivalOrder !== index + 1) {
               updates.arrivalOrder = index + 1;
               needsUpdate = true;
             }
