@@ -42,6 +42,15 @@ import { Player, Team, Match, Gender, Tournament, TournamentTeam, TournamentMatc
 import { generateTeams, generateTournamentTeams, getPriorityQueue, autoFixAllInconsistencies, optimizeTeamSynergyIteratively, enrichPlayerImmutably, cloneGenerationResultImmutably, calculateCompositePerformanceRating } from '../../utils/teamLogic';
 import { playerSchema, matchSchema } from '../lib/schemas';
 
+const dateFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Sao_Paulo',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit'
+});
+
+const getCorrectDate = (ts: number) => dateFormatter.format(new Date(ts));
+
 import { analyzeMatch, verifyRules, detectAnomalies, generateTeamAnnouncementAudio } from '../../services/geminiService';
 import { logAction, AuditAction } from '../../services/auditService';
 import { playFeedbackSound, triggerHaptic } from '../utils/feedback';
@@ -288,16 +297,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
         // 1. Check if session matches are correctly sequenced AND have correct Brazil Date
         const sortedByTime = [...sessionMatches].sort((a, b) => a.timestamp - b.timestamp);
         
-        const getCorrectDate = (ts: number) => {
-          return new Intl.DateTimeFormat('en-CA', {
-            timeZone: 'America/Sao_Paulo',
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit'
-          }).format(new Date(ts));
-        };
-
-        const sessionBaseDate = sortedByTime.length > 0 ? getCorrectDate(sortedByTime[0].timestamp) : getCorrectDate(now);
+                const sessionBaseDate = sortedByTime.length > 0 ? getCorrectDate(sortedByTime[0].timestamp) : getCorrectDate(now);
 
         sortedByTime.forEach((m, index) => {
           if (m.dailyNumber !== index + 1) {
@@ -329,7 +329,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
           playersToFix.forEach(p => {
             if (!p.eloHistory) return;
             const fixedHistory = p.eloHistory.map((h: any) => {
-              if (h.date.includes('T')) {
+              if (typeof h.date === 'string' && h.date.includes('T')) {
                 const ts = new Date(h.date).getTime();
                 const d = ts > currentThreshold ? sessionBaseDate : getCorrectDate(ts);
                 return { ...h, date: d };
@@ -1841,7 +1841,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
         
         // Sempre atualiza o documento na lista de presença do dia atual para manter consistência no Ranking Diário
         // Independentemente de dailyMatches ser 0 (pode ter sido removido da única partida que jogou)
-        batch.set(doc(db, 'attendance', todayDateKey, 'players', p.id), cleanObject(playerUpdates), { merge: true });
+        batch.set(doc(db, 'attendance', getFirestoreDateKey(), 'players', p.id), cleanObject(playerUpdates), { merge: true });
 
         // Se a partida editada for de uma data passada, também tentamos atualizar o registro de presença daquela data específica
         if (updatedMatch.date && updatedMatch.date !== todayDateKey) {
@@ -1905,7 +1905,9 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Total de documentos retornados após a busca: ${filteredSnap.size}`);
       console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] --------------------------------------------------`);
 
-      filteredSnap.forEach((docSnap, idx) => {
+      let idx = 0;
+      filteredSnap.forEach((docSnap) => {
+        idx++;
         const m = docSnap.data();
         console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Documento retornado [${idx + 1}]: ID=${docSnap.id}, date=${m.date}, timestamp=${m.timestamp}, dailyNumber=${m.dailyNumber}`);
       });
@@ -1920,7 +1922,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       matchesSnap.forEach(docSnap => {
         const data = docSnap.data();
         const rawDate = data.date;
-        const mDate = rawDate ? (rawDate.includes('T') ? rawDate.split('T')[0] : rawDate) : 'sem_data';
+        const mDate = rawDate ? (typeof rawDate === 'string' && typeof rawDate === 'string' && typeof rawDate === 'string' && rawDate.includes('T') ? rawDate.split('T')[0] : rawDate) : 'sem_data';
         dateCountMap[mDate] = (dateCountMap[mDate] || 0) + 1;
         fetchedMatches.push({ ...data, id: docSnap.id } as Match);
       });
@@ -1929,7 +1931,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Nenhuma paginação ou limite restritivo detectado. Total exato de partidas validadas: ${fetchedMatches.length}`);
 
       const matchesToUse = fetchedMatches.length > 0 ? fetchedMatches : matches;
-      const recalculatedPlayers = recalculateAllStatsFromMatches(players, matchesToUse, todayDateKey);
+      const recalculatedPlayers = recalculateAllStatsFromMatches(players, matchesToUse, dateKey);
 
       const batch = writeBatch(db);
       recalculatedPlayers.forEach(p => {
@@ -1953,7 +1955,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
         batch.set(doc(db, 'players', p.id), cleanObject(playerUpdates), { merge: true });
         
         // Sempre atualiza o documento na lista de presença do dia atual para manter consistência no Ranking Diário
-        batch.set(doc(db, 'attendance', todayDateKey, 'players', p.id), cleanObject(playerUpdates), { merge: true });
+        batch.set(doc(db, 'attendance', getFirestoreDateKey(), 'players', p.id), cleanObject(playerUpdates), { merge: true });
       });
 
       await batch.commit();
@@ -2654,16 +2656,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       
       const allSortedMatches = [...(matches || [])].sort((a, b) => a.timestamp - b.timestamp);
       
-      const getCorrectDate = (ts: number) => {
-        return new Intl.DateTimeFormat('en-CA', {
-          timeZone: 'America/Sao_Paulo',
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit'
-        }).format(new Date(ts));
-      };
-
-      const dateMapping = new Map<string, string>(); // Maps old match dates to clean session dates
+            const dateMapping = new Map<string, string>(); // Maps old match dates to clean session dates
 
       allSortedMatches.forEach(m => {
         const currentSessionBaseDate = getCorrectDate(m.timestamp);
@@ -2684,7 +2677,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
         const cleanedHistory = p.eloHistory.map((h: any) => {
           let hDate = h.date;
           // Fix ISO strings
-          if (hDate.includes('T')) {
+          if (typeof hDate === 'string' && hDate.includes('T')) {
             hDate = getCorrectDate(new Date(hDate).getTime());
             historyChanged = true;
           }
