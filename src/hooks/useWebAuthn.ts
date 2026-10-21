@@ -176,9 +176,13 @@ export const useWebAuthn = () => {
         // Isso evita o erro no App.tsx de "Perfil em uso em outro navegador"
         if (player && currentAuthUser) {
           try {
+            const idToken = await currentAuthUser.getIdToken();
             await fetch(`/api/players/${player.id}/link`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${idToken}`
+              },
               body: JSON.stringify({ uid: currentAuthUser.uid })
             });
             const updatedPlayer = { ...player, uid: currentAuthUser.uid };

@@ -1545,8 +1545,33 @@ async function startServer() {
       if (!playerId || !uid) {
         return res.status(400).json({ error: "Missing parameters" });
       }
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: "Missing or invalid authorization header" });
+      }
+      const token = authHeader.split('Bearer ')[1];
+      const { getAuth } = await import('firebase-admin/auth');
+      let decodedToken;
+      try {
+        decodedToken = await getAuth().verifyIdToken(token);
+      } catch (authErr) {
+        return res.status(403).json({ error: "Authorization failed" });
+      }
+      if (decodedToken.uid !== uid) {
+        return res.status(403).json({ error: "UID mismatch" });
+      }
       const dbAdmin = await getFirestore();
-      await dbAdmin.collection("players").doc(playerId).update({ uid });
+      const playerDoc = await dbAdmin.collection("players").doc(playerId).get();
+      if (!playerDoc.exists) {
+        return res.status(404).json({ error: "Player not found" });
+      }
+      const playerData = playerDoc.data();
+      if (playerData.uid && playerData.uid !== decodedToken.uid) {
+        if (!decodedToken.email || decodedToken.email.toLowerCase() !== (playerData.email || '').toLowerCase()) {
+          return res.status(403).json({ error: "Unauthorized to link this player ID" });
+        }
+      }
+      await dbAdmin.collection("players").doc(playerId).update({ uid: decodedToken.uid });
       res.json({ success: true });
     } catch (e) {
       console.error("[Link Device] Error:", e);

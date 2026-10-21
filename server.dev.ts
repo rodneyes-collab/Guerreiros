@@ -729,8 +729,45 @@ app.get("/api/billing/real-time", async (req, res) => {
        if (!playerId || !uid) {
           return res.status(400).json({ error: "Missing parameters" });
        }
+
+       const authHeader = req.headers.authorization;
+       if (!authHeader || !authHeader.startsWith('Bearer ')) {
+         return res.status(401).json({ error: "Missing or invalid authorization header" });
+       }
+
+       const token = authHeader.split('Bearer ')[1];
+       const { getAuth } = await import('firebase-admin/auth');
+       let decodedToken;
+       try {
+         decodedToken = await getAuth().verifyIdToken(token);
+       } catch (authErr: any) {
+         return res.status(403).json({ error: "Authorization failed" });
+       }
+
+       if (decodedToken.uid !== uid) {
+         return res.status(403).json({ error: "UID mismatch" });
+       }
+
        const dbAdmin = await getFirestore(); // firebase-admin
-       await dbAdmin.collection("players").doc(playerId).update({ uid });
+
+       // Verify that the playerId being modified actually belongs to this authenticated user
+       // or isn't already claimed by someone else (unless it's currently null/undefined or matches the user)
+       const playerDoc = await dbAdmin.collection("players").doc(playerId).get();
+       if (!playerDoc.exists) {
+         return res.status(404).json({ error: "Player not found" });
+       }
+
+       const playerData = playerDoc.data();
+       if (playerData.uid && playerData.uid !== decodedToken.uid) {
+         // To prevent IDOR, we block if it's already linked to a different UID.
+         // Also, ideally, the email from the decodedToken should match the player's email if it's an initial link.
+         // Let's enforce that the email in the token matches the player's email, or it's currently unlinked.
+         if (!decodedToken.email || decodedToken.email.toLowerCase() !== playerData.email?.toLowerCase()) {
+           return res.status(403).json({ error: "Unauthorized to link this player ID" });
+         }
+       }
+
+       await dbAdmin.collection("players").doc(playerId).update({ uid: decodedToken.uid });
        res.json({ success: true });
     } catch (e: any) {
        console.error("[Link Device] Error:", e);
