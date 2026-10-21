@@ -2310,6 +2310,8 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
             .map(d => ({ id: d.id, ...d.data() } as any))
             .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
 
+          let currentMaxOrder = sortedAtt.reduce((max, att) => Math.max(max, att.arrivalOrder || 0), 0);
+
           sortedAtt.forEach((attData, index) => {
             const fullPlayer = players.find(p => p.id === attData.id);
             
@@ -2329,7 +2331,8 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
 
             // Fix missing or zero arrivalOrder
             if (!attData.arrivalOrder || attData.arrivalOrder === 0) {
-              updates.arrivalOrder = index + 1;
+              currentMaxOrder++;
+              updates.arrivalOrder = currentMaxOrder;
               needsUpdate = true;
             }
 
