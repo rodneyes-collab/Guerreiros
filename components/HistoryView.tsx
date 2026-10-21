@@ -5,7 +5,7 @@ import { getMatchSetters } from '../utils/setterStats';
 import { formatTime } from '../utils/helpers';
 import { WinLossChart } from '../src/components/WinLossChart';
 import { getFirestoreDateKey } from '../firebase';
-import { toStandardDateKey } from '../src/utils/dateUtils';
+import { toStandardDateKey, dateFormatterEnCA_SP } from '../src/utils/dateUtils';
 import { 
   Trophy, 
   Clock, 
@@ -50,12 +50,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
   
   const getMatchStandardDate = (m: { date?: string; timestamp?: number }): string => {
     if (m.timestamp) {
-      return new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'America/Sao_Paulo',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit'
-      }).format(new Date(m.timestamp));
+      return dateFormatterEnCA_SP.format(new Date(m.timestamp));
     }
     return m.date ? toStandardDateKey(m.date) : '';
   };

@@ -28,3 +28,17 @@ export const toStandardDateKey = (dateStr: string): string => {
 
   return dateStr;
 };
+
+// Cached Intl.DateTimeFormat instances to avoid performance hit of instantiating them during renders/loops
+export const monthFormatterPtBR = new Intl.DateTimeFormat('pt-BR', { month: 'long' });
+export const dateFormatterEnCA_SP = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Sao_Paulo',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit'
+});
+export const dateFormatterPtBR_SP = new Intl.DateTimeFormat('pt-BR', {
+  timeZone: 'America/Sao_Paulo',
+  day: '2-digit',
+  month: '2-digit'
+});

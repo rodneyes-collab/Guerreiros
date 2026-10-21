@@ -3,6 +3,7 @@ import { useStore } from '../store';
 import { Player, Gender } from '../types';
 import { PlayerAvatar } from '../src/components/PlayerAvatar';
 import { translateGender, capitalizeName, formatPhoneNumber } from '../utils/helpers';
+import { monthFormatterPtBR } from '../src/utils/dateUtils';
 import { getPlayerTier } from '../utils/tierUtils';
 import { Tooltip } from '../src/components/Tooltip';
 import { 
@@ -924,7 +925,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
                   const m = String(i + 1).padStart(2, '0');
                   return (
                     <option key={m} value={m}>
-                      {new Intl.DateTimeFormat('pt-BR', { month: 'long' }).format(new Date(2024, i))}
+                      {monthFormatterPtBR.format(new Date(2024, i))}
                     </option>
                   );
                 })}

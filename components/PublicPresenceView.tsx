@@ -24,6 +24,7 @@ import { useIntentions } from '../src/hooks/useIntentions';
 import { useBirthdays } from '../src/hooks/useBirthdays';
 import { Logo } from '../src/components/Logo';
 import { capitalizeName } from '../utils/helpers';
+import { monthFormatterPtBR } from '../src/utils/dateUtils';
 
 import { playFeedbackSound, triggerHaptic } from '../src/utils/feedback';
 import { getPriorityQueue } from '../utils/teamLogic';
@@ -280,7 +281,7 @@ export const PublicPresenceView: React.FC<PublicPresenceViewProps> = ({ onBackTo
               >
                 {Array.from({ length: 12 }, (_, i) => (
                   <option key={i + 1} value={i + 1}>
-                    {new Intl.DateTimeFormat('pt-BR', { month: 'long' }).format(new Date(2024, i))}
+                    {monthFormatterPtBR.format(new Date(2024, i))}
                   </option>
                 ))}
               </select>
