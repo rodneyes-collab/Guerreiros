@@ -1905,7 +1905,9 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Total de documentos retornados após a busca: ${filteredSnap.size}`);
       console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] --------------------------------------------------`);
 
-      filteredSnap.forEach((docSnap, idx) => {
+      let idx = 0;
+      filteredSnap.forEach((docSnap) => {
+        idx++;
         const m = docSnap.data();
         console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Documento retornado [${idx + 1}]: ID=${docSnap.id}, date=${m.date}, timestamp=${m.timestamp}, dailyNumber=${m.dailyNumber}`);
       });
@@ -1928,6 +1930,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Distribuição completa de partidas por data no Firestore:`, dateCountMap);
       console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Nenhuma paginação ou limite restritivo detectado. Total exato de partidas validadas: ${fetchedMatches.length}`);
 
+      const todayDateKey = getFirestoreDateKey();
       const matchesToUse = fetchedMatches.length > 0 ? fetchedMatches : matches;
       const recalculatedPlayers = recalculateAllStatsFromMatches(players, matchesToUse, todayDateKey);
 

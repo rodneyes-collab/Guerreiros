@@ -1,5 +1,5 @@
 
-import { Player, Gender } from '../types';
+import { Player, Gender, Match } from '../types';
 import { getFirestoreDateKey } from '../firebase';
 
 export const capitalizeName = (name: string): string => {
@@ -173,4 +173,25 @@ export const getSafePlayer = (playerId: string, players: Player[]): Player => {
     arrivalOrder: 999,
     status: 'inactive'
   } as Player;
+};
+
+
+export const calculateConsecutiveMissedDays = (
+  playerId: string,
+  gameDates: string[],
+  matches: Match[],
+  isPresentTodayMap: Map<string, boolean>,
+  today: string
+): number => {
+  let consecutiveMissed = 0;
+  for (const date of gameDates) {
+    const played = matches.some(m => m.date === date && (m.teamA.includes(playerId) || m.teamB.includes(playerId)));
+    const present = (date === today && isPresentTodayMap.has(playerId)) || played;
+
+    if (present) {
+      break;
+    }
+    consecutiveMissed++;
+  }
+  return consecutiveMissed;
 };
