@@ -68,7 +68,7 @@ import { db, doc, updateDoc, setDoc, deleteDoc, onSnapshot, writeBatch, collecti
 import firebaseConfig from '../firebase-applet-config.json';
 import { Player } from '../types';
 import { APP_VERSION } from '../constants';
-import { generateUUID } from '../utils/helpers';
+import { generateUUID, calculateConsecutiveMissedDays } from '../utils/helpers';
 import { ServiceWorkerDiagnostics } from '../src/components/ServiceWorkerDiagnostics';
 import { DbAutoCorrectionPanel } from './DbAutoCorrectionPanel';
 import Markdown from 'react-markdown';
@@ -304,19 +304,13 @@ export const AdminView: React.FC<AdminViewProps> = ({
     }
 
     return activePlayersForEvasion.map(player => {
-      let consecutiveMissed = 0;
-      for (const date of gameDatesForEvasion) {
-        // Did the player play on this date?
-        const played = matches.some(m => m.date === date && (m.teamA.includes(player.id) || m.teamB.includes(player.id)));
-        
-        // Did they check in today (if date is today)?
-        const present = (date === today && isPresentTodayMap.has(player.id)) || played;
-
-        if (present) {
-          break; // Streak broken!
-        }
-        consecutiveMissed++;
-      }
+      const consecutiveMissed = calculateConsecutiveMissedDays(
+        player.id,
+        gameDatesForEvasion,
+        matches,
+        isPresentTodayMap,
+        today
+      );
       return {
         player,
         consecutiveMissed
