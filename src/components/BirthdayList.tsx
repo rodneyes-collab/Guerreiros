@@ -3,6 +3,7 @@ import { Player } from '../../types';
 import { Cake, PartyPopper, ChevronDown, ChevronUp, Star, Calendar } from 'lucide-react';
 import { useBirthdays } from '../hooks/useBirthdays';
 import { PlayerAvatar } from './PlayerAvatar';
+import { monthNameFormatter } from '../../utils/dateCache';
 
 interface BirthdayListProps {
   todayBirthdays?: Player[];
@@ -46,7 +47,7 @@ export const BirthdayList: React.FC<BirthdayListProps> = ({
 
   const monthName = useMemo(() => {
     try {
-      return new Intl.DateTimeFormat('pt-BR', { month: 'long' }).format(new Date(2024, (selectedMonth || initialMonth) - 1));
+      return monthNameFormatter.format(new Date(2024, (selectedMonth || initialMonth) - 1));
     } catch {
       return 'Mês';
     }
@@ -147,7 +148,7 @@ export const BirthdayList: React.FC<BirthdayListProps> = ({
             >
               {Array.from({ length: 12 }, (_, i) => (
                 <option key={i + 1} value={i + 1}>
-                  {new Intl.DateTimeFormat('pt-BR', { month: 'long' }).format(new Date(2024, i))}
+                  {monthNameFormatter.format(new Date(2024, i))}
                 </option>
               ))}
             </select>

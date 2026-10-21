@@ -3,6 +3,7 @@ import { getFirestoreDateKey } from '../firebase';
 import { useBirthdays } from '../src/hooks/useBirthdays';
 import { PlayerAvatar } from '../src/components/PlayerAvatar';
 // No active local types from types.ts needed here now
+import { monthNameFormatter } from '../utils/dateCache';
 import { 
   Users,
   Activity,
@@ -348,7 +349,7 @@ export const GlobalStats: React.FC<DashboardViewProps> = ({
                 >
                   {Array.from({ length: 12 }, (_, i) => (
                     <option key={i + 1} value={i + 1}>
-                      {new Intl.DateTimeFormat('pt-BR', { month: 'long' }).format(new Date(2024, i))}
+                      {monthNameFormatter.format(new Date(2024, i))}
                     </option>
                   ))}
                 </select>

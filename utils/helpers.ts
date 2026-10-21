@@ -1,6 +1,7 @@
 
 import { Player, Gender } from '../types';
 import { getFirestoreDateKey } from '../firebase';
+import { brazilShortDateFormatter } from './dateCache';
 
 export const capitalizeName = (name: string): string => {
   if (!name) return '';
@@ -114,11 +115,7 @@ export const formatBrazilianDate = (dateString: string | number) => {
       dateObj = new Date(dateString);
     }
 
-    return new Intl.DateTimeFormat('pt-BR', { 
-      timeZone: 'America/Sao_Paulo', 
-      day: '2-digit', 
-      month: '2-digit' 
-    }).format(dateObj);
+    return brazilShortDateFormatter.format(dateObj);
   } catch {
     return 'Data';
   }

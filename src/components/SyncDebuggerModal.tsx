@@ -4,6 +4,7 @@ import { Database, RefreshCw, X, AlertTriangle, CheckCircle2, ShieldCheck, HardD
 import { useStore } from '../../store';
 import { db, collection, getDocs, doc, deleteDoc } from '../../firebase';
 import { Match, Player } from '../../types';
+import { brazilDateFormatter } from '../../utils/dateCache';
 
 export const SyncDebuggerModal: React.FC = () => {
   const isOpen = useStore(state => state.isSyncDebuggerOpen);
@@ -55,12 +56,7 @@ export const SyncDebuggerModal: React.FC = () => {
   const getDateKey = (m: Match) => {
     if (m.date) return m.date;
     if (m.timestamp) {
-      return new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'America/Sao_Paulo',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit'
-      }).format(new Date(m.timestamp));
+      return brazilDateFormatter.format(new Date(m.timestamp));
     }
     return 'UNKNOWN';
   };
