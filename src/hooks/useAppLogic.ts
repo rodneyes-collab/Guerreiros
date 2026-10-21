@@ -2347,9 +2347,9 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
                 return {
                   ...p,
                   name: fullP.name,
-                  elo: fullP.elo || p.elo || 1200,
-                  gender: fullP.gender || p.gender || Gender.MALE,
-                  arrivalOrder: p.arrivalOrder || fullP.arrivalOrder || 0
+                  elo: fullP.elo ?? p.elo ?? 1200,
+                  gender: fullP.gender ?? p.gender ?? Gender.MALE,
+                  arrivalOrder: fullP.arrivalOrder ?? p.arrivalOrder ?? 0
                 };
               }
               return p;
