@@ -25,6 +25,8 @@ import {
   Cell
 } from 'recharts';
 
+const monthFormatter = new Intl.DateTimeFormat('pt-BR', { month: 'long' });
+
 interface DashboardViewProps {
   players: any[];
   matches: any[];
@@ -348,7 +350,7 @@ export const GlobalStats: React.FC<DashboardViewProps> = ({
                 >
                   {Array.from({ length: 12 }, (_, i) => (
                     <option key={i + 1} value={i + 1}>
-                      {new Intl.DateTimeFormat('pt-BR', { month: 'long' }).format(new Date(2024, i))}
+                      {monthFormatter.format(new Date(2024, i))}
                     </option>
                   ))}
                 </select>
