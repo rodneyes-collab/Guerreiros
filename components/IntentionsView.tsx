@@ -12,6 +12,7 @@ import { EvasionIcon } from './EvasionIcon';
 import { calculateEvasionLevel } from '../utils/evasion';
 import { Player } from '../types';
 import { getFirestoreDateKey, getBrazilDay } from '../firebase';
+import { monthNameFormatter } from '../utils/dateCache';
 import { capitalizeName } from '../utils/helpers';
 import { fetchAttendanceHistory, calculateAttendanceStats } from '../src/services/attendanceService';
 
@@ -718,7 +719,7 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
               >
                 {Array.from({ length: 12 }, (_, i) => (
                   <option key={i + 1} value={i + 1}>
-                    {new Intl.DateTimeFormat('pt-BR', { month: 'long' }).format(new Date(2024, i))}
+                    {monthNameFormatter.format(new Date(2024, i))}
                   </option>
                 ))}
               </select>

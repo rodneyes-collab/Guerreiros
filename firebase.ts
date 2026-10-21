@@ -1,3 +1,5 @@
+import { brazilDateFormatter, brazilWeekdayFormatter } from './utils/dateCache';
+
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { 
   getAuth, 
@@ -299,29 +301,20 @@ export const trackAccess = async (overridePlayerId?: string) => {
   }
 };
 
+
 export const getFirestoreDateKey = (date?: Date) => {
   const now = date || new Date();
   
   // Format the date strictly in Brazilian Timezone (America/Sao_Paulo)
   // This avoids any local timezone or UTC offsets bugs
-  const formatter = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Sao_Paulo',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  });
-  
   // en-CA format returns YYYY-MM-DD
-  return formatter.format(now);
+  return brazilDateFormatter.format(now);
 };
 
 export const getBrazilDay = () => {
   const now = new Date();
   // A bulletproof way to get 0-6 day of week in Brazil
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/Sao_Paulo',
-    weekday: 'short'
-  }).formatToParts(now);
+  const parts = brazilWeekdayFormatter.formatToParts(now);
   
   const dayName = parts.find(p => p.type === 'weekday')?.value;
   const days: Record<string, number> = { 'Sun': 0, 'Mon': 1, 'Tue': 2, 'Wed': 3, 'Thu': 4, 'Fri': 5, 'Sat': 6 };

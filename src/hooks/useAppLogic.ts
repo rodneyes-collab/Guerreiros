@@ -40,6 +40,7 @@ import { recalculateAllStatsFromMatches } from '../utils/matchReprocessor';
 import { calculateTrueSkillUpdate } from '../utils/trueSkill';
 import { Player, Team, Match, Gender, Tournament, TournamentTeam, TournamentMatch, SetScore, SystemMetadata, TournamentStrategy, Payment, Expense } from '../../types';
 import { generateTeams, generateTournamentTeams, getPriorityQueue, autoFixAllInconsistencies, optimizeTeamSynergyIteratively, enrichPlayerImmutably, cloneGenerationResultImmutably, calculateCompositePerformanceRating } from '../../utils/teamLogic';
+import { brazilDateFormatter } from '../../utils/dateCache';
 import { playerSchema, matchSchema } from '../lib/schemas';
 
 import { analyzeMatch, verifyRules, detectAnomalies, generateTeamAnnouncementAudio } from '../../services/geminiService';
@@ -289,12 +290,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
         const sortedByTime = [...sessionMatches].sort((a, b) => a.timestamp - b.timestamp);
         
         const getCorrectDate = (ts: number) => {
-          return new Intl.DateTimeFormat('en-CA', {
-            timeZone: 'America/Sao_Paulo',
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit'
-          }).format(new Date(ts));
+          return brazilDateFormatter.format(new Date(ts));
         };
 
         const sessionBaseDate = sortedByTime.length > 0 ? getCorrectDate(sortedByTime[0].timestamp) : getCorrectDate(now);
@@ -1085,9 +1081,9 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
     return matchedRecord;
   }, [attendance]);
 
-  const alignArrivalOrders = async (dateKey: string) => {
+  const alignArrivalOrders = async (todayDateKey: string) => {
     try {
-      const collectionRef = collection(db, 'attendance', dateKey, 'players');
+      const collectionRef = collection(db, 'attendance', todayDateKey, 'players');
       const snapshot = await getDocs(collectionRef);
       const playersList = snapshot.docs
         .map(d => ({ id: d.id, ...d.data() } as Player))
@@ -1107,7 +1103,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       playersList.forEach((p, index) => {
         const correctOrder = index + 1;
         if (p.arrivalOrder !== correctOrder) {
-          const playerRef = doc(db, 'attendance', dateKey, 'players', p.id);
+          const playerRef = doc(db, 'attendance', todayDateKey, 'players', p.id);
           batch.update(playerRef, { arrivalOrder: correctOrder });
           updatedCount++;
         }
@@ -1143,13 +1139,13 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
     try {
       triggerDbStatus('writing');
 
-      const dateKey = getFirestoreDateKey();
+      const todayDateKey = getFirestoreDateKey();
       
       const activeAttendance = attendance.filter(p => p.status !== 'left' && !p.isDM && p.status !== 'dm');
       const maxOrder = activeAttendance.reduce((max, p) => Math.max(max, p.arrivalOrder || 0), 0);
       const nextOrder = maxOrder + 1;
 
-      const todayMatches = matches.filter(m => m.date === dateKey && (m.teamA.includes(player.id) || m.teamB.includes(player.id)));
+      const todayMatches = matches.filter(m => m.date === todayDateKey && (m.teamA.includes(player.id) || m.teamB.includes(player.id)));
       const actualDailyMatches = todayMatches.length;
       const actualDailyWins = todayMatches.filter(m => (m.winner === 'A' && m.teamA.includes(player.id)) || (m.winner === 'B' && m.teamB.includes(player.id))).length;
       const actualDailyLosses = todayMatches.filter(m => (m.winner === 'B' && m.teamA.includes(player.id)) || (m.winner === 'A' && m.teamB.includes(player.id))).length;
@@ -1180,14 +1176,14 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       let nextElo = fullPlayer?.elo || 1200;
       let nextEloHistory = fullPlayer?.eloHistory || [];
 
-      if (fullPlayer && fullPlayer.lastFidelityDate !== dateKey) {
+      if (fullPlayer && fullPlayer.lastFidelityDate !== todayDateKey) {
         awardedFidelity = true;
         nextFidelityPoints += 50;
         nextElo += 50;
         const newHistoryEntry = {
-          date: dateKey,
+          date: todayDateKey,
           elo: nextElo,
-          matchId: `fidelity-bonus-${dateKey}-${Date.now()}`,
+          matchId: `fidelity-bonus-${todayDateKey}-${Date.now()}`,
           change: 50,
           timestamp: Date.now() - 500,
           result: 'P' as 'P',
@@ -1196,7 +1192,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
         nextEloHistory = [...nextEloHistory, newHistoryEntry].slice(-200);
 
         fullPlayer.fidelityPoints = nextFidelityPoints;
-        fullPlayer.lastFidelityDate = dateKey;
+        fullPlayer.lastFidelityDate = todayDateKey;
         fullPlayer.elo = nextElo;
         fullPlayer.eloHistory = nextEloHistory;
       }
@@ -1204,19 +1200,19 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       showNotification(`${nameToSave} confirmou presença!`, 'success');
 
       // === FIRESTORE BACKGROUND SYNC ===
-      const dateDocRef = doc(db, 'attendance', dateKey);
-      const attendanceRef = doc(db, 'attendance', dateKey, 'players', player.id);
+      const dateDocRef = doc(db, 'attendance', todayDateKey);
+      const attendanceRef = doc(db, 'attendance', todayDateKey, 'players', player.id);
       
       const batch = writeBatch(db);
       let batchSize = 0;
 
-      batch.set(dateDocRef, { date: dateKey, lastUpdate: Date.now() }, { merge: true });
+      batch.set(dateDocRef, { date: todayDateKey, lastUpdate: Date.now() }, { merge: true });
       batchSize++;
 
       if (awardedFidelity && fullPlayer) {
         batch.set(doc(db, 'players', player.id), {
           fidelityPoints: nextFidelityPoints,
-          lastFidelityDate: dateKey,
+          lastFidelityDate: todayDateKey,
           elo: nextElo,
           eloHistory: nextEloHistory
         }, { merge: true });
@@ -1249,7 +1245,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       }
       
       await trackUsage(1, 1);
-      await alignArrivalOrders(dateKey);
+      await alignArrivalOrders(todayDateKey);
     } catch (error) {
       console.error("Reverting optimistic UI due to network error:", error);
       // Revert optimistic updates
@@ -1269,12 +1265,12 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
     
     try {
       triggerDbStatus('writing');
-      const dateKey = getFirestoreDateKey();
+      const todayDateKey = getFirestoreDateKey();
       
       // OPTIMISTIC LOCAL UPDATE
       setAttendance(attendance.filter(p => p.id !== playerId));
 
-      const attendanceRef = doc(db, 'attendance', dateKey, 'players', playerId);
+      const attendanceRef = doc(db, 'attendance', todayDateKey, 'players', playerId);
       const batch = writeBatch(db);
       
       batch.update(attendanceRef, {
@@ -1301,8 +1297,8 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
     try {
       setIsSyncing(true);
       triggerDbStatus('writing');
-      const dateKey = getFirestoreDateKey();
-      const attendanceRef = doc(db, 'attendance', dateKey, 'players', playerId);
+      const todayDateKey = getFirestoreDateKey();
+      const attendanceRef = doc(db, 'attendance', todayDateKey, 'players', playerId);
       
       if (departureTime === null) {
         await updateDoc(attendanceRef, { departureTime: deleteField() });
@@ -1321,8 +1317,8 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
     try {
       setIsSyncing(true);
       triggerDbStatus('writing');
-      const dateKey = getFirestoreDateKey();
-      const attendanceRef = doc(db, 'attendance', dateKey, 'players', playerId);
+      const todayDateKey = getFirestoreDateKey();
+      const attendanceRef = doc(db, 'attendance', todayDateKey, 'players', playerId);
       
       if (arrivalTime === null) {
         await updateDoc(attendanceRef, { arrivalTime: deleteField() });
@@ -1345,20 +1341,20 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
         try {
           setIsSyncing(true);
           triggerDbStatus('writing');
-          const dateKey = getFirestoreDateKey();
+          const todayDateKey = getFirestoreDateKey();
           const batch = writeBatch(db);
           attendance.forEach(p => {
-            batch.delete(doc(db, 'attendance', dateKey, 'players', p.id));
+            batch.delete(doc(db, 'attendance', todayDateKey, 'players', p.id));
           });
           
           // Revert ELO bonus for each player in attendance
           for (const p of attendance) {
             const fullPlayer = players.find(fp => fp.id === p.id);
-            if (fullPlayer && fullPlayer.lastFidelityDate === dateKey) {
+            if (fullPlayer && fullPlayer.lastFidelityDate === todayDateKey) {
               const nextFidelityPoints = Math.max(0, (fullPlayer.fidelityPoints || 0) - 50);
               const nextElo = Math.max(800, (fullPlayer.elo || 1200) - 50);
               const filteredEloHistory = (fullPlayer.eloHistory || []).filter(h => 
-                !(h.date === dateKey && h.fidelityBonus)
+                !(h.date === todayDateKey && h.fidelityBonus)
               );
               const previousFidelityEntry = filteredEloHistory.slice().reverse().find(h => h.fidelityBonus);
               const previousFidelityDate = previousFidelityEntry ? previousFidelityEntry.date : null;
@@ -1888,30 +1884,32 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       triggerDbStatus('writing');
       showNotification('Reprocessando todas as partidas e o ranking dos sócios...', 'info');
 
-      const dateKey = getFirestoreDateKey();
+      const todayDateKey = getFirestoreDateKey();
       console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] --------------------------------------------------`);
       console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] INICIANDO QUERY AO FIRESTORE EM 'matches'`);
-      console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Parâmetro 'dateKey' formatado: "${dateKey}"`);
+      console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Parâmetro 'todayDateKey' formatado: "${todayDateKey}"`);
 
       // 1. Consulta direta geral à coleção 'matches' sem filtros
       const matchesSnap = await getDocs(collection(db, 'matches'));
       console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Total de documentos recuperados sem filtro de collection(db, 'matches'): ${matchesSnap.size}`);
 
-      // 2. Consulta direta filtrada por data usando a chave construída dateKey
-      const qFiltered = query(collection(db, 'matches'), where('date', '==', dateKey));
+      // 2. Consulta direta filtrada por data usando a chave construída todayDateKey
+      const qFiltered = query(collection(db, 'matches'), where('date', '==', todayDateKey));
       const filteredSnap = await getDocs(qFiltered);
       console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] --- QUERY FIRESTORE FILTRADA POR DATA ---`);
-      console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Query parameters: collection('matches').where('date', '==', '${dateKey}')`);
+      console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Query parameters: collection('matches').where('date', '==', '${todayDateKey}')`);
       console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Total de documentos retornados após a busca: ${filteredSnap.size}`);
       console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] --------------------------------------------------`);
 
-      filteredSnap.forEach((docSnap, idx) => {
+      let idx = 0;
+      filteredSnap.forEach((docSnap) => {
+        idx++;
         const m = docSnap.data();
-        console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Documento retornado [${idx + 1}]: ID=${docSnap.id}, date=${m.date}, timestamp=${m.timestamp}, dailyNumber=${m.dailyNumber}`);
+        console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Documento retornado [${idx}]: ID=${docSnap.id}, date=${m.date}, timestamp=${m.timestamp}, dailyNumber=${m.dailyNumber}`);
       });
 
       if (filteredSnap.size <= 1 && matchesSnap.size > 1) {
-        console.warn(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] ANÁLISE: A query filtrada por dateKey ("${dateKey}") retornou ${filteredSnap.size} partida(s), enquanto o total geral na coleção é ${matchesSnap.size}. Isso indica que o filtro por data restringe o resultado caso a data corrente não coincida com os dias em que houve partidas.`);
+        console.warn(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] ANÁLISE: A query filtrada por todayDateKey ("${todayDateKey}") retornou ${filteredSnap.size} partida(s), enquanto o total geral na coleção é ${matchesSnap.size}. Isso indica que o filtro por data restringe o resultado caso a data corrente não coincida com os dias em que houve partidas.`);
       }
 
       const fetchedMatches: Match[] = [];
@@ -2304,8 +2302,8 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
           });
 
           // Fix current day attendance names and arrivalOrder
-          const dateKey = getFirestoreDateKey();
-          const attendanceSnapshot = await getDocs(collection(db, 'attendance', dateKey, 'players'));
+          const todayDateKey = getFirestoreDateKey();
+          const attendanceSnapshot = await getDocs(collection(db, 'attendance', todayDateKey, 'players'));
           const sortedAtt = attendanceSnapshot.docs
             .map(d => ({ id: d.id, ...d.data() } as any))
             .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
@@ -2314,7 +2312,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
             const fullPlayer = players.find(p => p.id === attData.id);
             
             if (fullPlayer && (!fullPlayer.name || fullPlayer.name.trim() === '')) {
-              batch.delete(doc(db, 'attendance', dateKey, 'players', attData.id));
+              batch.delete(doc(db, 'attendance', todayDateKey, 'players', attData.id));
               deletedCount++;
               return;
             }
@@ -2334,7 +2332,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
             }
 
             if (needsUpdate) {
-              batch.update(doc(db, 'attendance', dateKey, 'players', attData.id), updates);
+              batch.update(doc(db, 'attendance', todayDateKey, 'players', attData.id), updates);
               fixedCount++;
             }
           });
@@ -2655,12 +2653,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       const allSortedMatches = [...(matches || [])].sort((a, b) => a.timestamp - b.timestamp);
       
       const getCorrectDate = (ts: number) => {
-        return new Intl.DateTimeFormat('en-CA', {
-          timeZone: 'America/Sao_Paulo',
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit'
-        }).format(new Date(ts));
+        return brazilDateFormatter.format(new Date(ts));
       };
 
       const dateMapping = new Map<string, string>(); // Maps old match dates to clean session dates

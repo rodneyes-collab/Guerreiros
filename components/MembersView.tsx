@@ -4,6 +4,7 @@ import { Player, Gender } from '../types';
 import { PlayerAvatar } from '../src/components/PlayerAvatar';
 import { translateGender, capitalizeName, formatPhoneNumber } from '../utils/helpers';
 import { getPlayerTier } from '../utils/tierUtils';
+import { monthNameFormatter } from '../utils/dateCache';
 import { Tooltip } from '../src/components/Tooltip';
 import { 
   Trash2, 
@@ -924,7 +925,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
                   const m = String(i + 1).padStart(2, '0');
                   return (
                     <option key={m} value={m}>
-                      {new Intl.DateTimeFormat('pt-BR', { month: 'long' }).format(new Date(2024, i))}
+                      {monthNameFormatter.format(new Date(2024, i))}
                     </option>
                   );
                 })}
