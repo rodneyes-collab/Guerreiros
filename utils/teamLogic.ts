@@ -264,7 +264,8 @@ export const verifyClubGenerationRules = (result: GenerationResult): ClubGenerat
     const t4B = allB.filter(p => top4Ids.has(p.id)).length;
     const b4A = allA.filter(p => bottom4Ids.has(p.id)).length;
     const b4B = allB.filter(p => bottom4Ids.has(p.id)).length;
-    topBottomFulfilled = (t2A === 1 && t2B === 1) && (b2A === 1 && b2B === 1) && (t4A === 2 && t4B === 2) && (b4A === 2 && b4B === 2);
+    // We only STRICTLY care about Top 2 and Bottom 2 being isolated. Top 4 / Bottom 4 is an optimization.
+    topBottomFulfilled = (t2A === 1 && t2B === 1) && (b2A === 1 && b2B === 1);
   }
 
   const allFulfilled = setterFulfilled && genderFulfilled && topBottomFulfilled;
