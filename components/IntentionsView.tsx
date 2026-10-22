@@ -101,16 +101,6 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
     showNotification
   });
 
-  const getWhatsAppLink = (player: Player) => {
-    let clean = (player.phone || '').replace(/\D/g, '');
-    if (!clean) return '';
-    if (clean.length === 10 || clean.length === 11) {
-      clean = '55' + clean;
-    }
-    const msg = `Olá, *${capitalizeName(player.name)}*! 🏐 Passando para lembrar de confirmar sua presença ou ausência para a próxima partida no Guerreiros App!\n\nConfirme em 5 segundos no link:\n${window.location.origin}/?public=true\n\nValeu!`;
-    return `https://api.whatsapp.com/send?phone=${clean}&text=${encodeURIComponent(msg)}`;
-  };
-
   const [isConfirming, setIsConfirming] = React.useState(false);
   const [isDeclining, setIsDeclining] = React.useState(false);
   const [processingId, setProcessingId] = React.useState<string | null>(null);

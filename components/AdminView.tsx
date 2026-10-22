@@ -84,6 +84,7 @@ import { TeamBalancingSimulatorCard } from '../src/components/TeamBalancingSimul
 
 import { getLevelSuggestions, LevelSuggestion } from '../utils/levelAuditUtils';
 import { getSyncModeDetails, formatTimeSince, SYNC_MODE_OPTIONS } from '../src/utils/syncConfig';
+import { getRiskWhatsAppLink } from "../utils/whatsapp";
 import { SyncFrequencyMode } from '../types';
 
 const MemoryMonitorCard = () => {
@@ -1064,17 +1065,6 @@ export const AdminView: React.FC<AdminViewProps> = ({
                             riskBadgeColor = 'border-orange-500/30 text-orange-500 bg-orange-500/5';
                             riskLabel = 'Risco Alto';
                           }
-
-                          // WhatsApp Message
-                          const getRiskWhatsAppLink = (p: Player, days: number) => {
-                            let clean = (p.phone || '').replace(/\D/g, '');
-                            if (!clean) return '';
-                            if (clean.length === 10 || clean.length === 11) {
-                              clean = '55' + clean;
-                            }
-                            const msg = `Olá, *${p.name}*! Tudo bem? Sentimos sua falta nos últimos ${days} dias de jogos do Guerreiros 🏐 Sentimos falta do seu jogo e da resenha! Está tudo bem? Esperamos você de volta nos próximos jogos! 🔥`;
-                            return `https://api.whatsapp.com/send?phone=${clean}&text=${encodeURIComponent(msg)}`;
-                          };
 
                           const waUrl = getRiskWhatsAppLink(player, consecutiveMissed);
 
