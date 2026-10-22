@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import { useMemo, useEffect, useState, useCallback } from 'react';
 import { useStore } from '../../store';
 import { Player } from '../../types';
@@ -8,7 +9,7 @@ import { db, collection, doc, writeBatch, serverTimestamp } from '../../firebase
 const fireConfetti = confetti.create(undefined, { useWorker: false, resize: true });
 
 export const useBirthdays = (providedPlayers?: Player[]) => {
-  const { players: storePlayers, currentPlayer, showNotification } = useStore();
+  const { players: storePlayers, currentPlayer, showNotification } = useStore(useShallow(state => ({players: state.players, currentPlayer: state.currentPlayer, showNotification: state.showNotification})));
   const players = providedPlayers || storePlayers;
   const [hasCelebrated, setHasCelebrated] = useState(false);
 

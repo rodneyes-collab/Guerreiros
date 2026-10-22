@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import React, { useMemo, useState } from 'react';
 import { 
   ShieldCheck, 
@@ -72,7 +73,7 @@ export const RoundStatusCard: React.FC<RoundStatusCardProps> = ({
   defaultExpanded = false
 }) => {
   const [isExpanded, setIsExpanded] = useState<boolean>(defaultExpanded);
-  const { players } = useStore();
+  const { players } = useStore(useShallow(state => ({players: state.players})));
 
   if (!generationResult || !generationResult.teamA || !generationResult.teamB) {
     return null;

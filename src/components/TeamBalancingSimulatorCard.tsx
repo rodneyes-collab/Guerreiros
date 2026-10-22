@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../../store';
 import { generateTeams, optimizeTeamSynergyIteratively, calculateCompositePerformanceRating, calculatePracticalSkillsSum, verifyClubGenerationRules } from '../../utils/teamLogic';
@@ -8,7 +9,7 @@ interface TeamBalancingSimulatorCardProps {
 }
 
 export const TeamBalancingSimulatorCard: React.FC<TeamBalancingSimulatorCardProps> = ({ onApplyToMatch }) => {
-  const { players, attendance, matches, balancingStrategy, setBalancingStrategy, balancingRatingMode, setBalancingRatingMode, teamGenerationMode, setTeamGenerationMode, generationResult: currentMatch, setGenerationResult, setViewMode, showNotification } = useStore();
+  const { players, attendance, matches, balancingStrategy, setBalancingStrategy, balancingRatingMode, setBalancingRatingMode, teamGenerationMode, setTeamGenerationMode, generationResult: currentMatch, setGenerationResult, setViewMode, showNotification } = useStore(useShallow(state => ({players: state.players, attendance: state.attendance, matches: state.matches, balancingStrategy: state.balancingStrategy, setBalancingStrategy: state.setBalancingStrategy, balancingRatingMode: state.balancingRatingMode, setBalancingRatingMode: state.setBalancingRatingMode, teamGenerationMode: state.teamGenerationMode, setTeamGenerationMode: state.setTeamGenerationMode, generationResult: state.generationResult, setGenerationResult: state.setGenerationResult, setViewMode: state.setViewMode, showNotification: state.showNotification})));
 
   const [simStrategy, setSimStrategy] = useState<'BOTTOM_TWO' | 'SYNERGY' | 'BOTH'>(balancingStrategy || 'BOTH');
   const [simRatingMode, setSimRatingMode] = useState<'IC_ONLY' | 'HYBRID'>(balancingRatingMode || 'IC_ONLY');

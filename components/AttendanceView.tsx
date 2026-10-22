@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import React from 'react';
 import { useStore } from '../store';
 import { Player, Gender } from '../types';
@@ -62,7 +63,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
   userRole,
   setViewMode
 }) => {
-  const { attendance: allAttendance, preConfirmations: allPreConfirmations, isSyncing, matches, players: allPlayers } = useStore();
+  const { attendance: allAttendance, preConfirmations: allPreConfirmations, isSyncing, matches, players: allPlayers } = useStore(useShallow(state => ({attendance: state.attendance, preConfirmations: state.preConfirmations, isSyncing: state.isSyncing, matches: state.matches, players: state.players})));
 
   const { avgMatchDuration, todayMatchesCount, firstMatchStartTimeStr } = React.useMemo(() => {
     const today = new Date().toISOString().split('T')[0];

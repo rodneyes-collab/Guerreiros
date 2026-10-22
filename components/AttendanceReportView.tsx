@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { useStore } from '../store';
@@ -34,7 +35,7 @@ import {
 } from 'recharts';
 
 export const AttendanceReportView: React.FC<{ setViewMode?: (mode: any) => void }> = ({ setViewMode }) => {
-  const { players: allPlayers, userRole, showConfirmModal, showNotification, matches } = useStore();
+  const { players: allPlayers, userRole, showConfirmModal, showNotification, matches } = useStore(useShallow(state => ({players: state.players, userRole: state.userRole, showConfirmModal: state.showConfirmModal, showNotification: state.showNotification, matches: state.matches})));
   const players = useMemo(() => allPlayers.filter(p => (p.status === 'active' || p.status === 'guest' || !p.status || p.status === '') && !p.isDM), [allPlayers]);
   const [history, setHistory] = useState<Record<string, Player[]>>({});
   const [isLoading, setIsLoading] = useState(true);
