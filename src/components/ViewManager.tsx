@@ -459,6 +459,7 @@ export const ViewManager: React.FC<ViewManagerProps> = (props) => {
               window.history.replaceState({}, document.title, url.pathname + url.search);
             }} 
             handleGoogleLogin={handleGoogleLogin}
+            savePlayer={savePlayer}
           />
         </>
       );

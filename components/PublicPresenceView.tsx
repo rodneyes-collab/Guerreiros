@@ -32,9 +32,10 @@ import { Flame, Star, ArrowRight } from 'lucide-react';
 interface PublicPresenceViewProps {
   onBackToLogin: () => void;
   handleGoogleLogin: () => void;
+  savePlayer: (player: any) => Promise<void>;
 }
 
-export const PublicPresenceView: React.FC<PublicPresenceViewProps> = ({ onBackToLogin, handleGoogleLogin }) => {
+export const PublicPresenceView: React.FC<PublicPresenceViewProps> = ({ onBackToLogin, handleGoogleLogin, savePlayer }) => {
   const players = useStore(state => state.players);
   const attendance = useStore(state => state.attendance);
   const { intentions, isLoaded, setIntent, resetIntent } = useIntentions();
@@ -405,11 +406,21 @@ export const PublicPresenceView: React.FC<PublicPresenceViewProps> = ({ onBackTo
                         <div className="p-4 text-center text-xs text-slate-500 italic">
                           Nenhum jogador encontrado com "{searchTerm}".
                           <button 
+                            disabled={isProcessing}
                             onClick={async () => {
-                              // TODO: Logic to add new player
-                              setErrorMsg('Opção para adicionar novo jogador ainda sendo implementada.');
+                              setIsProcessing(true);
+                              setErrorMsg('');
+                              try {
+                                await savePlayer({ name: searchTerm, status: 'guest' });
+                                setSuccessState({ active: true, type: null });
+                                setTimeout(() => setSuccessState({ active: false, type: null }), 3000);
+                              } catch (error: any) {
+                                setErrorMsg('Falha ao adicionar jogador: ' + (error.message || error));
+                              } finally {
+                                setIsProcessing(false);
+                              }
                             }}
-                            className="block w-full mt-2 text-brand-primary font-bold"
+                            className="block w-full mt-2 text-brand-primary font-bold disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             Adicionar "{searchTerm}" à lista
                           </button>
