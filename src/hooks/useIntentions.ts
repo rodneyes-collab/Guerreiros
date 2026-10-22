@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { db, doc, getDoc, onSnapshot, setDoc, updateDoc, writeBatch, collection, serverTimestamp, handleFirestoreError, OperationType, getDocs, query, where, deleteDoc, deleteField, getFirestoreDateKey, getBrazilDay, trackAccess, getNextThursday } from '../../firebase';
 import { IntentionsData, Player } from '../../types';
@@ -81,7 +82,7 @@ export async function executeWithRetry<T>(
 export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, size: number) => Promise<void>) => {
   const [rawIntentions, setRawIntentions] = useState<IntentionsData>(DEFAULT_INTENTIONS);
   const [isLoaded, setIsLoaded] = useState(false);
-  const { players, userRole, idToCanonicalId, preConfirmations } = useStore();
+  const { players, userRole, idToCanonicalId, preConfirmations } = useStore(useShallow(state => ({players: state.players, userRole: state.userRole, idToCanonicalId: state.idToCanonicalId, preConfirmations: state.preConfirmations})));
   const sendingRef = useRef<Record<string, boolean>>({});
 
   // Memoized filtered intentions based on current players in store

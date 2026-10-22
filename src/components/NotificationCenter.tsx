@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import React, { useState } from 'react';
 import { Bell, X, Check, Trash2 } from 'lucide-react';
 import { useNotifications } from '../hooks/useNotifications';
@@ -7,7 +8,7 @@ import { useStore } from '../../store';
 
 export const NotificationCenter: React.FC = () => {
   const { notifications, markAsRead, deleteNotification, clearAll } = useNotifications();
-  const { setViewMode } = useStore();
+  const { setViewMode } = useStore(useShallow(state => ({setViewMode: state.setViewMode})));
   const [isOpen, setIsOpen] = useState(false);
 
   const unreadCount = notifications.filter(n => !n.read).length;

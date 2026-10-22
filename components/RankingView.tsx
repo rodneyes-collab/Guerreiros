@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import { SynergyAnalysis } from './SynergyAnalysis';
 import { AICoach } from './AICoach';
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
@@ -118,7 +119,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
     payments, 
     expenses, 
     systemMetadata 
-  } = useStore();
+  } = useStore(useShallow(state => ({synergy: state.synergy, negativeSynergy: state.negativeSynergy, rivalry: state.rivalry, players: state.players, matches: state.matches, attendance: state.attendance, isSyncing: state.isSyncing, currentPlayer: state.currentPlayer, setNarrationAudio: state.setNarrationAudio, narrationAudio: state.narrationAudio, isNarrating: state.isNarrating, isNarratingSummary: state.isNarratingSummary, showNotification: state.showNotification, selectedRankingPlayerId: state.selectedRankingPlayerId, setSelectedRankingPlayerId: state.setSelectedRankingPlayerId, setViewMode: state.setViewMode, payments: state.payments, expenses: state.expenses, systemMetadata: state.systemMetadata})));
   
   const { handleAnnounce, playAudioContent } = useNarration();
 
