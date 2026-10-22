@@ -182,6 +182,15 @@ export const PublicPresenceView: React.FC<PublicPresenceViewProps> = ({ onBackTo
     }
   };
 
+  const handleAddPlayer = () => {
+    const newPlayer = {
+      id: `guest_${searchTerm.trim()}`,
+      name: searchTerm.trim(),
+      status: 'guest'
+    };
+    handleSelectPlayer(newPlayer);
+  };
+
   // Auto-identify player and Zero-Click check-in
   useEffect(() => {
     let targetPlayerId = urlPlayerId;
@@ -405,10 +414,7 @@ export const PublicPresenceView: React.FC<PublicPresenceViewProps> = ({ onBackTo
                         <div className="p-4 text-center text-xs text-slate-500 italic">
                           Nenhum jogador encontrado com "{searchTerm}".
                           <button 
-                            onClick={async () => {
-                              // TODO: Logic to add new player
-                              setErrorMsg('Opção para adicionar novo jogador ainda sendo implementada.');
-                            }}
+                            onClick={handleAddPlayer}
                             className="block w-full mt-2 text-brand-primary font-bold"
                           >
                             Adicionar "{searchTerm}" à lista
