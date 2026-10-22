@@ -477,6 +477,24 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
   };
 
   const setIntent = async (playerId: string, status: 'GOING' | 'NOT_GOING' | 'RESET') => {
+    // Collect all aliases for the player to ensure complete removal across aliases
+    const playerObjFound = (players || []).find(p => p.id === playerId || p.uid === playerId || (p.email && p.email.toLowerCase() === playerId.toLowerCase()));
+    const aliasSet = new Set<string>([playerId]);
+    if (playerObjFound) {
+      if (playerObjFound.id) aliasSet.add(playerObjFound.id);
+      if (playerObjFound.uid) aliasSet.add(playerObjFound.uid);
+      if (playerObjFound.email) aliasSet.add(playerObjFound.email.toLowerCase());
+    }
+    if (idToCanonicalId) {
+      if (idToCanonicalId[playerId]) aliasSet.add(idToCanonicalId[playerId]);
+      Object.entries(idToCanonicalId).forEach(([k, v]) => {
+        if (v === playerId || aliasSet.has(v) || aliasSet.has(k)) {
+          aliasSet.add(k);
+          aliasSet.add(v);
+        }
+      });
+    }
+
     // Optimistic UI Update
     const previousRaw = rawIntentions;
     const now = Date.now();
@@ -485,8 +503,10 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
       const newTimestamps = { ...prev.confirmationTimestamps };
       
       if (status === 'RESET') {
-        delete newResponses[playerId];
-        delete newTimestamps[playerId];
+        aliasSet.forEach(alias => {
+          delete newResponses[alias];
+          delete newTimestamps[alias];
+        });
       } else {
         newResponses[playerId] = status as 'GOING' | 'NOT_GOING';
         if (status === 'GOING') {
@@ -525,8 +545,10 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
       const finalTimestamps = isDateRotating ? {} : newTimestamps;
 
       if (status === 'RESET') {
-        delete finalResponses[playerId];
-        delete finalTimestamps[playerId];
+        aliasSet.forEach(alias => {
+          delete finalResponses[alias];
+          delete finalTimestamps[alias];
+        });
       } else {
         finalResponses[playerId] = status;
         if (status === 'GOING') {
@@ -548,22 +570,34 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
       const batch = writeBatch(db);
       let batchSize = 1;
 
-      // When date is rotating, we wipe old data by using merge: false.
-      // Otherwise, we save the COMPLETE computed maps (finalResponses/finalTimestamps) 
-      // to ensure all players are preserved with their correct data.
-      batch.set(intentionsRef, {
-        targetDate: targetDate,
-        automationEnabled: rawIntentions.automationEnabled ?? true,
-        responses: finalResponses,
-        confirmationTimestamps: finalTimestamps,
-        remindersSent: isDateRotating ? {} : (rawIntentions.remindersSent || {}),
-        lastUpdated: now
-      }, { merge: !isDateRotating });
-
-      const preConfirmationRef = doc(db, 'preConfirmations', targetDate, 'players', playerId);
+      if (status === 'RESET') {
+        // When resetting, explicitly delete all alias keys from responses and confirmationTimestamps
+        const intentionsUpdates: Record<string, any> = {
+          targetDate: targetDate,
+          automationEnabled: rawIntentions.automationEnabled ?? true,
+          responses: finalResponses,
+          confirmationTimestamps: finalTimestamps,
+          lastUpdated: now
+        };
+        aliasSet.forEach(alias => {
+          intentionsUpdates[`responses.${alias}`] = deleteField();
+          intentionsUpdates[`confirmationTimestamps.${alias}`] = deleteField();
+        });
+        batch.update(intentionsRef, intentionsUpdates);
+      } else {
+        batch.set(intentionsRef, {
+          targetDate: targetDate,
+          automationEnabled: rawIntentions.automationEnabled ?? true,
+          responses: finalResponses,
+          confirmationTimestamps: finalTimestamps,
+          remindersSent: isDateRotating ? {} : (rawIntentions.remindersSent || {}),
+          lastUpdated: now
+        }, { merge: !isDateRotating });
+      }
 
       if (status === 'GOING') {
-        const playerObjRaw = players.find(p => p.id === playerId) || {
+        const preConfirmationRef = doc(db, 'preConfirmations', targetDate, 'players', playerId);
+        const playerObjRaw = playerObjFound || {
           id: playerId,
           name: playerId.startsWith('guest_') ? playerId.replace('guest_', 'Convidado ') : playerId,
           status: 'guest'
@@ -578,15 +612,35 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
         batchSize++;
 
         useStore.getState().setPreConfirmations((prev: Player[]) => {
-          const filtered = (prev || []).filter(p => p.id !== playerId);
+          const filtered = (prev || []).filter(p => !aliasSet.has(p.id));
           return [...filtered, { ...playerObj, timestamp: now, id: playerId } as Player];
         });
       } else {
-        batch.delete(preConfirmationRef);
-        batchSize++;
+        // RESET or NOT_GOING: delete across all candidate target dates and aliases
+        const datesToClean = Array.from(new Set([
+          targetDate,
+          currentStoredTarget,
+          rawIntentions.targetDate,
+          today,
+          nextThu
+        ].filter(Boolean) as string[]));
 
+        datesToClean.forEach(dKey => {
+          aliasSet.forEach(alias => {
+            const pRef = doc(db, 'preConfirmations', dKey, 'players', alias);
+            batch.delete(pRef);
+            batchSize++;
+          });
+        });
+
+        // Optimistically clean Zustand store of all aliases to prevent auto-heal resurrecting
         useStore.getState().setPreConfirmations((prev: Player[]) => {
-          return (prev || []).filter(p => p.id !== playerId);
+          return (prev || []).filter(p => {
+            if (aliasSet.has(p.id)) return false;
+            if (p.uid && aliasSet.has(p.uid)) return false;
+            if (p.email && aliasSet.has(p.email.toLowerCase())) return false;
+            return true;
+          });
         });
       }
 
@@ -636,6 +690,7 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
       await setIntent(playerId, 'RESET');
     } catch (err) {
       console.error('Erro ao resetar intenção:', err);
+      throw err;
     }
   };
 

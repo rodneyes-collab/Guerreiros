@@ -213,6 +213,7 @@ export interface ViewManagerProps {
   exportPaymentsCSV: () => void;
   handleRecoverFinancials: () => Promise<void>;
   handleFinancialIntegrityAudit?: () => Promise<void>;
+  recreateOctober15Matches?: () => Promise<void>;
 }
 
 export const ViewManager: React.FC<ViewManagerProps> = (props) => {
@@ -756,6 +757,7 @@ export const ViewManager: React.FC<ViewManagerProps> = (props) => {
                     exportPaymentsCSV={exportPaymentsCSV}
                     handleRecoverFinancials={handleRecoverFinancials}
                     handleFinancialIntegrityAudit={handleFinancialIntegrityAudit}
+                    recreateOctober15Matches={props.recreateOctober15Matches || (async () => {})}
                     showConfirmModal={showConfirmModal}
                     setEditingPlayer={setEditingPlayer}
                     setIsFormOpen={setIsFormOpen}

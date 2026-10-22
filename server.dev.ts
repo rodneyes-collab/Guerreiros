@@ -133,6 +133,32 @@ function updateLocalCredentialCounter(id: string, counter: number) {
   }
 }
 
+async function syncCredentialsFromFirestore() {
+  try {
+    const dbInstance = await getWebFirestoreInstance();
+    if (!dbInstance) return;
+    const { doc, getDoc } = await import("firebase/firestore");
+    const metaSnap = await getDoc(doc(dbInstance, "metadata", "webauthn_credentials"));
+    if (metaSnap.exists()) {
+      const data = metaSnap.data() || {};
+      const local = loadLocalCredentials();
+      let updated = false;
+      for (const [k, v] of Object.entries(data)) {
+        if (!local[k]) {
+          local[k] = v;
+          updated = true;
+        }
+      }
+      if (updated) {
+        fs.writeFileSync(CREDENTIALS_FILE_PATH, JSON.stringify(local, null, 2), "utf-8");
+        console.log(`[Local Credentials Store] Sincronizadas ${Object.keys(local).length} credenciais biométricas do Firestore.`);
+      }
+    }
+  } catch (err: any) {
+    console.warn("[Local Credentials Store] Erro ao sincronizar credenciais:", err.message);
+  }
+}
+
 // Lazy initialize firebase-admin
 let adminApp: any = null;
 let adminDb: any = null;
@@ -283,6 +309,11 @@ async function startServer() {
   console.log("[Guerreiros] Iniciando processo de boot...");
   const app = express();
   const PORT = 3000;
+
+  // Sincroniza credenciais biométricas salvas no Firestore no boot
+  syncCredentialsFromFirestore().catch(err => {
+    console.warn("[Server] Sincronização de credenciais em segundo plano:", err.message);
+  });
 
   app.use(cors());
   app.use(express.json({ limit: '10mb' }));
@@ -902,9 +933,33 @@ app.get("/api/billing/real-time", async (req, res) => {
         const responses = { ...(existingData.responses || {}) };
         const timestamps = { ...(existingData.confirmationTimestamps || {}) };
 
+        // Collect aliases for the player to ensure clean deletion
+        const aliasSet = new Set<string>([playerId]);
+        if (player) {
+          if (player.id) aliasSet.add(player.id);
+          if (player.uid) aliasSet.add(player.uid);
+          if (player.email) aliasSet.add(player.email.toLowerCase());
+        }
+
         if (status === 'RESET') {
-          delete responses[playerId];
-          delete timestamps[playerId];
+          aliasSet.forEach(alias => {
+            delete responses[alias];
+            delete timestamps[alias];
+          });
+
+          const { deleteField, updateDoc } = await import("firebase/firestore");
+          const updatePayload: Record<string, any> = {
+            targetDate: existingData.targetDate || getFirestoreDateKey(),
+            automationEnabled: existingData.automationEnabled ?? true,
+            responses,
+            confirmationTimestamps: timestamps,
+            lastUpdated: Date.now()
+          };
+          aliasSet.forEach(alias => {
+            updatePayload[`responses.${alias}`] = deleteField();
+            updatePayload[`confirmationTimestamps.${alias}`] = deleteField();
+          });
+          await updateDoc(intentionsRef, updatePayload);
         } else {
           responses[playerId] = status;
           if (status === 'GOING') {
@@ -912,26 +967,36 @@ app.get("/api/billing/real-time", async (req, res) => {
           } else {
             delete timestamps[playerId];
           }
-        }
 
-        await setDoc(intentionsRef, {
-          targetDate: existingData.targetDate || getFirestoreDateKey(),
-          automationEnabled: existingData.automationEnabled ?? true,
-          responses,
-          confirmationTimestamps: timestamps
-        }, { merge: true });
+          await setDoc(intentionsRef, {
+            targetDate: existingData.targetDate || getFirestoreDateKey(),
+            automationEnabled: existingData.automationEnabled ?? true,
+            responses,
+            confirmationTimestamps: timestamps,
+            lastUpdated: Date.now()
+          }, { merge: true });
+        }
 
         // Also update preConfirmations
         try {
-          const intentionsSnap = await getDoc(intentionsRef);
-          const targetDate = intentionsSnap.exists() && intentionsSnap.data().targetDate ? intentionsSnap.data().targetDate : getFirestoreDateKey();
-          const preConfirmationsRef = doc(db, 'preConfirmations', targetDate, 'players', playerId);
+          const { deleteDoc } = await import("firebase/firestore");
+          const targetDates = Array.from(new Set([
+            existingData.targetDate,
+            getFirestoreDateKey(),
+            getNextThursday()
+          ].filter(Boolean) as string[]));
 
           if (status === 'GOING') {
-             await setDoc(preConfirmationsRef, { ...player, timestamp: Date.now(), id: playerId }, { merge: true });
+            const currentTarget = existingData.targetDate || getFirestoreDateKey();
+            const preConfirmationsRef = doc(db, 'preConfirmations', currentTarget, 'players', playerId);
+            await setDoc(preConfirmationsRef, { ...player, timestamp: Date.now(), id: playerId }, { merge: true });
           } else {
-             const { deleteDoc } = await import("firebase/firestore");
-             await deleteDoc(preConfirmationsRef);
+            for (const tDate of targetDates) {
+              for (const alias of aliasSet) {
+                const pRef = doc(db, 'preConfirmations', tDate, 'players', alias);
+                await deleteDoc(pRef).catch(() => {});
+              }
+            }
           }
         } catch (e: any) {
           console.warn("[Presence API] Could not update preConfirmations", e.message);
@@ -1192,7 +1257,26 @@ app.get("/api/billing/real-time", async (req, res) => {
       }
       
       // 2. Executa a verificação
-      const verification = await verifyRegistration(attestationResponse, expectedChallenge, origin, rpID);
+      const allowedOrigins = Array.from(new Set([
+        origin,
+        req.headers.origin,
+        'https://ais-dev-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app',
+        'https://ais-pre-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app',
+        'https://guerreiros-volleyball-club-238897290870.us-west1.run.app',
+        'http://localhost:3000',
+        'http://127.0.0.1:3000'
+      ].filter(Boolean) as string[]));
+
+      const allowedRPIDs = Array.from(new Set([
+        rpID,
+        'ais-dev-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app',
+        'ais-pre-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app',
+        'guerreiros-volleyball-club-238897290870.us-west1.run.app',
+        'localhost',
+        '127.0.0.1'
+      ].filter(Boolean) as string[]));
+
+      const verification = await verifyRegistration(attestationResponse, expectedChallenge, allowedOrigins, allowedRPIDs);
       
       if (!verification.verified || !verification.registrationInfo) {
         return res.status(400).json({ error: "Falha na verificação de assinatura da biometria." });
@@ -1315,8 +1399,27 @@ app.get("/api/billing/real-time", async (req, res) => {
 
   app.post("/api/auth/webauthn/login/options", async (req, res) => {
     try {
-      const { rpID } = req.body;
-      const options = await getAuthenticationOptions(rpID);
+      const { rpID, email } = req.body;
+      let allowCredentials: any[] | undefined = undefined;
+
+      if (email) {
+        const trimmed = String(email).trim().toLowerCase();
+        let localCreds = loadLocalCredentials();
+        if (Object.keys(localCreds).length === 0) {
+          await syncCredentialsFromFirestore();
+          localCreds = loadLocalCredentials();
+        }
+        const matching = Object.values(localCreds).filter((c: any) => c.email && c.email.toLowerCase() === trimmed);
+        if (matching.length > 0) {
+          allowCredentials = matching.map((c: any) => ({
+            id: c.id,
+            type: 'public-key',
+            transports: c.transports || ['internal', 'hybrid']
+          }));
+        }
+      }
+
+      const options = await getAuthenticationOptions(rpID, allowCredentials);
       
       // Salva no Memory Cache
       challengeStore.set("login_" + options.challenge, {
@@ -1384,7 +1487,12 @@ app.get("/api/billing/real-time", async (req, res) => {
       let isMetaSource = false;
 
       // Primeiro, procura nas credenciais locais salvas robustamente no servidor (100% livre de falhas de permissão)
-      const localCreds = loadLocalCredentials();
+      let localCreds = loadLocalCredentials();
+      if (!localCreds[credentialID]) {
+        await syncCredentialsFromFirestore();
+        localCreds = loadLocalCredentials();
+      }
+
       if (localCreds[credentialID]) {
         credentialData = localCreds[credentialID];
         console.log("[WebAuthn Login Verify] Credential successfully resolved from local filesystem credentials cache!");
@@ -1401,6 +1509,7 @@ app.get("/api/billing/real-time", async (req, res) => {
             if (allCreds[credentialID]) {
               credentialData = allCreds[credentialID];
               isMetaSource = true;
+              saveLocalCredential(credentialID, credentialData);
             }
           }
         } catch (metaErr: any) {
@@ -1419,6 +1528,7 @@ app.get("/api/billing/real-time", async (req, res) => {
               credentialData = allCreds[credentialID];
               isMetaSource = true;
               usedAdmin = true;
+              saveLocalCredential(credentialID, credentialData);
             }
           }
         } catch (adminMetaErr: any) {
@@ -1436,6 +1546,7 @@ app.get("/api/billing/real-time", async (req, res) => {
             credentialData = docDoc.data();
             credDocRefToUpdate = docDoc.ref;
             usedAdmin = true;
+            saveLocalCredential(credentialID, credentialData);
           }
         } catch (adminError: any) {
           // Ignorado silenciosamente
@@ -1455,6 +1566,7 @@ app.get("/api/billing/real-time", async (req, res) => {
               const docDoc = credsSnap.docs[0];
               credentialData = docDoc.data();
               credDocRefToUpdate = docDoc.ref;
+              saveLocalCredential(credentialID, credentialData);
             }
           } catch (webError: any) {
             // Ignorado silenciosamente
@@ -1463,19 +1575,38 @@ app.get("/api/billing/real-time", async (req, res) => {
       }
 
       if (!credentialData) {
-        return res.status(404).json({ error: "Biometria não cadastrada neste dispositivo ou conta inválida." });
+        return res.status(404).json({ error: "Biometria não cadastrada neste dispositivo ou conta inválida. Toque em 'Vincular Biometria' para cadastrar!" });
       }
       
-      // 3. Monta o autenticador para verificação
+      // 3. Monta o autenticador para verificação (counter seguro para Face ID / Touch ID / Windows Hello)
       const authenticator = {
         credentialID: credentialData.id,
         credentialPublicKey: Buffer.from(credentialData.publicKey, "base64url"),
-        counter: credentialData.counter,
+        counter: 0,
         transports: credentialData.transports || []
       };
       
-      // 4. Executa a verificação
-      const verification = await verifyAuthentication(assertionResponse, challenge, origin, rpID, authenticator);
+      // 4. Executa a verificação com suporte a origens múltiplas
+      const allowedOrigins = Array.from(new Set([
+        origin,
+        req.headers.origin,
+        'https://ais-dev-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app',
+        'https://ais-pre-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app',
+        'https://guerreiros-volleyball-club-238897290870.us-west1.run.app',
+        'http://localhost:3000',
+        'http://127.0.0.1:3000'
+      ].filter(Boolean) as string[]));
+
+      const allowedRPIDs = Array.from(new Set([
+        rpID,
+        'ais-dev-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app',
+        'ais-pre-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app',
+        'guerreiros-volleyball-club-238897290870.us-west1.run.app',
+        'localhost',
+        '127.0.0.1'
+      ].filter(Boolean) as string[]));
+
+      const verification = await verifyAuthentication(assertionResponse, challenge, allowedOrigins, allowedRPIDs, authenticator);
       
       if (verification.verified) {
         // Atualiza o counter

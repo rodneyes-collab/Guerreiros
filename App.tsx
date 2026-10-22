@@ -192,7 +192,8 @@ const App: React.FC = () => {
     exportPlayersCSV,
     exportMatchesCSV,
     exportPaymentsCSV,
-    handleRecoverFinancials
+    handleRecoverFinancials,
+    recreateOctober15Matches
   } = useAppLogic(commitBatchWithLog);
   
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
@@ -823,6 +824,7 @@ const App: React.FC = () => {
       exportMatchesCSV={exportMatchesCSV}
       exportPaymentsCSV={exportPaymentsCSV}
       handleRecoverFinancials={handleRecoverFinancials}
+      recreateOctober15Matches={recreateOctober15Matches}
     />
   );
 };

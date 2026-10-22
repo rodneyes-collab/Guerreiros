@@ -191,6 +191,7 @@ interface AdminViewProps {
   exportPaymentsCSV: () => void;
   handleRecoverFinancials: () => Promise<void>;
   handleFinancialIntegrityAudit: () => Promise<void>;
+  recreateOctober15Matches: () => Promise<void>;
   showConfirmModal: (title: string, message: string, onConfirm: () => void) => void;
   setEditingPlayer: (player: Player | null) => void;
   setIsFormOpen: (open: boolean) => void;
@@ -225,6 +226,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
   exportPaymentsCSV,
   handleRecoverFinancials,
   handleFinancialIntegrityAudit,
+  recreateOctober15Matches,
   showConfirmModal,
   setEditingPlayer,
   setIsFormOpen,
@@ -2072,6 +2074,12 @@ export const AdminView: React.FC<AdminViewProps> = ({
                         desc: "Recalcula estatísticas diárias via histórico.", 
                         action: recalculateDailyStats, 
                         icon: RefreshCw 
+                      },
+                      { 
+                        label: "Recriar Partidas 15/10", 
+                        desc: "Gera as 6 partidas do dia 15/10/2026 e recalcula o ranking.", 
+                        action: recreateOctober15Matches, 
+                        icon: Calendar 
                       },
                       { 
                         label: "Finalizar Dia", 

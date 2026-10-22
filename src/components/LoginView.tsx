@@ -45,14 +45,18 @@ export const LoginView: React.FC<LoginViewProps> = ({
   const [hasBiometrics, setHasBiometrics] = useState<boolean>(false);
   const [isEnrollModalOpen, setIsEnrollModalOpen] = useState(false);
   const [enrollEmail, setEnrollEmail] = useState('');
+  const [modalError, setModalError] = useState<string | null>(null);
 
   useEffect(() => {
     setHasBiometrics(window.localStorage.getItem('hasBiometricsLinked') === 'true');
   }, [biometricSuccess]);
 
   useEffect(() => {
-    if (isEnrollModalOpen && magicLinkEmail) {
-      setEnrollEmail(magicLinkEmail);
+    if (isEnrollModalOpen) {
+      setModalError(null);
+      if (magicLinkEmail) {
+        setEnrollEmail(magicLinkEmail);
+      }
     }
   }, [isEnrollModalOpen, magicLinkEmail]);
 
@@ -70,20 +74,15 @@ export const LoginView: React.FC<LoginViewProps> = ({
     setIsIframe(window.self !== window.top);
     
     // Check for Passkey/WebAuthn support
-    if (window.PublicKeyCredential && PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable) {
-      PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable().then(setIsPasskeySupported);
+    if (typeof window !== 'undefined' && !!window.PublicKeyCredential) {
+      setIsPasskeySupported(true);
     } else {
       setIsPasskeySupported(false);
     }
   }, []);
 
   const handleBiometricLogin = () => {
-    if (isIframe) {
-      window.alert("O navegador bloqueou a Biometria segura (Passkeys) dentro do painel do AI Studio por restrição de segurança.\n\nPor favor, use o botão 'ABRIR EM NOVA ABA' no topo direito do AI Studio para acessar ou cadastrar sua digital/Face ID de forma 100% nativa!");
-      return;
-    }
-    // If successful, log the user into the main authenticated member/admin menu
-    // and clear any lingering public URL params (if present)
+    // Tenta autenticar diretamente e passa o email informado se houver
     login(() => {
       setViewMode('intentions');
       onLoginSuccess?.();
@@ -92,7 +91,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
         url.searchParams.delete('public');
         window.history.replaceState({}, document.title, url.pathname + url.search);
       }
-    });
+    }, magicLinkEmail || undefined);
   };
 
   useEffect(() => {
@@ -283,28 +282,22 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 </p>
               </div>
 
-              {/* Sub-action to enroll device's biometric key - SÓ EXIBE SE NÃO VINCULADO */}
-              {!hasBiometrics && (
-                <div className="w-full border-t border-white/5 pt-3 flex flex-col gap-2 items-center">
-                  <p className="text-[9px] font-bold text-slate-500 uppercase tracking-wider text-center">
-                    Ainda não vinculou este dispositivo?
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (isIframe) {
-                        window.alert("O cadastro de chaves seguras (Passkeys) não é permitido dentro de iframes pelo navegador.\n\nPor favor, toque no botão 'ABRIR EM NOVA ABA' abaixo para fazer isso!");
-                        return;
-                      }
-                      setIsEnrollModalOpen(true);
-                    }}
-                    disabled={isBiometricLoading || isLoggingIn || isSendingMagicLink}
-                    className="px-4 py-2 bg-brand-primary/10 border border-brand-primary/30 hover:border-brand-primary hover:bg-brand-primary/20 rounded-xl text-[9px] font-black text-brand-primary uppercase tracking-widest transition-all active:scale-95 shrink-0 animate-pulse"
-                  >
-                    🔑 Vincular Biometria do Celular
-                  </button>
-                </div>
-              )}
+              {/* Sub-action to enroll device's biometric key - Sempre acessível */}
+              <div className="w-full border-t border-white/5 pt-3 flex flex-col gap-2 items-center">
+                <p className="text-[9px] font-bold text-slate-500 uppercase tracking-wider text-center">
+                  {hasBiometrics ? 'Dispositivo já vinculado' : 'Ainda não vinculou este dispositivo?'}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsEnrollModalOpen(true);
+                  }}
+                  disabled={isBiometricLoading || isLoggingIn || isSendingMagicLink}
+                  className="px-4 py-2 bg-brand-primary/10 border border-brand-primary/30 hover:border-brand-primary hover:bg-brand-primary/20 rounded-xl text-[9px] font-black text-brand-primary uppercase tracking-widest transition-all active:scale-95 shrink-0"
+                >
+                  {hasBiometrics ? '🔄 Atualizar Biometria / Face ID' : '🔑 Vincular Biometria do Celular'}
+                </button>
+              </div>
 
               {isIframe && (
                 <div className="w-full pt-2 flex flex-col gap-2 items-center">
@@ -312,7 +305,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                     href={window.location.href}
                     target="_blank"
                     rel="noreferrer"
-                    className="w-full text-center py-3 bg-brand-primary text-black rounded-xl font-black uppercase tracking-widest text-[9px] flex items-center justify-center gap-2 hover:scale-[1.02] active:scale-[0.98] transition-all animate-pulse shadow-[0_0_20px_rgba(245,196,41,0.3)]"
+                    className="w-full text-center py-3 bg-brand-primary text-black rounded-xl font-black uppercase tracking-widest text-[9px] flex items-center justify-center gap-2 hover:scale-[1.02] active:scale-[0.98] transition-all shadow-[0_0_20px_rgba(245,196,41,0.3)]"
                   >
                     🚀 ABRIR EM NOVA ABA (TESTAR BIOMETRIA)
                   </a>
@@ -321,7 +314,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
             </div>
           ) : (
             <div className="p-4 bg-slate-900/50 border border-white/10 rounded-2xl text-[10px] text-center text-slate-400 font-bold uppercase tracking-widest">
-              Biometria (Passkey) não disponível ou bloqueada no iframe do AI Studio.
+              Biometria (Passkey) não disponível ou bloqueada no navegador.
             </div>
           )}
 
@@ -340,7 +333,10 @@ export const LoginView: React.FC<LoginViewProps> = ({
         <div className="fixed inset-0 bg-black/90 backdrop-blur-xl z-50 flex items-center justify-center p-4">
           <div className="bg-black border-2 border-brand-primary/60 rounded-[2rem] max-w-sm w-full p-8 relative shadow-[0_0_50px_rgba(245,196,41,0.25)] space-y-6 animate-in zoom-in-95 duration-200">
             <button
-              onClick={() => setIsEnrollModalOpen(false)}
+              onClick={() => {
+                setIsEnrollModalOpen(false);
+                setModalError(null);
+              }}
               className="absolute top-5 right-5 text-slate-400 hover:text-brand-primary transition-colors focus:outline-none"
               aria-label="Fechar"
             >
@@ -358,14 +354,27 @@ export const LoginView: React.FC<LoginViewProps> = ({
               </p>
             </div>
 
+            {isIframe && (
+              <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-[10px] text-amber-300 font-bold text-center">
+                Dica: Se o navegador restringir a biometria dentro do preview, abra em uma nova aba pelo botão principal.
+              </div>
+            )}
+
+            {(modalError || biometricError) && (
+              <div className="p-3 bg-red-950/40 border border-red-500/40 rounded-xl text-[10px] font-bold text-red-200 text-center animate-in fade-in">
+                {modalError || biometricError}
+              </div>
+            )}
+
             <form onSubmit={async (e) => {
               e.preventDefault();
               if (isBiometricLoading) return;
               if (!enrollEmail || !enrollEmail.trim()) {
-                window.alert("Por favor, preencha o e-mail!");
+                setModalError("Por favor, preencha o e-mail de sócio!");
                 return;
               }
-              const success = await register(enrollEmail);
+              setModalError(null);
+              const success = await register(enrollEmail.trim());
               if (success) {
                 setIsEnrollModalOpen(false);
               }
@@ -380,7 +389,10 @@ export const LoginView: React.FC<LoginViewProps> = ({
                     required
                     placeholder="sócio@email.com"
                     value={enrollEmail}
-                    onChange={(e) => setEnrollEmail(e.target.value)}
+                    onChange={(e) => {
+                      setEnrollEmail(e.target.value);
+                      if (modalError) setModalError(null);
+                    }}
                     className="w-full pl-11 pr-4 py-4 bg-slate-900 border border-brand-primary/40 rounded-xl text-xs font-bold text-white focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary transition-all placeholder:text-slate-600"
                   />
                 </div>

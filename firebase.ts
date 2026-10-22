@@ -64,7 +64,7 @@ try {
 // Silencia logs internos do Firestore SDK para evitar ruído
 if (typeof window !== 'undefined') {
   try {
-    setLogLevel('error');
+    setLogLevel('silent');
   } catch (e) {}
 }
 

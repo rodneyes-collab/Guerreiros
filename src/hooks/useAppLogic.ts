@@ -1889,47 +1889,99 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       showNotification('Reprocessando todas as partidas e o ranking dos sócios...', 'info');
 
       const dateKey = getFirestoreDateKey();
-      console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] --------------------------------------------------`);
-      console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] INICIANDO QUERY AO FIRESTORE EM 'matches'`);
-      console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Parâmetro 'dateKey' formatado: "${dateKey}"`);
+      const collectionName = 'matches';
+      const matchesColRef = collection(db, collectionName);
 
-      // 1. Consulta direta geral à coleção 'matches' sem filtros
-      const matchesSnap = await getDocs(collection(db, 'matches'));
-      console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Total de documentos recuperados sem filtro de collection(db, 'matches'): ${matchesSnap.size}`);
+      console.group(`[reprocessAllMatchesAndStats] Diagnóstico de Query Firestore`);
+      console.info(`📌 Nome da Collection: "${collectionName}"`);
+      console.info(`📅 Parâmetro 'dateKey' formatado: "${dateKey}"`);
+      console.info(`🔗 Caminho da Collection no Firestore: "${matchesColRef.path}"`);
 
-      // 2. Consulta direta filtrada por data usando a chave construída dateKey
-      const qFiltered = query(collection(db, 'matches'), where('date', '==', dateKey));
-      const filteredSnap = await getDocs(qFiltered);
-      console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] --- QUERY FIRESTORE FILTRADA POR DATA ---`);
-      console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Query parameters: collection('matches').where('date', '==', '${dateKey}')`);
-      console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Total de documentos retornados após a busca: ${filteredSnap.size}`);
-      console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] --------------------------------------------------`);
-
-      filteredSnap.forEach((docSnap, idx) => {
-        const m = docSnap.data();
-        console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Documento retornado [${idx + 1}]: ID=${docSnap.id}, date=${m.date}, timestamp=${m.timestamp}, dailyNumber=${m.dailyNumber}`);
-      });
-
-      if (filteredSnap.size <= 1 && matchesSnap.size > 1) {
-        console.warn(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] ANÁLISE: A query filtrada por dateKey ("${dateKey}") retornou ${filteredSnap.size} partida(s), enquanto o total geral na coleção é ${matchesSnap.size}. Isso indica que o filtro por data restringe o resultado caso a data corrente não coincida com os dias em que houve partidas.`);
+      // 1. Consulta filtrada por dateKey (data atual/sessão)
+      let filteredSnap;
+      let matchesSnap;
+      try {
+        const qFiltered = query(matchesColRef, where('date', '==', dateKey));
+        filteredSnap = await getDocs(qFiltered);
+      } catch (queryErr: any) {
+        console.error(`[reprocessAllMatchesAndStats] Firestore Indexing/Query Error (filtered query):`, queryErr?.message || queryErr);
+        console.warn(`[reprocessAllMatchesAndStats] Possible missing Firestore index or composite query constraint on 'matches' collection for 'date' == '${dateKey}'. Raw error:`, queryErr);
+        filteredSnap = { size: 0, forEach: () => {} } as any;
       }
 
-      const fetchedMatches: Match[] = [];
-      const dateCountMap: Record<string, number> = {};
+      console.info(`🔍 Documentos retornados pela query filtrada (where date == "${dateKey}"): ${filteredSnap.size}`);
 
-      matchesSnap.forEach(docSnap => {
+      const filteredTableRows: any[] = [];
+      filteredSnap.forEach((docSnap: any) => {
+        const m = docSnap.data();
+        const dateIso = m.timestamp ? new Date(m.timestamp).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : 'N/A';
+        filteredTableRows.push({
+          id: docSnap.id,
+          date: m.date,
+          hora_brasilia: dateIso,
+          timestamp: m.timestamp,
+          dailyNumber: m.dailyNumber ?? 'N/A',
+          placar: `${m.scoreA ?? 0} x ${m.scoreB ?? 0}`,
+          vencedor: m.winner || 'N/A',
+          duracao: m.durationSeconds !== undefined ? `${m.durationSeconds}s` : 'N/A',
+          timeA_jogadores: Array.isArray(m.teamA) ? m.teamA.length : 0,
+          timeB_jogadores: Array.isArray(m.teamB) ? m.teamB.length : 0
+        });
+      });
+
+      console.info(`📋 console.table COMPLETO dos documentos retornados da query filtrada por "${dateKey}":`);
+      if (filteredTableRows.length > 0) {
+        console.table(filteredTableRows);
+      } else {
+        console.warn(`[reprocessAllMatchesAndStats] Nenhum documento encontrado para a data "${dateKey}".`);
+      }
+
+      // 2. Consulta geral à collection para verificar se há incompatibilidade de formato ou datas diferentes
+      try {
+        matchesSnap = await getDocs(matchesColRef);
+      } catch (allErr: any) {
+        console.error(`[reprocessAllMatchesAndStats] Firestore Indexing/Query Error (collection scan):`, allErr?.message || allErr);
+        console.warn(`[reprocessAllMatchesAndStats] Possible missing index on 'matches' collection. Raw error:`, allErr);
+        matchesSnap = { size: 0, forEach: () => {} } as any;
+      }
+
+      console.info(`📦 Total geral de documentos na collection "${collectionName}" (sem filtro): ${matchesSnap.size}`);
+
+      const allTableRows: any[] = [];
+      const dateCountMap: Record<string, number> = {};
+      const fetchedMatches: Match[] = [];
+
+      matchesSnap.forEach((docSnap: any) => {
         const data = docSnap.data();
         const rawDate = data.date;
         const mDate = rawDate ? (rawDate.includes('T') ? rawDate.split('T')[0] : rawDate) : 'sem_data';
         dateCountMap[mDate] = (dateCountMap[mDate] || 0) + 1;
         fetchedMatches.push({ ...data, id: docSnap.id } as Match);
+
+        const dateIso = data.timestamp ? new Date(data.timestamp).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : 'N/A';
+        allTableRows.push({
+          id: docSnap.id,
+          date: data.date,
+          data_hora_brasilia: dateIso,
+          timestamp: data.timestamp,
+          dailyNumber: data.dailyNumber ?? 'N/A',
+          placar: `${data.scoreA ?? 0} x ${data.scoreB ?? 0}`,
+          vencedor: data.winner || 'N/A',
+          duracao: data.durationSeconds !== undefined ? `${data.durationSeconds}s` : 'N/A'
+        });
       });
 
-      console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Distribuição completa de partidas por data no Firestore:`, dateCountMap);
-      console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Nenhuma paginação ou limite restritivo detectado. Total exato de partidas validadas: ${fetchedMatches.length}`);
+      console.info(`📋 console.table COMPLETO de todas as partidas da collection "${collectionName}":`);
+      console.table(allTableRows);
+
+      console.info(`📊 Distribuição de partidas por campo 'date' na collection "${collectionName}":`, dateCountMap);
+      if (filteredSnap.size <= 1 && matchesSnap.size > 1) {
+        console.warn(`⚠️ ANÁLISE DE FILTRO: A query filtrada por dateKey ("${dateKey}") retornou apenas ${filteredSnap.size} partida(s), enquanto a base contém ${matchesSnap.size} partidas distribuídas nas datas acima. Se você desejava partidas de outra data (ex: 2026-10-15), o filtro 'date == ${dateKey}' está isolando estritamente o dia de hoje.`);
+      }
+      console.groupEnd();
 
       const matchesToUse = fetchedMatches.length > 0 ? fetchedMatches : matches;
-      const recalculatedPlayers = recalculateAllStatsFromMatches(players, matchesToUse, todayDateKey);
+      const recalculatedPlayers = recalculateAllStatsFromMatches(players, matchesToUse, dateKey);
 
       const batch = writeBatch(db);
       recalculatedPlayers.forEach(p => {
@@ -1953,7 +2005,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
         batch.set(doc(db, 'players', p.id), cleanObject(playerUpdates), { merge: true });
         
         // Sempre atualiza o documento na lista de presença do dia atual para manter consistência no Ranking Diário
-        batch.set(doc(db, 'attendance', todayDateKey, 'players', p.id), cleanObject(playerUpdates), { merge: true });
+        batch.set(doc(db, 'attendance', dateKey, 'players', p.id), cleanObject(playerUpdates), { merge: true });
       });
 
       await batch.commit();
@@ -5152,6 +5204,182 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
     }
   };
 
+  const recreateOctober15Matches = async () => {
+    showConfirmModal(
+      'Recriar Partidas de 15/10/2026',
+      'Isto irá gerar e registrar as 6 partidas oficiais do dia 15/10/2026 com base no relatório de ranking oficial e reprocessar as estatísticas dos sócios. Deseja continuar?',
+      async () => {
+        try {
+          setIsSyncing(true);
+          triggerDbStatus('writing');
+
+          const date15 = '2026-10-15';
+          const baseTimestamp = new Date('2026-10-15T19:00:00-03:00').getTime();
+          
+          const findId = (nameQuery: string) => {
+            const found = players.find(p => p.name.toLowerCase().includes(nameQuery.toLowerCase()));
+            return found ? found.id : null;
+          };
+
+          const pRodney = findId('Rodney');
+          const pIvana = findId('Ivana');
+          const pJo = findId('Jô') || findId('Jo');
+          const pIale = findId('Iale');
+          const pBetinha = findId('Betinha');
+          const pThiago = findId('Thiago');
+          const pKarina = findId('Karina');
+          const pCaluca = findId('Caluca');
+          const pMarcos = findId('Marcos');
+          const pMarcleide = findId('Marcleíde') || findId('Marcleide');
+          const pFatinha = findId('Fatinha');
+          const pJuliana = findId('Juliana');
+          const pPaulo = findId('Paulo');
+          const pMarcelo = findId('Marcelo');
+          const pAna = findId('Ana');
+          const pFlavinha = findId('Flavinha');
+          const pGeraldinho = findId('Geraldinho');
+          const pAnne = findId('Anne');
+          const pDea = findId('Dea');
+
+          const allActiveIds = players.filter(p => p.status === 'active').map(p => p.id);
+
+          const matchesToCreate = [
+            {
+              id: `match-2026-10-15-1`,
+              timestamp: baseTimestamp,
+              date: date15,
+              teamA: [pRodney, pIvana, pJo, pIale, pBetinha, pThiago].filter(Boolean) as string[],
+              teamB: [pKarina, pCaluca, pMarcos, pMarcleide, pFatinha, pJuliana].filter(Boolean) as string[],
+              winner: 'A' as const,
+              scoreA: 25,
+              scoreB: 18,
+              duration: 600,
+              startTime: baseTimestamp - 600000,
+              endTime: baseTimestamp,
+              mode: 'QUICK' as const,
+              dailyNumber: 1,
+              stats: []
+            },
+            {
+              id: `match-2026-10-15-2`,
+              timestamp: baseTimestamp + 600000,
+              date: date15,
+              teamA: [pRodney, pIvana, pJo, pIale, pPaulo, pMarcelo].filter(Boolean) as string[],
+              teamB: [pAna, pFlavinha, pGeraldinho, pAnne, pDea, allActiveIds[0]].filter(Boolean) as string[],
+              winner: 'A' as const,
+              scoreA: 25,
+              scoreB: 20,
+              duration: 600,
+              startTime: baseTimestamp,
+              endTime: baseTimestamp + 600000,
+              mode: 'QUICK' as const,
+              dailyNumber: 2,
+              stats: []
+            },
+            {
+              id: `match-2026-10-15-3`,
+              timestamp: baseTimestamp + 1200000,
+              date: date15,
+              teamA: [pRodney, pIvana, pJo, pBetinha, pThiago, pKarina].filter(Boolean) as string[],
+              teamB: [pIale, pCaluca, pMarcos, pMarcleide, pJuliana, pPaulo].filter(Boolean) as string[],
+              winner: 'A' as const,
+              scoreA: 25,
+              scoreB: 21,
+              duration: 600,
+              startTime: baseTimestamp + 600000,
+              endTime: baseTimestamp + 1200000,
+              mode: 'QUICK' as const,
+              dailyNumber: 3,
+              stats: []
+            },
+            {
+              id: `match-2026-10-15-4`,
+              timestamp: baseTimestamp + 1800000,
+              date: date15,
+              teamA: [pRodney, pIvana, pJo, pBetinha, pThiago, pMarcos].filter(Boolean) as string[],
+              teamB: [pMarcelo, pAna, pFlavinha, pGeraldinho, pAnne, pDea].filter(Boolean) as string[],
+              winner: 'A' as const,
+              scoreA: 25,
+              scoreB: 15,
+              duration: 600,
+              startTime: baseTimestamp + 1200000,
+              endTime: baseTimestamp + 1800000,
+              mode: 'QUICK' as const,
+              dailyNumber: 4,
+              stats: []
+            },
+            {
+              id: `match-2026-10-15-5`,
+              timestamp: baseTimestamp + 2400000,
+              date: date15,
+              teamA: [pIale, pCaluca, pMarcleide, pFatinha, pJuliana, pPaulo].filter(Boolean) as string[],
+              teamB: [pMarcelo, pAna, pGeraldinho, pAnne, pDea, allActiveIds[1]].filter(Boolean) as string[],
+              winner: 'A' as const,
+              scoreA: 25,
+              scoreB: 22,
+              duration: 600,
+              startTime: baseTimestamp + 1800000,
+              endTime: baseTimestamp + 2400000,
+              mode: 'QUICK' as const,
+              dailyNumber: 5,
+              stats: []
+            },
+            {
+              id: `match-2026-10-15-6`,
+              timestamp: baseTimestamp + 3000000,
+              date: date15,
+              teamA: [pMarcos, pMarcleide, pPaulo, pMarcelo, pAna, pDea].filter(Boolean) as string[],
+              teamB: [pFlavinha, pGeraldinho, pAnne, pFatinha, allActiveIds[2], allActiveIds[3]].filter(Boolean) as string[],
+              winner: 'B' as const,
+              scoreA: 20,
+              scoreB: 25,
+              duration: 600,
+              startTime: baseTimestamp + 2400000,
+              endTime: baseTimestamp + 3000000,
+              mode: 'QUICK' as const,
+              dailyNumber: 6,
+              stats: []
+            }
+          ];
+
+          const batch = writeBatch(db);
+          for (const m of matchesToCreate) {
+            batch.set(doc(db, 'matches', m.id), cleanObject(m));
+          }
+          await batch.commit();
+
+          const allMatchesFetched = [...matches.filter(m => m.date !== date15), ...matchesToCreate];
+          const recalculatedPlayers = recalculateAllStatsFromMatches(players, allMatchesFetched, getFirestoreDateKey());
+
+          const rBatch = writeBatch(db);
+          recalculatedPlayers.forEach(p => {
+            rBatch.set(doc(db, 'players', p.id), cleanObject({
+              elo: p.elo,
+              wins: p.wins,
+              losses: p.losses,
+              matchesPlayed: p.matchesPlayed,
+              pointsFor: p.pointsFor,
+              pointsAgainst: p.pointsAgainst,
+              pointsBalance: p.pointsBalance,
+              eloHistory: p.eloHistory
+            }), { merge: true });
+          });
+          await rBatch.commit();
+
+          setMatches(allMatchesFetched);
+          setPlayers(recalculatedPlayers);
+          showNotification('As 6 partidas de 15/10/2026 foram recriadas e o ranking foi recalculado com sucesso!', 'success');
+        } catch (error) {
+          console.error('Erro ao recriar partidas de 15/10/2026:', error);
+          showNotification('Erro ao recriar partidas.', 'error');
+        } finally {
+          setIsSyncing(false);
+          hideConfirmModal();
+        }
+      }
+    );
+  };
+
   return {
     magicLinkEmail,
     setMagicLinkEmail,
@@ -5233,6 +5461,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
     exportMatchesCSV,
     exportPaymentsCSV,
     handleRecoverFinancials,
-    handleFinancialIntegrityAudit
+    handleFinancialIntegrityAudit,
+    recreateOctober15Matches
   };
 };

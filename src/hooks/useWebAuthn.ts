@@ -5,6 +5,26 @@ import { auth, db, doc, setDoc, signOut } from '../../firebase';
 import { signInAnonymously } from 'firebase/auth';
 import { useStore } from '../../store';
 
+const formatWebAuthnError = (e: any): string => {
+  const msg = e?.message || String(e || '');
+  if (msg.includes('BIOMETRIA_BLOQUEADA_IFRAME') || msg.includes('not enabled in this document') || msg.includes('feature is not enabled')) {
+    return "A autenticação biométrica (Passkey) requer execução em aba nativa por segurança do navegador. Use o botão 'ABRIR EM NOVA ABA' no topo!";
+  }
+  if (e?.name === 'NotAllowedError' || msg.includes('NotAllowedError') || msg.includes('timed out or was not allowed')) {
+    return "Leitura biométrica / Face ID cancelada ou expirada. Tente novamente!";
+  }
+  if (e?.name === 'NotSupportedError' || msg.includes('NotSupportedError')) {
+    return "Este dispositivo ou navegador não possui suporte a biometria nativa. Acesse via E-mail ou Google.";
+  }
+  if (e?.name === 'InvalidStateError' || msg.includes('InvalidStateError')) {
+    return "Esta biometria já se encontra cadastrada neste dispositivo.";
+  }
+  if (msg.includes('Biometria não cadastrada') || msg.includes('404')) {
+    return "Nenhuma biometria cadastrada neste dispositivo para este e-mail. Toque em 'Vincular Biometria' abaixo para cadastrar!";
+  }
+  return msg || "Erro ao processar biometria. Tente novamente.";
+};
+
 export const useWebAuthn = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -19,22 +39,17 @@ export const useWebAuthn = () => {
     setIsLoading(true);
     clearMessages();
     try {
-      // Security check for iframe environments (standard for AI Studio)
-      if (window.self !== window.top) {
-        throw new Error("BIOMETRIA_BLOQUEADA_IFRAME");
-      }
-
       if (!email || !email.trim()) {
-        throw new Error("Por favor, digite o seu e-mail no campo acima antes de configurar a biometria!");
+        throw new Error("Por favor, informe seu e-mail de sócio antes de configurar a biometria!");
       }
 
       const targetEmail = email.trim().toLowerCase();
       
       // Encontra o player correspondente na store local se existir
       const { players } = useStore.getState();
-      const matchedPlayer = players.find(p => p.email && p.email.trim().toLowerCase() === targetEmail);
-      const playerId = matchedPlayer ? matchedPlayer.id : (targetEmail === "rodneyes@gmail.com" ? "owner_admin" : "");
-      const playerName = matchedPlayer ? matchedPlayer.name : (targetEmail === "rodneyes@gmail.com" ? "Administrador" : "");
+      const matchedPlayer = (players || []).find(p => p.email && p.email.trim().toLowerCase() === targetEmail);
+      const playerId = matchedPlayer ? matchedPlayer.id : (targetEmail === "rodneyes@gmail.com" ? "owner_admin" : targetEmail);
+      const playerName = matchedPlayer ? matchedPlayer.name : (targetEmail === "rodneyes@gmail.com" ? "Administrador" : targetEmail.split('@')[0]);
 
       const rpID = window.location.hostname;
       const response = await fetch('/api/auth/webauthn/register/options', { 
@@ -88,40 +103,34 @@ export const useWebAuthn = () => {
       }
       
       window.localStorage.setItem('hasBiometricsLinked', 'true');
-      setSuccess("Biometria registrada com sucesso!");
+      window.localStorage.setItem('simpleLoginEmail', targetEmail);
+      setSuccess("Biometria / Face ID registrada com sucesso!");
       return true;
     } catch (e: any) {
       console.error("WebAuthn register error:", e);
-      let errMsg = e.message || String(e);
-      
-      if (errMsg === "BIOMETRIA_BLOQUEADA_IFRAME" || errMsg.includes("not enabled in this document") || errMsg.includes("feature is not enabled")) {
-        errMsg = "O navegador bloqueou a Biometria (Passkeys) dentro do painel do AI Studio por segurança. Clique em 'ABRIR EM NOVA ABA' no topo direito para usar biometria nativa!";
-      }
-      
-      setError(errMsg);
+      setError(formatWebAuthnError(e));
       return false;
     } finally {
       setIsLoading(false);
     }
   };
 
-  const login = async (onSuccessCallback?: () => void) => {
+  const login = async (onSuccessCallback?: () => void, preferredEmail?: string) => {
     setIsLoading(true);
     clearMessages();
     try {
-      if (window.self !== window.top) {
-        throw new Error("BIOMETRIA_BLOQUEADA_IFRAME");
-      }
-
       const rpID = window.location.hostname;
+      const targetEmail = preferredEmail || window.localStorage.getItem('simpleLoginEmail') || undefined;
+
       const response = await fetch('/api/auth/webauthn/login/options', { 
         method: 'POST',
-        body: JSON.stringify({ rpID }),
+        body: JSON.stringify({ rpID, email: targetEmail }),
         headers: { 'Content-Type': 'application/json' }
       });
 
       if (!response.ok) {
-        throw new Error(`Erro do servidor (${response.status})`);
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `Erro do servidor (${response.status})`);
       }
 
       const options = await response.json();
@@ -150,10 +159,11 @@ export const useWebAuthn = () => {
       if (verificationResult.verified && verificationResult.email) {
         // Guarde o e-mail no localStorage para que o app logue como esse jogador!
         window.localStorage.setItem('simpleLoginEmail', verificationResult.email);
+        window.localStorage.setItem('hasBiometricsLinked', 'true');
         
         // Atualiza a store imediatamente para máxima velocidade de renderização
         const { players, setCurrentPlayer, setUserRole } = useStore.getState();
-        const player = players.find(p => p.email && p.email.trim().toLowerCase() === verificationResult.email.trim().toLowerCase());
+        const player = (players || []).find(p => p.email && p.email.trim().toLowerCase() === verificationResult.email.trim().toLowerCase());
         if (player) {
           setCurrentPlayer(player);
           const isAdmin = verificationResult.email === "rodneyes@gmail.com" || player.isAdmin;
@@ -172,8 +182,7 @@ export const useWebAuthn = () => {
           }
         }
 
-        // Auto-vincula o dispositivo logo após o login biométrico (já que é 100% seguro)
-        // Isso evita o erro no App.tsx de "Perfil em uso em outro navegador"
+        // Auto-vincula o dispositivo logo após o login biométrico
         if (player && currentAuthUser) {
           try {
             await fetch(`/api/players/${player.id}/link`, {
@@ -209,13 +218,7 @@ export const useWebAuthn = () => {
       }
     } catch (e: any) {
       console.error("WebAuthn login error:", e);
-      let errMsg = e.message || String(e);
-      
-      if (errMsg === "BIOMETRIA_BLOQUEADA_IFRAME" || errMsg.includes("not enabled in this document") || errMsg.includes("feature is not enabled")) {
-        errMsg = "O navegador bloqueou a Biometria (Passkeys) dentro do painel do AI Studio por segurança. Clique em 'ABRIR EM NOVA ABA' no topo direito para usar biometria nativa!";
-      }
-      
-      setError(errMsg);
+      setError(formatWebAuthnError(e));
     } finally {
       setIsLoading(false);
     }

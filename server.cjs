@@ -946,23 +946,23 @@ var import_path = __toESM(require("path"), 1);
 var import_fs = __toESM(require("fs"), 1);
 
 // constants.ts
-var APP_VERSION = "3.3.4";
+var APP_VERSION = "3.3.5";
 
 // src/services/webauthn.ts
 var import_server = require("@simplewebauthn/server");
 var getRegistrationOptions = async (userId, userName, rpID) => {
+  const safeUserId = userId && userId.trim() ? userId.trim() : userName ? `user_${userName.trim().toLowerCase()}` : `user_${Date.now()}`;
   return (0, import_server.generateRegistrationOptions)({
     rpName: "Guerreiros V\xF4lei de Elite",
     rpID,
-    userID: Buffer.from(userId),
-    userName,
-    userDisplayName: userName,
+    userID: Buffer.from(safeUserId),
+    userName: userName || "S\xF3cio Guerreiros",
+    userDisplayName: userName || "S\xF3cio Guerreiros",
     attestationType: "none",
     supportedAlgorithmIDs: [-7, -257],
     authenticatorSelection: {
-      authenticatorAttachment: "platform",
-      userVerification: "required",
-      residentKey: "required"
+      userVerification: "preferred",
+      residentKey: "preferred"
     }
   });
 };
@@ -971,13 +971,15 @@ var verifyRegistration = async (body, expectedChallenge, expectedOrigin, expecte
     response: body,
     expectedChallenge,
     expectedOrigin,
-    expectedRPID
+    expectedRPID,
+    requireUserVerification: false
   });
 };
-var getAuthenticationOptions = async (rpID) => {
+var getAuthenticationOptions = async (rpID, allowCredentials) => {
   return (0, import_server.generateAuthenticationOptions)({
     rpID,
-    userVerification: "required"
+    userVerification: "preferred",
+    allowCredentials: allowCredentials && allowCredentials.length > 0 ? allowCredentials : void 0
   });
 };
 var verifyAuthentication = async (body, expectedChallenge, expectedOrigin, expectedRPID, authenticator) => {
@@ -986,10 +988,11 @@ var verifyAuthentication = async (body, expectedChallenge, expectedOrigin, expec
     expectedChallenge,
     expectedOrigin,
     expectedRPID,
+    requireUserVerification: false,
     credential: {
       id: authenticator.credentialID,
       publicKey: authenticator.credentialPublicKey,
-      counter: authenticator.counter,
+      counter: authenticator.counter || 0,
       transports: authenticator.transports
     }
   });
@@ -1076,6 +1079,31 @@ function updateLocalCredentialCounter(id, counter) {
     }
   } catch (err) {
     console.log("[Local Credentials Store] Update counter error:", err.message);
+  }
+}
+async function syncCredentialsFromFirestore() {
+  try {
+    const dbInstance = await getWebFirestoreInstance();
+    if (!dbInstance) return;
+    const { doc, getDoc } = await import("firebase/firestore");
+    const metaSnap = await getDoc(doc(dbInstance, "metadata", "webauthn_credentials"));
+    if (metaSnap.exists()) {
+      const data = metaSnap.data() || {};
+      const local = loadLocalCredentials();
+      let updated = false;
+      for (const [k, v] of Object.entries(data)) {
+        if (!local[k]) {
+          local[k] = v;
+          updated = true;
+        }
+      }
+      if (updated) {
+        import_fs.default.writeFileSync(CREDENTIALS_FILE_PATH, JSON.stringify(local, null, 2), "utf-8");
+        console.log(`[Local Credentials Store] Sincronizadas ${Object.keys(local).length} credenciais biom\xE9tricas do Firestore.`);
+      }
+    }
+  } catch (err) {
+    console.warn("[Local Credentials Store] Erro ao sincronizar credenciais:", err.message);
   }
 }
 async function getFirestore() {
@@ -1177,6 +1205,9 @@ async function startServer() {
   console.log("[Guerreiros] Iniciando processo de boot...");
   const app = (0, import_express.default)();
   const PORT = 3e3;
+  syncCredentialsFromFirestore().catch((err) => {
+    console.warn("[Server] Sincroniza\xE7\xE3o de credenciais em segundo plano:", err.message);
+  });
   app.use((0, import_cors.default)());
   app.use(import_express.default.json({ limit: "10mb" }));
   app.use(import_express.default.urlencoded({ extended: true, limit: "10mb" }));
@@ -1682,9 +1713,30 @@ async function startServer() {
       const existingData = intentionsSnap.exists() ? intentionsSnap.data() : {};
       const responses = { ...existingData.responses || {} };
       const timestamps = { ...existingData.confirmationTimestamps || {} };
+      const aliasSet = /* @__PURE__ */ new Set([playerId]);
+      if (player) {
+        if (player.id) aliasSet.add(player.id);
+        if (player.uid) aliasSet.add(player.uid);
+        if (player.email) aliasSet.add(player.email.toLowerCase());
+      }
       if (status === "RESET") {
-        delete responses[playerId];
-        delete timestamps[playerId];
+        aliasSet.forEach((alias) => {
+          delete responses[alias];
+          delete timestamps[alias];
+        });
+        const { deleteField: deleteField2, updateDoc: updateDoc2 } = await import("firebase/firestore");
+        const updatePayload = {
+          targetDate: existingData.targetDate || getFirestoreDateKey(),
+          automationEnabled: existingData.automationEnabled ?? true,
+          responses,
+          confirmationTimestamps: timestamps,
+          lastUpdated: Date.now()
+        };
+        aliasSet.forEach((alias) => {
+          updatePayload[`responses.${alias}`] = deleteField2();
+          updatePayload[`confirmationTimestamps.${alias}`] = deleteField2();
+        });
+        await updateDoc2(intentionsRef, updatePayload);
       } else {
         responses[playerId] = status;
         if (status === "GOING") {
@@ -1692,22 +1744,33 @@ async function startServer() {
         } else {
           delete timestamps[playerId];
         }
+        await setDoc(intentionsRef, {
+          targetDate: existingData.targetDate || getFirestoreDateKey(),
+          automationEnabled: existingData.automationEnabled ?? true,
+          responses,
+          confirmationTimestamps: timestamps,
+          lastUpdated: Date.now()
+        }, { merge: true });
       }
-      await setDoc(intentionsRef, {
-        targetDate: existingData.targetDate || getFirestoreDateKey(),
-        automationEnabled: existingData.automationEnabled ?? true,
-        responses,
-        confirmationTimestamps: timestamps
-      }, { merge: true });
       try {
-        const intentionsSnap2 = await getDoc(intentionsRef);
-        const targetDate = intentionsSnap2.exists() && intentionsSnap2.data().targetDate ? intentionsSnap2.data().targetDate : getFirestoreDateKey();
-        const preConfirmationsRef = doc(db, "preConfirmations", targetDate, "players", playerId);
+        const { deleteDoc } = await import("firebase/firestore");
+        const targetDates = Array.from(new Set([
+          existingData.targetDate,
+          getFirestoreDateKey(),
+          getNextThursday()
+        ].filter(Boolean)));
         if (status === "GOING") {
+          const currentTarget = existingData.targetDate || getFirestoreDateKey();
+          const preConfirmationsRef = doc(db, "preConfirmations", currentTarget, "players", playerId);
           await setDoc(preConfirmationsRef, { ...player, timestamp: Date.now(), id: playerId }, { merge: true });
         } else {
-          const { deleteDoc } = await import("firebase/firestore");
-          await deleteDoc(preConfirmationsRef);
+          for (const tDate of targetDates) {
+            for (const alias of aliasSet) {
+              const pRef = doc(db, "preConfirmations", tDate, "players", alias);
+              await deleteDoc(pRef).catch(() => {
+              });
+            }
+          }
         }
       } catch (e) {
         console.warn("[Presence API] Could not update preConfirmations", e.message);
@@ -1925,7 +1988,24 @@ async function startServer() {
       if (!expectedChallenge) {
         return res.status(400).json({ error: "Sess\xE3o expirada ou desafio n\xE3o encontrado. Tente configurar novamente!" });
       }
-      const verification = await verifyRegistration(attestationResponse, expectedChallenge, origin, rpID);
+      const allowedOrigins = Array.from(new Set([
+        origin,
+        req.headers.origin,
+        "https://ais-dev-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app",
+        "https://ais-pre-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app",
+        "https://guerreiros-volleyball-club-238897290870.us-west1.run.app",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000"
+      ].filter(Boolean)));
+      const allowedRPIDs = Array.from(new Set([
+        rpID,
+        "ais-dev-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app",
+        "ais-pre-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app",
+        "guerreiros-volleyball-club-238897290870.us-west1.run.app",
+        "localhost",
+        "127.0.0.1"
+      ].filter(Boolean)));
+      const verification = await verifyRegistration(attestationResponse, expectedChallenge, allowedOrigins, allowedRPIDs);
       if (!verification.verified || !verification.registrationInfo) {
         return res.status(400).json({ error: "Falha na verifica\xE7\xE3o de assinatura da biometria." });
       }
@@ -2028,8 +2108,25 @@ async function startServer() {
   });
   app.post("/api/auth/webauthn/login/options", async (req, res) => {
     try {
-      const { rpID } = req.body;
-      const options = await getAuthenticationOptions(rpID);
+      const { rpID, email } = req.body;
+      let allowCredentials = void 0;
+      if (email) {
+        const trimmed = String(email).trim().toLowerCase();
+        let localCreds = loadLocalCredentials();
+        if (Object.keys(localCreds).length === 0) {
+          await syncCredentialsFromFirestore();
+          localCreds = loadLocalCredentials();
+        }
+        const matching = Object.values(localCreds).filter((c) => c.email && c.email.toLowerCase() === trimmed);
+        if (matching.length > 0) {
+          allowCredentials = matching.map((c) => ({
+            id: c.id,
+            type: "public-key",
+            transports: c.transports || ["internal", "hybrid"]
+          }));
+        }
+      }
+      const options = await getAuthenticationOptions(rpID, allowCredentials);
       challengeStore.set("login_" + options.challenge, {
         challenge: options.challenge,
         createdAt: Date.now()
@@ -2082,7 +2179,11 @@ async function startServer() {
       let credentialData = null;
       let credDocRefToUpdate = null;
       let isMetaSource = false;
-      const localCreds = loadLocalCredentials();
+      let localCreds = loadLocalCredentials();
+      if (!localCreds[credentialID]) {
+        await syncCredentialsFromFirestore();
+        localCreds = loadLocalCredentials();
+      }
       if (localCreds[credentialID]) {
         credentialData = localCreds[credentialID];
         console.log("[WebAuthn Login Verify] Credential successfully resolved from local filesystem credentials cache!");
@@ -2097,6 +2198,7 @@ async function startServer() {
             if (allCreds[credentialID]) {
               credentialData = allCreds[credentialID];
               isMetaSource = true;
+              saveLocalCredential(credentialID, credentialData);
             }
           }
         } catch (metaErr) {
@@ -2112,6 +2214,7 @@ async function startServer() {
               credentialData = allCreds[credentialID];
               isMetaSource = true;
               usedAdmin = true;
+              saveLocalCredential(credentialID, credentialData);
             }
           }
         } catch (adminMetaErr) {
@@ -2126,6 +2229,7 @@ async function startServer() {
             credentialData = docDoc.data();
             credDocRefToUpdate = docDoc.ref;
             usedAdmin = true;
+            saveLocalCredential(credentialID, credentialData);
           }
         } catch (adminError) {
         }
@@ -2143,21 +2247,39 @@ async function startServer() {
               const docDoc = credsSnap.docs[0];
               credentialData = docDoc.data();
               credDocRefToUpdate = docDoc.ref;
+              saveLocalCredential(credentialID, credentialData);
             }
           } catch (webError) {
           }
         }
       }
       if (!credentialData) {
-        return res.status(404).json({ error: "Biometria n\xE3o cadastrada neste dispositivo ou conta inv\xE1lida." });
+        return res.status(404).json({ error: "Biometria n\xE3o cadastrada neste dispositivo ou conta inv\xE1lida. Toque em 'Vincular Biometria' para cadastrar!" });
       }
       const authenticator = {
         credentialID: credentialData.id,
         credentialPublicKey: Buffer.from(credentialData.publicKey, "base64url"),
-        counter: credentialData.counter,
+        counter: 0,
         transports: credentialData.transports || []
       };
-      const verification = await verifyAuthentication(assertionResponse, challenge, origin, rpID, authenticator);
+      const allowedOrigins = Array.from(new Set([
+        origin,
+        req.headers.origin,
+        "https://ais-dev-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app",
+        "https://ais-pre-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app",
+        "https://guerreiros-volleyball-club-238897290870.us-west1.run.app",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000"
+      ].filter(Boolean)));
+      const allowedRPIDs = Array.from(new Set([
+        rpID,
+        "ais-dev-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app",
+        "ais-pre-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app",
+        "guerreiros-volleyball-club-238897290870.us-west1.run.app",
+        "localhost",
+        "127.0.0.1"
+      ].filter(Boolean)));
+      const verification = await verifyAuthentication(assertionResponse, challenge, allowedOrigins, allowedRPIDs, authenticator);
       if (verification.verified) {
         const newCounter = verification.authenticationInfo.newCounter;
         updateLocalCredentialCounter(credentialID, newCounter);
@@ -2204,8 +2326,7 @@ async function startServer() {
   const server = import_http.default.createServer(app);
   console.log(`[Guerreiros] Configurando ambiente: ${process.env.NODE_ENV || "development"}`);
   const distPath = import_path.default.join(process.cwd(), "dist");
-  const indexExists = import_fs.default.existsSync(import_path.default.join(distPath, "index.html"));
-  if (process.env.NODE_ENV !== "production" && !indexExists) {
+  if (process.env.NODE_ENV !== "production") {
     console.log("[Guerreiros] Montando Vite em modo Middleware...");
     try {
       const { createServer: createViteServer } = await import("vite");
