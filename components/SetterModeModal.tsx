@@ -61,7 +61,10 @@ export const SetterModeModal: React.FC<SetterModeModalProps> = ({
               {/* Opção 1: Todo mundo levantando */}
               <button
                 type="button"
-                onClick={() => onSelect('everyone')}
+                onClick={() => {
+                  onSelect('everyone');
+                  onClose();
+                }}
                 className="group relative flex flex-col items-center justify-center p-5 bg-brand-primary text-black hover:bg-brand-primary/90 rounded-2xl shadow-xl transition-all text-center focus:outline-none focus:ring-2 focus:ring-brand-primary"
               >
                 <span className="font-black uppercase tracking-widest text-xs sm:text-sm">
@@ -75,7 +78,10 @@ export const SetterModeModal: React.FC<SetterModeModalProps> = ({
               {/* Opção 2: Levantador temporário */}
               <button
                 type="button"
-                onClick={() => onSelect('temporary')}
+                onClick={() => {
+                  onSelect('temporary');
+                  onClose();
+                }}
                 className="group relative flex flex-col items-center justify-center p-5 bg-white/5 hover:bg-white/10 text-white rounded-2xl transition-all text-center border border-white/10 focus:outline-none focus:ring-2 focus:ring-white/20"
               >
                 <span className="font-black uppercase tracking-widest text-xs sm:text-sm text-brand-primary group-hover:text-white transition-colors">
