@@ -805,17 +805,46 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       batch.delete(doc(db, 'metadata', 'currentMatch'));
 
       // Notificar jogadores sobre o resultado da partida
-      const playersToNotify = [...teamA, ...teamB];
-      const notificationData = await Promise.all(playersToNotify.map(async (p) => {
-        if (!p.id || !p.fcmToken) return { id: p.id, unreadCount: 1 };
-        try {
-          const q = query(collection(db, 'notifications'), where('playerUid', '==', p.uid), where('read', '==', false));
-          const snap = await getDocs(q);
-          return { id: p.id, unreadCount: snap.size + 1 };
-        } catch (e) {
-          return { id: p.id, unreadCount: 1 };
+const playersToNotify = [...teamA, ...teamB];
+      const notificationData: { id: string; unreadCount: number }[] = [];
+      const validPlayers = playersToNotify.filter(p => p && p.id && p.fcmToken && p.uid);
+
+      for (const p of playersToNotify) {
+        if (!p || !p.id) continue;
+        if (!p.fcmToken || !p.uid) {
+          notificationData.push({ id: p.id, unreadCount: 1 });
         }
-      }));
+      }
+
+      const chunkSize = 10;
+      const chunkPromises = [];
+      for (let i = 0; i < validPlayers.length; i += chunkSize) {
+        const chunk = validPlayers.slice(i, i + chunkSize);
+        chunkPromises.push((async () => {
+          const uids = chunk.map(p => p.uid);
+          try {
+            const q = query(collection(db, 'notifications'), where('playerUid', 'in', uids), where('read', '==', false));
+            const snap = await getDocs(q);
+
+            const countsByUid: Record<string, number> = {};
+            uids.forEach(uid => countsByUid[uid as string] = 0);
+
+            snap.forEach((doc) => {
+              const data = doc.data();
+              if (data.playerUid) {
+                countsByUid[data.playerUid] = (countsByUid[data.playerUid] || 0) + 1;
+              }
+            });
+
+            return chunk.map(p => ({ id: p.id!, unreadCount: (countsByUid[p.uid!] || 0) + 1 }));
+          } catch (e) {
+            return chunk.map(p => ({ id: p.id!, unreadCount: 1 }));
+          }
+        })());
+      }
+
+      const results = await Promise.all(chunkPromises);
+      results.forEach(res => notificationData.push(...res));
 
       const notifyResult = (p: Player, isTeamA: boolean) => {
         const isWinner = (isTeamA && winner === 'A') || (!isTeamA && winner === 'B');
@@ -1905,10 +1934,10 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Total de documentos retornados após a busca: ${filteredSnap.size}`);
       console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] --------------------------------------------------`);
 
-      filteredSnap.forEach((docSnap, idx) => {
+      let idx = 0; filteredSnap.forEach((docSnap) => {
         const m = docSnap.data();
         console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Documento retornado [${idx + 1}]: ID=${docSnap.id}, date=${m.date}, timestamp=${m.timestamp}, dailyNumber=${m.dailyNumber}`);
-      });
+idx++;      });
 
       if (filteredSnap.size <= 1 && matchesSnap.size > 1) {
         console.warn(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] ANÁLISE: A query filtrada por dateKey ("${dateKey}") retornou ${filteredSnap.size} partida(s), enquanto o total geral na coleção é ${matchesSnap.size}. Isso indica que o filtro por data restringe o resultado caso a data corrente não coincida com os dias em que houve partidas.`);
@@ -1929,7 +1958,8 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       console.info(`[reprocessAllMatchesAndStats] [DIAGNOSTICO] Nenhuma paginação ou limite restritivo detectado. Total exato de partidas validadas: ${fetchedMatches.length}`);
 
       const matchesToUse = fetchedMatches.length > 0 ? fetchedMatches : matches;
-      const recalculatedPlayers = recalculateAllStatsFromMatches(players, matchesToUse, todayDateKey);
+      const todayDateKey = getFirestoreDateKey();
+const recalculatedPlayers = recalculateAllStatsFromMatches(players, matchesToUse, todayDateKey);
 
       const batch = writeBatch(db);
       recalculatedPlayers.forEach(p => {
@@ -3210,20 +3240,49 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       }
 
       // Notificações FCM e In-App para jogadores em quadra e fila
-      const playersToNotifyWithTokens = [
+const playersToNotifyWithTokens = [
         ...onCourtPlayers,
         ...(result.remainingPlayers ? result.remainingPlayers.slice(0, 12) : [])
       ].filter(p => p && p.id && p.fcmToken);
 
-      const notificationData = await Promise.all(playersToNotifyWithTokens.map(async (p) => {
-        try {
-          const q = query(collection(db, 'notifications'), where('playerUid', '==', p!.uid), where('read', '==', false));
-          const snap = await getDocs(q);
-          return { id: p!.id, unreadCount: snap.size + 1 };
-        } catch (e) {
-          return { id: p!.id, unreadCount: 1 };
+      const notificationData: { id: string; unreadCount: number }[] = [];
+      const validPlayersForNotify = playersToNotifyWithTokens.filter(p => p && p.uid);
+
+      for (const p of playersToNotifyWithTokens) {
+        if (!p || !p.uid) {
+          notificationData.push({ id: p!.id!, unreadCount: 1 });
         }
-      }));
+      }
+
+      const chunkSize = 10;
+      const chunkPromises = [];
+      for (let i = 0; i < validPlayersForNotify.length; i += chunkSize) {
+        const chunk = validPlayersForNotify.slice(i, i + chunkSize);
+        chunkPromises.push((async () => {
+          const uids = chunk.map(p => p!.uid);
+          try {
+            const q = query(collection(db, 'notifications'), where('playerUid', 'in', uids), where('read', '==', false));
+            const snap = await getDocs(q);
+
+            const countsByUid: Record<string, number> = {};
+            uids.forEach(uid => countsByUid[uid as string] = 0);
+
+            snap.forEach((doc) => {
+              const data = doc.data();
+              if (data.playerUid) {
+                countsByUid[data.playerUid] = (countsByUid[data.playerUid] || 0) + 1;
+              }
+            });
+
+            return chunk.map(p => ({ id: p!.id!, unreadCount: (countsByUid[p!.uid!] || 0) + 1 }));
+          } catch (e) {
+            return chunk.map(p => ({ id: p!.id!, unreadCount: 1 }));
+          }
+        })());
+      }
+
+      const results = await Promise.all(chunkPromises);
+      results.forEach(res => notificationData.push(...res));
 
       const queueNotification = (player: Player | null | undefined, title: string, body: string) => {
         if (player) {
@@ -3448,7 +3507,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
           let hasNotifications = false;
 
           // Prepare unread counts for all players involved in the notification
-          const playersToNotify = [
+const playersToNotify = [
             result.teamA.setter, 
             ...result.teamA.players, 
             result.teamB.setter, 
@@ -3456,15 +3515,44 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
             ...result.remainingPlayers.slice(0, 12)
           ].filter(p => p && p.id && p.fcmToken);
 
-          const notificationData = await Promise.all(playersToNotify.map(async (p) => {
-            try {
-              const q = query(collection(db, 'notifications'), where('playerUid', '==', p!.uid), where('read', '==', false));
-              const snap = await getDocs(q);
-              return { id: p!.id, unreadCount: snap.size + 1 };
-            } catch (e) {
-              return { id: p!.id, unreadCount: 1 };
+          const notificationData: { id: string; unreadCount: number }[] = [];
+          const validPlayersNotify = playersToNotify.filter(p => p && p.uid);
+
+          for (const p of playersToNotify) {
+            if (!p || !p.uid) {
+              notificationData.push({ id: p!.id!, unreadCount: 1 });
             }
-          }));
+          }
+
+          const chunkSize = 10;
+          const chunkPromises = [];
+          for (let i = 0; i < validPlayersNotify.length; i += chunkSize) {
+            const chunk = validPlayersNotify.slice(i, i + chunkSize);
+            chunkPromises.push((async () => {
+              const uids = chunk.map(p => p!.uid);
+              try {
+                const q = query(collection(db, 'notifications'), where('playerUid', 'in', uids), where('read', '==', false));
+                const snap = await getDocs(q);
+
+                const countsByUid: Record<string, number> = {};
+                uids.forEach(uid => countsByUid[uid as string] = 0);
+
+                snap.forEach((doc) => {
+                  const data = doc.data();
+                  if (data.playerUid) {
+                    countsByUid[data.playerUid] = (countsByUid[data.playerUid] || 0) + 1;
+                  }
+                });
+
+                return chunk.map(p => ({ id: p!.id!, unreadCount: (countsByUid[p!.uid!] || 0) + 1 }));
+              } catch (e) {
+                return chunk.map(p => ({ id: p!.id!, unreadCount: 1 }));
+              }
+            })());
+          }
+
+          const results = await Promise.all(chunkPromises);
+          results.forEach(res => notificationData.push(...res));
 
           // Função auxiliar para enfileirar notificação
           const queueNotification = (player: Player | null | undefined, title: string, body: string) => {
