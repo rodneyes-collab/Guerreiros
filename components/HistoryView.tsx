@@ -33,6 +33,7 @@ import { motion } from 'motion/react';
 import { HelpTooltip } from '../src/components/HelpTooltip';
 import { HistoryCalendar } from './HistoryCalendar';
 import { EditMatchModal } from '../src/components/EditMatchModal';
+import { useShallow } from "zustand/react/shallow";
 
 interface HistoryViewProps {
   onDeleteMatch?: (matchId: string) => void;
@@ -44,7 +45,7 @@ interface HistoryViewProps {
 export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDeleteMatchesByDate, onUpdateMatchResult, onReprocessAllMatches }) => {
   const [editingMatch, setEditingMatch] = useState<Match | null>(null);
   const [isReprocessing, setIsReprocessing] = useState(false);
-  const { matches, players: allPlayers, userRole, currentPlayer, attendance: allAttendance, tournaments } = useStore();
+  const { matches, players: allPlayers, userRole, currentPlayer, attendance: allAttendance, tournaments } = useStore(useShallow(state => ({ matches: state.matches, players: state.players, userRole: state.userRole, currentPlayer: state.currentPlayer, attendance: state.attendance, tournaments: state.tournaments })));
   const players = React.useMemo(() => allPlayers.filter(p => p.status !== 'inactive'), [allPlayers]);
   const attendance = React.useMemo(() => allAttendance.filter(p => p.status !== 'inactive'), [allAttendance]);
   
