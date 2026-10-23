@@ -4,10 +4,14 @@ import { useNotifications } from '../hooks/useNotifications';
 import { motion, AnimatePresence } from 'motion/react';
 import Markdown from 'react-markdown';
 import { useStore } from '../../store';
+import { useShallow } from 'zustand/react/shallow';
 
 export const NotificationCenter: React.FC = () => {
   const { notifications, markAsRead, deleteNotification, clearAll } = useNotifications();
-  const { setViewMode } = useStore();
+  const {
+ setViewMode } = useStore(useShallow(state => ({
+      setViewMode: state.setViewMode
+    })));
   const [isOpen, setIsOpen] = useState(false);
 
   const unreadCount = notifications.filter(n => !n.read).length;

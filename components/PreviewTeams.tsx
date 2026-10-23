@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useStore } from '../store';
+import { useShallow } from 'zustand/react/shallow';
 import { calculateCompositePerformanceRating, calculatePracticalSkillsSum, enrichPlayerImmutably, verifyClubGenerationRules, validateTopBottomTolerance } from '../utils/teamLogic';
 import { BarChart3, Check, RefreshCw, X, UserCheck, History, Sparkles, AlertTriangle, Activity, Settings2, Info, Scale, Star, Shield } from 'lucide-react';
 import { Player, Gender } from '../types';
@@ -38,7 +39,12 @@ export const PreviewTeams: React.FC<{
   isRecalculating?: boolean;
   recalcCount?: number;
 }> = ({ result, onConfirm, onCancel, onRegenerate, onRecalculate, isRecalculating, recalcCount }) => {
-  const { players, attendance, matches } = useStore();
+  const {
+ players, attendance, matches } = useStore(useShallow(state => ({
+      players: state.players,
+      attendance: state.attendance,
+      matches: state.matches
+    })));
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [showComparison, setShowComparison] = useState(false);
 

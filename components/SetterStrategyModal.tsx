@@ -1,10 +1,15 @@
 import React from 'react';
 import { useStore } from '../store';
+import { useShallow } from 'zustand/react/shallow';
 import { HelpCircle, X, Users, Zap, RotateCcw } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 export const SetterStrategyModal: React.FC = () => {
-  const { setterStrategyModal, hideSetterStrategyModal } = useStore();
+  const {
+ setterStrategyModal, hideSetterStrategyModal } = useStore(useShallow(state => ({
+      setterStrategyModal: state.setterStrategyModal,
+      hideSetterStrategyModal: state.hideSetterStrategyModal
+    })));
 
   if (!setterStrategyModal.isOpen) return null;
 

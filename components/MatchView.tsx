@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence, LayoutGroup } from 'motion/react';
 import { useStore } from '../store';
+import { useShallow } from 'zustand/react/shallow';
 import { GenerationResult, Gender } from '../types';
 import { TeamCard } from './TeamCard';
 import { PreviewTeams } from './PreviewTeams';
@@ -138,7 +139,8 @@ export const MatchView: React.FC<MatchViewProps> = ({
     executeQuickSwap
   } = useMatchSwaps();
   const { status: aiStatus } = useAIStatus();
-  const { 
+  const {
+
     generationResult: storeGenerationResult, 
     attendance: allAttendance, 
     userRole: storeUserRole, 
@@ -170,7 +172,39 @@ export const MatchView: React.FC<MatchViewProps> = ({
     balancingRatingMode,
     setBalancingRatingMode,
     players
-  } = useStore();
+  } = useStore(useShallow(state => ({
+      generationResult: state.generationResult,
+      attendance: state.attendance,
+      userRole: state.userRole,
+      matches: state.matches,
+      setGenerationResult: state.setGenerationResult,
+      setViewMode: state.setViewMode,
+      isNarrating: state.isNarrating,
+      scoreMode: state.scoreMode,
+      setScoreMode: state.setScoreMode,
+      scoreA: state.scoreA,
+      setScoreA: state.setScoreA,
+      scoreB: state.scoreB,
+      setScoreB: state.setScoreB,
+      tempScoreA: state.tempScoreA,
+      setTempScoreA: state.setTempScoreA,
+      tempScoreB: state.tempScoreB,
+      setTempScoreB: state.setTempScoreB,
+      analysis: state.analysis,
+      ruleVerification: state.ruleVerification,
+      elapsedTime: state.elapsedTime,
+      swapSelection: state.swapSelection,
+      setSwapSelection: state.setSwapSelection,
+      isSyncing: state.isSyncing,
+      showNotification: state.showNotification,
+      teamGenerationMode: state.teamGenerationMode,
+      setTeamGenerationMode: state.setTeamGenerationMode,
+      balancingStrategy: state.balancingStrategy,
+      setBalancingStrategy: state.setBalancingStrategy,
+      balancingRatingMode: state.balancingRatingMode,
+      setBalancingRatingMode: state.setBalancingRatingMode,
+      players: state.players
+    })));
 
   // Memoize rule verification to prevent expensive recalculations on every render
   const rules = useMemo(() => {
@@ -182,7 +216,10 @@ export const MatchView: React.FC<MatchViewProps> = ({
   const isAdmin = userRole === 'ADMIN' || userRole === 'DIRETORIA';
   const updateDepartureTime = updateDepartureTimeProp;
   const attendance = React.useMemo(() => allAttendance.filter(p => p.status !== 'inactive'), [allAttendance]);
-  const { currentPlayer } = useStore();
+  const {
+ currentPlayer } = useStore(useShallow(state => ({
+      currentPlayer: state.currentPlayer
+    })));
 
   // Identificador único dos 12 jogadores escalados para a quadra (Fila de Prioridade)
   // Utilizado como dependência estrita para garantir que a geração seja persistente e não resete
@@ -1133,6 +1170,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
   };
   
   const {
+
     matchServingTeam: servingTeam,
     setMatchServingTeam: setServingTeam,
     matchRotationA: rotationA,
@@ -1143,7 +1181,18 @@ export const MatchView: React.FC<MatchViewProps> = ({
     setMatchPlayEvents: setPlayEvents,
     matchActiveGenerationId,
     setMatchActiveGenerationId,
-  } = useStore();
+  } = useStore(useShallow(state => ({
+      matchServingTeam: state.matchServingTeam,
+      setMatchServingTeam: state.setMatchServingTeam,
+      matchRotationA: state.matchRotationA,
+      setMatchRotationA: state.setMatchRotationA,
+      matchRotationB: state.matchRotationB,
+      setMatchRotationB: state.setMatchRotationB,
+      matchPlayEvents: state.matchPlayEvents,
+      setMatchPlayEvents: state.setMatchPlayEvents,
+      matchActiveGenerationId: state.matchActiveGenerationId,
+      setMatchActiveGenerationId: state.setMatchActiveGenerationId
+    })));
 
   const [showPlayEventsLog, setShowPlayEventsLog] = useState<boolean>(true);
   const [showCourtForecastContent, setShowCourtForecastContent] = useState<boolean>(true);

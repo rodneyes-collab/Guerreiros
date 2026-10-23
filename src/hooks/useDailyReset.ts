@@ -11,10 +11,12 @@ import {
   getFirestoreDateKey
 } from '../../firebase';
 import { useStore } from '../../store';
+import { useShallow } from 'zustand/react/shallow';
 import { Player } from '../../types';
 
 export const useDailyReset = () => {
-  const { 
+  const {
+
     user, 
     players, 
     systemMetadata, 
@@ -22,7 +24,15 @@ export const useDailyReset = () => {
     setPlayers, 
     setAttendance, 
     showNotification 
-  } = useStore();
+  } = useStore(useShallow(state => ({
+      user: state.user,
+      players: state.players,
+      systemMetadata: state.systemMetadata,
+      isInitialLoading: state.isInitialLoading,
+      setPlayers: state.setPlayers,
+      setAttendance: state.setAttendance,
+      showNotification: state.showNotification
+    })));
 
   const isResettingRef = useRef(false);
   const lastFailedResetRef = useRef<string | null>(null);

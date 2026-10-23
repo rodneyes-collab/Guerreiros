@@ -1,10 +1,15 @@
 import React from 'react';
 import { useStore } from '../store';
+import { useShallow } from 'zustand/react/shallow';
 import { AlertTriangle, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 export const ConfirmModal: React.FC = () => {
-  const { confirmModal, hideConfirmModal } = useStore();
+  const {
+ confirmModal, hideConfirmModal } = useStore(useShallow(state => ({
+      confirmModal: state.confirmModal,
+      hideConfirmModal: state.hideConfirmModal
+    })));
 
   if (!confirmModal.isOpen) return null;
 

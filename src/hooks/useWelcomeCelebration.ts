@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '../../store';
+import { useShallow } from 'zustand/react/shallow';
 import confetti from 'canvas-confetti';
 import { db, doc, setDoc } from '../../firebase';
 
@@ -7,7 +8,10 @@ import { db, doc, setDoc } from '../../firebase';
 const fireConfetti = confetti.create(undefined, { useWorker: false, resize: true });
 
 export const useWelcomeCelebration = () => {
-  const { currentPlayer } = useStore();
+  const {
+ currentPlayer } = useStore(useShallow(state => ({
+      currentPlayer: state.currentPlayer
+    })));
   const [showWelcome, setShowWelcome] = useState(false);
   const [hasTriggered, setHasTriggered] = useState(false);
 

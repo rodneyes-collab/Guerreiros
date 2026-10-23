@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../store';
+import { useShallow } from 'zustand/react/shallow';
 import { Payment, PaymentStatus, Expense } from '../types';
 import { db, doc, updateDoc, getFirestoreDateKey, clearIndexedDbPersistence, getDocsFromServer, collection } from '../firebase';
 import { 
@@ -46,7 +47,14 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
   updateMonthlyFee,
   handleFinancialIntegrityAudit
 }) => {
-  const { payments, expenses, userRole, systemMetadata, players: allPlayers } = useStore();
+  const {
+ payments, expenses, userRole, systemMetadata, players: allPlayers } = useStore(useShallow(state => ({
+      payments: state.payments,
+      expenses: state.expenses,
+      userRole: state.userRole,
+      systemMetadata: state.systemMetadata,
+      players: state.players
+    })));
   const players = React.useMemo(() => allPlayers.filter(p => (p.status === 'active' || p.status === 'guest' || !p.status || p.status === '') && !p.isDM), [allPlayers]);
   const [activeTab, setActiveTab] = useState<'RECEIPTS' | 'EXPENSES' | 'COMPLIANCE' | 'STATEMENT'>('RECEIPTS');
   const [filterMonth, setFilterMonth] = useState('');

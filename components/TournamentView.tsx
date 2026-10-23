@@ -25,6 +25,7 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { useStore } from '../store';
+import { useShallow } from 'zustand/react/shallow';
 import { Tournament, TournamentTeam, TournamentMatch, SetScore, TournamentStrategy } from '../types';
 import { generateTournamentTeams } from '../utils/teamLogic';
 import { HelpTooltip } from '../src/components/HelpTooltip';
@@ -39,7 +40,14 @@ interface TournamentViewProps {
 }
 
 export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecord, onResetMatch, onEnd, onAddPlayer, onSubstitute }) => {
-  const { activeTournament, attendance: allAttendance, userRole, players: allPlayers, isSyncing } = useStore();
+  const {
+ activeTournament, attendance: allAttendance, userRole, players: allPlayers, isSyncing } = useStore(useShallow(state => ({
+      activeTournament: state.activeTournament,
+      attendance: state.attendance,
+      userRole: state.userRole,
+      players: state.players,
+      isSyncing: state.isSyncing
+    })));
   const players = useMemo(() => allPlayers.filter(p => p.status !== 'inactive' && !p.isDM), [allPlayers]);
   const attendance = useMemo(() => allAttendance.filter(p => p.status !== 'inactive' && !p.isDM), [allAttendance]);
   const [isStarting, setIsStarting] = useState(false);
