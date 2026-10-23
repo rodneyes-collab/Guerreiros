@@ -6,6 +6,7 @@ import { useStore } from '../store';
 import ReactMarkdown from 'react-markdown';
 
 import { useAIStatus } from '../src/hooks/useAIStatus';
+import { useShallow } from "zustand/react/shallow";
 
 export const AIChatBot: React.FC = () => {
   const { status: aiStatus } = useAIStatus();
@@ -14,7 +15,7 @@ export const AIChatBot: React.FC = () => {
   const [chatHistory, setChatHistory] = useState<{ role: 'user' | 'model', parts: string }[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const { players, matches } = useStore();
+  const { players, matches } = useStore(useShallow(state => ({ players: state.players, matches: state.matches })));
 
   useEffect(() => {
     if (scrollRef.current) {

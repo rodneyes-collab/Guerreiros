@@ -11,13 +11,14 @@ import {
 } from '../../firebase';
 import { scanDatabaseAnomalies, executeDbAutoCorrection } from '../../services/dbAutoCorrectionAgent';
 import { Player } from '../../types';
+import { useShallow } from "zustand/react/shallow";
 
 /**
  * Hook to perform autonomous and periodic database maintenance & auto-corrections.
  * Runs autonomously for Admin sessions according to configured schedule (Daily/Weekly).
  */
 export const useDatabaseMaintenance = () => {
-  const { user, userRole, showNotification } = useStore();
+  const { user, userRole, showNotification } = useStore(useShallow(state => ({ user: state.user, userRole: state.userRole, showNotification: state.showNotification })));
 
   useEffect(() => {
     const runAutonomousAgent = async () => {
