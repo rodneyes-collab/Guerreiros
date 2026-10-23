@@ -3,6 +3,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { MessageCircle, X, Send, Loader2, Bot, User, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useStore } from '../store';
+import { useShallow } from 'zustand/react/shallow';
 import ReactMarkdown from 'react-markdown';
 
 import { useAIStatus } from '../src/hooks/useAIStatus';
@@ -14,7 +15,11 @@ export const AIChatBot: React.FC = () => {
   const [chatHistory, setChatHistory] = useState<{ role: 'user' | 'model', parts: string }[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const { players, matches } = useStore();
+  const {
+ players, matches } = useStore(useShallow(state => ({
+      players: state.players,
+      matches: state.matches
+    })));
 
   useEffect(() => {
     if (scrollRef.current) {

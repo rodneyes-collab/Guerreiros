@@ -11,6 +11,7 @@ import {
   Copy
 } from 'lucide-react';
 import { useStore } from '../store';
+import { useShallow } from 'zustand/react/shallow';
 import { PaymentStatus, Payment } from '../types';
 import { useAppLogic } from '../src/hooks/useAppLogic';
 import { 
@@ -29,7 +30,13 @@ interface MyPaymentsViewProps {
 }
 
 export const MyPaymentsView: React.FC<MyPaymentsViewProps> = ({ playerId }) => {
-  const { payments: storePayments, setPayments, systemMetadata, userRole } = useStore();
+  const {
+ payments: storePayments, setPayments, systemMetadata, userRole } = useStore(useShallow(state => ({
+      payments: state.payments,
+      setPayments: state.setPayments,
+      systemMetadata: state.systemMetadata,
+      userRole: state.userRole
+    })));
   const { deletePayment } = useAppLogic();
   const [localPayments, setLocalPayments] = React.useState<Payment[]>([]);
   const [loading, setLoading] = React.useState(true);

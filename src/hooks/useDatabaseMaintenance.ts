@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useStore } from '../../store';
+import { useShallow } from 'zustand/react/shallow';
 import { 
   db, 
   collection, 
@@ -17,7 +18,12 @@ import { Player } from '../../types';
  * Runs autonomously for Admin sessions according to configured schedule (Daily/Weekly).
  */
 export const useDatabaseMaintenance = () => {
-  const { user, userRole, showNotification } = useStore();
+  const {
+ user, userRole, showNotification } = useStore(useShallow(state => ({
+      user: state.user,
+      userRole: state.userRole,
+      showNotification: state.showNotification
+    })));
 
   useEffect(() => {
     const runAutonomousAgent = async () => {
