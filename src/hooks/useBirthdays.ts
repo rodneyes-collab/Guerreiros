@@ -3,12 +3,13 @@ import { useStore } from '../../store';
 import { Player } from '../../types';
 import confetti from 'canvas-confetti';
 import { db, collection, doc, writeBatch, serverTimestamp } from '../../firebase';
+import { useShallow } from "zustand/react/shallow";
 
 // Create a custom confetti instance with worker disabled to prevent getBoundingClientRect error in hidden iframes
 const fireConfetti = confetti.create(undefined, { useWorker: false, resize: true });
 
 export const useBirthdays = (providedPlayers?: Player[]) => {
-  const { players: storePlayers, currentPlayer, showNotification } = useStore();
+  const { players: storePlayers, currentPlayer, showNotification } = useStore(useShallow(state => ({ players: state.players, currentPlayer: state.currentPlayer, showNotification: state.showNotification })));
   const players = providedPlayers || storePlayers;
   const [hasCelebrated, setHasCelebrated] = useState(false);
 

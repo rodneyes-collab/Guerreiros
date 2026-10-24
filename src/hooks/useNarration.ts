@@ -3,6 +3,7 @@ import { useEffect, useCallback } from 'react';
 import { useStore } from '../../store';
 import { generateNarrationScript, generateDailySummaryAudio, generateTeamAnnouncementAudio, speakNarration } from '../../services/geminiService';
 import { useAIStatus } from './useAIStatus';
+import { useShallow } from "zustand/react/shallow";
 
 export const useNarration = () => {
   const { status: aiStatus } = useAIStatus();
@@ -18,7 +19,7 @@ export const useNarration = () => {
     narrationScript,
     viewMode,
     showNotification
-  } = useStore();
+  } = useStore(useShallow(state => ({ generationResult: state.generationResult, setNarrationScript: state.setNarrationScript, setNarrationAudio: state.setNarrationAudio, isNarrating: state.isNarrating, setIsNarrating: state.setIsNarrating, isNarratingSummary: state.isNarratingSummary, setIsNarratingSummary: state.setIsNarratingSummary, narrationAudio: state.narrationAudio, narrationScript: state.narrationScript, viewMode: state.viewMode, showNotification: state.showNotification })));
 
   useEffect(() => {
     // Only clear narration if we're in generation mode and result was cleared,

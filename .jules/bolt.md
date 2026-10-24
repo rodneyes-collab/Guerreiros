@@ -1,0 +1,3 @@
+## 2024-05-18 - Zustand Full Store Destructuring causes massive re-renders
+**Learning:** Destructuring the full `useStore()` hook causes massive React component re-renders whenever *any* state in the store updates, even if that specific component doesn't use the updated value. In our codebase, `elapsedTime` updates every second, causing any component that used `const { x, y } = useStore()` to re-render every second.
+**Action:** Replaced all `const { ... } = useStore()` destructuring patterns with `useStore(useShallow(state => ({ ... })))` to subscribe strictly to the properties being used, which significantly improves frontend rendering performance.
