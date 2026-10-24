@@ -24,6 +24,7 @@ import {
 
 import { HelpTooltip } from '../src/components/HelpTooltip';
 import { capitalizeName } from '../utils/helpers';
+import { useShallow } from "zustand/react/shallow";
 
 interface PaymentsViewProps {
   deletePayment: (id: string) => void;
@@ -46,7 +47,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
   updateMonthlyFee,
   handleFinancialIntegrityAudit
 }) => {
-  const { payments, expenses, userRole, systemMetadata, players: allPlayers } = useStore();
+  const { payments, expenses, userRole, systemMetadata, players: allPlayers } = useStore(useShallow(state => ({ payments: state.payments, expenses: state.expenses, userRole: state.userRole, systemMetadata: state.systemMetadata, players: state.players })));
   const players = React.useMemo(() => allPlayers.filter(p => (p.status === 'active' || p.status === 'guest' || !p.status || p.status === '') && !p.isDM), [allPlayers]);
   const [activeTab, setActiveTab] = useState<'RECEIPTS' | 'EXPENSES' | 'COMPLIANCE' | 'STATEMENT'>('RECEIPTS');
   const [filterMonth, setFilterMonth] = useState('');
