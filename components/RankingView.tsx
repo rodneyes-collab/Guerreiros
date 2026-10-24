@@ -68,7 +68,7 @@ import ReactMarkdown from 'react-markdown';
 import { WinLossChart } from '../src/components/WinLossChart';
 import { IcEvolutionChart } from '../src/components/IcEvolutionChart';
 import { PlayerAvatar } from '../src/components/PlayerAvatar';
-import { translateGender, capitalizeName } from '../utils/helpers';
+import { translateGender, capitalizeName, standardDateFormatter, formatBrazilianDate } from '../utils/helpers';
 import { generateDailySummaryAudio, detectAnomalies } from '../services/geminiService';
 import { calculateEffectiveElo, calculateCompositePerformanceRating } from '../utils/teamLogic';
 import { calculateMvpEfficiencyScore } from '../utils/statsLogic';
@@ -174,12 +174,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
   // Helper to extract standard Brasília date from a match (resilient to UTC/local timezones)
   const getMatchDate = useCallback((m: { date?: string; timestamp?: number }): string => {
     if (m.timestamp) {
-      return new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'America/Sao_Paulo',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit'
-      }).format(new Date(m.timestamp));
+      return standardDateFormatter.format(new Date(m.timestamp));
     }
     return m.date ? (m.date.includes('T') ? m.date.split('T')[0] : m.date) : '';
   }, []);
@@ -243,36 +238,6 @@ export const RankingView: React.FC<RankingViewProps> = ({
   const [modalTarget, setModalTarget] = useState<'selected' | 'comparison'>('selected');
   const [modalSearchQuery, setModalSearchQuery] = useState('');
   
-  // Helper format function to eliminate local timezone interference across the whole component
-  const formatBrazilianDate = (dateString: string | number) => {
-    try {
-      // If it's a date-only string like YYYY-MM-DD, parsing it as `new Date("YYYY-MM-DD")` in JS
-      // gets treated as UTC. But here we want to format it explicitly.
-      // If it's a full ISO string '2026-04-17T02:00:00Z', new Date() will parse it correctly
-      // and Intl.DateTimeFormat will convert it to Brazil time (which would be 23:00 on the 16th).
-      
-      let dateObj: Date;
-      if (typeof dateString === 'string') {
-        if (dateString.includes('T')) {
-          dateObj = new Date(dateString); // Full timezone-aware string
-        } else {
-          // Just "YYYY-MM-DD", let's safely split to avoid UTC midnight shifts giving wrong days locally
-          const [year, month, day] = dateString.split('-');
-          return `${day}/${month}`;
-        }
-      } else {
-        dateObj = new Date(dateString); // Timestamp number
-      }
-
-      return new Intl.DateTimeFormat('pt-BR', { 
-        timeZone: 'America/Sao_Paulo', 
-        day: '2-digit', 
-        month: '2-digit' 
-      }).format(dateObj);
-    } catch {
-      return 'Data';
-    }
-  };
 
   const calculateWilsonScore = (wins: number, total: number, z: number = 1.96) => {
     if (total === 0) return 0;
