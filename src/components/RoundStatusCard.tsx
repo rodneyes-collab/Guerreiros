@@ -22,6 +22,7 @@ import {
   calculatePracticalSkillsSum, 
   verifyClubGenerationRules 
 } from '../../utils/teamLogic';
+import { useShallow } from "zustand/react/shallow";
 
 const getBadgeFontSize = (name: string) => {
   const len = name.length;
@@ -72,7 +73,7 @@ export const RoundStatusCard: React.FC<RoundStatusCardProps> = ({
   defaultExpanded = false
 }) => {
   const [isExpanded, setIsExpanded] = useState<boolean>(defaultExpanded);
-  const { players } = useStore();
+  const { players } = useStore(useShallow(state => ({ players: state.players })));
 
   if (!generationResult || !generationResult.teamA || !generationResult.teamB) {
     return null;

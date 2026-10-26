@@ -23,13 +23,14 @@ import {
   handleFirestoreError, 
   OperationType 
 } from '../firebase';
+import { useShallow } from "zustand/react/shallow";
 
 interface MyPaymentsViewProps {
   playerId: string;
 }
 
 export const MyPaymentsView: React.FC<MyPaymentsViewProps> = ({ playerId }) => {
-  const { payments: storePayments, setPayments, systemMetadata, userRole } = useStore();
+  const { payments: storePayments, setPayments, systemMetadata, userRole } = useStore(useShallow(state => ({ payments: state.payments, setPayments: state.setPayments, systemMetadata: state.systemMetadata, userRole: state.userRole })));
   const { deletePayment } = useAppLogic();
   const [localPayments, setLocalPayments] = React.useState<Payment[]>([]);
   const [loading, setLoading] = React.useState(true);
