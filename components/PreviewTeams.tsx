@@ -7,6 +7,7 @@ import { Player, Gender } from '../types';
 import { SKILL_WEIGHTS } from '../constants';
 import { TeamMetricsComparison } from './TeamMetricsComparison';
 import { RoundStatusCard } from '../src/components/RoundStatusCard';
+import { useShallow } from "zustand/react/shallow";
 
 // Constantes seguras de gênero que previnem ReferenceError em qualquer runtime mobile/PWA
 export const SAFE_MALE: Gender = (typeof Gender !== 'undefined' && Gender?.MALE) ? Gender.MALE : ('MALE' as Gender);
@@ -38,7 +39,7 @@ export const PreviewTeams: React.FC<{
   isRecalculating?: boolean;
   recalcCount?: number;
 }> = ({ result, onConfirm, onCancel, onRegenerate, onRecalculate, isRecalculating, recalcCount }) => {
-  const { players, attendance, matches } = useStore();
+  const { players, attendance, matches } = useStore(useShallow(state => ({ players: state.players, attendance: state.attendance, matches: state.matches })));
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [showComparison, setShowComparison] = useState(false);
 

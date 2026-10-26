@@ -35,6 +35,7 @@ import { calculateCompositePerformanceRating } from '../utils/teamLogic';
 import { getFirestoreDateKey } from '../firebase';
 import { useIntentions } from '../src/hooks/useIntentions';
 import { useBirthdays } from '../src/hooks/useBirthdays';
+import { useShallow } from "zustand/react/shallow";
 
 interface MembersViewProps {
   clearAllPlayers: () => void;
@@ -55,7 +56,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
   repairDatabase,
   savePlayer
 }) => {
-  const { players, userRole, isSyncing, showConfirmModal, matches, attendance, systemMetadata } = useStore();
+  const { players, userRole, isSyncing, showConfirmModal, matches, attendance, systemMetadata } = useStore(useShallow(state => ({ players: state.players, userRole: state.userRole, isSyncing: state.isSyncing, showConfirmModal: state.showConfirmModal, matches: state.matches, attendance: state.attendance, systemMetadata: state.systemMetadata })));
   const { intentions } = useIntentions();
   const { monthBirthdays, getBirthdaysByMonth } = useBirthdays(players);
   const [selectedMonth, setSelectedMonth] = React.useState<string>((new Date().getMonth() + 1).toString().padStart(2, '0'));
@@ -350,7 +351,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
     return `${parts[2]}/${parts[1]}`;
   };
 
-  const { setViewMode } = useStore();
+  const { setViewMode } = useStore(useShallow(state => ({ setViewMode: state.setViewMode })));
 
   const getImpactIcon = (level?: number) => {
     switch (level) {

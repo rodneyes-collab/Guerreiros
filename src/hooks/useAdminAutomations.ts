@@ -2,9 +2,10 @@ import { useEffect } from 'react';
 import { useStore } from '../../store';
 import { db, doc, getDoc, setDoc, updateDoc, getFirestoreDateKey, getBrazilDay } from '../../firebase';
 import { analyzeBillingCosts } from '../../services/geminiService';
+import { useShallow } from "zustand/react/shallow";
 
 export const useAdminAutomations = () => {
-  const { user, userRole, monthlyUsageStats, showNotification } = useStore();
+  const { user, userRole, monthlyUsageStats, showNotification } = useStore(useShallow(state => ({ user: state.user, userRole: state.userRole, monthlyUsageStats: state.monthlyUsageStats, showNotification: state.showNotification })));
 
   useEffect(() => {
     const checkWeeklyBillingReport = async () => {
