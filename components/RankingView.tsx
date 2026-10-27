@@ -77,6 +77,7 @@ import { calculateSetterStats, calculateSetterScore } from '../utils/setterStats
 import { GlobalStats } from './DashboardView';
 import { EvasionIcon } from './EvasionIcon';
 import { calculateEvasionLevel } from '../utils/evasion';
+import { useShallow } from "zustand/react/shallow";
 
 interface RankingViewProps {
   userRole: 'ADMIN' | 'MEMBER';
@@ -118,7 +119,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
     payments, 
     expenses, 
     systemMetadata 
-  } = useStore();
+  } = useStore(useShallow(state => ({ synergy: state.synergy, negativeSynergy: state.negativeSynergy, rivalry: state.rivalry, players: state.players, matches: state.matches, attendance: state.attendance, isSyncing: state.isSyncing, currentPlayer: state.currentPlayer, setNarrationAudio: state.setNarrationAudio, narrationAudio: state.narrationAudio, isNarrating: state.isNarrating, isNarratingSummary: state.isNarratingSummary, showNotification: state.showNotification, selectedRankingPlayerId: state.selectedRankingPlayerId, setSelectedRankingPlayerId: state.setSelectedRankingPlayerId, setViewMode: state.setViewMode, payments: state.payments, expenses: state.expenses, systemMetadata: state.systemMetadata })));
   
   const { handleAnnounce, playAudioContent } = useNarration();
 
