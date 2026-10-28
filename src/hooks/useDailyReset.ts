@@ -1,4 +1,4 @@
-
+import { useShallow } from "zustand/react/shallow";
 import { useEffect, useRef } from 'react';
 import { 
   db, 
@@ -22,7 +22,7 @@ export const useDailyReset = () => {
     setPlayers, 
     setAttendance, 
     showNotification 
-  } = useStore();
+  } = useStore(useShallow(state => ({ user: state.user, players: state.players, systemMetadata: state.systemMetadata, isInitialLoading: state.isInitialLoading, setPlayers: state.setPlayers, setAttendance: state.setAttendance, showNotification: state.showNotification })));
 
   const isResettingRef = useRef(false);
   const lastFailedResetRef = useRef<string | null>(null);

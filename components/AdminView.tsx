@@ -1,3 +1,4 @@
+import { useShallow } from "zustand/react/shallow";
 import React, { useState, useEffect, useMemo } from 'react';
 import { useStore } from '../store';
 import { 
@@ -256,7 +257,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
     lastSyncTimestamp,
     setIsSyncSettingsOpen,
     isSyncing
-  } = useStore();
+  } = useStore(useShallow(state => ({ userRole: state.userRole, players: state.players, matches: state.matches, payments: state.payments, tournaments: state.tournaments, systemMetadata: state.systemMetadata, setSystemMetadata: state.setSystemMetadata, showNotification: state.showNotification, usageStats: state.usageStats, setUsageStats: state.setUsageStats, monthlyUsageStats: state.monthlyUsageStats, isScanningAnomalies: state.isScanningAnomalies, anomalyReport: state.anomalyReport, user: state.user, currentPlayer: state.currentPlayer, setSelectedRankingPlayerId: state.setSelectedRankingPlayerId, setViewMode: state.setViewMode, attendance: state.attendance, syncMode: state.syncMode, setSyncMode: state.setSyncMode, lastSyncTimestamp: state.lastSyncTimestamp, setIsSyncSettingsOpen: state.setIsSyncSettingsOpen, isSyncing: state.isSyncing })));
 
   const getPublicUrl = () => {
     const origin = window.location.origin;
