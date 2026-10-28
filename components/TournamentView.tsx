@@ -1,3 +1,4 @@
+import { useShallow } from "zustand/react/shallow";
 import React, { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
@@ -39,7 +40,7 @@ interface TournamentViewProps {
 }
 
 export const TournamentView: React.FC<TournamentViewProps> = ({ onStart, onRecord, onResetMatch, onEnd, onAddPlayer, onSubstitute }) => {
-  const { activeTournament, attendance: allAttendance, userRole, players: allPlayers, isSyncing } = useStore();
+  const { activeTournament, attendance: allAttendance, userRole, players: allPlayers, isSyncing } = useStore(useShallow(state => ({ activeTournament: state.activeTournament, attendance: state.attendance, userRole: state.userRole, players: state.players, isSyncing: state.isSyncing })));
   const players = useMemo(() => allPlayers.filter(p => p.status !== 'inactive' && !p.isDM), [allPlayers]);
   const attendance = useMemo(() => allAttendance.filter(p => p.status !== 'inactive' && !p.isDM), [allAttendance]);
   const [isStarting, setIsStarting] = useState(false);

@@ -1,3 +1,4 @@
+import { useShallow } from "zustand/react/shallow";
 import React from 'react';
 import confetti from 'canvas-confetti';
 import { motion, AnimatePresence } from 'motion/react';
@@ -29,7 +30,7 @@ interface IntentionsViewProps {
 
 export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, currentPlayer, onMoveToAttendance, showNotification }) => {
   const { intentions, isLoaded, setIntent, resetIntent, clearIntentions, toggleAutomation, sendReminders, copyToWhatsApp, copyReminder, getPlayerConfirmationTime, refreshIntentions } = useIntentions();
-  const { players, attendance, preConfirmations, idToCanonicalId, showConfirmModal, isInitialLoading } = useStore();
+  const { players, attendance, preConfirmations, idToCanonicalId, showConfirmModal, isInitialLoading } = useStore(useShallow(state => ({ players: state.players, attendance: state.attendance, preConfirmations: state.preConfirmations, idToCanonicalId: state.idToCanonicalId, showConfirmModal: state.showConfirmModal, isInitialLoading: state.isInitialLoading })));
   const { monthBirthdays, getBirthdaysByMonth } = useBirthdays(players);
   const [selectedMonth, setSelectedMonth] = React.useState<number>(0);
   const [isRefreshing, setIsRefreshing] = React.useState(false);
