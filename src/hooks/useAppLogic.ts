@@ -114,7 +114,6 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
   const tempScoreB = useStore(state => state.tempScoreB);
   const scoreMode = useStore(state => state.scoreMode);
   const isSyncing = useStore(state => state.isSyncing);
-  const elapsedTime = useStore(state => state.elapsedTime);
   const setIsAnalyzing = useStore(state => state.setIsAnalyzing);
   const isAnalyzing = useStore(state => state.isAnalyzing);
   const isVerifyingRules = useStore(state => state.isVerifyingRules);
@@ -618,8 +617,8 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
         winner,
         scoreA: finalScoreA,
         scoreB: finalScoreB,
-        duration: elapsedTime,
-        startTime: systemMetadata.matchStartTime || (timestamp - elapsedTime * 1000),
+        duration: useStore.getState().elapsedTime,
+        startTime: systemMetadata.matchStartTime || (timestamp - useStore.getState().elapsedTime * 1000),
         endTime: timestamp,
         mode: scoreMode,
         dailyNumber: finalCount,
