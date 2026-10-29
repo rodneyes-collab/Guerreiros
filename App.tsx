@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 
 import ViewManager from './src/components/ViewManager';
+import { TimerTracker } from './src/components/TimerTracker';
 
 import { getBrazilDay, getFirestoreDateKey, db, doc, updateDoc, setDoc, clearIndexedDbPersistence } from './firebase';
 import { useStore } from './store';
@@ -102,7 +103,6 @@ const App: React.FC = () => {
   const hideConfirmModal = useStore(state => state.hideConfirmModal);
   const swapSelection = useStore(state => state.swapSelection);
   const setSwapSelection = useStore(state => state.setSwapSelection);
-  const elapsedTime = useStore(state => state.elapsedTime);
   const setElapsedTime = useStore(state => state.setElapsedTime);
   const systemMetadata = useStore(state => state.systemMetadata);
   const setGenerationResult = useStore(state => state.setGenerationResult);
@@ -556,29 +556,6 @@ const App: React.FC = () => {
     }
   };
 
-  // --- Timer Logic ---
-  useEffect(() => {
-    let interval: NodeJS.Timeout;
-
-    if (generationResult && systemMetadata.matchStartTime) {
-      // Update immediately
-      const updateTimer = () => {
-        const now = Date.now();
-        const start = systemMetadata.matchStartTime || now;
-        const elapsed = Math.floor((now - start) / 1000);
-        setElapsedTime(Math.max(0, elapsed));
-      };
-
-      updateTimer();
-      interval = setInterval(updateTimer, 1000);
-    } else {
-      setElapsedTime(0);
-    }
-
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [generationResult, systemMetadata.matchStartTime, setElapsedTime]);
 
   useEffect(() => {
     if (editingPayment) {
@@ -664,6 +641,8 @@ const App: React.FC = () => {
   // --- Render Logic ---
   if (!ViewManager) {
     return (
+      <>
+      <TimerTracker />
       <div className="min-h-screen bg-black flex items-center justify-center p-4 text-white">
         <div className="text-center">
           <p className="text-amber-400 font-bold mb-4 uppercase tracking-widest text-sm">Carregando Módulos do Aplicativo...</p>
@@ -675,11 +654,14 @@ const App: React.FC = () => {
           </button>
         </div>
       </div>
+      </>
     );
   }
 
   return (
-    <ViewManager 
+    <>
+      <TimerTracker />
+      <ViewManager
       hasNewVersion={hasNewVersion}
       serverVersion={serverVersion}
       isLoggingOut={isLoggingOut} 
@@ -826,6 +808,7 @@ const App: React.FC = () => {
       handleRecoverFinancials={handleRecoverFinancials}
       recreateOctober15Matches={recreateOctober15Matches}
     />
+    </>
   );
 };
 export default App;
