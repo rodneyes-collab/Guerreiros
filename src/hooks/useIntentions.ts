@@ -81,7 +81,10 @@ export async function executeWithRetry<T>(
 export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, size: number) => Promise<void>) => {
   const [rawIntentions, setRawIntentions] = useState<IntentionsData>(DEFAULT_INTENTIONS);
   const [isLoaded, setIsLoaded] = useState(false);
-  const { players, userRole, idToCanonicalId, preConfirmations } = useStore();
+  const players = useStore(state => state.players);
+  const userRole = useStore(state => state.userRole);
+  const idToCanonicalId = useStore(state => state.idToCanonicalId);
+  const preConfirmations = useStore(state => state.preConfirmations);
   const sendingRef = useRef<Record<string, boolean>>({});
 
   // Memoized filtered intentions based on current players in store
@@ -143,18 +146,42 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
       }
     });
 
-    // 2. Also propagate responses to players by UID or Email
+    // 2. Unify and map responses strictly to the player's canonical ID (p.id)
     if (players && players.length > 0) {
       players.forEach(p => {
-        let isGoing = filteredResponses[p.id] === 'GOING';
-        let isNotGoing = filteredResponses[p.id] === 'NOT_GOING';
-        let ts = filteredTimestamps[p.id] || 0;
+        const uidKey = p.uid;
+        const emailKey = p.email ? p.email.trim().toLowerCase() : undefined;
+        
+        const isGoing = filteredResponses[p.id] === 'GOING' || 
+                        Boolean(uidKey && filteredResponses[uidKey] === 'GOING') ||
+                        Boolean(emailKey && filteredResponses[emailKey] === 'GOING');
+        const isNotGoing = !isGoing && (
+          filteredResponses[p.id] === 'NOT_GOING' ||
+          Boolean(uidKey && filteredResponses[uidKey] === 'NOT_GOING') ||
+          Boolean(emailKey && filteredResponses[emailKey] === 'NOT_GOING')
+        );
+        const ts = filteredTimestamps[p.id] || 
+                   (uidKey ? filteredTimestamps[uidKey] : 0) || 
+                   (emailKey ? filteredTimestamps[emailKey] : 0) || 0;
 
         if (isGoing) {
           filteredResponses[p.id] = 'GOING';
-          if (ts) filteredTimestamps[p.id] = ts;
-        } else if (isNotGoing && !filteredResponses[p.id]) {
+          if (ts) {
+            filteredTimestamps[p.id] = ts;
+          }
+        } else if (isNotGoing) {
           filteredResponses[p.id] = 'NOT_GOING';
+        }
+
+        // CRITICAL: Clean up any separate alias keys (UID or email) from responses and timestamps
+        // so that registered club members never generate duplicate guest records (e.g. email or UID as 'Convidado')
+        if (uidKey && uidKey !== p.id) {
+          delete filteredResponses[uidKey];
+          delete filteredTimestamps[uidKey];
+        }
+        if (emailKey && emailKey !== p.id) {
+          delete filteredResponses[emailKey];
+          delete filteredTimestamps[emailKey];
         }
       });
     }
@@ -837,15 +864,49 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
     const confirmed: Player[] = [];
     const addedIds = new Set<string>();
 
-    (players || []).filter(p => intentions.responses[p.id] === 'GOING').forEach(p => {
+    const markPlayerAdded = (p: Player) => {
       addedIds.add(p.id);
+      if (p.uid) {
+        addedIds.add(p.uid);
+        addedIds.add(p.uid.toLowerCase());
+      }
+      if (p.email) {
+        addedIds.add(p.email.toLowerCase());
+      }
+      const canonical = idToCanonicalId?.[p.id];
+      if (canonical) addedIds.add(canonical);
+    };
+
+    (players || []).filter(p => intentions.responses[p.id] === 'GOING').forEach(p => {
+      markPlayerAdded(p);
       confirmed.push(p);
     });
 
     Object.entries(intentions.responses || {}).forEach(([respId, status]) => {
       if (status === 'GOING' && !addedIds.has(respId)) {
+        // Double check against registered players by ID, UID, or email
+        const matchingPlayer = (players || []).find(p => 
+          p.id === respId || 
+          (p.uid && p.uid.toLowerCase() === respId.toLowerCase()) || 
+          (p.email && p.email.toLowerCase() === respId.toLowerCase()) ||
+          idToCanonicalId?.[respId] === p.id
+        );
+        if (matchingPlayer) {
+          markPlayerAdded(matchingPlayer);
+          if (!confirmed.some(c => c.id === matchingPlayer.id)) {
+            confirmed.push(matchingPlayer);
+          }
+          return;
+        }
+
         const canonical = idToCanonicalId?.[respId];
         if (canonical && addedIds.has(canonical)) return;
+
+        // Never synthesize a guest from a raw UID or email
+        if (respId.includes('@') || /^[a-zA-Z0-9]{25,32}$/.test(respId)) {
+          return;
+        }
+
         addedIds.add(respId);
         confirmed.push({ id: respId, name: respId.startsWith('guest_') ? respId.replace('guest_', 'Convidado ') : respId, status: 'guest' } as Player);
       }

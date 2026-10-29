@@ -94,10 +94,14 @@ const parsePlayersSnapshot = (snapshot: any) => {
       if (email) {
         seenEmails.add(email);
         emailToCanonicalId[email] = id;
+        idToCanonical[email] = id;
+        idToCanonical[email.toLowerCase()] = id;
       }
       if (uid) {
         seenUids.add(uid);
         uidToCanonicalId[uid] = id;
+        idToCanonical[uid] = id;
+        idToCanonical[uid.toLowerCase()] = id;
       }
       
       idToCanonical[id] = id;

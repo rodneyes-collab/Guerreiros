@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import { SynergyAnalysis } from './SynergyAnalysis';
 import { AICoach } from './AICoach';
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
@@ -118,7 +119,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
     payments, 
     expenses, 
     systemMetadata 
-  } = useStore();
+  } = useStore(useShallow(state => ({synergy: state.synergy, negativeSynergy: state.negativeSynergy, rivalry: state.rivalry, players: state.players, matches: state.matches, attendance: state.attendance, isSyncing: state.isSyncing, currentPlayer: state.currentPlayer, setNarrationAudio: state.setNarrationAudio, narrationAudio: state.narrationAudio, isNarrating: state.isNarrating, isNarratingSummary: state.isNarratingSummary, showNotification: state.showNotification, selectedRankingPlayerId: state.selectedRankingPlayerId, setSelectedRankingPlayerId: state.setSelectedRankingPlayerId, setViewMode: state.setViewMode, payments: state.payments, expenses: state.expenses, systemMetadata: state.systemMetadata})));
   
   const { handleAnnounce, playAudioContent } = useNarration();
 
@@ -1138,7 +1139,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
           (m.winner === 'A' && m.teamA.includes(p.id)) || 
           (m.winner === 'B' && m.teamB.includes(p.id))
         ).length;
-        const duration = playerMatches.reduce((acc, m) => acc + (m.duration || 0), 0);
+        const duration = playerMatches.reduce((acc, m) => acc + (m.duration || 720), 0);
         const pFor = playerMatches.reduce((acc, m) => {
           const isA = m.teamA.includes(p.id);
           return acc + (isA ? (m.scoreA || 0) : (m.scoreB || 0));
@@ -1163,7 +1164,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
           (m.winner === 'A' && m.teamA.includes(p.id)) || 
           (m.winner === 'B' && m.teamB.includes(p.id))
         ).length;
-        const duration = playerMatches.reduce((acc, m) => acc + (m.duration || 0), 0);
+        const duration = playerMatches.reduce((acc, m) => acc + (m.duration || 720), 0);
         const pFor = playerMatches.reduce((acc, m) => {
           const isA = m.teamA.includes(p.id);
           return acc + (isA ? (m.scoreA || 0) : (m.scoreB || 0));
@@ -1186,9 +1187,10 @@ export const RankingView: React.FC<RankingViewProps> = ({
           });
           if (historyEntry && historyEntry.change) {
             eloGain = historyEntry.change;
-            if (eloGain >= 50 || historyEntry.fidelityBonus) {
-              fidelityGain = 50;
-              matchEloGain = eloGain - 50;
+            const bonusAmount = systemMetadata?.dailyAttendanceBonus ?? 10;
+            if (historyEntry.fidelityBonus) {
+              fidelityGain = bonusAmount;
+              matchEloGain = eloGain - bonusAmount;
             } else {
               matchEloGain = eloGain;
             }
@@ -1199,15 +1201,16 @@ export const RankingView: React.FC<RankingViewProps> = ({
               totalMatches = Math.round(Math.abs(matchEloGain) / 20) || 1;
               wins = 0;
             } else if (fidelityGain > 0) {
-              totalMatches = 1;
+              totalMatches = 2;
               wins = 0;
             }
           }
         } else {
           const losses = totalMatches - wins;
           matchEloGain = totalMatches > 0 ? (wins * 20 + losses * -20) : 0;
-          const hasFidelityBonus = (p.eloHistory || []).some(h => h.date === dateKey && h.fidelityBonus) || (totalMatches > 0);
-          fidelityGain = hasFidelityBonus ? 50 : 0;
+          const bonusAmount = systemMetadata?.dailyAttendanceBonus ?? 10;
+          const hasFidelityBonus = (p.eloHistory || []).some(h => h.date === dateKey && h.fidelityBonus) || (totalMatches >= 2);
+          fidelityGain = hasFidelityBonus ? bonusAmount : 0;
           eloGain = matchEloGain + fidelityGain;
         }
 
@@ -1225,7 +1228,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
     }
 
     const maxDailyMatches = Math.max(0, ...Object.values(dailyStats).map(s => s.matches));
-    const minReqDailyMatches = Math.max(1, Math.min(maxDailyMatches, 2));
+    const minReqDailyMatches = Math.max(1, Math.min(maxDailyMatches, systemMetadata?.minMatchesForDailyBonus ?? 2));
 
     const getDailyWinRate = (pId: string) => {
       const stats = dailyStats[pId];
@@ -1243,11 +1246,13 @@ export const RankingView: React.FC<RankingViewProps> = ({
     };
 
     const getCareerMvpEfficiency = (p: any) => {
-      const matches = p.matchesPlayed || 0;
-      const wr = matches > 0 ? (p.wins || 0) / matches : 0;
+      const stats = dailyStats[p.id];
+      const matches = stats ? stats.matches : (p.matchesPlayed || 0);
+      const wins = stats ? stats.wins : (p.wins || 0);
+      const wr = matches > 0 ? wins / matches : 0;
       const eloGain = (p.elo || 1200) - 1200;
-      const pointsFor = p.pointsFor || 0;
-      const pointsAgainst = p.pointsAgainst || 0;
+      const pointsFor = stats ? stats.pointsFor : (p.pointsFor || 0);
+      const pointsAgainst = stats ? stats.pointsAgainst : (p.pointsAgainst || 0);
       return calculateMvpEfficiencyScore(p, wr, matches, eloGain, pointsFor, pointsAgainst, false);
     };
 
@@ -1263,10 +1268,10 @@ export const RankingView: React.FC<RankingViewProps> = ({
     const dailySetterStats = calculateSetterStats(dailyMatches, playersMap);
 
     const mvp = [...players]
-      .filter(p => (p.matchesPlayed || 0) >= MIN_MATCHES)
+      .filter(p => (dailyStats[p.id]?.matches ?? p.matchesPlayed ?? 0) >= MIN_MATCHES)
       .sort((a, b) => getCareerMvpEfficiency(b) - getCareerMvpEfficiency(a) || (b.elo || 0) - (a.elo || 0) || (totalDurations[a.id] || 0) - (totalDurations[b.id] || 0))[0] || 
       [...players]
-        .filter(p => (p.matchesPlayed || 0) > 0)
+        .filter(p => (dailyStats[p.id]?.matches ?? p.matchesPlayed ?? 0) > 0)
         .sort((a, b) => getCareerMvpEfficiency(b) - getCareerMvpEfficiency(a) || (b.elo || 0) - (a.elo || 0) || (totalDurations[a.id] || 0) - (totalDurations[b.id] || 0))[0];
 
     const activePlayers = players.filter(p => (p.status || 'active') === 'active');
@@ -1458,12 +1463,31 @@ export const RankingView: React.FC<RankingViewProps> = ({
         })[0];
     
     const mostEfficientTechnical = [...players]
-      .filter(p => (p.matchesPlayed || 0) > 0)
-      .sort((a, b) => calculateEffectiveElo(b) - calculateEffectiveElo(a))[0] || null;
+      .filter(p => (p.matchesPlayed || 0) >= MIN_MATCHES && (p.elo || 1200) > 1200 && p.id !== mvp?.id && p.id !== topElo?.id)
+      .sort((a, b) => getCareerMvpEfficiency(b) - getCareerMvpEfficiency(a))[0] ||
+      [...players]
+        .filter(p => (p.matchesPlayed || 0) > 0 && p.id !== mvp?.id)
+        .sort((a, b) => getCareerMvpEfficiency(b) - getCareerMvpEfficiency(a))[0] ||
+      mvp;
 
     const dailyEfficientTechnical = [...players]
-      .filter(p => (dailyStats[p.id]?.matches || 0) > 0)
-      .sort((a, b) => calculateEffectiveElo(b) - calculateEffectiveElo(a))[0] || null;
+      .filter(p => (dailyStats[p.id]?.matches || 0) >= minReqDailyMatches && 
+                   ((dailyStats[p.id]?.matchEloGain ?? dailyStats[p.id]?.eloGain ?? 0) > 0) &&
+                   p.id !== dailyMvp?.id && p.id !== dailyKing?.id)
+      .sort((a, b) => {
+        const effB = getDailyMvpEfficiency(b);
+        const effA = getDailyMvpEfficiency(a);
+        if (Math.abs(effB - effA) > 0.01) return effB - effA;
+        const gainB = dailyStats[b.id]?.matchEloGain ?? dailyStats[b.id]?.eloGain ?? 0;
+        const gainA = dailyStats[a.id]?.matchEloGain ?? dailyStats[a.id]?.eloGain ?? 0;
+        return gainB - gainA;
+      })[0] ||
+      [...players]
+        .filter(p => (dailyStats[p.id]?.matches || 0) > 0 && 
+                     ((dailyStats[p.id]?.matchEloGain ?? dailyStats[p.id]?.eloGain ?? 0) > 0) &&
+                     p.id !== dailyMvp?.id)
+        .sort((a, b) => getDailyMvpEfficiency(b) - getDailyMvpEfficiency(a))[0] ||
+      dailyMvp;
 
     const averageMatchDuration = effectiveMatches.length > 0
       ? Math.round((effectiveMatches.reduce((acc, m) => acc + (m.duration || 0), 0) / effectiveMatches.length) / 60)
@@ -1742,7 +1766,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
 
   // Global Top Synergies & Rivalries (Normalized with Laplace smoothing to balance setters)
   const globalRelationships = useMemo(() => {
-    if (!players || players.length === 0) return { synergies: [], rivalries: [] };
+    if (!players || players.length === 0) return { synergies: [], lowestSynergies: [], rivalries: [] };
 
     let synergyWins: Record<string, number> = {};
     let synergyMatches: Record<string, number> = {};
@@ -1810,6 +1834,23 @@ export const RankingView: React.FC<RankingViewProps> = ({
       .sort((a, b) => b.score - a.score || b.wins - a.wins)
       .slice(0, 5);
 
+    const minMatchesForLowest = isSession ? 1 : 2;
+    const lowestSynergies = Object.entries(synergyMatches)
+      .map(([pair, matchesCount]) => {
+        const [id1, id2] = pair.split('_');
+        const p1 = players.find(p => p.id === id1);
+        const p2 = players.find(p => p.id === id2);
+        const wins = synergyWins[pair] || 0;
+        const losses = matchesCount - wins;
+        const winRate = matchesCount > 0 ? Math.round((wins / matchesCount) * 100) : 0;
+        const score = (wins + 1) / (matchesCount + 2);
+
+        return { p1, p2, wins, losses, matches: matchesCount, winRate, score };
+      })
+      .filter((s): s is typeof s & { p1: any, p2: any } => !!s.p1 && !!s.p2 && s.matches >= minMatchesForLowest)
+      .sort((a, b) => a.winRate - b.winRate || a.score - b.score || b.matches - a.matches)
+      .slice(0, 5);
+
     const rivalries = Object.entries(rivalryAgainst)
       .map(([pair, totalAcross]) => {
         const [id1, id2] = pair.split('_');
@@ -1836,7 +1877,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
       .sort((a, b) => b.score - a.score || b.wins - a.wins)
       .slice(0, 5);
 
-    return { synergies, rivalries };
+    return { synergies, lowestSynergies, rivalries };
   }, [players, rankingPeriod, effectiveMatches, matches]);
 
   const averageElo = useMemo(() => {
@@ -1906,11 +1947,19 @@ export const RankingView: React.FC<RankingViewProps> = ({
       text += `• *Melhores Parcerias  (Sinergias):*\n  Sem dados de parcerias\n`;
     }
 
+    // Lowest Synergies (Menores Taxas de Sucesso)
+    if (globalRelationships.lowestSynergies && globalRelationships.lowestSynergies.length > 0) {
+      text += `\n• *Menores Taxas de Sucesso (Menor Aproveitamento em Dupla):*\n`;
+      globalRelationships.lowestSynergies.forEach((s, idx) => {
+        text += `  ${idx + 1}. ${s.p1?.name} + ${s.p2?.name}: ${s.wins}V - ${s.losses}D (${s.winRate}% de ${s.matches} ${s.matches === 1 ? 'jogo' : 'jogos'})\n`;
+      });
+    }
+
     // Rivalries (Maiores Rivalidades)
     text += `•\n *Maiores Rivalidades  (Confronto Direto):*\n`;
     if (globalRelationships.rivalries && globalRelationships.rivalries.length > 0) {
       globalRelationships.rivalries.forEach((r, idx) => {
-        text += `  ${idx + 1}. ${r.winner?.name} vs ${r.loser?.name}: ${r.wins} ${r.wins === 1 ? 'Vitória' : 'Vitórias'} do vencedor (${r.winRate}% de ${r.total} ${r.total === 1 ? 'confronto' : 'confrontos'})\n`;
+        text += `  ${idx + 1}. ${r.winner?.name} vs ${r.loser?.name}: ${r.wins} ${r.wins === 1 ? 'Vitória' : 'Vitórias'} de ${r.winner?.name} (${r.winRate}% de ${r.total} ${r.total === 1 ? 'confronto' : 'confrontos'})\n`;
       });
     } else {
       text += `  Sem histórico de rivalidades\n`;
@@ -2752,8 +2801,8 @@ export const RankingView: React.FC<RankingViewProps> = ({
               </div>
             </section>
 
-      {/* Global Synergies & Rivalries */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      {/* Global Synergies, Rivalries & Lowest Success Rates */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className={`bg-black backdrop-blur-xl border-white/5 border-l-[6px] border-l-brand-primary p-8 rounded-[2.5rem] shadow-2xl border`}>
           <div className="flex items-center gap-3 mb-6">
             <div className="p-2 bg-brand-primary/10 rounded-xl">
@@ -2806,12 +2855,46 @@ export const RankingView: React.FC<RankingViewProps> = ({
                   </div>
                 </div>
                 <div className="text-right">
-                  <p className="text-xs font-black text-brand-primary drop-shadow-sm">{r.wins} {r.wins === 1 ? 'Vitória' : 'Vitórias'} ({r.winRate}%)</p>
+                  <p className="text-xs font-black text-brand-primary drop-shadow-sm">{r.wins} {r.wins === 1 ? 'Vitória' : 'Vitórias'} de {r.winner?.name} ({r.winRate}%)</p>
                   <p className="text-[9px] font-black text-white/40 uppercase tracking-widest">de {r.total} confrontos</p>
                 </div>
               </div>
             )) : (
               <p className="text-center py-8 text-white/40 text-xs font-bold uppercase tracking-widest">Sem dados de rivalidade</p>
+            )}
+          </div>
+        </div>
+
+        <div className={`bg-black backdrop-blur-xl border-white/5 border-l-[6px] border-l-rose-500/80 p-8 rounded-[2.5rem] shadow-2xl border`}>
+          <div className="flex items-center gap-3 mb-6">
+            <div className="p-2 bg-rose-500/10 rounded-xl">
+              <TrendingDown className="w-5 h-5 text-rose-400" />
+            </div>
+            <h4 className={`text-xs font-black uppercase tracking-widest text-rose-400`}>
+              Menores Taxas de Sucesso {rankingPeriod === 'session' ? 'do Dia' : '(Menor Aproveitamento)'}
+            </h4>
+          </div>
+          <div className="space-y-4">
+            {globalRelationships.lowestSynergies && globalRelationships.lowestSynergies.length > 0 ? globalRelationships.lowestSynergies.map((s, i) => (
+              <div key={i} className={`flex items-center justify-between p-4 rounded-2xl border bg-white/5 border-rose-500/20`}>
+                <div className="flex items-center gap-3 animate-fade-in">
+                  <div className="flex -space-x-2">
+                    <div className="w-8 h-8 rounded-full bg-brand-secondary border-2 border-white/20 flex items-center justify-center text-[10px] font-black text-white/80">
+                      {s.p1?.name.charAt(0)}
+                    </div>
+                    <div className="w-8 h-8 rounded-full bg-rose-950 border-2 border-white/20 flex items-center justify-center text-[10px] font-black text-rose-300">
+                      {s.p2?.name.charAt(0)}
+                    </div>
+                  </div>
+                  <p className={`text-xs font-black text-white`}>{s.p1?.name} + {s.p2?.name}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs font-black text-rose-400 drop-shadow-sm">{s.wins}V - {s.losses}D ({s.winRate}%)</p>
+                  <p className="text-[9px] font-black text-white/40 uppercase tracking-widest">{s.matches} {s.matches === 1 ? 'jogo' : 'jogos'}</p>
+                </div>
+              </div>
+            )) : (
+              <p className="text-center py-8 text-white/40 text-xs font-bold uppercase tracking-widest">Sem dados de atrito</p>
             )}
           </div>
         </div>
@@ -2965,7 +3048,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
           const winRate = matchesCount > 0 ? Math.round((winsCount / matchesCount) * 100) : 0;
           
           const uniqueDates = new Set(targetMatches.map(m => getMatchDate(m) || m.date)).size;
-          const loyaltyReward = socio.fidelityPoints !== undefined ? socio.fidelityPoints : uniqueDates * 50;
+          const loyaltyReward = socio.fidelityPoints !== undefined ? socio.fidelityPoints : uniqueDates * 10;
 
           return (
             <motion.div 
@@ -3092,7 +3175,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
                   return [...players]
                     .filter(p => {
                       const stats = topStats.dailyStats[p.id];
-                      const hasPlayed = rankingPeriod === 'session' ? (stats && stats.matches > 0) : (p.matchesPlayed > 0);
+                      const hasPlayed = rankingPeriod === 'session' ? (stats && stats.matches > 0) : ((stats?.matches || 0) > 0 || (p.matchesPlayed || 0) > 0);
                       const matchesSearch = p.name.toLowerCase().includes(rankingSearchQuery.toLowerCase());
                       const matchesSocio = filterSocioId === 'all' || p.id === filterSocioId;
                       return hasPlayed && matchesSearch && matchesSocio;
@@ -3104,16 +3187,16 @@ export const RankingView: React.FC<RankingViewProps> = ({
                       if (rankingSortMetric === 'fidelity') {
                         const datesA = new Set(effectiveMatches.filter(m => m.teamA.includes(a.id) || m.teamB.includes(a.id)).map(m => getMatchDate(m) || m.date)).size;
                         const datesB = new Set(effectiveMatches.filter(m => m.teamA.includes(b.id) || m.teamB.includes(b.id)).map(m => getMatchDate(m) || m.date)).size;
-                        const ptA = a.fidelityPoints !== undefined ? a.fidelityPoints : datesA * 50;
-                        const ptB = b.fidelityPoints !== undefined ? b.fidelityPoints : datesB * 50;
+                        const ptA = a.fidelityPoints !== undefined ? a.fidelityPoints : datesA * 10;
+                        const ptB = b.fidelityPoints !== undefined ? b.fidelityPoints : datesB * 10;
                         if (ptB !== ptA) return ptB - ptA;
                       }
 
                       if (rankingSortMetric === 'efficiency') {
-                        const matchesA = rankingPeriod === 'session' ? (statsA?.matches || 0) : (a.matchesPlayed || 0);
-                        const matchesB = rankingPeriod === 'session' ? (statsB?.matches || 0) : (b.matchesPlayed || 0);
-                        const winsA = rankingPeriod === 'session' ? (statsA?.wins || 0) : (a.wins || 0);
-                        const winsB = rankingPeriod === 'session' ? (statsB?.wins || 0) : (b.wins || 0);
+                        const matchesA = rankingPeriod === 'session' ? (statsA?.matches || 0) : (statsA?.matches ?? a.matchesPlayed ?? 0);
+                        const matchesB = rankingPeriod === 'session' ? (statsB?.matches || 0) : (statsB?.matches ?? b.matchesPlayed ?? 0);
+                        const winsA = rankingPeriod === 'session' ? (statsA?.wins || 0) : (statsA?.wins ?? a.wins ?? 0);
+                        const winsB = rankingPeriod === 'session' ? (statsB?.wins || 0) : (statsB?.wins ?? b.wins ?? 0);
                         
                         const winRateA = matchesA > 0 ? (winsA / matchesA) : 0;
                         const winRateB = matchesB > 0 ? (winsB / matchesB) : 0;
@@ -3128,10 +3211,10 @@ export const RankingView: React.FC<RankingViewProps> = ({
                         // Tie-breaker 2: Point difference (Saldo)
                         const saldoA = rankingPeriod === 'session' 
                           ? ((statsA?.pointsFor || 0) - (statsA?.pointsAgainst || 0)) 
-                          : ((a.pointsFor || 0) - (a.pointsAgainst || 0));
+                          : ((statsA?.pointsFor ?? a.pointsFor ?? 0) - (statsA?.pointsAgainst ?? a.pointsAgainst ?? 0));
                         const saldoB = rankingPeriod === 'session' 
                           ? ((statsB?.pointsFor || 0) - (statsB?.pointsAgainst || 0)) 
-                          : ((b.pointsFor || 0) - (b.pointsAgainst || 0));
+                          : ((statsB?.pointsFor ?? b.pointsFor ?? 0) - (statsB?.pointsAgainst ?? b.pointsAgainst ?? 0));
                         if (saldoB !== saldoA) return saldoB - saldoA;
                       }
 
@@ -3158,8 +3241,8 @@ export const RankingView: React.FC<RankingViewProps> = ({
                     })
                     .map((player, idx) => {
                       const stats = topStats.dailyStats[player.id];
-                      const matchesPlayed = rankingPeriod === 'session' ? stats.matches : player.matchesPlayed;
-                      const wins = rankingPeriod === 'session' ? stats.wins : player.wins;
+                      const matchesPlayed = rankingPeriod === 'session' ? (stats?.matches || 0) : (stats?.matches ?? player.matchesPlayed ?? 0);
+                      const wins = rankingPeriod === 'session' ? (stats?.wins || 0) : (stats?.wins ?? player.wins ?? 0);
                       const eloValue = rankingPeriod === 'session' ? stats?.matchEloGain : Math.round(player.elo);
                       const winRate = Math.round((wins / (matchesPlayed || 1)) * 100);
                       
@@ -3240,11 +3323,11 @@ export const RankingView: React.FC<RankingViewProps> = ({
                           <td className="px-6 py-4 text-center text-xs font-bold text-brand-primary font-mono">{wins}</td>
                           <td className="px-6 py-4 text-center text-xs font-bold text-white/40 font-mono">{matchesPlayed - wins}</td>
                           <td className={`px-6 py-4 text-center text-xs font-black font-mono ${
-                            (rankingPeriod === 'session' ? (stats?.pointsFor || 0) - (stats?.pointsAgainst || 0) : (player.pointsFor || 0) - (player.pointsAgainst || 0)) > 0 ? 'text-emerald-500' : 
-                            (rankingPeriod === 'session' ? (stats?.pointsFor || 0) - (stats?.pointsAgainst || 0) : (player.pointsFor || 0) - (player.pointsAgainst || 0)) < 0 ? 'text-rose-500' : 'text-white/40'
+                            (rankingPeriod === 'session' ? (stats?.pointsFor || 0) - (stats?.pointsAgainst || 0) : (stats?.pointsFor ?? player.pointsFor ?? 0) - (stats?.pointsAgainst ?? player.pointsAgainst ?? 0)) > 0 ? 'text-emerald-500' : 
+                            (rankingPeriod === 'session' ? (stats?.pointsFor || 0) - (stats?.pointsAgainst || 0) : (stats?.pointsFor ?? player.pointsFor ?? 0) - (stats?.pointsAgainst ?? player.pointsAgainst ?? 0)) < 0 ? 'text-rose-500' : 'text-white/40'
                           }`}>
-                            {(rankingPeriod === 'session' ? (stats?.pointsFor || 0) - (stats?.pointsAgainst || 0) : (player.pointsFor || 0) - (player.pointsAgainst || 0)) > 0 ? '+' : ''}
-                            {rankingPeriod === 'session' ? (stats?.pointsFor || 0) - (stats?.pointsAgainst || 0) : (player.pointsFor || 0) - (player.pointsAgainst || 0)}
+                            {(rankingPeriod === 'session' ? (stats?.pointsFor || 0) - (stats?.pointsAgainst || 0) : (stats?.pointsFor ?? player.pointsFor ?? 0) - (stats?.pointsAgainst ?? player.pointsAgainst ?? 0)) > 0 ? '+' : ''}
+                            {rankingPeriod === 'session' ? (stats?.pointsFor || 0) - (stats?.pointsAgainst || 0) : (stats?.pointsFor ?? player.pointsFor ?? 0) - (stats?.pointsAgainst ?? player.pointsAgainst ?? 0)}
                           </td>
                           <td className="px-6 py-4 text-center font-mono">
                             <span className={`inline-flex items-center gap-1.5 text-[10px] font-black px-2 py-1 rounded-lg font-mono ${winRate >= 50 ? 'bg-brand-primary/10 text-brand-primary' : 'bg-white/10 text-white/40'}`}>
@@ -3273,14 +3356,18 @@ export const RankingView: React.FC<RankingViewProps> = ({
                                   );
                                 }
 
-                                const minMatches = rankingPeriod === 'session' ? 3 : 5;
+                                const minMatches = rankingPeriod === 'session' ? 1 : 3;
                                 const isQualified = matchesPlayed >= minMatches;
-                                const K = rankingPeriod === 'session' ? 2 : 10;
+                                const K = rankingPeriod === 'session' ? 1 : 10;
                                 const weight = matchesPlayed / (matchesPlayed + K);
                                 
+                                const playerDurationMinutes = rankingPeriod === 'session' 
+                                  ? Math.max(1, (stats?.duration || (matchesPlayed * 720)) / 60)
+                                  : Math.max(1, (topStats.totalDurations[player.id] || (player.matchesPlayed * 720)) / 60);
+
                                 const effValueRaw = rankingPeriod === 'session' 
-                                  ? ((stats?.matchEloGain !== undefined ? stats.matchEloGain : (stats?.eloGain || 0)) / ((stats?.duration || 1) / 60))
-                                  : ((player.elo - 1200) / ((topStats.totalDurations[player.id] || 1) / 60));
+                                  ? ((stats?.matchEloGain !== undefined ? stats.matchEloGain : (stats?.eloGain || 0)) / playerDurationMinutes)
+                                  : ((player.elo - 1200) / playerDurationMinutes);
                                 
                                 const weightedEff = effValueRaw * weight;
                                 

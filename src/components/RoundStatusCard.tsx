@@ -72,7 +72,7 @@ export const RoundStatusCard: React.FC<RoundStatusCardProps> = ({
   defaultExpanded = false
 }) => {
   const [isExpanded, setIsExpanded] = useState<boolean>(defaultExpanded);
-  const { players } = useStore();
+  const players = useStore(state => state.players);
 
   if (!generationResult || !generationResult.teamA || !generationResult.teamB) {
     return null;

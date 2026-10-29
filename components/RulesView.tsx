@@ -18,7 +18,13 @@ import {
   Award
 } from 'lucide-react';
 
+import { useStore } from '../store';
+
 export const RulesView: React.FC = () => {
+  const systemMetadata = useStore(state => state.systemMetadata);
+  const dailyBonus = systemMetadata?.dailyAttendanceBonus ?? 20;
+  const minMatches = systemMetadata?.minMatchesForDailyBonus ?? 2;
+
   return (
     <div className="max-w-4xl mx-auto space-y-12 animate-in fade-in slide-in-from-bottom-4 duration-700">
       <div className="text-center space-y-4">
@@ -61,8 +67,8 @@ export const RulesView: React.FC = () => {
                 desc: "O ranking de sócios é atualizado após cada partida. Ele combina sua pontuação ELO, sua porcentagem de vitórias e seu desempenho no dia (MVP). Estar no topo significa ser o jogador mais consistente e decisivo do clube." 
               },
               {
-                title: "Bônus Diário de Presença (Fidelidade)",
-                desc: "A cada dia de jogo em que o sócio tiver sua presença confirmada na lista (check-in), ele recebe imediatamente um acréscimo de +50 pontos ELO na sua carreira. O bônus é concedido de forma instantânea para valorizar a assiduidade e pontualidade."
+                title: "Bônus Diário de Presença e Fidelidade",
+                desc: `A cada dia de jogo em que o sócio disputar ${minMatches} ou mais partidas na sessão, ele recebe imediatamente um acréscimo de +${dailyBonus} pontos ELO na sua carreira. O bônus valoriza a assiduidade e o engajamento contínuo nas rodadas.`
               }
             ].map((item, i) => (
               <div key={i} className="flex gap-6 group">
@@ -79,9 +85,9 @@ export const RulesView: React.FC = () => {
                 <Sparkles className="w-6 h-6 text-brand-primary animate-pulse" />
               </div>
               <div className="space-y-1">
-                <h5 className="text-sm font-black uppercase tracking-wider text-brand-primary">🔥 Super Bônus Diário de Presença</h5>
+                <h5 className="text-sm font-black uppercase tracking-wider text-brand-primary">🔥 Bônus Diário de Fidelidade (+{dailyBonus} pts)</h5>
                 <p className="text-xs text-white/80 leading-relaxed font-bold">
-                  Valorizamos a sua fidelidade! Ao confirmar a presença (check-in) na lista de hoje, você ganha instantaneamente um acréscimo de <span className="text-brand-primary font-black">+50 pontos ELO</span> direto no seu perfil. Esse bônus é acumulativo ao longo do campeonato e ajuda você a conquistar novas patentes e subir no ranking!
+                  Valorizamos a sua fidelidade em quadra! Ao disputar <span className="text-brand-primary font-black">{minMatches} ou mais partidas</span> em uma sessão, você ganha automaticamente um acréscimo de <span className="text-brand-primary font-black">+{dailyBonus} pontos ELO</span> de bônus de presença. Esse bônus é somado ao seu saldo de vitórias e derrotas para formar o seu ELO Global!
                 </p>
               </div>
             </div>
@@ -130,10 +136,10 @@ export const RulesView: React.FC = () => {
                     <h5 className="text-[10px] font-black text-white uppercase tracking-widest">Bônus de Participação</h5>
                   </div>
                   <p className="text-xs text-white/60 leading-relaxed">
-                    Todos os guerreiros que jogam no dia garantem um bônus fixo de presença:
+                    Atletas que disputam 2 ou mais partidas na sessão garantem o bônus:
                   </p>
                   <p className="text-sm font-black text-brand-primary uppercase mt-3">
-                    +50 pontos de fidelidade
+                    +20 pontos de fidelidade
                   </p>
                 </div>
                 <div className="text-[9px] font-mono text-white/30 uppercase mt-4">Presença</div>
@@ -147,10 +153,10 @@ export const RulesView: React.FC = () => {
                     <h5 className="text-[10px] font-black text-white uppercase tracking-widest">A Fórmula de Pontos</h5>
                   </div>
                   <p className="text-xs text-white/60 leading-relaxed">
-                    A soma do desempenho em quadra com o bônus fixo diário:
+                    A soma do ELO base (1200) + saldo de partidas + bônus:
                   </p>
                   <div className="bg-black/60 border border-white/5 p-2 rounded-xl mt-3 text-center font-mono text-xs text-brand-primary font-black">
-                    Pontos = (V * 20) + (D * -20) + 50
+                    ELO = 1200 + (V - D) * 20 + Bônus
                   </div>
                 </div>
                 <div className="text-[9px] font-mono text-white/30 uppercase mt-4">Fórmula Oficial</div>

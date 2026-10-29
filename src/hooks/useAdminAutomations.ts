@@ -4,7 +4,10 @@ import { db, doc, getDoc, setDoc, updateDoc, getFirestoreDateKey, getBrazilDay }
 import { analyzeBillingCosts } from '../../services/geminiService';
 
 export const useAdminAutomations = () => {
-  const { user, userRole, monthlyUsageStats, showNotification } = useStore();
+  const user = useStore(state => state.user);
+  const userRole = useStore(state => state.userRole);
+  const monthlyUsageStats = useStore(state => state.monthlyUsageStats);
+  const showNotification = useStore(state => state.showNotification);
 
   useEffect(() => {
     const checkWeeklyBillingReport = async () => {

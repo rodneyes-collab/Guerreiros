@@ -27,6 +27,7 @@ import { PlayerForm } from '../../components/PlayerForm';
 import { PaymentForm } from '../../components/PaymentForm';
 import { ExpenseForm } from '../../components/ExpenseForm';
 import { SidebarNavigation } from './SidebarNavigation';
+import { PreGameReminderContainer } from './PreGameReminderContainer';
 
 // Atomic Lazy Loaded Views to isolate bundle chunks and prevent dependency cycles
 const AttendanceView = safeLazy(() => import('../../components/AttendanceView').then(m => ({ default: m.AttendanceView })));
@@ -803,6 +804,11 @@ export const ViewManager: React.FC<ViewManagerProps> = (props) => {
       <SetterStrategyModal />
       <SyncSettingsModal />
       <SyncDebuggerModal />
+      <PreGameReminderContainer 
+        currentPlayer={currentPlayer} 
+        userRole={userRole} 
+        showNotification={showNotification} 
+      />
 
       <PlayerForm 
         isOpen={isFormOpen} 

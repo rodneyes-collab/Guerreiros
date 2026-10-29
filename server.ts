@@ -528,6 +528,119 @@ async function startServer() {
     }
   });
 
+  // --- Server-Side Gemini API Routes ---
+  app.post("/api/gemini/analyze-match", async (req, res) => {
+    try {
+      const { result, attendance } = req.body;
+      const { serverAnalyzeMatch } = await import("./services/serverGemini.ts");
+      const analysis = await serverAnalyzeMatch(result, attendance);
+      res.json({ success: true, analysis });
+    } catch (err: any) {
+      console.error("[Gemini API] analyze-match error:", err);
+      res.status(500).json({ error: "Failed to analyze match", details: err.message });
+    }
+  });
+
+  app.post("/api/gemini/verify-rules", async (req, res) => {
+    try {
+      const { attendanceList, result, balanceLevel, lastMatch } = req.body;
+      const { serverVerifyRules } = await import("./services/serverGemini.ts");
+      const auditResult = await serverVerifyRules(attendanceList, result, balanceLevel, lastMatch);
+      res.json({ success: true, auditResult });
+    } catch (err: any) {
+      console.error("[Gemini API] verify-rules error:", err);
+      res.status(500).json({ error: "Failed to verify rules", details: err.message });
+    }
+  });
+
+  app.post("/api/gemini/daily-summary", async (req, res) => {
+    try {
+      const { stats } = req.body;
+      const { serverDailySummary } = await import("./services/serverGemini.ts");
+      const summary = await serverDailySummary(stats);
+      res.json({ success: true, summary });
+    } catch (err: any) {
+      console.error("[Gemini API] daily-summary error:", err);
+      res.status(500).json({ error: "Failed to generate daily summary", details: err.message });
+    }
+  });
+
+  app.post("/api/gemini/tts", async (req, res) => {
+    try {
+      const { text } = req.body;
+      const { serverTTS } = await import("./services/serverGemini.ts");
+      const audioBase64 = await serverTTS(text);
+      res.json({ success: true, audioBase64 });
+    } catch (err: any) {
+      console.error("[Gemini API] tts error:", err);
+      res.status(500).json({ error: "Failed to generate TTS", details: err.message });
+    }
+  });
+
+  app.post("/api/gemini/detect-anomalies", async (req, res) => {
+    try {
+      const { data } = req.body;
+      const { serverDetectAnomalies } = await import("./services/serverGemini.ts");
+      const report = await serverDetectAnomalies(data);
+      res.json({ success: true, report });
+    } catch (err: any) {
+      console.error("[Gemini API] detect-anomalies error:", err);
+      res.status(500).json({ error: "Failed to detect anomalies", details: err.message });
+    }
+  });
+
+  app.post("/api/gemini/billing-analysis", async (req, res) => {
+    try {
+      const { billingData } = req.body;
+      const { serverAnalyzeBillingCosts } = await import("./services/serverGemini.ts");
+      const analysis = await serverAnalyzeBillingCosts(billingData);
+      res.json({ success: true, analysis });
+    } catch (err: any) {
+      console.error("[Gemini API] billing-analysis error:", err);
+      res.status(500).json({ error: "Failed to analyze billing", details: err.message });
+    }
+  });
+
+  app.post("/api/gemini/birthday-message", async (req, res) => {
+    try {
+      const { playerName } = req.body;
+      const { serverGenerateBirthdayMessage } = await import("./services/serverGemini.ts");
+      const message = await serverGenerateBirthdayMessage(playerName);
+      res.json({ success: true, message });
+    } catch (err: any) {
+      console.error("[Gemini API] birthday-message error:", err);
+      res.status(500).json({ error: "Failed to generate birthday message", details: err.message });
+    }
+  });
+
+  app.post("/api/gemini/stream", async (req, res) => {
+    const { prompt, model = "gemini-3.8-flash" } = req.body;
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+
+    try {
+      const { getAI } = await import("./services/serverGemini.ts");
+      const ai = getAI();
+      const responseStream = await ai.models.generateContentStream({
+        model: model || "gemini-3.8-flash",
+        contents: prompt,
+      });
+
+      for await (const chunk of responseStream) {
+        if (chunk.text) {
+          res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`);
+        }
+      }
+      res.write("data: [DONE]\n\n");
+      res.end();
+    } catch (err: any) {
+      console.error("[Gemini Stream] error:", err);
+      res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+      res.end();
+    }
+  });
+
   // Rota para debug de identidade (apenas para verificação)
 app.get("/api/debug-identity", async (req, res) => {
   try {
@@ -1656,6 +1769,10 @@ app.get("/api/billing/real-time", async (req, res) => {
   });
 
   const server = http.createServer(app);
+
+  // Setup Gemini Live API WebSocket Handler
+  const { setupGeminiLiveWebSocket } = await import("./services/serverLiveApi.ts");
+  setupGeminiLiveWebSocket(server);
 
   // Vite middleware for development
   console.log(`[Guerreiros] Configurando ambiente: ${process.env.NODE_ENV || 'development'}`);

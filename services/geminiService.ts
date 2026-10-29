@@ -1,12 +1,9 @@
-
-import { GoogleGenAI, Modality, ThinkingLevel } from "@google/genai";
 import { Team, Player, GenerationResult, Match } from "../types";
-import { calculateCompositePerformanceRating } from "../utils/teamLogic";
 
 // Cache persistente para evitar chamadas repetidas à IA com os mesmos dados
 const CACHE_KEY = 'spikegen_ai_cache_v2';
-const MAX_CACHE_ITEMS = 20; // Reduzido para maior segurança
-const MAX_CACHE_SIZE_BYTES = 1.0 * 1024 * 1024; // 1MB (limite conservador)
+const MAX_CACHE_ITEMS = 20;
+const MAX_CACHE_SIZE_BYTES = 1.0 * 1024 * 1024; // 1MB
 
 // State to track AI health
 let aiHealth = {
@@ -16,7 +13,7 @@ let aiHealth = {
 };
 
 export const isQuotaOrBillingError = (error: any): boolean => {
-  const msg = (error?.message || "").toLowerCase();
+  const msg = (error?.message || (typeof error === 'string' ? error : "")).toLowerCase();
   const isQuota = msg.includes("429") || msg.includes("quota") || msg.includes("resource_exhausted") || msg.includes("exceeded");
   const isBilling = msg.includes("403") || msg.includes("spending cap") || msg.includes("billing");
   
@@ -33,7 +30,6 @@ export const isQuotaOrBillingError = (error: any): boolean => {
 };
 
 export const getAIStatus = () => {
-  // Reset availability after 10 minutes if it was a quota error
   if (!aiHealth.isAvailable && Date.now() - aiHealth.lastQuotaError > 600000) {
     aiHealth.isAvailable = true;
   }
@@ -42,7 +38,6 @@ export const getAIStatus = () => {
 
 /**
  * Limpa chaves antigas do localStorage de versões anteriores do app
- * que não são mais necessárias devido à migração para Firebase.
  */
 export const clearOldStorage = () => {
   if (typeof window === 'undefined') return;
@@ -84,15 +79,12 @@ const saveCache = (cache: Record<string, string>) => {
     let keys = Object.keys(cache);
     let cacheString = JSON.stringify(cache);
 
-    // Limpeza proativa baseada em quantidade e tamanho
     if (keys.length > MAX_CACHE_ITEMS || cacheString.length > MAX_CACHE_SIZE_BYTES) {
       console.log(`[Cache] Limpando cache proativamente. Itens: ${keys.length}, Tamanho: ${(cacheString.length / 1024).toFixed(1)}KB`);
       
-      // Prioriza remover áudios (TTS) que são pesados
       const ttsKeys = keys.filter(k => k.startsWith('tts_'));
       const otherKeys = keys.filter(k => !k.startsWith('tts_'));
       
-      // Remove metade dos áudios ou os itens mais antigos
       const toRemove = ttsKeys.length > 0 
         ? ttsKeys.slice(0, Math.ceil(ttsKeys.length / 2)) 
         : otherKeys.slice(0, 5);
@@ -106,8 +98,6 @@ const saveCache = (cache: Record<string, string>) => {
     console.error("Erro ao salvar cache da IA:", e);
     if (e instanceof Error && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED')) {
       console.warn("[Cache] Cota do LocalStorage excedida. Limpando cache agressivamente...");
-      
-      // Tenta limpar apenas áudios primeiro
       const keys = Object.keys(cache);
       const ttsKeys = keys.filter(k => k.startsWith('tts_'));
       
@@ -119,16 +109,9 @@ const saveCache = (cache: Record<string, string>) => {
         } catch { /* segue para limpeza total */ }
       }
       
-      // Se falhar, limpa tudo do cache da IA
       localStorage.removeItem(CACHE_KEY);
       Object.keys(cache).forEach(k => delete cache[k]);
-      
-      // Tenta limpar chaves antigas também para liberar espaço geral
       clearOldStorage();
-      
-      // Se ainda assim falhar ao salvar (mesmo vazio), limpa TUDO do localStorage como último recurso
-      // (CUIDADO: Isso pode deslogar o usuário se o token estiver no localStorage)
-      // Mas aqui vamos apenas tentar salvar um objeto vazio para resetar a chave
       try {
         localStorage.setItem(CACHE_KEY, '{}');
       } catch (finalError) {
@@ -140,47 +123,40 @@ const saveCache = (cache: Record<string, string>) => {
 const analysisCache = getCache();
 
 /**
- * Helper to convert raw PCM from Gemini TTS to a playable WAV Blob URL.
+ * Converte base64 de áudio para URL executável, tratando formatos com ou sem cabeçalho WAV.
  */
-const pcmToWavUrl = (pcmBase64: string, sampleRate: number = 24000): string => {
-  const binaryString = window.atob(pcmBase64);
+const audioBase64ToUrl = (base64Data: string, sampleRate: number = 24000): string => {
+  const binaryString = window.atob(base64Data);
   const len = binaryString.length;
   const bytes = new Uint8Array(len);
   for (let i = 0; i < len; i++) {
     bytes[i] = binaryString.charCodeAt(i);
   }
 
+  // Verifica se já possui cabeçalho RIFF WAV
+  if (bytes.length >= 4 && bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46) {
+    const blob = new Blob([bytes], { type: 'audio/wav' });
+    return URL.createObjectURL(blob);
+  }
+
+  // Se for raw PCM, empacota com cabeçalho RIFF WAV
   const buffer = new ArrayBuffer(44 + len);
   const view = new DataView(buffer);
 
-  // RIFF identifier
   view.setUint32(0, 0x52494646, false); // "RIFF"
-  // file length
   view.setUint32(4, 36 + len, true);
-  // RIFF type
   view.setUint32(8, 0x57415645, false); // "WAVE"
-  // format chunk identifier
   view.setUint32(12, 0x666d7420, false); // "fmt "
-  // format chunk length
   view.setUint32(16, 16, true);
-  // sample format (PCM = 1)
-  view.setUint16(20, 1, true);
-  // channel count (Mono = 1)
-  view.setUint16(22, 1, true);
-  // sample rate
+  view.setUint16(20, 1, true); // PCM = 1
+  view.setUint16(22, 1, true); // Mono = 1
   view.setUint32(24, sampleRate, true);
-  // byte rate (sample rate * block align)
   view.setUint32(28, sampleRate * 2, true);
-  // block align (channel count * bytes per sample)
   view.setUint16(32, 2, true);
-  // bits per sample
   view.setUint16(34, 16, true);
-  // data chunk identifier
   view.setUint32(36, 0x64617461, false); // "data"
-  // data chunk length
   view.setUint32(40, len, true);
 
-  // write the PCM samples
   for (let i = 0; i < len; i++) {
     view.setUint8(44 + i, bytes[i]);
   }
@@ -190,79 +166,36 @@ const pcmToWavUrl = (pcmBase64: string, sampleRate: number = 24000): string => {
 };
 
 /**
- * Helper to get a fresh instance of the Gemini AI client.
- */
-const getAI = (isTTS = false) => {
-  const key = isTTS 
-    ? (process.env.API_KEY || process.env.GEMINI_API_KEY) 
-    : process.env.GEMINI_API_KEY;
-    
-  return new GoogleGenAI({ 
-    apiKey: key || "",
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      }
-    }
-  });
-};
-
-/**
- * Analyzes a match between two teams, including balance metrics and swap explanation.
+ * Analyzes a match between two teams, calling the server-side Gemini endpoint.
  */
 export const analyzeMatch = async (result: GenerationResult, attendance: Player[]): Promise<string> => {
-  const { teamA, teamB, swaps } = result;
+  const { teamA, teamB } = result;
   const teamAIds = [teamA.setter?.id, ...teamA.players.map(p => p.id)].sort().join(',');
   const teamBIds = [teamB.setter?.id, ...teamB.players.map(p => p.id)].sort().join(',');
-  const cacheKey = `analysis_v3_${teamAIds}_vs_${teamBIds}`;
+  const cacheKey = `analysis_v4_${teamAIds}_vs_${teamBIds}`;
 
   if (analysisCache[cacheKey]) return analysisCache[cacheKey];
 
-  const ai = getAI();
-  
-  const formatPlayer = (p: Player) => `${p.name} (IC:${calculateCompositePerformanceRating(p).toFixed(1)}, Impacto:${p.impactLevel || 1})`;
-  const playersA = [teamA.setter, ...teamA.players].filter((p): p is Player => p !== null).map(formatPlayer).join(', ');
-  const playersB = [teamB.setter, ...teamB.players].filter((p): p is Player => p !== null).map(formatPlayer).join(', ');
-  
-  const swapInfo = swaps && swaps.length > 0 
-    ? swaps.map(s => {
-        const pA = attendance.find(p => p.id === s.playerA)?.name || 'Desconhecido';
-        const pB = attendance.find(p => p.id === s.playerB)?.name || 'Desconhecido';
-        return `${pA} <-> ${pB}`;
-      }).join(', ')
-    : "Nenhuma troca de refinamento necessária.";
-
-  const prompt = `Analise Técnica de Partida (Guerreiros Volleyball):
-    
-    TIME A (Média IC: ${(teamA.totalIC / (teamA.players.length + (teamA.setter ? 1 : 0))).toFixed(1)}):
-    Jogadores: ${playersA}
-    
-    TIME B (Média IC: ${(teamB.totalIC / (teamB.players.length + (teamB.setter ? 1 : 0))).toFixed(1)}):
-    Jogadores: ${playersB}
-
-    AJUSTES DE BALANCEAMENTO FEITOS:
-    ${swapInfo}
-    
-    TAREFA:
-    1. Analise o equilíbrio das equipes (Índice Composto - IC e Nível de Impacto).
-    2. Explique como as trocas feitas ajudaram a equilibrar os times (foram necessárias para otimizar o IC ou Nível de Impacto?).
-    3. Determine a probabilidade de vitória para cada time (%).
-    
-    ESTILO: Analítico, direto e profissional. Max 100 palavras.`;
-
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: prompt,
-      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+    const res = await fetch("/api/gemini/analyze-match", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ result, attendance }),
     });
-    const result = response.text || "Análise indisponível.";
-    analysisCache[cacheKey] = result;
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.details || errData.error || `HTTP error ${res.status}`);
+    }
+
+    const data = await res.json();
+    const output = data.analysis || "Análise indisponível.";
+    analysisCache[cacheKey] = output;
     saveCache(analysisCache);
-    return result;
+    return output;
   } catch (error: any) {
     if (isQuotaOrBillingError(error)) {
-      console.warn("AI Analysis Quota/Billing/Permission Reached (429/403/RESOURCE_EXHAUSTED). Falling back.");
+      console.warn("AI Analysis Quota/Billing/Permission Reached. Falling back.");
       return "Análise temporariamente indisponível. O sistema realizou o balanceamento baseado no IC e Níveis de Impacto técnico individual (Saque/Ataque/Defesa).";
     }
     console.error("Erro na análise técnica:", error);
@@ -277,13 +210,11 @@ export const generateNarrationScript = async (teamA: Team, teamB: Team): Promise
   const teamANames = [teamA.setter?.name, ...teamA.players.map(p => p.name)].filter(Boolean).join(', ');
   const teamBNames = [teamB.setter?.name, ...teamB.players.map(p => p.name)].filter(Boolean).join(', ');
 
-  // Retorna o texto exato e direto, conforme solicitado pelo usuário, 
-  // sem usar a IA para gerar o script, evitando assim qualquer texto extra, opções ou repetições.
   return `Equipe A: ${teamANames}. Equipe B: ${teamBNames}.`;
 };
 
 /**
- * Audits the team generation.
+ * Audits the team generation by calling the server-side Gemini verification route.
  */
 export const verifyRules = async (
   attendanceList: Player[], 
@@ -293,60 +224,24 @@ export const verifyRules = async (
 ): Promise<string> => {
   const teamAIds = [result.teamA.setter?.id, ...result.teamA.players.map(p => p.id)].sort().join(',');
   const teamBIds = [result.teamB.setter?.id, ...result.teamB.players.map(p => p.id)].sort().join(',');
-  const cacheKey = `audit_v4_${teamAIds}_vs_${teamBIds}_${lastMatch?.id || 'none'}`;
+  const cacheKey = `audit_v5_${teamAIds}_vs_${teamBIds}_${lastMatch?.id || 'none'}`;
 
   if (analysisCache[cacheKey]) return analysisCache[cacheKey];
 
-  const ai = getAI();
-  
-  // Mapear nomes para os IDs da última partida para facilitar a leitura da IA
-  const getNamesFromIds = (ids: string[]) => {
-    return ids.map(id => attendanceList.find(p => p.id === id)?.name || id).join(', ');
-  };
-
-  const lastMatchInfo = lastMatch 
-    ? `Última Partida - Time A: ${getNamesFromIds(lastMatch.teamA)} | Time B: ${getNamesFromIds(lastMatch.teamB)}`
-    : "Nenhuma partida anterior registrada hoje.";
-
-  const swapsInfo = result.swaps && result.swaps.length > 0
-    ? result.swaps.map(s => {
-        const pA = attendanceList.find(p => p.id === s.playerA);
-        const pB = attendanceList.find(p => p.id === s.playerB);
-        return `${pA?.name || s.playerA} (ELO ${pA?.elo}) <-> ${pB?.name || s.playerB} (ELO ${pB?.elo})`;
-      }).join(', ')
-    : "Nenhuma troca de refinamento necessária.";
-
-  const prompt = `Auditoria Técnica (Guerreiros Volleyball):
-    
-    DADOS ATUAIS:
-    - Presentes: ${attendanceList.map(p => `${p.name}(G:${p.gender === 'MALE' ? 'M' : 'F'}, ELO:${p.elo}, Impacto:${p.impactLevel || 1}, Jogos:${p.dailyMatches}, Ultima:${p.playedLastMatch ? 'Sim' : 'Não'}, Lev:${p.isOfficialSetter ? 'Sim' : 'Não'})`).join(', ')}
-    - Time A: ${result.teamA.setter?.name || 'Sem Lev'}, ${result.teamA.players.map(p => p.name).join(', ')} (Total ELO:${result.teamA.totalIC})
-    - Time B: ${result.teamB.setter?.name || 'Sem Lev'}, ${result.teamB.players.map(p => p.name).join(', ')} (Total ELO:${result.teamB.totalIC})
-    - Espera: ${result.remainingPlayers.map(p => `${p.name}(Impacto:${p.impactLevel || 1}, Jogos:${p.dailyMatches})`).join(', ')}
-    - ${lastMatchInfo}
-    - Trocas de Refinamento (Impacto + ELO): ${swapsInfo}
-
-    REGRAS DO CLUBE:
-    1. Prioridade para quem tem MENOS jogos no dia.
-    2. Critério de desempate: Quem NÃO jogou a última partida.
-    3. Levantadores: Devem ser equilibrados.
-    4. Nível de Impacto (Novo): O sistema usa "Pontos de Pressão" ocultos (Elite:+200, Médio:+75, Base:0) somados ao ELO para equilibrar atacantes e suporte.
-    5. Waitlist Weight: Jogadores que ficam 2 ou mais partidas seguidas fora ganham prioridade máxima para entrar.
-    
-    TAREFA:
-    1. Levantadores: Compare os 2 escolhidos.
-    2. Equilíbrio e Fila (Waitlist): Justifique as escolhas.
-    3. Rodízio e Impacto: Explique como os "Pontos de Pressão" ajudaram a equilibrar jogadores de alto impacto (Elite) entre as equipes para evitar que um time fique "pesado" demais ofensivamente.
-
-    ESTILO: Respostas equilibradas, técnicas e diretas. Use emojis. Max 200 palavras.`;
-
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: prompt,
-      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+    const res = await fetch("/api/gemini/verify-rules", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ attendanceList, result, balanceLevel, lastMatch }),
     });
-    const auditResult = response.text || "Auditoria concluída. Escalação segue os critérios de rodízio e equilíbrio do clube.";
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.details || errData.error || `HTTP error ${res.status}`);
+    }
+
+    const data = await res.json();
+    const auditResult = data.auditResult || "Auditoria concluída. Escalação segue os critérios de rodízio e equilíbrio do clube.";
     analysisCache[cacheKey] = auditResult;
     saveCache(analysisCache);
     return auditResult;
@@ -356,7 +251,7 @@ export const verifyRules = async (
 };
 
 /**
- * Generates a summary of the day's highlights.
+ * Generates a summary of the day's highlights via server-side Gemini endpoint.
  */
 export const generateDailySummaryNarration = async (stats: { 
   mvp?: string; 
@@ -368,54 +263,33 @@ export const generateDailySummaryNarration = async (stats: {
   avgMatchTime?: number;
   summaryType?: 'session' | 'career';
 }): Promise<string> => {
-  const cacheKey = `summary_v7_${stats.summaryType}_${stats.mvp}_${stats.bestSetter}_${stats.dailyKing}_${stats.matchesCount}_${stats.rankingChanges?.join(',')}_${stats.date}_${stats.avgMatchTime}`;
+  const cacheKey = `summary_v8_${stats.summaryType}_${stats.mvp}_${stats.bestSetter}_${stats.dailyKing}_${stats.matchesCount}_${stats.rankingChanges?.join(',')}_${stats.date}_${stats.avgMatchTime}`;
   if (analysisCache[cacheKey]) return analysisCache[cacheKey];
 
-  const ai = getAI();
-  const rankingInfo = stats.rankingChanges && stats.rankingChanges.length > 0
-    ? `\n- Mudanças no Ranking: ${stats.rankingChanges.join(', ')}`
-    : '';
-
-  const isCareer = stats.summaryType === 'career';
-  const typeLabel = isCareer ? 'GERAL ACUMULADO (CARREIRA)' : 'DO DIA (SESSÃO)';
-
-  const prompt = `Você é um narrador esportivo brasileiro carismático e enérgico do Guerreiros Volleyball.
-    TIPO DE RESUMO: ${typeLabel}
-    Resumo dos Dados:
-    - Data/Período: ${stats.date || new Date().toLocaleDateString('pt-BR')}
-    - Partidas: ${stats.matchesCount || 0}
-    - Tempo médio das partidas: ${stats.avgMatchTime || 'não disponível'} minutos
-    - MVP (Maior Pontuador/Destaque): ${stats.mvp || 'N/A'}
-    - Melhor Levantador(a): ${stats.bestSetter || 'N/A'}
-    - Rei/Rainha (Maior Ganho ELO): ${stats.dailyKing || 'N/A'}${rankingInfo}
-    
-    TAREFA: Gere um roteiro de locução curto (max 5 frases) que soe NATURAL e FLUIDO, como se estivesse comentando ao vivo.
-    MUITO IMPORTANTE: A PRIMEIRA FRASE DEVE SER EXATAMENTE: "Resumo ${isCareer ? 'do Ranking Geral' : 'da rodada'} do Guerreiros Volleyball:".
-    
-    INSTRUÇÕES GERAIS:
-    1. Gênero: Analise o NOME e identifique o gênero para adaptar (Levantador/Levantadora, Rei/Rainha).
-    2. Contexto: Se for resumo de CARREIRA, fale sobre a trajetória e as mudanças históricas no ranking. Se for SESSÃO, foque no que aconteceu hoje.
-    3. Estilo: Use pontuação para pausas naturais. Use gírias de vôlei. NÃO faça listas.
-    4. Termos: Use "Equipe" em vez de "Time".
-    5. Fechamento: Finalize dizendo "Guerreiros Volleyball: onde o racha é de outro nível!".`;
-
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: prompt,
-      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+    const res = await fetch("/api/gemini/daily-summary", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stats }),
     });
-    const result = response.text || "Racha épico hoje! Parabéns a todos os guerreiros!";
-    analysisCache[cacheKey] = result;
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.details || errData.error || `HTTP error ${res.status}`);
+    }
+
+    const data = await res.json();
+    const output = data.summary || "Racha épico hoje! Parabéns a todos os guerreiros!";
+    analysisCache[cacheKey] = output;
     saveCache(analysisCache);
-    return result;
+    return output;
   } catch (error: any) {
     return "Racha sensacional! Parabéns aos guerreiros pelo desempenho de hoje!";
   }
 };
 
 /**
- * Generates a team announcement audio directly from teams to reduce latency.
+ * Generates a team announcement audio directly from teams.
  */
 export const generateTeamAnnouncementAudio = async (teamA: Team, teamB: Team): Promise<string | null> => {
   try {
@@ -428,7 +302,7 @@ export const generateTeamAnnouncementAudio = async (teamA: Team, teamB: Team): P
 };
 
 /**
- * Generates a summary audio directly from stats to reduce latency.
+ * Generates a summary audio directly from stats.
  */
 export const generateDailySummaryAudio = async (stats: { 
   mvp?: string;
@@ -451,40 +325,36 @@ export const generateDailySummaryAudio = async (stats: {
 };
 
 /**
- * Converts text to speech using Gemini TTS (Special moments only).
+ * Converts text to speech using server-side Gemini TTS.
  */
 export const getNarrationAudio = async (text: string): Promise<string | null> => {
-  // Cache baseado no hash do texto (primeiros 100 caracteres)
-  const cacheKey = `tts_v3_${btoa(unescape(encodeURIComponent(text.substring(0, 100))))}`;
+  const cacheKey = `tts_v4_${btoa(unescape(encodeURIComponent(text.substring(0, 100))))}`;
   if (analysisCache[cacheKey]) return analysisCache[cacheKey];
 
-  const ai = getAI(true);
   try {
-    const promptText = `Narre o seguinte texto com empolgação e naturalidade de locutor esportivo, gerando apenas áudio: ${text}`;
-    const response = await ai.models.generateContent({
-      model: "gemini-3.1-flash-tts-preview",
-      contents: [{ parts: [{ text: promptText }] }],
-      config: {
-        responseModalities: [Modality.AUDIO],
-        speechConfig: {
-          voiceConfig: { 
-            prebuiltVoiceConfig: { voiceName: 'Zephyr' } 
-          },
-        },
-      },
+    const res = await fetch("/api/gemini/tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
     });
-    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-    const result = base64Audio ? pcmToWavUrl(base64Audio) : null;
-    
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.details || errData.error || `HTTP error ${res.status}`);
+    }
+
+    const data = await res.json();
+    if (!data.audioBase64) return null;
+
+    const result = audioBase64ToUrl(data.audioBase64);
     if (result) {
       analysisCache[cacheKey] = result;
       saveCache(analysisCache);
     }
-    
     return result;
   } catch (error: any) {
     if (isQuotaOrBillingError(error)) {
-      console.warn("AI TTS Quota Reached (429/RESOURCE_EXHAUSTED).");
+      console.warn("AI TTS Quota Reached.");
     }
     return null;
   }
@@ -494,10 +364,8 @@ export const getNarrationAudio = async (text: string): Promise<string | null> =>
  * Speaks the provided text. Defaults to browser TTS for zero cost.
  */
 export const speakNarration = async (text: string, forceAIVoice = false): Promise<void> => {
-  // Pré-processamento para garantir pronúncia correta
   const processedText = text;
 
-  // Setup Media Session Metadata
   if ('mediaSession' in navigator) {
     navigator.mediaSession.metadata = new MediaMetadata({
       title: 'Narração Guerreiros',
@@ -509,13 +377,11 @@ export const speakNarration = async (text: string, forceAIVoice = false): Promis
     });
   }
 
-  // Se não for forçado, usa a voz do navegador (Grátis)
   if (!forceAIVoice) {
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(processedText);
     utterance.lang = 'pt-BR';
     
-    // Tentar encontrar uma voz mais natural em português
     const voices = window.speechSynthesis.getVoices();
     const ptVoice = voices.find(v => v.lang.includes('pt-BR') && (v.name.includes('Google') || v.name.includes('Natural'))) || 
                     voices.find(v => v.lang.includes('pt-BR'));
@@ -539,14 +405,13 @@ export const speakNarration = async (text: string, forceAIVoice = false): Promis
     return;
   }
 
-  // Voz da IA apenas se explicitamente solicitado
+  // Voz da IA no servidor se explicitamente solicitado
   try {
     const audioSrc = await getNarrationAudio(processedText);
     if (audioSrc) {
       const audio = new Audio(audioSrc);
       audio.crossOrigin = "anonymous";
 
-      // Tenta forçar o Audio Focus usando Web Audio API
       try {
         const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
         if (AudioContextClass) {
@@ -574,7 +439,6 @@ export const speakNarration = async (text: string, forceAIVoice = false): Promis
       throw new Error("AI TTS unavailable");
     }
   } catch (error) {
-    // Fallback para navegador se a IA falhar
     const utterance = new SpeechSynthesisUtterance(processedText);
     utterance.lang = 'pt-BR';
     window.speechSynthesis.speak(utterance);
@@ -582,50 +446,26 @@ export const speakNarration = async (text: string, forceAIVoice = false): Promis
 };
 
 /**
- * Scans the database data to identify anomalies using AI.
+ * Scans the database data to identify anomalies using server-side Gemini.
  */
 export const detectAnomalies = async (data: { players: Player[], matches: any[], metadata: any }): Promise<string> => {
-  const ai = getAI();
-  
-  const currentSystemDate = new Date().toISOString();
-  const prompt = `Você é um Agente de IA Especialista em Integridade de Dados para o Guerreiros Volleyball Club. 
-    Sua missão é varrer os dados do banco de dados e identificar ANOMALIAS, INCONSISTÊNCIAS ou possíveis ERROS que possam causar crashes ou injustiças no sistema.
-
-    DATA ATUAL DO SISTEMA: ${currentSystemDate}
-    (Nota: Se as datas das partidas estiverem próximas a esta data, elas estão CORRETAS. Não considere 2026 como futuro se o sistema disser que estamos em 2026).
-
-    DADOS PARA ANÁLISE:
-    - Jogadores: ${JSON.stringify(data.players.map(p => ({ id: p.id, name: p.name, elo: p.elo, matches: p.matchesPlayed, wins: p.wins, losses: p.losses })))}
-    - Últimas Partidas: ${JSON.stringify(data.matches.slice(0, 10))}
-    - Metadados do Sistema: ${JSON.stringify(data.metadata)}
-
-    O QUE PROCURAR:
-    1. ELOs impossíveis ou saltos desproporcionais.
-    2. Inconsistência entre Vitórias/Derrotas e total de Partidas Jogadas.
-    3. Jogadores com muitos jogos mas ELO muito baixo (ou vice-versa sem explicação).
-    4. Partidas com placares impossíveis ou falta de dados essenciais.
-    5. Erros de lógica nos metadados (ex: data de reset futura).
-    6. Jogadores duplicados ou com nomes suspeitos.
-
-    FORMATO DA RESPOSTA:
-    - Use Markdown.
-    - Comece com um resumo do estado de saúde do banco (✅ SAUDÁVEL, ⚠️ ATENÇÃO ou 🚨 CRÍTICO).
-    - Liste as anomalias encontradas em tópicos.
-    - Para cada anomalia, sugira uma ação corretiva.
-    - Se não houver anomalias, elogie a integridade dos dados.
-
-    Mantenha o tom profissional e técnico. Max 300 palavras.`;
-
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: prompt,
-      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+    const res = await fetch("/api/gemini/detect-anomalies", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ data }),
     });
-    return response.text || "Não foi possível realizar a varredura de anomalias no momento.";
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.details || errData.error || `HTTP error ${res.status}`);
+    }
+
+    const resp = await res.json();
+    return resp.report || "Varredura concluída.";
   } catch (error: any) {
     if (isQuotaOrBillingError(error)) {
-      console.warn("AI Anomaly Detection Quota Reached (429/RESOURCE_EXHAUSTED).");
+      console.warn("AI Anomaly Detection Quota Reached.");
       return "Limite de requisições da IA atingido. Tente novamente mais tarde.";
     }
     console.error("Erro na detecção de anomalias:", error);
@@ -634,7 +474,7 @@ export const detectAnomalies = async (data: { players: Player[], matches: any[],
 };
 
 /**
- * Analyzes billing costs and provides optimization suggestions using AI.
+ * Analyzes billing costs and provides optimization suggestions using server-side Gemini.
  */
 export const analyzeBillingCosts = async (billingData: {
   actual: number;
@@ -642,42 +482,23 @@ export const analyzeBillingCosts = async (billingData: {
   services: { name: string, cost: number, savings?: number }[];
   usage: any;
 }): Promise<string> => {
-  const ai = getAI();
-  
-  const prompt = `Você é um Consultor Sênior de FinOps e Especialista em Google Cloud. 
-    Analise o faturamento atual do aplicativo Guerreiros Volleyball e sugira estratégias de otimização de custos.
-
-    DADOS FINANCEIROS (1-17 Abr):
-    - Total Acumulado: R$ ${billingData.actual.toFixed(2)}
-    - Previsão Mensal: R$ ${billingData.forecast.toFixed(2)}
-    
-    DETALHE POR SERVIÇO:
-    ${billingData.services.map(s => `- ${s.name}: R$ ${s.cost.toFixed(2)}${s.savings ? ` (Economia: -R$ ${s.savings.toFixed(2)})` : ''}`).join('\n')}
-
-    MONITORAMENTO DE USO INTERNO:
-    - Leituras Firestore: ${billingData.usage.reads}
-    - Escritas Firestore: ${billingData.usage.writes}
-    - Chamadas de IA: ${billingData.usage.aiCalls}
-
-    MISSÃO:
-    1. Explique por que o Google Cloud Console e o Firebase Console mostram valores diferentes (Firebase é apenas uma sub-parte do faturamento total do Google Cloud).
-    2. Identifique o serviço "vilão" dos custos (o que está gastando mais).
-    3. Para o Cloud Run: Sugira se a configuração de "Instância Mínima = 0" e "CPU apenas durante requisição" faz sentido.
-    4. Para o Firestore: Sugira se o volume de leituras está alto para o número de sócios e sugira cache.
-    5. Para o Gemini: Explique as cotas gratuitas e se o uso atual justifica o custo.
-
-    ESTILO: Tom executivo, consultivo, direto e útil. Use Markdown e emojis. Max 250 palavras.`;
-
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: prompt,
-      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+    const res = await fetch("/api/gemini/billing-analysis", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ billingData }),
     });
-    return response.text || "O consultor de custos está ocupado no momento. Tente novamente mais tarde.";
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.details || errData.error || `HTTP error ${res.status}`);
+    }
+
+    const data = await res.json();
+    return data.analysis || "Análise concluída.";
   } catch (error: any) {
     if (isQuotaOrBillingError(error)) {
-      console.warn("AI Billing Analysis Quota Reached (429/RESOURCE_EXHAUSTED).");
+      console.warn("AI Billing Analysis Quota Reached.");
       return "Não foi possível conectar com o Consultor de IA (Limite de cota atingido).";
     }
     console.error("Erro na análise de custos:", error);
@@ -686,31 +507,112 @@ export const analyzeBillingCosts = async (billingData: {
 };
 
 /**
- * Generates a creative birthday message for a player.
+ * Generates a creative birthday message for a player via server-side Gemini.
  */
 export const generateBirthdayMessage = async (playerName: string): Promise<string> => {
-  const ai = getAI();
-  const prompt = `Gere uma mensagem de aniversário curta, criativa e animada para um sócio de um clube de vôlei. 
-    O nome do sócio é "${playerName}". 
-    A mensagem deve ser em português, usar emojis de vôlei e festa, e ter um tom de união e celebração. 
-    Evite usar palavras com gênero específico como "guerreiro" ou "guerreira", use termos neutros ou apenas o nome.
-    Não use aspas na resposta. Max 50 palavras.`;
-
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: prompt,
-      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+    const res = await fetch("/api/gemini/birthday-message", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ playerName }),
     });
 
-    return response.text || `Parabéns, ${playerName}! Que seu dia seja repleto de aces e vitórias dentro e fora de quadra! 🏐🎉`;
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.details || errData.error || `HTTP error ${res.status}`);
+    }
+
+    const data = await res.json();
+    return data.message || `Parabéns, ${playerName}! Que seu dia seja repleto de aces e vitórias dentro e fora de quadra! 🏐🎉`;
   } catch (error: any) {
     if (isQuotaOrBillingError(error)) {
-      console.warn("AI Birthday Message Quota Reached (429/RESOURCE_EXHAUSTED).");
+      console.warn("AI Birthday Message Quota Reached.");
     } else {
       console.error("Error generating birthday message:", error);
     }
     return `Parabéns, ${playerName}! Que seu dia seja repleto de aces e vitórias dentro e fora de quadra! 🏐🎉`;
   }
+};
+
+/**
+ * Streams text from the server-side Gemini SSE endpoint (/api/gemini/stream).
+ */
+export const streamGeminiText = async (
+  prompt: string,
+  onChunk: (chunk: string) => void,
+  systemInstruction?: string
+): Promise<string> => {
+  try {
+    const res = await fetch("/api/gemini/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt, systemInstruction }),
+    });
+
+    if (!res.ok || !res.body) {
+      throw new Error(`HTTP error ${res.status}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let fullText = "";
+    let buffer = "";
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (line.startsWith("data: ")) {
+          const payload = line.slice(6).trim();
+          if (payload === "[DONE]") break;
+          try {
+            const parsed = JSON.parse(payload);
+            if (parsed.text) {
+              fullText += parsed.text;
+              onChunk(parsed.text);
+            }
+          } catch {
+            // ignore partial JSON
+          }
+        }
+      }
+    }
+
+    return fullText;
+  } catch (error: any) {
+    isQuotaOrBillingError(error);
+    throw error;
+  }
+};
+
+/**
+ * Connects to the server-side Gemini Live API WebSocket proxy (/api/gemini/live).
+ */
+export const connectGeminiLive = (callbacks: {
+  onOpen?: () => void;
+  onMessage?: (message: any) => void;
+  onError?: (error: any) => void;
+  onClose?: () => void;
+}): WebSocket => {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const ws = new WebSocket(`${protocol}//${window.location.host}/api/gemini/live`);
+
+  ws.onopen = () => callbacks.onOpen?.();
+  ws.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      callbacks.onMessage?.(data);
+    } catch (e) {
+      callbacks.onError?.(e);
+    }
+  };
+  ws.onerror = (event) => callbacks.onError?.(event);
+  ws.onclose = () => callbacks.onClose?.();
+
+  return ws;
 };
 

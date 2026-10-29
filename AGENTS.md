@@ -76,6 +76,11 @@ O gerenciamento da lista de intenção (quem "VAI" ou "NÃO VAI" jogar) deve seg
    - **Agendamento Fixo:** Disparos automáticos às **10:00** e **16:00** nos dias de partida.
    - **Filtro de Destinatários:** Apenas sócios com status `active` que ainda constam como "Indecisos" (sem resposta GOING ou NOT_GOING na sessão).
 
+6. **Unicidade de Registro de Sócio (Proibição de Chaves Duplicadas / Falsos Convidados):**
+   - Todo sócio ativo que confirma presença deve constar estritamente uma única vez na lista de confirmados, sob o seu nome e ID canônico (`p.id`).
+   - É expressamente proibido propagar ou exibir o UID de autenticação ou o e-mail do atleta como registros adicionais de 'Convidado'.
+   - O pipeline de intenções deve consolidar confirmações originadas por UID ou e-mail diretamente no ID mestre do sócio e expurgar chaves de alias redundantes da visualização de confirmados e da lista de exportação do WhatsApp.
+
 ---
 
 ## 🔄 Pipeline Sequencial de Geração e Balanceamento de Partidas
@@ -246,6 +251,26 @@ Para garantir que as regras de negócio de balanceamento nunca sofram regressõe
    - Ao modificar `utils/teamLogic.ts`, o agente deve obrigatoriamente rodar `npm run test:rules` e `npm run test:load` localmente antes de finalizar a tarefa.
    - O teste de carga (`test:load`) simula 100 partidas consecutivas para verificar se o sistema mantém a integridade do ELO (soma zero) e a equidade no rodízio de levantadores e jogadores.
    - É proibido desabilitar os hooks de Git (`--no-verify`) para contornar falhas de lógica.
+
+---
+
+## 📊 Auditoria de Partidas Acumuladas, Sinergias e Integridade Diária
+
+Para garantir a transparência histórica e a exatidão estatística de todos os sócios:
+
+1. **Ranking Acumulado Dinâmico (Coleção `matches` como Fonte da Verdade):**
+   - O ranking acumulado consolida dinamicamente todas as partidas disputadas desde a fundação do clube diretamente da coleção `matches`.
+   - O cômputo de partidas disputadas (`matchesPlayed`), vitórias (`wins`), derrotas e saldo de pontos para ordenação e exibição na tabela baseia-se nas estatísticas calculadas dinamicamente das partidas efetivas (`topStats.dailyStats`), prevenindo que documentos de atletas com contadores desatualizados distorçam o ranking.
+   - Discrepâncias acumuladas são auditadas e sincronizadas diretamente contra os documentos da coleção `matches`.
+
+2. **Exibição de Menores Taxas de Sucesso (Atrito / Menor Aproveitamento em Dupla):**
+   - O `RankingView` apresenta a métrica de **Menores Taxas de Sucesso** ao lado das Melhores Parcerias e Maiores Rivalidades:
+     - **Painel Visual:** Card dedicado com indicador de tendência descendente (`TrendingDown`), exibindo as 5 duplas com menor aproveitamento percentual, saldo de vitórias/derrotas e volume de partidas disputadas juntas.
+     - **Relatório WhatsApp (`handleCopyTextSummary`):** Seção dedicada exportando as duplas com menor taxa de vitórias no período (sessão ou acumulado).
+   - **Critério de Elegibilidade:** Mínimo de 1 partida em sessões diárias e 2 partidas no ranking acumulado, ordenando por menor taxa de vitória e pontuação bayesiana (Laplace smoothing).
+
+3. **Validação Resiliente de Fuso Horário nos Resultados Diários:**
+   - As rotinas de recuperação e auditoria de estatísticas diárias (`recalculateDailyStats` em `useAppLogic.ts`) utilizam conversão explícita baseada no fuso de Brasília (`America/Sao_Paulo`) para cruzar `m.date` e `m.timestamp`, garantindo que nenhuma partida do dia seja desconsiderada por variações de formato (data simples vs ISO) ou deslocamento de fuso.
 
 ---
 

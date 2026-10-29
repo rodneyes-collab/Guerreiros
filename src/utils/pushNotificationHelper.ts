@@ -10,12 +10,20 @@ export interface IntentionPushPayload {
 }
 
 export interface IntentionReminderPushPayload {
-  period: 'morning' | 'afternoon';
+  period: 'morning' | 'afternoon' | 'wednesday';
   customMessage?: string;
   totalUndecided?: number;
 }
 
-export function getIntentionReminderText(period: 'morning' | 'afternoon') {
+export function getIntentionReminderText(period: 'morning' | 'afternoon' | 'wednesday', targetDateFormatted?: string) {
+  if (period === 'wednesday') {
+    return {
+      title: '🏐 Amanhã tem Jogo! Confirme sua Presença',
+      body: targetDateFormatted
+        ? `Guerreiro(a), o jogo oficial é amanhã (${targetDateFormatted})! Confirme sua presença ou ausência na lista de intenções.`
+        : 'Guerreiro(a), o jogo oficial é amanhã (quinta-feira)! Confirme sua presença ou ausência na lista de intenções.'
+    };
+  }
   if (period === 'morning') {
     return {
       title: '🏐 Bom dia, Guerreiro! Confirme sua Presença',

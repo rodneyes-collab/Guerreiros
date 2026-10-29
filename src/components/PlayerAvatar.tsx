@@ -12,7 +12,7 @@ interface PlayerAvatarProps {
   showBorder?: boolean;
 }
 
-export const PlayerAvatar: React.FC<PlayerAvatarProps> = ({
+export const PlayerAvatar = React.memo<PlayerAvatarProps>(({
   player,
   name: propName,
   gender: propGender,
@@ -88,4 +88,16 @@ export const PlayerAvatar: React.FC<PlayerAvatarProps> = ({
       </span>
     </div>
   );
-};
+}, (prevProps, nextProps) => {
+  return prevProps.player?.id === nextProps.player?.id &&
+    prevProps.player?.name === nextProps.player?.name &&
+    prevProps.player?.photoUrl === nextProps.player?.photoUrl &&
+    prevProps.player?.gender === nextProps.player?.gender &&
+    prevProps.name === nextProps.name &&
+    prevProps.gender === nextProps.gender &&
+    prevProps.photoUrl === nextProps.photoUrl &&
+    prevProps.id === nextProps.id &&
+    prevProps.size === nextProps.size &&
+    prevProps.className === nextProps.className &&
+    prevProps.showBorder === nextProps.showBorder;
+});

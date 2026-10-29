@@ -8,7 +8,9 @@ import { db, collection, doc, writeBatch, serverTimestamp } from '../../firebase
 const fireConfetti = confetti.create(undefined, { useWorker: false, resize: true });
 
 export const useBirthdays = (providedPlayers?: Player[]) => {
-  const { players: storePlayers, currentPlayer, showNotification } = useStore();
+  const storePlayers = useStore(state => state.players);
+  const currentPlayer = useStore(state => state.currentPlayer);
+  const showNotification = useStore(state => state.showNotification);
   const players = providedPlayers || storePlayers;
   const [hasCelebrated, setHasCelebrated] = useState(false);
 

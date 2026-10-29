@@ -1,6 +1,6 @@
 
-import { GoogleGenAI } from "@google/genai";
 import { Player, Match } from "../types";
+import { getAI } from "./serverGemini";
 
 export interface CoachAnalysisData {
   player: Player;
@@ -11,15 +11,8 @@ export interface CoachAnalysisData {
 /**
  * AI Coach Service to provide personalized feedback to players.
  */
-export const runAICoachAnalysis = async (apiKey: string, data: CoachAnalysisData): Promise<string> => {
-  const ai = new GoogleGenAI({
-    apiKey: apiKey,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      }
-    }
-  });
+export const runAICoachAnalysis = async (_apiKey: string, data: CoachAnalysisData): Promise<string> => {
+  const ai = getAI();
 
   const { player, allPlayers, recentMatches } = data;
 
@@ -76,7 +69,7 @@ export const runAICoachAnalysis = async (apiKey: string, data: CoachAnalysisData
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
+      model: "gemini-3.8-flash",
       contents: prompt,
     });
     return response.text || "O Treinador IA está sem fôlego no momento. Tente novamente mais tarde.";

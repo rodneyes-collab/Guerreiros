@@ -17,7 +17,9 @@ import { Player } from '../../types';
  * Runs autonomously for Admin sessions according to configured schedule (Daily/Weekly).
  */
 export const useDatabaseMaintenance = () => {
-  const { user, userRole, showNotification } = useStore();
+  const user = useStore(state => state.user);
+  const userRole = useStore(state => state.userRole);
+  const showNotification = useStore(state => state.showNotification);
 
   useEffect(() => {
     const runAutonomousAgent = async () => {

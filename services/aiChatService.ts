@@ -1,17 +1,17 @@
 
-import { GoogleGenAI } from "@google/genai";
 import { Player, Match } from "../types";
+import { getAI } from "./serverGemini";
 
 /**
  * AI Chat Service to answer member questions with club context.
  */
 export const runAIChat = async (
-  apiKey: string, 
+  _apiKey: string, 
   message: string, 
   history: { role: 'user' | 'model', parts: string }[],
   context: { players: Player[], matches: Match[], rules?: string }
 ): Promise<string> => {
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = getAI();
 
   const clubContext = `
     CONTEXTO DO CLUBE:
@@ -44,7 +44,7 @@ export const runAIChat = async (
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
+      model: "gemini-3.8-flash",
       contents: fullPrompt,
     });
 

@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import React from 'react';
 import confetti from 'canvas-confetti';
 import { motion, AnimatePresence } from 'motion/react';
@@ -29,7 +30,7 @@ interface IntentionsViewProps {
 
 export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, currentPlayer, onMoveToAttendance, showNotification }) => {
   const { intentions, isLoaded, setIntent, resetIntent, clearIntentions, toggleAutomation, sendReminders, copyToWhatsApp, copyReminder, getPlayerConfirmationTime, refreshIntentions } = useIntentions();
-  const { players, attendance, preConfirmations, idToCanonicalId, showConfirmModal, isInitialLoading } = useStore();
+  const { players, attendance, preConfirmations, idToCanonicalId, showConfirmModal, isInitialLoading } = useStore(useShallow(state => ({players: state.players, attendance: state.attendance, preConfirmations: state.preConfirmations, idToCanonicalId: state.idToCanonicalId, showConfirmModal: state.showConfirmModal, isInitialLoading: state.isInitialLoading})));
   const { monthBirthdays, getBirthdaysByMonth } = useBirthdays(players);
   const [selectedMonth, setSelectedMonth] = React.useState<number>(0);
   const [isRefreshing, setIsRefreshing] = React.useState(false);
@@ -86,8 +87,10 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
 
   const {
     isGameDay,
+    isDayBeforeGame,
     morningSentToday,
     afternoonSentToday,
+    wednesdaySentToday,
     undecidedActiveCount,
     isSending: isReminderSending,
     triggerManualReminder
@@ -100,16 +103,6 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
     currentPlayer,
     showNotification
   });
-
-  const getWhatsAppLink = (player: Player) => {
-    let clean = (player.phone || '').replace(/\D/g, '');
-    if (!clean) return '';
-    if (clean.length === 10 || clean.length === 11) {
-      clean = '55' + clean;
-    }
-    const msg = `Olá, *${capitalizeName(player.name)}*! 🏐 Passando para lembrar de confirmar sua presença ou ausência para a próxima partida no Guerreiros App!\n\nConfirme em 5 segundos no link:\n${window.location.origin}/?public=true\n\nValeu!`;
-    return `https://api.whatsapp.com/send?phone=${clean}&text=${encodeURIComponent(msg)}`;
-  };
 
   const [isConfirming, setIsConfirming] = React.useState(false);
   const [isDeclining, setIsDeclining] = React.useState(false);
@@ -444,20 +437,53 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
     const confirmed: Player[] = [];
     const addedIds = new Set<string>();
 
+    const markPlayerAdded = (p: Player) => {
+      addedIds.add(p.id);
+      if (p.uid) {
+        addedIds.add(p.uid);
+        addedIds.add(p.uid.toLowerCase());
+      }
+      if (p.email) {
+        addedIds.add(p.email.toLowerCase());
+      }
+      const canonical = idToCanonicalId?.[p.id];
+      if (canonical) addedIds.add(canonical);
+    };
+
     // 1. Check known active players
     (players || []).filter(p => p.status === 'active' || (!p.status && p.status !== 'inactive')).forEach(p => {
       const intent = checkPlayerIntent(p);
       if (intent === 'GOING' && !addedIds.has(p.id)) {
-        addedIds.add(p.id);
+        markPlayerAdded(p);
         confirmed.push(p);
       }
     });
 
-    // 2. Include any responses where GOING is recorded for IDs not yet matching known players (e.g. guests / newly added mobile users)
+    // 2. Include any responses where GOING is recorded for IDs not yet matching known players (e.g. guests)
     Object.entries(intentions.responses || {}).forEach(([respId, status]) => {
       if (status === 'GOING' && !addedIds.has(respId)) {
+        // Double check against registered players by ID, UID, or email
+        const matchingPlayer = (players || []).find(p => 
+          p.id === respId || 
+          (p.uid && p.uid.toLowerCase() === respId.toLowerCase()) || 
+          (p.email && p.email.toLowerCase() === respId.toLowerCase()) ||
+          idToCanonicalId?.[respId] === p.id
+        );
+        if (matchingPlayer) {
+          markPlayerAdded(matchingPlayer);
+          if (!confirmed.some(c => c.id === matchingPlayer.id)) {
+            confirmed.push(matchingPlayer);
+          }
+          return;
+        }
+
         const canonical = idToCanonicalId?.[respId];
         if (canonical && addedIds.has(canonical)) return;
+
+        // Never synthesize a guest from a raw UID (28 alphanumeric chars) or email address
+        if (respId.includes('@') || /^[a-zA-Z0-9]{25,32}$/.test(respId)) {
+          return;
+        }
 
         // Check if player exists in preConfirmations
         const prePlayer = (preConfirmations || []).find(pc => pc.id === respId);
@@ -467,7 +493,7 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
           return;
         }
 
-        // Synthesize guest or member
+        // Synthesize guest only if explicitly marked as guest
         const guestName = respId.startsWith('guest_') ? respId.replace('guest_', 'Convidado ') : respId;
         addedIds.add(respId);
         confirmed.push({
@@ -838,15 +864,19 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
             <div className="bg-brand-primary/5 p-5 rounded-2xl border border-brand-primary/40 flex flex-col justify-between gap-4">
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Push Automático (Dia de Jogo)</p>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Push Automático (Véspera e Jogo)</p>
                   <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-brand-primary/20 text-brand-primary border border-brand-primary/30">
                     {undecidedActiveCount} indeciso(s)
                   </span>
                 </div>
                 <p className="text-[10px] text-slate-400 mb-2">
-                  Disparo automático pela manhã (10h) e à tarde (16h - última chamada).
+                  Disparo automático na quarta (véspera) e quinta-feira (10h e 16h).
                 </p>
-                <div className="flex items-center gap-2 text-[10px] font-semibold text-zinc-300">
+                <div className="flex items-center gap-2 text-[10px] font-semibold text-zinc-300 flex-wrap">
+                  <span className="flex items-center gap-1">
+                    {wednesdaySentToday ? '🟢 Quarta enviada' : '⚪ Quarta pendente'}
+                  </span>
+                  <span>•</span>
                   <span className="flex items-center gap-1">
                     {morningSentToday ? '🟢 Manhã enviada' : '⚪ Manhã pendente'}
                   </span>
@@ -856,7 +886,16 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
                   </span>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  disabled={isReminderSending || undecidedActiveCount === 0}
+                  onClick={() => triggerManualReminder('wednesday')}
+                  className="py-2.5 px-2 rounded-xl font-black uppercase tracking-wider text-[9px] bg-amber-500/20 text-amber-400 border border-amber-500/40 hover:bg-amber-500 hover:text-black transition-all disabled:opacity-40 flex items-center justify-center gap-1"
+                  title="Disparar lembrete de quarta-feira (véspera do jogo)"
+                >
+                  <BellRing className="w-3 h-3" />
+                  Push Quarta
+                </button>
                 <button
                   disabled={isReminderSending || undecidedActiveCount === 0}
                   onClick={() => triggerManualReminder('morning')}

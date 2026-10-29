@@ -7,7 +7,7 @@ import { db, doc, setDoc } from '../../firebase';
 const fireConfetti = confetti.create(undefined, { useWorker: false, resize: true });
 
 export const useWelcomeCelebration = () => {
-  const { currentPlayer } = useStore();
+  const currentPlayer = useStore(state => state.currentPlayer);
   const [showWelcome, setShowWelcome] = useState(false);
   const [hasTriggered, setHasTriggered] = useState(false);
 

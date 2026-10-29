@@ -56,10 +56,14 @@ self.onmessage = (e: MessageEvent) => {
           if (email) {
             seenEmails.add(email);
             emailToCanonicalId[email] = docId;
+            idToCanonical[email] = docId;
+            idToCanonical[email.toLowerCase()] = docId;
           }
           if (uid) {
             seenUids.add(uid);
             uidToCanonicalId[uid] = docId;
+            idToCanonical[uid] = docId;
+            idToCanonical[uid.toLowerCase()] = docId;
           }
 
           idToCanonical[docId] = docId;

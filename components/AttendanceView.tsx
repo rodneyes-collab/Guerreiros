@@ -1,4 +1,6 @@
+import { useShallow } from 'zustand/react/shallow';
 import React from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { useStore } from '../store';
 import { Player, Gender } from '../types';
 import { translateGender, capitalizeName } from '../utils/helpers';
@@ -62,7 +64,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
   userRole,
   setViewMode
 }) => {
-  const { attendance: allAttendance, preConfirmations: allPreConfirmations, isSyncing, matches, players: allPlayers } = useStore();
+  const { attendance: allAttendance, preConfirmations: allPreConfirmations, isSyncing, matches, players: allPlayers } = useStore(useShallow(state => ({attendance: state.attendance, preConfirmations: state.preConfirmations, isSyncing: state.isSyncing, matches: state.matches, players: state.players})));
 
   const { avgMatchDuration, todayMatchesCount, firstMatchStartTimeStr } = React.useMemo(() => {
     const today = new Date().toISOString().split('T')[0];
@@ -298,36 +300,45 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                     <p className="text-white/40 text-lg font-black uppercase tracking-widest italic">Aguardando convocações...</p>
                   </div>
                 ) : (
-                  displayedAttendance
-                    .map((player, idx) => {
-                      const fullPlayer = availablePlayers.find(p => p.id === player.id);
-                      const displayName = player.name || fullPlayer?.name || "Sócio sem nome";
-                      
-                      const generationResult = useStore.getState().generationResult;
-                      const isCurrentlyBenched = generationResult?.remainingPlayers?.some(rp => rp.id === player.id);
-                      const displayBenchedCount = (player.consecutiveBenched || 0) + (isCurrentlyBenched ? 1 : 0);
-                      
-                      const now = new Date();
-                      const currentTimeStr = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                  <AnimatePresence mode="popLayout">
+                    {displayedAttendance
+                      .map((player, idx) => {
+                        const fullPlayer = availablePlayers.find(p => p.id === player.id);
+                        const displayName = player.name || fullPlayer?.name || "Sócio sem nome";
+                        
+                        const generationResult = useStore.getState().generationResult;
+                        const isCurrentlyBenched = generationResult?.remainingPlayers?.some(rp => rp.id === player.id);
+                        const displayBenchedCount = (player.consecutiveBenched || 0) + (isCurrentlyBenched ? 1 : 0);
+                        
+                        const now = new Date();
+                        const currentTimeStr = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 
-                      const predicted = calculatePredictedMatches(
-                        currentTimeStr,
-                        SESSION_END_TIME,
-                        avgMatchDuration,
-                        attendance.length,
-                        player.departureTime || undefined,
-                        todayMatchesCount,
-                        player.arrivalTime || undefined,
-                        firstMatchStartTimeStr || SESSION_START_TIME,
-                        player.dailyMatches || 0
-                      );
-                      
-                      console.log(`Debug: Player ${player.name}, totalPlayers: ${attendance.length}, predicted: ${predicted}`);
+                        const predicted = calculatePredictedMatches(
+                          currentTimeStr,
+                          SESSION_END_TIME,
+                          avgMatchDuration,
+                          attendance.length,
+                          player.departureTime || undefined,
+                          todayMatchesCount,
+                          player.arrivalTime || undefined,
+                          firstMatchStartTimeStr || SESSION_START_TIME,
+                          player.dailyMatches || 0
+                        );
+                        
+                        console.log(`Debug: Player ${player.name}, totalPlayers: ${attendance.length}, predicted: ${predicted}`);
 
-                      const hasSpecialSchedule = player.departureTime || player.arrivalTime;
+                        const hasSpecialSchedule = player.departureTime || player.arrivalTime;
 
-                      return (
-                        <div key={player.id || `attendance-${idx}`} className={`flex flex-col p-2 rounded-xl border transition-all group shadow-sm hover:shadow-xl bg-brand-light ${hasSpecialSchedule ? 'border-brand-primary/60 bg-brand-primary/5' : 'border-brand-primary/20'} hover:border-brand-primary/50 gap-1.5 relative`}>
+                        return (
+                          <motion.div 
+                            key={player.id || `attendance-${idx}`} 
+                            layout
+                            initial={{ opacity: 0, x: -24, scale: 0.96 }}
+                            animate={{ opacity: 1, x: 0, scale: 1 }}
+                            exit={{ opacity: 0, x: 24, scale: 0.92 }}
+                            transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+                            className={`flex flex-col p-2 rounded-xl border transition-all group shadow-sm hover:shadow-xl bg-brand-light ${hasSpecialSchedule ? 'border-brand-primary/60 bg-brand-primary/5' : 'border-brand-primary/20'} hover:border-brand-primary/50 gap-1.5 relative`}
+                          >
                           {hasSpecialSchedule && (
                             <div className="absolute top-0 right-0 w-16 h-16 -mr-8 -mt-8 bg-brand-primary/5 rounded-full blur-xl group-hover:bg-brand-primary/10 transition-all"></div>
                           )}
@@ -508,9 +519,10 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                                </div>
                              )}
                           </div>
-                        </div>
+                        </motion.div>
                       );
-                    })
+                    })}
+                  </AnimatePresence>
                 )}
                 </div>
               <div className="p-8 bg-brand-primary/5 border-t border-brand-primary/40">
@@ -556,25 +568,32 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                     <p className="text-white/60 text-xl font-black uppercase tracking-tighter italic">Todos os guerreiros já estão em campo!</p>
                   </span>
                 ) : (
-                    activeAvailablePlayers
-                    .filter(p => !attendance.some(a => a.id === p.id))
-                    .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
-                    .map((player, idx) => (
-                      <button 
-                        key={player.id || `available-${idx}`} 
-                        onClick={() => registerAttendance(player)} 
-                        disabled={isSyncing}
-                        className={`flex items-center justify-between p-2 rounded-xl border hover:shadow-xl transition-all text-left group bg-brand-light border-brand-primary/40 hover:border-brand-primary/50 ${isSyncing ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      >
-                        <span className="min-w-0">
-                          <p className={`text-[12px] font-black uppercase flex items-center gap-1.5 leading-tight tracking-tighter ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
-                            {capitalizeName(player.name || "Sócio")}
-                            {player.isOfficialSetter && <span className="text-[7px] font-black uppercase bg-brand-primary/10 text-brand-primary px-1.5 py-0.5 rounded-full border border-brand-primary/40 leading-none">L</span>}
-                          </p>
-                        </span>
-                        <span className="p-1 bg-brand-primary/10 text-brand-primary group-hover:bg-brand-primary group-hover:text-brand-secondary rounded-lg shadow-lg transition-all border border-brand-primary/40 shrink-0"><Plus className="w-4 h-4" /></span>
-                      </button>
-                    ))
+                  <AnimatePresence mode="popLayout">
+                    {activeAvailablePlayers
+                      .filter(p => !attendance.some(a => a.id === p.id))
+                      .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+                      .map((player, idx) => (
+                        <motion.button 
+                          key={player.id || `available-${idx}`} 
+                          layout
+                          initial={{ opacity: 0, scale: 0.95 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.92 }}
+                          transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+                          onClick={() => registerAttendance(player)} 
+                          disabled={isSyncing}
+                          className={`flex items-center justify-between p-2 rounded-xl border hover:shadow-xl transition-all text-left group bg-brand-light border-brand-primary/40 hover:border-brand-primary/50 ${isSyncing ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        >
+                          <span className="min-w-0">
+                            <p className={`text-[12px] font-black uppercase flex items-center gap-1.5 leading-tight tracking-tighter ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
+                              {capitalizeName(player.name || "Sócio")}
+                              {player.isOfficialSetter && <span className="text-[7px] font-black uppercase bg-brand-primary/10 text-brand-primary px-1.5 py-0.5 rounded-full border border-brand-primary/40 leading-none">L</span>}
+                            </p>
+                          </span>
+                          <span className="p-1 bg-brand-primary/10 text-brand-primary group-hover:bg-brand-primary group-hover:text-brand-secondary rounded-lg shadow-lg transition-all border border-brand-primary/40 shrink-0"><Plus className="w-4 h-4" /></span>
+                        </motion.button>
+                      ))}
+                  </AnimatePresence>
                 )}
               </div>
             </div>

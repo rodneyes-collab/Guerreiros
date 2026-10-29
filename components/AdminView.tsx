@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import React, { useState, useEffect, useMemo } from 'react';
 import { useStore } from '../store';
 import { 
@@ -81,9 +82,12 @@ import { useWebAuthn } from '../src/hooks/useWebAuthn';
 import { BirthdayAdminCard } from '../src/components/BirthdayAdminCard';
 import { HelpTooltip } from '../src/components/HelpTooltip';
 import { TeamBalancingSimulatorCard } from '../src/components/TeamBalancingSimulatorCard';
+import { AdminEloAuditView } from '../src/components/AdminEloAuditView';
+import { AthleteTimeAuditReport } from '../src/components/AthleteTimeAuditReport';
 
 import { getLevelSuggestions, LevelSuggestion } from '../utils/levelAuditUtils';
 import { getSyncModeDetails, formatTimeSince, SYNC_MODE_OPTIONS } from '../src/utils/syncConfig';
+import { getRiskWhatsAppLink } from "../utils/whatsapp";
 import { SyncFrequencyMode } from '../types';
 
 const MemoryMonitorCard = () => {
@@ -198,7 +202,7 @@ interface AdminViewProps {
   savePlayer: (player: Player) => Promise<void>;
 }
 
-type AdminTab = 'dashboard' | 'members' | 'sentinel' | 'tournaments' | 'system' | 'notifications' | 'audit' | 'security' | 'maintenance' | 'qrcode';
+type AdminTab = 'dashboard' | 'members' | 'sentinel' | 'tournaments' | 'system' | 'notifications' | 'audit' | 'security' | 'maintenance' | 'qrcode' | 'elo-audit';
 
 export const AdminView: React.FC<AdminViewProps> = ({
   resetDailyStats,
@@ -256,7 +260,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
     lastSyncTimestamp,
     setIsSyncSettingsOpen,
     isSyncing
-  } = useStore();
+  } = useStore(useShallow(state => ({userRole: state.userRole, players: state.players, matches: state.matches, payments: state.payments, tournaments: state.tournaments, systemMetadata: state.systemMetadata, setSystemMetadata: state.setSystemMetadata, showNotification: state.showNotification, usageStats: state.usageStats, setUsageStats: state.setUsageStats, monthlyUsageStats: state.monthlyUsageStats, isScanningAnomalies: state.isScanningAnomalies, anomalyReport: state.anomalyReport, user: state.user, currentPlayer: state.currentPlayer, setSelectedRankingPlayerId: state.setSelectedRankingPlayerId, setViewMode: state.setViewMode, attendance: state.attendance, syncMode: state.syncMode, setSyncMode: state.setSyncMode, lastSyncTimestamp: state.lastSyncTimestamp, setIsSyncSettingsOpen: state.setIsSyncSettingsOpen, isSyncing: state.isSyncing})));
 
   const getPublicUrl = () => {
     const origin = window.location.origin;
@@ -969,6 +973,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
     { id: 'tournaments', label: 'Torneios', icon: Trophy },
     { id: 'system', label: 'Sistema', icon: Settings },
     { id: 'audit', label: 'Auditoria', icon: ShieldCheck },
+    { id: 'elo-audit', label: 'Auditoria ELO', icon: History },
     { id: 'security', label: 'Segurança', icon: Shield },
   ];
 
@@ -1066,17 +1071,6 @@ export const AdminView: React.FC<AdminViewProps> = ({
                             riskBadgeColor = 'border-orange-500/30 text-orange-500 bg-orange-500/5';
                             riskLabel = 'Risco Alto';
                           }
-
-                          // WhatsApp Message
-                          const getRiskWhatsAppLink = (p: Player, days: number) => {
-                            let clean = (p.phone || '').replace(/\D/g, '');
-                            if (!clean) return '';
-                            if (clean.length === 10 || clean.length === 11) {
-                              clean = '55' + clean;
-                            }
-                            const msg = `Olá, *${p.name}*! Tudo bem? Sentimos sua falta nos últimos ${days} dias de jogos do Guerreiros 🏐 Sentimos falta do seu jogo e da resenha! Está tudo bem? Esperamos você de volta nos próximos jogos! 🔥`;
-                            return `https://api.whatsapp.com/send?phone=${clean}&text=${encodeURIComponent(msg)}`;
-                          };
 
                           const waUrl = getRiskWhatsAppLink(player, consecutiveMissed);
 
@@ -1281,36 +1275,85 @@ export const AdminView: React.FC<AdminViewProps> = ({
                     
                     
 <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary text-white space-y-6">
-  <h3 className="text-lg font-black uppercase tracking-tight text-white">Configurações</h3>
-  <div className="space-y-4">
-    <div className="space-y-2">
-      <p className="text-[10px] font-black text-white/40 uppercase tracking-widest">Cota Diária IA</p>
-      <div className="grid grid-cols-4 gap-2">
-        {[50, 100, 200, 500].map(q => (
-          <button
-            key={q}
-            onClick={() => setSystemMetadata({ dailyAICallsQuota: q })}
-            className={`py-2 rounded-xl text-[10px] font-black transition-all ${
-              (systemMetadata.dailyAICallsQuota || 100) === q
-                ? 'bg-brand-primary text-brand-secondary'
-                : 'bg-white/5 text-white/40 hover:bg-white/10'
-            }`}
-          >
-            {q}
-          </button>
-        ))}
+  <div className="flex items-center gap-3">
+    <div className="p-2.5 bg-brand-primary/10 rounded-xl border border-brand-primary/30">
+      <Trophy className="w-5 h-5 text-brand-primary" />
+    </div>
+    <div>
+      <h3 className="text-lg font-black uppercase tracking-tight text-white">Configuração do Bônus Diário & Cotas</h3>
+      <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Defina o bônus de fidelidade e limites do sistema no Firestore</p>
+    </div>
+  </div>
+
+  <div className="space-y-6">
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="space-y-2">
+        <p className="text-[10px] font-black text-white/40 uppercase tracking-widest">Cota Diária IA</p>
+        <div className="grid grid-cols-4 gap-2">
+          {[50, 100, 200, 500].map(q => (
+            <button
+              key={q}
+              onClick={() => setSystemMetadata({ dailyAICallsQuota: q })}
+              className={`py-2 rounded-xl text-[10px] font-black transition-all ${
+                (systemMetadata.dailyAICallsQuota || 100) === q
+                  ? 'bg-brand-primary text-brand-secondary'
+                  : 'bg-white/5 text-white/40 hover:bg-white/10'
+              }`}
+            >
+              {q}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="space-y-2">
+        <p className="text-[10px] font-black text-white/40 uppercase tracking-widest">Cota Total Leituras</p>
+        <div className="flex items-center gap-3 bg-white/5 p-3 rounded-xl border border-white/5">
+          <input
+            type="number"
+            defaultValue={systemMetadata.dailyReadQuota || 50000}
+            onBlur={(e) => updateQuotaSettings(parseInt(e.target.value))}
+            className="flex-1 bg-transparent border-none text-sm font-black text-white focus:outline-none"
+          />
+          <span className="text-[10px] text-white/20 font-black uppercase">Leituras</span>
+        </div>
       </div>
     </div>
-    <div className="space-y-2">
-      <p className="text-[10px] font-black text-white/40 uppercase tracking-widest">Cota Total Leituras</p>
-      <div className="flex items-center gap-3 bg-white/5 p-3 rounded-xl border border-white/5">
-        <input
-          type="number"
-          defaultValue={systemMetadata.dailyReadQuota || 50000}
-          onBlur={(e) => updateQuotaSettings(parseInt(e.target.value))}
-          className="flex-1 bg-transparent border-none text-sm font-black text-white focus:outline-none"
-        />
-        <span className="text-[10px] text-white/20 font-black uppercase">Leituras</span>
+
+    <div className="pt-4 border-t border-white/10 space-y-4">
+      <p className="text-xs font-black uppercase tracking-wider text-brand-primary flex items-center gap-2">
+        <Zap className="w-4 h-4" /> Bônus Diário de Presença e Fidelidade (ELO)
+      </p>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="space-y-2 bg-white/5 p-4 rounded-2xl border border-white/5">
+          <p className="text-[10px] font-black text-white/60 uppercase tracking-widest">Valor do Bônus Diário (pontos ELO)</p>
+          <div className="flex items-center gap-3 bg-black/40 p-3 rounded-xl border border-white/10">
+            <input
+              type="number"
+              defaultValue={systemMetadata.dailyAttendanceBonus ?? 20}
+              onBlur={(e) => updateSystemMetadata({ dailyAttendanceBonus: parseInt(e.target.value) || 20 })}
+              className="flex-1 bg-transparent border-none text-base font-black font-mono text-brand-primary focus:outline-none"
+            />
+            <span className="text-[10px] text-white/40 font-black uppercase">Pontos ELO</span>
+          </div>
+          <p className="text-[9px] font-medium text-white/30">Acórdão concedido ao atingir a quantidade mínima de partidas na sessão.</p>
+        </div>
+
+        <div className="space-y-2 bg-white/5 p-4 rounded-2xl border border-white/5">
+          <p className="text-[10px] font-black text-white/60 uppercase tracking-widest">Mínimo de Partidas no Dia</p>
+          <div className="flex items-center gap-3 bg-black/40 p-3 rounded-xl border border-white/10">
+            <input
+              type="number"
+              min={1}
+              max={10}
+              defaultValue={systemMetadata.minMatchesForDailyBonus ?? 2}
+              onBlur={(e) => updateSystemMetadata({ minMatchesForDailyBonus: Math.max(1, parseInt(e.target.value) || 2) })}
+              className="flex-1 bg-transparent border-none text-base font-black font-mono text-brand-primary focus:outline-none"
+            />
+            <span className="text-[10px] text-white/40 font-black uppercase">Partidas Mínimas</span>
+          </div>
+          <p className="text-[9px] font-medium text-white/30">Quantidade mínima de jogos que o atleta deve disputar no dia para receber o bônus.</p>
+        </div>
       </div>
     </div>
   </div>
@@ -3041,6 +3084,13 @@ export const AdminView: React.FC<AdminViewProps> = ({
                     </div>
                   )}
                 </div>
+              </div>
+            )}
+
+            {activeTab === 'elo-audit' && (
+              <div className="space-y-8">
+                <AdminEloAuditView players={players} matches={matches} dailyBonus={systemMetadata.dailyAttendanceBonus || 20} />
+                <AthleteTimeAuditReport players={players} matches={matches} attendance={attendance} />
               </div>
             )}
 

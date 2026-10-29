@@ -8,7 +8,19 @@ interface TeamBalancingSimulatorCardProps {
 }
 
 export const TeamBalancingSimulatorCard: React.FC<TeamBalancingSimulatorCardProps> = ({ onApplyToMatch }) => {
-  const { players, attendance, matches, balancingStrategy, setBalancingStrategy, balancingRatingMode, setBalancingRatingMode, teamGenerationMode, setTeamGenerationMode, generationResult: currentMatch, setGenerationResult, setViewMode, showNotification } = useStore();
+  const players = useStore(state => state.players);
+  const attendance = useStore(state => state.attendance);
+  const matches = useStore(state => state.matches);
+  const balancingStrategy = useStore(state => state.balancingStrategy);
+  const setBalancingStrategy = useStore(state => state.setBalancingStrategy);
+  const balancingRatingMode = useStore(state => state.balancingRatingMode);
+  const setBalancingRatingMode = useStore(state => state.setBalancingRatingMode);
+  const teamGenerationMode = useStore(state => state.teamGenerationMode);
+  const setTeamGenerationMode = useStore(state => state.setTeamGenerationMode);
+  const currentMatch = useStore(state => state.generationResult);
+  const setGenerationResult = useStore(state => state.setGenerationResult);
+  const setViewMode = useStore(state => state.setViewMode);
+  const showNotification = useStore(state => state.showNotification);
 
   const [simStrategy, setSimStrategy] = useState<'BOTTOM_TWO' | 'SYNERGY' | 'BOTH'>(balancingStrategy || 'BOTH');
   const [simRatingMode, setSimRatingMode] = useState<'IC_ONLY' | 'HYBRID'>(balancingRatingMode || 'IC_ONLY');

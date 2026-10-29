@@ -67,6 +67,14 @@ class SyncWorkerService {
               const player = { id: docId, name: (data.name || 'Jogador Sem Nome').trim(), ...data };
               list.push(player);
               idToCanonical[docId] = docId;
+              if (player.uid) {
+                idToCanonical[player.uid] = docId;
+                idToCanonical[player.uid.toLowerCase()] = docId;
+              }
+              if (player.email) {
+                idToCanonical[player.email] = docId;
+                idToCanonical[player.email.toLowerCase()] = docId;
+              }
             }
             resolve({ sortedList: list.sort((a, b) => a.name.localeCompare(b.name)), idToCanonical });
           } else if (type === 'PARSE_ATTENDANCE') {

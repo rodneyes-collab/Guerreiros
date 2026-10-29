@@ -1,10 +1,11 @@
+import { useShallow } from 'zustand/react/shallow';
 import React, { useEffect } from 'react';
 import { useStore } from '../store';
 import { CheckCircle, AlertCircle, Info, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 export const Notification: React.FC = () => {
-  const { notification, hideNotification } = useStore();
+  const { notification, hideNotification } = useStore(useShallow(state => ({notification: state.notification, hideNotification: state.hideNotification})));
 
   useEffect(() => {
     if (notification) {

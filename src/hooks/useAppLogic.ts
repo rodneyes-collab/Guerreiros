@@ -42,6 +42,15 @@ import { Player, Team, Match, Gender, Tournament, TournamentTeam, TournamentMatc
 import { generateTeams, generateTournamentTeams, getPriorityQueue, autoFixAllInconsistencies, optimizeTeamSynergyIteratively, enrichPlayerImmutably, cloneGenerationResultImmutably, calculateCompositePerformanceRating } from '../../utils/teamLogic';
 import { playerSchema, matchSchema } from '../lib/schemas';
 
+const dateFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Sao_Paulo',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit'
+});
+
+const getCorrectDate = (ts: number) => dateFormatter.format(new Date(ts));
+
 import { analyzeMatch, verifyRules, detectAnomalies, generateTeamAnnouncementAudio } from '../../services/geminiService';
 import { logAction, AuditAction } from '../../services/auditService';
 import { playFeedbackSound, triggerHaptic } from '../utils/feedback';
@@ -49,6 +58,13 @@ import { playFeedbackSound, triggerHaptic } from '../utils/feedback';
 // Module-level safeguards to prevent multiple simultaneous runners of critical hooks
 let activeBirthdaysSyncId: string | null = null;
 let activeGuardianId: string | null = null;
+
+const dateCache = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Sao_Paulo',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
 
 export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, size: number) => Promise<void>) => {
   const [instanceId] = useState(() => generateUUID());
@@ -289,12 +305,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
         const sortedByTime = [...sessionMatches].sort((a, b) => a.timestamp - b.timestamp);
         
         const getCorrectDate = (ts: number) => {
-          return new Intl.DateTimeFormat('en-CA', {
-            timeZone: 'America/Sao_Paulo',
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit'
-          }).format(new Date(ts));
+          return dateCache.format(new Date(ts));
         };
 
         const sessionBaseDate = sortedByTime.length > 0 ? getCorrectDate(sortedByTime[0].timestamp) : getCorrectDate(now);
@@ -329,7 +340,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
           playersToFix.forEach(p => {
             if (!p.eloHistory) return;
             const fixedHistory = p.eloHistory.map((h: any) => {
-              if (h.date.includes('T')) {
+              if (typeof h.date === 'string' && h.date.includes('T')) {
                 const ts = new Date(h.date).getTime();
                 const d = ts > currentThreshold ? sessionBaseDate : getCorrectDate(ts);
                 return { ...h, date: d };
@@ -657,18 +668,20 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
         
         const updates: any = {};
         
-        // Se ainda não recebeu bônus de fidelidade hoje, adiciona +50 de fidelidade e soma 50 ao ELO
-        if (!hasFidelityToday) {
-          updates.fidelityPoints = (latestPlayer.fidelityPoints || 0) + 50;
+        const dailyBonus = systemMetadata?.dailyAttendanceBonus ?? 10;
+        const willHaveAtLeastTwoMatches = ((latestPlayer.dailyMatches || 0) + 1) >= 2;
+        // Se ainda não recebeu bônus de fidelidade hoje e atinge a 2ª partida do dia, adiciona o bônus diário de fidelidade
+        if (!hasFidelityToday && willHaveAtLeastTwoMatches) {
+          updates.fidelityPoints = (latestPlayer.fidelityPoints || 0) + dailyBonus;
           updates.lastFidelityDate = date;
-          finalPlayerElo += 50;
-          updates.dailyEloGain = (latestPlayer.dailyEloGain || 0) + 50;
+          finalPlayerElo += dailyBonus;
+          updates.dailyEloGain = (latestPlayer.dailyEloGain || 0) + dailyBonus;
           
           const fidelityHistoryEntry = {
             date: date,
             elo: finalPlayerElo,
             matchId: `fidelity-bonus-${date}-${timestamp}`,
-            change: 50,
+            change: dailyBonus,
             timestamp: timestamp - 1000,
             result: 'P' as 'P',
             fidelityBonus: true
@@ -776,20 +789,23 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
           consecutiveBenched: newConsecutiveBenched
         };
         
+        const dailyBonus = systemMetadata?.dailyAttendanceBonus ?? 20;
+        const minMatchesNeeded = systemMetadata?.minMatchesForDailyBonus ?? 2;
         const hasFidelityToday = p.lastFidelityDate === date;
-        if (!hasFidelityToday) {
-          updates.fidelityPoints = (p.fidelityPoints || 0) + 50;
+        const hasPlayedAtLeastMin = (p.dailyMatches || 0) >= minMatchesNeeded;
+        if (!hasFidelityToday && hasPlayedAtLeastMin) {
+          updates.fidelityPoints = (p.fidelityPoints || 0) + dailyBonus;
           updates.lastFidelityDate = date;
           
-          const newElo = p.elo + 50;
+          const newElo = p.elo + dailyBonus;
           updates.elo = newElo;
-          updates.dailyEloGain = (p.dailyEloGain || 0) + 50;
+          updates.dailyEloGain = (p.dailyEloGain || 0) + dailyBonus;
           
           const fidelityHistoryEntry = {
             date: date,
             elo: newElo,
             matchId: `fidelity-bonus-${date}-${timestamp}`,
-            change: 50,
+            change: dailyBonus,
             timestamp: timestamp - 1000,
             result: 'P' as 'P',
             fidelityBonus: true
@@ -805,17 +821,46 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       batch.delete(doc(db, 'metadata', 'currentMatch'));
 
       // Notificar jogadores sobre o resultado da partida
-      const playersToNotify = [...teamA, ...teamB];
-      const notificationData = await Promise.all(playersToNotify.map(async (p) => {
-        if (!p.id || !p.fcmToken) return { id: p.id, unreadCount: 1 };
-        try {
-          const q = query(collection(db, 'notifications'), where('playerUid', '==', p.uid), where('read', '==', false));
-          const snap = await getDocs(q);
-          return { id: p.id, unreadCount: snap.size + 1 };
-        } catch (e) {
-          return { id: p.id, unreadCount: 1 };
+const playersToNotify = [...teamA, ...teamB];
+      const notificationData: { id: string; unreadCount: number }[] = [];
+      const validPlayers = playersToNotify.filter(p => p && p.id && p.fcmToken && p.uid);
+
+      for (const p of playersToNotify) {
+        if (!p || !p.id) continue;
+        if (!p.fcmToken || !p.uid) {
+          notificationData.push({ id: p.id, unreadCount: 1 });
         }
-      }));
+      }
+
+      const chunkSize = 10;
+      const chunkPromises = [];
+      for (let i = 0; i < validPlayers.length; i += chunkSize) {
+        const chunk = validPlayers.slice(i, i + chunkSize);
+        chunkPromises.push((async () => {
+          const uids = chunk.map(p => p.uid);
+          try {
+            const q = query(collection(db, 'notifications'), where('playerUid', 'in', uids), where('read', '==', false));
+            const snap = await getDocs(q);
+
+            const countsByUid: Record<string, number> = {};
+            uids.forEach(uid => countsByUid[uid as string] = 0);
+
+            snap.forEach((doc) => {
+              const data = doc.data();
+              if (data.playerUid) {
+                countsByUid[data.playerUid] = (countsByUid[data.playerUid] || 0) + 1;
+              }
+            });
+
+            return chunk.map(p => ({ id: p.id!, unreadCount: (countsByUid[p.uid!] || 0) + 1 }));
+          } catch (e) {
+            return chunk.map(p => ({ id: p.id!, unreadCount: 1 }));
+          }
+        })());
+      }
+
+      const results = await Promise.all(chunkPromises);
+      results.forEach(res => notificationData.push(...res));
 
       const notifyResult = (p: Player, isTeamA: boolean) => {
         const isWinner = (isTeamA && winner === 'A') || (!isTeamA && winner === 'B');
@@ -1180,15 +1225,16 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       let nextElo = fullPlayer?.elo || 1200;
       let nextEloHistory = fullPlayer?.eloHistory || [];
 
+      const dailyBonus = systemMetadata?.dailyAttendanceBonus ?? 10;
       if (fullPlayer && fullPlayer.lastFidelityDate !== dateKey) {
         awardedFidelity = true;
-        nextFidelityPoints += 50;
-        nextElo += 50;
+        nextFidelityPoints += dailyBonus;
+        nextElo += dailyBonus;
         const newHistoryEntry = {
           date: dateKey,
           elo: nextElo,
           matchId: `fidelity-bonus-${dateKey}-${Date.now()}`,
-          change: 50,
+          change: dailyBonus,
           timestamp: Date.now() - 500,
           result: 'P' as 'P',
           fidelityBonus: true
@@ -1352,11 +1398,12 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
           });
           
           // Revert ELO bonus for each player in attendance
+          const dailyBonus = systemMetadata?.dailyAttendanceBonus ?? 10;
           for (const p of attendance) {
             const fullPlayer = players.find(fp => fp.id === p.id);
             if (fullPlayer && fullPlayer.lastFidelityDate === dateKey) {
-              const nextFidelityPoints = Math.max(0, (fullPlayer.fidelityPoints || 0) - 50);
-              const nextElo = Math.max(800, (fullPlayer.elo || 1200) - 50);
+              const nextFidelityPoints = Math.max(0, (fullPlayer.fidelityPoints || 0) - dailyBonus);
+              const nextElo = Math.max(800, (fullPlayer.elo || 1200) - dailyBonus);
               const filteredEloHistory = (fullPlayer.eloHistory || []).filter(h => 
                 !(h.date === dateKey && h.fidelityBonus)
               );
@@ -1841,7 +1888,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
         
         // Sempre atualiza o documento na lista de presença do dia atual para manter consistência no Ranking Diário
         // Independentemente de dailyMatches ser 0 (pode ter sido removido da única partida que jogou)
-        batch.set(doc(db, 'attendance', todayDateKey, 'players', p.id), cleanObject(playerUpdates), { merge: true });
+        batch.set(doc(db, 'attendance', getFirestoreDateKey(), 'players', p.id), cleanObject(playerUpdates), { merge: true });
 
         // Se a partida editada for de uma data passada, também tentamos atualizar o registro de presença daquela data específica
         if (updatedMatch.date && updatedMatch.date !== todayDateKey) {
@@ -1954,7 +2001,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       matchesSnap.forEach((docSnap: any) => {
         const data = docSnap.data();
         const rawDate = data.date;
-        const mDate = rawDate ? (rawDate.includes('T') ? rawDate.split('T')[0] : rawDate) : 'sem_data';
+        const mDate = rawDate ? (typeof rawDate === 'string' && typeof rawDate === 'string' && typeof rawDate === 'string' && rawDate.includes('T') ? rawDate.split('T')[0] : rawDate) : 'sem_data';
         dateCountMap[mDate] = (dateCountMap[mDate] || 0) + 1;
         fetchedMatches.push({ ...data, id: docSnap.id } as Match);
 
@@ -2260,7 +2307,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
             const snapshot = await getDocs(collection(db, collName));
             
             if (collName === 'attendance') {
-              for (const dateDoc of snapshot.docs) {
+              await Promise.all(snapshot.docs.map(async (dateDoc) => {
                 const playersSnapshot = await getDocs(collection(db, `attendance/${dateDoc.id}/players`));
                 const subBatch = writeBatch(db);
                 playersSnapshot.forEach(p => subBatch.delete(p.ref));
@@ -2269,7 +2316,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
                 const dateBatch = writeBatch(db);
                 dateBatch.delete(dateDoc.ref);
                 await dateBatch.commit();
-              }
+              }));
             } else {
               const batch = writeBatch(db);
               snapshot.forEach(doc => {
@@ -2345,6 +2392,14 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
               if (typeof p.wins !== 'number') { updates.wins = 0; needsFix = true; }
               if (typeof p.losses !== 'number') { updates.losses = 0; needsFix = true; }
               if (typeof p.dailyMatches !== 'number') { updates.dailyMatches = 0; needsFix = true; }
+              if (typeof p.dailyWins !== 'number') { updates.dailyWins = 0; needsFix = true; }
+              if (typeof p.dailyLosses !== 'number') { updates.dailyLosses = 0; needsFix = true; }
+              if (typeof p.dailyEloGain !== 'number') { updates.dailyEloGain = 0; needsFix = true; }
+              if (typeof p.consecutivePlayed !== 'number') { updates.consecutivePlayed = 0; needsFix = true; }
+              if (typeof p.consecutiveBenched !== 'number') { updates.consecutiveBenched = 0; needsFix = true; }
+              if (typeof p.fidelityPoints !== 'number') { updates.fidelityPoints = 0; needsFix = true; }
+              if (typeof p.playedLastMatch !== 'boolean') { updates.playedLastMatch = false; needsFix = true; }
+              if (typeof p.isPresent !== 'boolean') { updates.isPresent = false; needsFix = true; }
               if (typeof p.isOfficialSetter !== 'boolean') { updates.isOfficialSetter = false; needsFix = true; }
               if (typeof p.isAdmin !== 'boolean') { updates.isAdmin = false; needsFix = true; }
               
@@ -2380,7 +2435,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
             }
 
             // Fix missing or zero arrivalOrder
-            if (!attData.arrivalOrder || attData.arrivalOrder === 0) {
+            if (!attData.arrivalOrder || attData.arrivalOrder === 0 || attData.arrivalOrder !== index + 1) {
               updates.arrivalOrder = index + 1;
               needsUpdate = true;
             }
@@ -2671,6 +2726,36 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
     useStore.setState(state => ({ syncTrigger: state.syncTrigger + 1 }));
   };
 
+  const recalculateAllElo = async () => {
+    try {
+      setIsSyncing(true);
+      triggerDbStatus('writing');
+      showNotification('Recarregando e recalculando ELO de todos os sócios...', 'info');
+
+      const dailyBonus = systemMetadata.dailyAttendanceBonus !== undefined ? systemMetadata.dailyAttendanceBonus : 10;
+      const recalculatedPlayers = recalculateAllStatsFromMatches(players, matches, getFirestoreDateKey(), dailyBonus);
+
+      const batch = writeBatch(db);
+      recalculatedPlayers.forEach(p => {
+        const playerRef = doc(db, 'players', p.id);
+        const finalHistory = (p.eloHistory || []).slice(-200);
+        batch.set(playerRef, cleanObject({
+          ...p,
+          eloHistory: finalHistory
+        }), { merge: true });
+      });
+
+      await batch.commit();
+      showNotification('Recálculo de ELO concluído com sucesso!', 'success');
+      useStore.setState(state => ({ syncTrigger: state.syncTrigger + 1 }));
+    } catch (error) {
+      console.error('Erro no recálculo:', error);
+      showNotification('Falha ao recalcular pontos ELO.', 'error');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   const fixDatabaseAnomalies = async () => {
     try {
       setIsSyncing(true);
@@ -2707,12 +2792,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       const allSortedMatches = [...(matches || [])].sort((a, b) => a.timestamp - b.timestamp);
       
       const getCorrectDate = (ts: number) => {
-        return new Intl.DateTimeFormat('en-CA', {
-          timeZone: 'America/Sao_Paulo',
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit'
-        }).format(new Date(ts));
+        return dateCache.format(new Date(ts));
       };
 
       const dateMapping = new Map<string, string>(); // Maps old match dates to clean session dates
@@ -2736,7 +2816,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
         const cleanedHistory = p.eloHistory.map((h: any) => {
           let hDate = h.date;
           // Fix ISO strings
-          if (hDate.includes('T')) {
+          if (typeof hDate === 'string' && hDate.includes('T')) {
             hDate = getCorrectDate(new Date(hDate).getTime());
             historyChanged = true;
           }
@@ -2792,237 +2872,6 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       setIsSyncing(false);
     }
   };
-
-
-  const recalculateAllElo = async () => {
-    try {
-      setIsSyncing(true);
-      triggerDbStatus('writing');
-      showNotification('Recalculando todos os pontos ELO desde o início...', 'info');
-
-      // 1. Pegar todos os jogadores e limpar estatísticas para o estado inicial
-      const initialPlayers = players.map(p => ({
-        ...p,
-        elo: 1200,
-        wins: 0,
-        losses: 0,
-        matchesPlayed: 0,
-        pointsFor: 0,
-        pointsAgainst: 0,
-        pointsBalance: 0,
-        eloHistory: [],
-        dailyEloGain: 0,
-        dailyWins: 0,
-        dailyLosses: 0,
-        dailyMatches: 0,
-        dailyResults: [],
-        fidelityPoints: 0,
-        lastFidelityDate: null,
-        trueSkill: { mu: 25, sigma: 25 / 3 }
-      }));
-
-      const playerMap = new Map<string, any>();
-      initialPlayers.forEach(p => playerMap.set(p.id, p));
-
-      // 1.5. Carregar histórico de presenças para aplicar bônus de elo estritamente pelos dias de presença
-      let attendanceHistory: Record<string, Player[]> = {};
-      try {
-        const { fetchAttendanceHistory } = await import('../services/attendanceService');
-        attendanceHistory = await fetchAttendanceHistory();
-      } catch (err) {
-        console.error("Erro ao carregar histórico de presenças para o recálculo do ELO", err);
-      }
-
-      const matchDates = new Set(matches.map(m => m.date));
-      const playerAttendanceDates = new Map<string, Set<string>>();
-      Object.entries(attendanceHistory).forEach(([dateStr, dayPlayers]) => {
-        if (!matchDates.has(dateStr)) return; // Apenas dias de jogo que possuem partidas registradas no banco
-        dayPlayers.forEach(p => {
-          if (p.id) {
-            if (!playerAttendanceDates.has(p.id)) {
-              playerAttendanceDates.set(p.id, new Set());
-            }
-            playerAttendanceDates.get(p.id)!.add(dateStr);
-          }
-        });
-      });
-
-      // 2. Criar cronograma unificado de eventos ordenados chronologicamente (partidas e presenças)
-      const events: any[] = [];
-
-      // Adicionar partidas
-      const sortedMatches = [...matches].sort((a, b) => a.timestamp - b.timestamp);
-      sortedMatches.forEach(m => {
-        events.push({
-          type: 'match',
-          date: m.date,
-          timestamp: m.timestamp,
-          match: m
-        });
-      });
-
-      // Adicionar presenças como eventos
-      playerAttendanceDates.forEach((datesSet, playerId) => {
-        datesSet.forEach(dateStr => {
-          const [year, month, day] = dateStr.split('-').map(Number);
-          // Define o timestamp para o início do dia para processar o bônus antes das partidas daquele dia
-          const dayTimestamp = new Date(year, month - 1, day, 0, 0, 0).getTime();
-          events.push({
-            type: 'attendance',
-            date: dateStr,
-            timestamp: dayTimestamp,
-            playerId: playerId
-          });
-        });
-      });
-
-      // Ordenar eventos cronologicamente (se empate, attendance vem antes de match)
-      events.sort((a, b) => {
-        if (a.timestamp !== b.timestamp) {
-          return a.timestamp - b.timestamp;
-        }
-        if (a.type !== b.type) {
-          return a.type === 'attendance' ? -1 : 1;
-        }
-        return 0;
-      });
-
-      // 3. Processar cronologicamente os eventos
-      events.forEach(event => {
-        if (event.type === 'attendance') {
-          const p = playerMap.get(event.playerId);
-          if (p) {
-            // Aplicar bônus de fidelidade apenas uma vez por dia
-            if (p.lastFidelityDate !== event.date) {
-              p.fidelityPoints = (p.fidelityPoints || 0) + 50;
-              p.lastFidelityDate = event.date;
-              p.elo = p.elo + 50;
-
-              p.eloHistory.push({
-                date: event.date,
-                elo: p.elo,
-                matchId: `fidelity-bonus-${event.date}-${event.timestamp}`,
-                change: 50,
-                timestamp: event.timestamp,
-                result: 'P',
-                fidelityBonus: true
-              });
-
-              if (event.date === getFirestoreDateKey()) {
-                p.dailyEloGain += 50;
-              }
-            }
-          }
-        } else if (event.type === 'match') {
-          const m = event.match;
-          const winner = m.winner;
-          if (!winner) return;
-
-          const teamAIds = m.teamA;
-          const teamBIds = m.teamB;
-
-          const teamAPlayers = teamAIds.map(id => playerMap.get(id)).filter(Boolean);
-          const teamBPlayers = teamBIds.map(id => playerMap.get(id)).filter(Boolean);
-
-          // Update Eficiência Técnica
-          const tsUpdates = calculateTrueSkillUpdate(teamAPlayers, teamBPlayers, winner);
-          tsUpdates.forEach(u => {
-            const p = playerMap.get(u.playerId);
-            if (p) p.trueSkill = u.newTrueSkill;
-          });
-
-          // Update ELO Fixo (+20/-20)
-          const updateStats = (pId: string, isTeamA: boolean) => {
-            const p = playerMap.get(pId);
-            if (!p) return;
-
-            // Salvaguarda: se por acaso jogou a partida mas não constava na lista de presenças do dia, ganha o bônus aqui
-            if (p.lastFidelityDate !== m.date) {
-              p.fidelityPoints = (p.fidelityPoints || 0) + 50;
-              p.lastFidelityDate = m.date;
-              p.elo = p.elo + 50;
-
-              p.eloHistory.push({
-                date: m.date,
-                elo: p.elo,
-                matchId: `fidelity-bonus-${m.date}-${m.timestamp - 1000}`,
-                change: 50,
-                timestamp: m.timestamp - 1000,
-                result: 'P',
-                fidelityBonus: true
-              });
-
-              if (m.date === getFirestoreDateKey()) {
-                p.dailyEloGain += 50;
-              }
-            }
-
-            const isWinner = (isTeamA && winner === 'A') || (!isTeamA && winner === 'B');
-            const change = isWinner ? 20 : -20;
-            const newElo = Math.max(800, p.elo + change);
-
-            p.elo = newElo;
-            p.matchesPlayed++;
-            if (isWinner) p.wins++; else p.losses++;
-
-            p.pointsFor += isTeamA ? (m.scoreA || 0) : (m.scoreB || 0);
-            p.pointsAgainst += isTeamA ? (m.scoreB || 0) : (m.scoreA || 0);
-            p.pointsBalance = (p.pointsBalance || 0) + ((isTeamA ? (m.scoreA || 0) : (m.scoreB || 0)) - (isTeamA ? (m.scoreB || 0) : (m.scoreA || 0)));
-
-            p.eloHistory.push({
-              date: m.date,
-              elo: newElo,
-              matchId: m.id,
-              change: change,
-              timestamp: m.timestamp,
-              result: isWinner ? 'V' : 'D'
-            });
-
-            // UPDATE DAILY STATS FOR CURRENT DAY
-            if (m.date === getFirestoreDateKey()) {
-              p.dailyEloGain += change;
-              p.dailyMatches++;
-              if (isWinner) {
-                p.dailyWins++;
-                p.dailyResults.push('V');
-              } else {
-                p.dailyLosses++;
-                p.dailyResults.push('D');
-              }
-            }
-          };
-
-          teamAIds.forEach(id => updateStats(id, true));
-          teamBIds.forEach(id => updateStats(id, false));
-        }
-      });
-
-      // 4. Salvar tudo em batches (limite 500 ops por batch)
-      const playerStates = Array.from(playerMap.values());
-      const BATCH_SIZE = 100; // Safer batch size
-      for (let i = 0; i < playerStates.length; i += BATCH_SIZE) {
-        const batch = writeBatch(db);
-        const chunk = playerStates.slice(i, i + BATCH_SIZE);
-        chunk.forEach(p => {
-          const playerRef = doc(db, 'players', p.id);
-          // Fatiar histórico para não exceder limites de documento
-          const finalHistory = (p.eloHistory || []).slice(-200);
-          batch.set(playerRef, cleanObject({ ...p, eloHistory: finalHistory }), { merge: true });
-        });
-        await batch.commit();
-      }
-
-      showNotification('Recálculo de ELO concluído com sucesso!', 'success');
-      // Forçar atualização local
-      useStore.setState(state => ({ syncTrigger: state.syncTrigger + 1 }));
-    } catch (error) {
-      console.error('Erro no recálculo:', error);
-      showNotification('Falha ao recalcular pontos ELO.', 'error');
-    } finally {
-      setIsSyncing(false);
-    }
-  };
-
 
   const handleScanAnomalies = async () => {
     if (!checkAIQuota()) return;
@@ -3262,20 +3111,49 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       }
 
       // Notificações FCM e In-App para jogadores em quadra e fila
-      const playersToNotifyWithTokens = [
+const playersToNotifyWithTokens = [
         ...onCourtPlayers,
         ...(result.remainingPlayers ? result.remainingPlayers.slice(0, 12) : [])
       ].filter(p => p && p.id && p.fcmToken);
 
-      const notificationData = await Promise.all(playersToNotifyWithTokens.map(async (p) => {
-        try {
-          const q = query(collection(db, 'notifications'), where('playerUid', '==', p!.uid), where('read', '==', false));
-          const snap = await getDocs(q);
-          return { id: p!.id, unreadCount: snap.size + 1 };
-        } catch (e) {
-          return { id: p!.id, unreadCount: 1 };
+      const notificationData: { id: string; unreadCount: number }[] = [];
+      const validPlayersForNotify = playersToNotifyWithTokens.filter(p => p && p.uid);
+
+      for (const p of playersToNotifyWithTokens) {
+        if (!p || !p.uid) {
+          notificationData.push({ id: p!.id!, unreadCount: 1 });
         }
-      }));
+      }
+
+      const chunkSize = 10;
+      const chunkPromises = [];
+      for (let i = 0; i < validPlayersForNotify.length; i += chunkSize) {
+        const chunk = validPlayersForNotify.slice(i, i + chunkSize);
+        chunkPromises.push((async () => {
+          const uids = chunk.map(p => p!.uid);
+          try {
+            const q = query(collection(db, 'notifications'), where('playerUid', 'in', uids), where('read', '==', false));
+            const snap = await getDocs(q);
+
+            const countsByUid: Record<string, number> = {};
+            uids.forEach(uid => countsByUid[uid as string] = 0);
+
+            snap.forEach((doc) => {
+              const data = doc.data();
+              if (data.playerUid) {
+                countsByUid[data.playerUid] = (countsByUid[data.playerUid] || 0) + 1;
+              }
+            });
+
+            return chunk.map(p => ({ id: p!.id!, unreadCount: (countsByUid[p!.uid!] || 0) + 1 }));
+          } catch (e) {
+            return chunk.map(p => ({ id: p!.id!, unreadCount: 1 }));
+          }
+        })());
+      }
+
+      const results = await Promise.all(chunkPromises);
+      results.forEach(res => notificationData.push(...res));
 
       const queueNotification = (player: Player | null | undefined, title: string, body: string) => {
         if (player) {
@@ -3500,7 +3378,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
           let hasNotifications = false;
 
           // Prepare unread counts for all players involved in the notification
-          const playersToNotify = [
+const playersToNotify = [
             result.teamA.setter, 
             ...result.teamA.players, 
             result.teamB.setter, 
@@ -3508,15 +3386,44 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
             ...result.remainingPlayers.slice(0, 12)
           ].filter(p => p && p.id && p.fcmToken);
 
-          const notificationData = await Promise.all(playersToNotify.map(async (p) => {
-            try {
-              const q = query(collection(db, 'notifications'), where('playerUid', '==', p!.uid), where('read', '==', false));
-              const snap = await getDocs(q);
-              return { id: p!.id, unreadCount: snap.size + 1 };
-            } catch (e) {
-              return { id: p!.id, unreadCount: 1 };
+          const notificationData: { id: string; unreadCount: number }[] = [];
+          const validPlayersNotify = playersToNotify.filter(p => p && p.uid);
+
+          for (const p of playersToNotify) {
+            if (!p || !p.uid) {
+              notificationData.push({ id: p!.id!, unreadCount: 1 });
             }
-          }));
+          }
+
+          const chunkSize = 10;
+          const chunkPromises = [];
+          for (let i = 0; i < validPlayersNotify.length; i += chunkSize) {
+            const chunk = validPlayersNotify.slice(i, i + chunkSize);
+            chunkPromises.push((async () => {
+              const uids = chunk.map(p => p!.uid);
+              try {
+                const q = query(collection(db, 'notifications'), where('playerUid', 'in', uids), where('read', '==', false));
+                const snap = await getDocs(q);
+
+                const countsByUid: Record<string, number> = {};
+                uids.forEach(uid => countsByUid[uid as string] = 0);
+
+                snap.forEach((doc) => {
+                  const data = doc.data();
+                  if (data.playerUid) {
+                    countsByUid[data.playerUid] = (countsByUid[data.playerUid] || 0) + 1;
+                  }
+                });
+
+                return chunk.map(p => ({ id: p!.id!, unreadCount: (countsByUid[p!.uid!] || 0) + 1 }));
+              } catch (e) {
+                return chunk.map(p => ({ id: p!.id!, unreadCount: 1 }));
+              }
+            })());
+          }
+
+          const results = await Promise.all(chunkPromises);
+          results.forEach(res => notificationData.push(...res));
 
           // Função auxiliar para enfileirar notificação
           const queueNotification = (player: Player | null | undefined, title: string, body: string) => {
@@ -3811,8 +3718,25 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
         consecutiveBenched: 0
       }));
 
-      // 2. Filtrar partidas de hoje
-      const todayMatches = matches.filter(m => m.date === today);
+      // Helper function to extract Brasília date
+      const getCorrectDate = (m: any) => {
+        if (m.timestamp) {
+          try {
+            return new Intl.DateTimeFormat('en-CA', {
+              timeZone: 'America/Sao_Paulo',
+              year: 'numeric',
+              month: '2-digit',
+              day: '2-digit'
+            }).format(new Date(m.timestamp));
+          } catch {
+            // fallback
+          }
+        }
+        return m.date ? (m.date.includes('T') ? m.date.split('T')[0] : m.date) : '';
+      };
+
+      // 2. Filtrar partidas de hoje com validação de fuso horário resiliente
+      const todayMatches = matches.filter(m => m.date === today || getCorrectDate(m) === today);
       
       // 3. Recalcular a partir das partidas
       const sortedMatches = [...todayMatches].sort((a, b) => a.timestamp - b.timestamp);

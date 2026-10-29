@@ -168,6 +168,8 @@ export interface SystemMetadata {
   matchNotificationsGlobalEnabled?: boolean;
   mvpEfficiencyBonusPercent?: number;
   consecutiveAbsenceLimit?: number;
+  dailyAttendanceBonus?: number;
+  minMatchesForDailyBonus?: number;
   appVersion?: string;
   versionNumber?: number;
 }

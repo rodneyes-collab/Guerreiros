@@ -1,6 +1,4 @@
 
-import { GoogleGenAI } from "@google/genai";
-
 export interface SentinelSystemData {
   players: any[];
   matches: any[];
@@ -135,15 +133,9 @@ ${statusColor} **SISTEMA EM MODO MONITORADO: ${status}**
   return report;
 };
 
-export const runSentinelDeepScan = async (apiKey: string, data: SentinelSystemData): Promise<string> => {
-  const ai = new GoogleGenAI({
-    apiKey: apiKey,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      }
-    }
-  });
+export const runSentinelDeepScan = async (_apiKey: string, data: SentinelSystemData): Promise<string> => {
+  const { getAI } = await import("./serverGemini");
+  const ai = getAI();
 
   const prompt = `Você é o "Agente Sentinela IA" do Guerreiros Volleyball Club. 
     Seu objetivo é garantir a estabilidade máxima do sistema, a integridade dos dados e o sucesso no login dos sócios.
@@ -179,7 +171,7 @@ export const runSentinelDeepScan = async (apiKey: string, data: SentinelSystemDa
 
   try {
     const result = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-3.8-flash",
       contents: prompt,
     });
     return result.text || "Sem resposta do Sentinela.";

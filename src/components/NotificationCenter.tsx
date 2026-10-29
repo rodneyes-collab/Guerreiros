@@ -7,7 +7,7 @@ import { useStore } from '../../store';
 
 export const NotificationCenter: React.FC = () => {
   const { notifications, markAsRead, deleteNotification, clearAll } = useNotifications();
-  const { setViewMode } = useStore();
+  const setViewMode = useStore(state => state.setViewMode);
   const [isOpen, setIsOpen] = useState(false);
 
   const unreadCount = notifications.filter(n => !n.read).length;

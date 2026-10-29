@@ -13,7 +13,8 @@ export interface ReprocessResult {
 export function recalculateAllStatsFromMatches(
   currentPlayers: Player[],
   allMatches: Match[],
-  todayDateKey: string
+  todayDateKey: string,
+  dailyAttendanceBonus: number = 10
 ): Player[] {
   // Ordena todas as partidas cronologicamente
   const sortedMatches = [...allMatches].sort((a, b) => {
@@ -25,15 +26,13 @@ export function recalculateAllStatsFromMatches(
   // Mapeia jogadores por ID
   const playerMap = new Map<string, Player>();
   currentPlayers.forEach(p => {
-    // Mantém as entradas de bônus de presença (fidelity bonus) já existentes no histórico do atleta
-    const fidelityEntries = (p.eloHistory || []).filter(h => h.fidelityBonus || h.result === 'P');
-
     playerMap.set(p.id, {
       ...p,
       elo: 1200, // ELO base inicial padrão
       wins: 0,
       losses: 0,
       matchesPlayed: 0,
+      fidelityPoints: 0,
       pointsFor: 0,
       pointsAgainst: 0,
       pointsBalance: 0,
@@ -42,12 +41,11 @@ export function recalculateAllStatsFromMatches(
       dailyLosses: 0,
       dailyEloGain: 0,
       dailyResults: [],
-      // Inicializa histórico com bônus de fidelidade preservados
-      eloHistory: fidelityEntries.map(f => ({ ...f })),
+      eloHistory: [],
     });
   });
 
-  // Eventos cronológicos combinando partidas e bônus de fidelidade
+  // Eventos cronológicos combinando partidas e bônus de fidelidade baseados em ter jogado >= 2 partidas no dia
   interface TimelineEvent {
     type: 'MATCH' | 'FIDELITY';
     timestamp: number;
@@ -58,30 +56,43 @@ export function recalculateAllStatsFromMatches(
   }
 
   const events: TimelineEvent[] = [];
+  const playerMatchesPerDate: Record<string, Record<string, number>> = {};
+  const playerFidelityAwarded: Record<string, Set<string>> = {};
 
-  // Adiciona eventos de partidas
+  // Adiciona eventos de partidas e dispara o bônus de fidelidade ao completar 2 partidas no dia
   sortedMatches.forEach(m => {
     const ts = m.timestamp || (m.endTime ? new Date(m.endTime).getTime() : 0);
+    const date = m.date;
     events.push({
       type: 'MATCH',
       timestamp: ts,
-      date: m.date,
+      date: date,
       match: m
     });
-  });
 
-  // Adiciona eventos de bônus de presença que cada jogador já possui
-  currentPlayers.forEach(p => {
-    (p.eloHistory || []).forEach(h => {
-      if (h.fidelityBonus || h.result === 'P') {
-        const ts = h.timestamp || (h.date ? new Date(h.date).getTime() : 0);
-        events.push({
-          type: 'FIDELITY',
-          timestamp: ts,
-          date: h.date?.includes('T') ? h.date.split('T')[0] : h.date,
-          playerId: p.id,
-          fidelityEntry: h
-        });
+    const participants = new Set([...(m.teamA || []), ...(m.teamB || [])]);
+    participants.forEach(pid => {
+      if (!playerMatchesPerDate[pid]) playerMatchesPerDate[pid] = {};
+      playerMatchesPerDate[pid][date] = (playerMatchesPerDate[pid][date] || 0) + 1;
+
+      if (playerMatchesPerDate[pid][date] === 2) {
+        if (!playerFidelityAwarded[pid]) playerFidelityAwarded[pid] = new Set();
+        if (!playerFidelityAwarded[pid].has(date)) {
+          playerFidelityAwarded[pid].add(date);
+          events.push({
+            type: 'FIDELITY',
+            timestamp: ts - 100,
+            date: date,
+            playerId: pid,
+            fidelityEntry: {
+              date: date,
+              change: dailyAttendanceBonus,
+              fidelityBonus: true,
+              result: 'P',
+              matchId: `fidelity-${date}-${pid}`
+            }
+          });
+        }
       }
     });
   });
@@ -94,8 +105,9 @@ export function recalculateAllStatsFromMatches(
     if (ev.type === 'FIDELITY' && ev.playerId) {
       const p = playerMap.get(ev.playerId);
       if (!p) return;
-      const change = ev.fidelityEntry.change || 50;
+      const change = ev.fidelityEntry.change || dailyAttendanceBonus;
       p.elo = (p.elo || 1200) + change;
+      p.fidelityPoints = (p.fidelityPoints || 0) + change;
       // Garante que o eloHistory registre o estado acumulado
       const existing = (p.eloHistory || []).find(h => h.matchId === ev.fidelityEntry.matchId);
       if (existing) {

@@ -2,6 +2,8 @@ import React, { useMemo } from 'react';
 import { getFirestoreDateKey } from '../firebase';
 import { useBirthdays } from '../src/hooks/useBirthdays';
 import { PlayerAvatar } from '../src/components/PlayerAvatar';
+import { AthleteTimeAuditReport } from '../src/components/AthleteTimeAuditReport';
+import { AdminEloSummaryTableCard } from '../src/components/AdminEloSummaryTableCard';
 // No active local types from types.ts needed here now
 import { 
   Users,
@@ -434,6 +436,12 @@ export const GlobalStats: React.FC<DashboardViewProps> = ({
             </ResponsiveContainer>
           </div>
         </div>
+      </div>
+
+      {/* Relatório de Auditoria de Tempo Individual e Tabela Consolidada de ELO */}
+      <div className="space-y-8 mt-8">
+        <AthleteTimeAuditReport players={allPlayers} matches={matches} attendance={attendance} />
+        <AdminEloSummaryTableCard players={allPlayers} />
       </div>
     </div>
   );
