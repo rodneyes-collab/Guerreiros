@@ -27,6 +27,10 @@ import {
   Cell
 } from 'recharts';
 
+// ⚡ Bolt: Cache Intl.DateTimeFormat instance at the module level
+// to prevent expensive re-instantiations during array mapping/renders.
+const monthFormatter = new Intl.DateTimeFormat('pt-BR', { month: 'long' });
+
 interface DashboardViewProps {
   players: any[];
   matches: any[];
@@ -350,7 +354,7 @@ export const GlobalStats: React.FC<DashboardViewProps> = ({
                 >
                   {Array.from({ length: 12 }, (_, i) => (
                     <option key={i + 1} value={i + 1}>
-                      {new Intl.DateTimeFormat('pt-BR', { month: 'long' }).format(new Date(2024, i))}
+                      {monthFormatter.format(new Date(2024, i))}
                     </option>
                   ))}
                 </select>
