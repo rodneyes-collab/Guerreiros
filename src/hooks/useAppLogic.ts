@@ -3722,12 +3722,7 @@ const playersToNotify = [
       const getCorrectDate = (m: any) => {
         if (m.timestamp) {
           try {
-            return new Intl.DateTimeFormat('en-CA', {
-              timeZone: 'America/Sao_Paulo',
-              year: 'numeric',
-              month: '2-digit',
-              day: '2-digit'
-            }).format(new Date(m.timestamp));
+            return dateCache.format(new Date(m.timestamp));
           } catch {
             // fallback
           }
