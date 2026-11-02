@@ -9,6 +9,19 @@ import { Player, Match } from '../types';
 import { HelpTooltip } from '../src/components/HelpTooltip';
 import { getFirestoreDateKey } from '../firebase';
 import { getPlayerTier, getEfficiencyTier } from '../utils/tierUtils';
+
+const matchDateFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Sao_Paulo',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit'
+});
+
+const brazilianDateFormatter = new Intl.DateTimeFormat('pt-BR', {
+  timeZone: 'America/Sao_Paulo',
+  day: '2-digit',
+  month: '2-digit'
+});
 import { 
   Trophy, 
   TrendingUp, 
@@ -175,12 +188,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
   // Helper to extract standard Brasília date from a match (resilient to UTC/local timezones)
   const getMatchDate = useCallback((m: { date?: string; timestamp?: number }): string => {
     if (m.timestamp) {
-      return new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'America/Sao_Paulo',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit'
-      }).format(new Date(m.timestamp));
+      return matchDateFormatter.format(new Date(m.timestamp));
     }
     return m.date ? (m.date.includes('T') ? m.date.split('T')[0] : m.date) : '';
   }, []);
@@ -265,11 +273,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
         dateObj = new Date(dateString); // Timestamp number
       }
 
-      return new Intl.DateTimeFormat('pt-BR', { 
-        timeZone: 'America/Sao_Paulo', 
-        day: '2-digit', 
-        month: '2-digit' 
-      }).format(dateObj);
+      return brazilianDateFormatter.format(dateObj);
     } catch {
       return 'Data';
     }
