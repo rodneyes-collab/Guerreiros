@@ -83,6 +83,15 @@ import { getPriorityQueue, calculateEffectiveElo, suggestPosition, calculateTeam
 import { Player, SystemMetadata } from '../types';
 import { APP_VERSION } from '../constants';
 
+
+const MatchTimerDisplay = () => {
+  const elapsedTime = useStore(state => state.elapsedTime);
+  return (
+    <span className="text-xs sm:text-sm font-black text-white font-mono tracking-widest">
+      {formatTime(elapsedTime)}
+    </span>
+  );
+};
 interface MatchViewProps {
   onGenerate: (onlyCurrentPlayers?: boolean) => void;
   onDiscard: () => void;
@@ -159,7 +168,6 @@ export const MatchView: React.FC<MatchViewProps> = ({
     setTempScoreB,
     analysis,
     ruleVerification,
-    elapsedTime,
     swapSelection,
     setSwapSelection,
     isSyncing,
@@ -191,7 +199,6 @@ export const MatchView: React.FC<MatchViewProps> = ({
     setTempScoreB: state.setTempScoreB,
     analysis: state.analysis,
     ruleVerification: state.ruleVerification,
-    elapsedTime: state.elapsedTime,
     swapSelection: state.swapSelection,
     setSwapSelection: state.setSwapSelection,
     isSyncing: state.isSyncing,
@@ -1089,7 +1096,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
     const label = matchesToWait === 1 ? '1ª' : `${matchesToWait}ª`;
     
     // Cálculo de tempo estimado
-    let remainingCurrent = avgMatchDuration - elapsedTime;
+    let remainingCurrent = avgMatchDuration - useStore.getState().elapsedTime;
     let isOvertime = false;
     
     if (remainingCurrent <= 0) {
@@ -3393,7 +3400,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
                 </div>
                 <div className="flex items-center gap-2 sm:gap-3 bg-brand-secondary/50 px-3 py-2 sm:px-6 sm:py-3 rounded-xl sm:rounded-2xl border border-brand-primary/10">
                   <Clock className="w-3 h-3 sm:w-4 sm:h-4 text-brand-primary animate-pulse" />
-                  <span className="text-xs sm:text-sm font-black text-white font-mono tracking-widest">{formatTime(elapsedTime)}</span>
+                  <MatchTimerDisplay />
                 </div>
               </div>
 
