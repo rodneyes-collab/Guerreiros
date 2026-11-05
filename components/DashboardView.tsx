@@ -57,7 +57,7 @@ export const GlobalStats: React.FC<DashboardViewProps> = ({
 
   // Use allPlayers from props to stay in sync with parent filtering/loading state
   const { monthBirthdays, getBirthdaysByMonth } = useBirthdays(allPlayers);
-  const [selectedMonth, setSelectedMonth] = React.useState<number>(0);
+  const [selectedMonth, setSelectedMonth] = React.useState<number>(() => (new Date().getMonth() + 1));
 
   // Sync selectedMonth with the recommended month from the hook
   React.useEffect(() => {

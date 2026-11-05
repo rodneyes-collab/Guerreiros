@@ -699,6 +699,7 @@ export const ViewManager: React.FC<ViewManagerProps> = (props) => {
                     setEditingExpense={setEditingExpense}
                     setIsExpenseFormOpen={setIsExpenseFormOpen}
                     updateMonthlyFee={updateMonthlyFee}
+                    updateSystemMetadata={updateSystemMetadata}
                     handleFinancialIntegrityAudit={handleFinancialIntegrityAudit}
                   />
                 )}

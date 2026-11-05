@@ -571,12 +571,17 @@ export const streamGeminiText = async (
           if (payload === "[DONE]") break;
           try {
             const parsed = JSON.parse(payload);
+            if (parsed.error) {
+              throw new Error(parsed.error);
+            }
             if (parsed.text) {
               fullText += parsed.text;
               onChunk(parsed.text);
             }
-          } catch {
-            // ignore partial JSON
+          } catch (e: any) {
+            if (e.message && e.message !== "Unexpected end of JSON input") {
+              throw e;
+            }
           }
         }
       }

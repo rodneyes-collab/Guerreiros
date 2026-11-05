@@ -1,6 +1,6 @@
 import type { Player } from './types.ts';
 
-export const APP_VERSION = '3.3.5';
+export const APP_VERSION = '3.3.8';
 
 export const INITIAL_PLAYERS: Player[] = [];
 

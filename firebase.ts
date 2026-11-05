@@ -80,14 +80,21 @@ if (typeof window !== 'undefined') {
     const settings = {
       localCache: persistentLocalCache({
         tabManager: persistentMultipleTabManager()
-      }),
-      experimentalForceLongPolling: true
+      })
     };
     dbInstance = dbId ? initializeFirestore(app, settings, dbId) : initializeFirestore(app, settings);
   } catch (e) {
     console.warn('[Firestore] Modern persistence init skipped or already initialized, using existing instance:', e);
     dbInstance = dbId ? getFirestore(app, dbId) : getFirestore(app);
   }
+
+  // Auto-reconnect when device regains connectivity
+  window.addEventListener('online', () => {
+    console.info('[Firestore] Dispositivo online detectado, reestabelecendo conexão com o backend...');
+    if (dbInstance) {
+      enableNetwork(dbInstance).catch((err) => console.warn('[Firestore] Erro ao reabilitar rede:', err));
+    }
+  });
 } else {
   dbInstance = dbId ? getFirestore(app, dbId) : getFirestore(app);
 }
@@ -142,6 +149,11 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   if (code === 'resource-exhausted' || message.includes('bandwidth for writes') || message.includes('quota exceeded')) {
     isQuotaExceeded = true;
     console.error('[Firestore] Quota exceeded! Disabling background writes.');
+  }
+
+  if (code === 'unavailable' || message.includes('unavailable') || message.includes('Could not reach Cloud Firestore backend') || message.includes('client is offline')) {
+    console.warn('[Firestore Connection Handled] Servidor temporariamente inacessível ou offline. Operando com cache local IndexedDB:', message);
+    return;
   }
 
   const errInfo: FirestoreErrorInfo = {
@@ -573,10 +585,10 @@ async function testConnection() {
     ]);
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
-    if (errMsg.includes('the client is offline') || errMsg.includes('timeout') || errMsg.includes('Could not reach')) {
-      console.warn("Verificação de conexão com Firebase expirou ou está offline. Operando em modo cache local.");
+    if (errMsg.includes('the client is offline') || errMsg.includes('timeout') || errMsg.includes('Could not reach') || errMsg.includes('unavailable')) {
+      console.warn("Verificação de conexão com Firebase expirou ou está offline. Operando em modo de cache local.");
     } else {
-      console.error("Please check your Firebase configuration.", error);
+      console.warn("Verificação de conexão com Firebase indisponível no momento. Operando em modo de cache local.");
     }
   }
 }

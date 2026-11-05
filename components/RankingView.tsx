@@ -860,7 +860,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
     return 'neutral';
   };
 
-  // Get unique dates strictly from matches where actual matches occurred
+  // Get unique dates from matches, ensuring today is always available so users can view today even when empty/reset
   const availableDates = useMemo(() => {
     const dates = new Set<string>();
     matches.forEach(m => {
@@ -868,17 +868,19 @@ export const RankingView: React.FC<RankingViewProps> = ({
       if (d) dates.add(d);
       else if (m.date) dates.add(m.date.includes('T') ? m.date.split('T')[0] : m.date);
     });
+    dates.add(today);
     return Array.from(dates).sort((a, b) => b.localeCompare(a));
-  }, [matches, getMatchDate]);
+  }, [matches, getMatchDate, today]);
 
-  // Keep selectedDailyDate synchronized: if current selection has no matches, select the latest session with matches
+  // Keep selectedDailyDate synchronized: allow staying on today even when 0 matches
   useEffect(() => {
+    if (selectedDailyDate === today) return;
     if (availableDates.length > 0) {
       if (!selectedDailyDate || (!availableDates.includes(selectedDailyDate) && selectedDailyDate !== 'global')) {
         setSelectedDailyDate(availableDates[0]);
       }
     }
-  }, [availableDates, selectedDailyDate]);
+  }, [availableDates, selectedDailyDate, today]);
 
   // Calculate rank movements compared to the previous game session
   const leaderboardMovements = useMemo(() => {

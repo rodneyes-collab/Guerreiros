@@ -30,9 +30,11 @@ interface IntentionsViewProps {
 
 export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, currentPlayer, onMoveToAttendance, showNotification }) => {
   const { intentions, isLoaded, setIntent, resetIntent, clearIntentions, toggleAutomation, sendReminders, copyToWhatsApp, copyReminder, getPlayerConfirmationTime, refreshIntentions } = useIntentions();
-  const { players, attendance, preConfirmations, idToCanonicalId, showConfirmModal, isInitialLoading } = useStore(useShallow(state => ({players: state.players, attendance: state.attendance, preConfirmations: state.preConfirmations, idToCanonicalId: state.idToCanonicalId, showConfirmModal: state.showConfirmModal, isInitialLoading: state.isInitialLoading})));
+  const { players, attendance, preConfirmations, idToCanonicalId, showConfirmModal, isInitialLoading, user } = useStore(useShallow(state => ({players: state.players, attendance: state.attendance, preConfirmations: state.preConfirmations, idToCanonicalId: state.idToCanonicalId, showConfirmModal: state.showConfirmModal, isInitialLoading: state.isInitialLoading, user: state.user})));
+  
+  const isAdmin = userRole === 'ADMIN' || !!currentPlayer?.isAdmin || (user?.email?.trim().toLowerCase() === 'rodneyes@gmail.com');
   const { monthBirthdays, getBirthdaysByMonth } = useBirthdays(players);
-  const [selectedMonth, setSelectedMonth] = React.useState<number>(0);
+  const [selectedMonth, setSelectedMonth] = React.useState<number>(() => (new Date().getMonth() + 1));
   const [isRefreshing, setIsRefreshing] = React.useState(false);
   const [pullStartY, setPullStartY] = React.useState(0);
   const [pullDist, setPullDist] = React.useState(0);
@@ -107,6 +109,18 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
   const [isConfirming, setIsConfirming] = React.useState(false);
   const [isDeclining, setIsDeclining] = React.useState(false);
   const [processingId, setProcessingId] = React.useState<string | null>(null);
+
+  // Watchdog de Segurança: Libera o lock visual (processingId, isConfirming, isDeclining) em no máximo 3.2s
+  // garantindo que os cartões e ícones nunca fiquem congelados em tom cinza (opacity-40 grayscale pointer-events-none).
+  React.useEffect(() => {
+    if (!processingId && !isConfirming && !isDeclining) return;
+    const watchdog = setTimeout(() => {
+      setProcessingId(null);
+      setIsConfirming(false);
+      setIsDeclining(false);
+    }, 3200);
+    return () => clearTimeout(watchdog);
+  }, [processingId, isConfirming, isDeclining]);
 
   // Create confetti instance
   const fireConfetti = React.useMemo(() => confetti.create(undefined, { useWorker: false, resize: true }), []);
@@ -423,14 +437,34 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
 
   const formatConfirmationTime = React.useCallback((timestamp?: number | null) => {
     if (!timestamp || isNaN(timestamp) || timestamp <= 0) return null;
-    const date = new Date(timestamp);
-    const day = String(date.getDate()).padStart(2, '0');
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    const weekdays = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
-    const weekDay = weekdays[date.getDay()];
-    return `${weekDay}, ${day}/${month} às ${hours}:${minutes}`;
+    try {
+      const date = new Date(timestamp);
+      const formatter = new Intl.DateTimeFormat('pt-BR', {
+        timeZone: 'America/Sao_Paulo',
+        weekday: 'short',
+        day: '2-digit',
+        month: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      });
+      const parts = formatter.formatToParts(date);
+      const getPart = (type: string) => parts.find(p => p.type === type)?.value || '';
+
+      let weekDay = getPart('weekday');
+      if (weekDay) {
+        weekDay = weekDay.replace('.', '');
+        weekDay = weekDay.charAt(0).toUpperCase() + weekDay.slice(1);
+      }
+      const day = getPart('day');
+      const month = getPart('month');
+      const hour = getPart('hour');
+      const minute = getPart('minute');
+
+      return `${weekDay}, ${day}/${month} às ${hour}:${minute}`;
+    } catch (e) {
+      return null;
+    }
   }, []);
 
   const goingPlayers = React.useMemo(() => {
@@ -540,6 +574,14 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
   const filteredUndecided = undecidedPlayers.filter(p => 
     norm(p.name).includes(searchNorm) || (p.email && norm(p.email).includes(searchNorm))
   );
+
+  const quickSearchResults = React.useMemo(() => {
+    if (!searchNorm) return [];
+    return (players || [])
+      .filter(p => p.status === 'active' && !p.isDM)
+      .filter(p => norm(p.name).includes(searchNorm) || (p.email && norm(p.email).includes(searchNorm)))
+      .slice(0, 10);
+  }, [searchNorm, players]);
 
   const isGoing = currentPlayer ? checkPlayerIntent(currentPlayer) === 'GOING' : false;
   const isNotGoing = currentPlayer ? checkPlayerIntent(currentPlayer) === 'NOT_GOING' : false;
@@ -811,7 +853,7 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
 
 
       {/* WhatsApp / Evolution API Action Buttons */}
-      {userRole === 'ADMIN' && (
+      {isAdmin && (
             <div className="bg-black rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary p-6 sm:p-8">
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-3">
@@ -843,6 +885,62 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
                   )}
                 </div>
               </div>
+
+              {/* Immediate Quick Confirmation Dropdown */}
+              {searchTerm.trim().length > 0 && (
+                <div className="mt-3 bg-brand-secondary border border-brand-primary/40 rounded-2xl overflow-hidden divide-y divide-white/5 shadow-2xl">
+                  {quickSearchResults.length === 0 ? (
+                    <div className="p-4 text-center text-xs text-white/40 italic">
+                      Nenhum sócio ativo encontrado para "{searchTerm}".
+                    </div>
+                  ) : (
+                    quickSearchResults.map(p => {
+                      const intent = checkPlayerIntent(p);
+                      const isGoing = intent === 'GOING';
+                      return (
+                        <div key={p.id} className="p-3.5 flex items-center justify-between gap-3 hover:bg-white/5 transition-colors">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <PlayerAvatar player={p} size="sm" />
+                            <div className="min-w-0">
+                              <p className="text-sm font-black text-white uppercase tracking-tight truncate">
+                                {capitalizeName(p.name)}
+                              </p>
+                              <p className="text-[10px] text-brand-primary/70 font-bold uppercase tracking-widest">
+                                {p.isOfficialSetter ? 'Levantador Oficial' : 'Jogador de Linha'}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {isGoing ? (
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                                <UserCheck className="w-3.5 h-3.5" />
+                                Confirmado
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={isConfirming || processingId === p.id}
+                                onClick={() => {
+                                  handleConfirmPlayer(p);
+                                  setSearchTerm('');
+                                }}
+                                className="px-4 py-2 bg-brand-primary text-brand-secondary rounded-xl font-black text-[10px] uppercase tracking-wider hover:bg-brand-primary/90 transition-all flex items-center gap-1.5 shadow-lg shadow-brand-primary/20 active:scale-95 disabled:opacity-50 cursor-pointer"
+                              >
+                                {processingId === p.id ? (
+                                  <span className="w-3 h-3 border-2 border-brand-secondary border-t-transparent rounded-full animate-spin" />
+                                ) : (
+                                  <UserCheck className="w-3.5 h-3.5" />
+                                )}
+                                Confirmar Presença
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              )}
             </div>
             <div className="bg-brand-primary/5 p-5 rounded-2xl border border-brand-primary/40 flex flex-col justify-between gap-4">
               <div>
@@ -939,7 +1037,7 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
               </div>
               <button
                 onClick={() => {
-                  copyToWhatsApp();
+                  copyToWhatsApp(goingPlayers);
                   showNotification('Lista copiada para a área de transferência!', 'success');
                 }}
                 className="w-full py-3 rounded-xl font-black uppercase tracking-widest text-[10px] bg-green-500/20 text-green-400 border border-green-500/30 hover:bg-green-500 hover:text-black transition-all flex items-center justify-center gap-2"
@@ -1010,7 +1108,7 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
             <AnimatePresence mode="popLayout">
               {goingPlayers.map((p, i) => {
                 const isCheckedIn = (attendance || []).some(a => a.id === p.id);
-                const canReset = !isCheckedIn && (currentPlayer?.id === p.id || userRole === 'ADMIN');
+                const canReset = !isCheckedIn && (currentPlayer?.id === p.id || isAdmin);
                 const timeStr = formatConfirmationTime(getPlayerConfirmationTime(p));
                 return (
                   <ConfirmedPlayerItem
@@ -1020,7 +1118,7 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
                     isCheckedIn={isCheckedIn}
                     canReset={canReset}
                     isCurrentPlayer={currentPlayer?.id === p.id}
-                    userRole={userRole}
+                    userRole={isAdmin ? 'ADMIN' : userRole}
                     isProcessing={processingId === p.id}
                     isOtherProcessing={Boolean(processingId && processingId !== p.id)}
                     confirmationTimeStr={timeStr}
@@ -1046,10 +1144,10 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
           <div className="grid grid-cols-1 gap-2 mt-4 overflow-y-auto max-h-[500px] pr-1 custom-scrollbar">
             <AnimatePresence mode="popLayout">
               {filteredUndecided.map((p, i) => {
-                const canConfirm = userRole === 'ADMIN' || currentPlayer?.id === p.id || !currentPlayer;
+                const canConfirm = isAdmin || currentPlayer?.id === p.id || !currentPlayer;
                 const reminderSent = Boolean(intentions.remindersSent?.[p.id]);
                 const hasPushToken = Boolean(p.fcmToken);
-                const isAlreadyConfirmed = checkPlayerIntent(p) === 'GOING';
+                const isAlreadyConfirmed = !isAdmin && checkPlayerIntent(p) === 'GOING';
                 return (
                   <UndecidedPlayerItem
                     key={p.id}

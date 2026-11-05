@@ -41,6 +41,7 @@ import { calculateTrueSkillUpdate } from '../utils/trueSkill';
 import { Player, Team, Match, Gender, Tournament, TournamentTeam, TournamentMatch, SetScore, SystemMetadata, TournamentStrategy, Payment, Expense } from '../../types';
 import { generateTeams, generateTournamentTeams, getPriorityQueue, autoFixAllInconsistencies, optimizeTeamSynergyIteratively, enrichPlayerImmutably, cloneGenerationResultImmutably, calculateCompositePerformanceRating } from '../../utils/teamLogic';
 import { playerSchema, matchSchema } from '../lib/schemas';
+import { auditDayPurgeIntegrity } from '../services/dayPurgeAuditAgent';
 
 const dateFormatter = new Intl.DateTimeFormat('en-CA', {
   timeZone: 'America/Sao_Paulo',
@@ -1172,8 +1173,15 @@ const playersToNotify = [...teamA, ...teamB];
   };
 
   const registerAttendance = async (player: Player, method: 'NFC' | 'QR' | 'MANUAL' = 'MANUAL') => {
-    const previousAttendance = [...attendance];
     const fullPlayer = players.find(p => p.id === player.id);
+
+    // Regra Estatutária: Apenas sócios estritamente com status 'active' podem ser convocados
+    if ((fullPlayer && fullPlayer.status !== 'active') || (player.status && player.status !== 'active')) {
+      showNotification('Apenas sócios com cadastro Ativo podem ser incluídos na lista de presença.', 'error');
+      return;
+    }
+
+    const previousAttendance = [...attendance];
     
     // Immediate sensory feedback
     triggerHaptic('success');
@@ -1186,6 +1194,7 @@ const playersToNotify = [...teamA, ...teamB];
     } : null;
 
     try {
+      setIsSyncing(true);
       triggerDbStatus('writing');
 
       const dateKey = getFirestoreDateKey();
@@ -1307,6 +1316,8 @@ const playersToNotify = [...teamA, ...teamB];
         fullPlayer.eloHistory = previousPlayerState.eloHistory;
       }
       handleFirestoreError(error, OperationType.WRITE, 'attendance');
+    } finally {
+      setIsSyncing(false);
     }
   };
 
@@ -2075,32 +2086,72 @@ const playersToNotify = [...teamA, ...teamB];
   };
 
   const deleteMatchesByDate = async (date: string) => {
-    const matchesToDelete = matches.filter(m => m.date === date);
-    if (matchesToDelete.length === 0) {
-      showNotification(`Nenhuma partida encontrada para a data ${date}.`, 'info');
-      return;
-    }
+    const stdTarget = toStandardDateKey(date);
+    const today = getFirestoreDateKey();
+    const isToday = stdTarget === toStandardDateKey(today);
+
+    console.log(`[deleteMatchesByDate] 🚀 Iniciando exclusão para data: ${date} (stdTarget: ${stdTarget}), hoje: ${today}, isToday: ${isToday}`);
+
+    const isMatchForTargetDate = (m: { date?: string; timestamp?: number }) => {
+      const mDate = m.date ? toStandardDateKey(m.date) : '';
+      let mTsDate = '';
+      if (m.timestamp) {
+        try {
+          mTsDate = new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'America/Sao_Paulo',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
+          }).format(new Date(m.timestamp));
+        } catch {}
+      }
+      return mDate === stdTarget || mTsDate === stdTarget;
+    };
+
+    const localMatchesToDelete = matches.filter(isMatchForTargetDate);
+    console.log(`[deleteMatchesByDate] 🔍 Partidas locais encontradas para exclusão: ${localMatchesToDelete.length}`, localMatchesToDelete.map(m => ({ id: m.id, date: m.date, dailyNumber: m.dailyNumber })));
 
     const formattedDate = date.split('-').reverse().join('/');
     
     showConfirmModal(
       'Excluir Partidas do Dia',
-      `Deseja realmente excluir TODAS as ${matchesToDelete.length} partidas do dia ${formattedDate}? As estatísticas dos sócios serão revertidas cronologicamente. Esta ação é irreversível.`,
+      `Deseja realmente excluir TODAS as partidas do dia ${formattedDate} e zerar a performance da sessão? As estatísticas dos sócios serão revertidas cronologicamente. Esta ação é irreversível.`,
       async () => {
         try {
           setIsSyncing(true);
           triggerDbStatus('writing');
           
+          // 1. Buscar todas as partidas no Firestore para certificar que nenhum documento com divergência de fuso escape
+          const firestoreMatchesSnap = await getDocs(collection(db, 'matches'));
+          console.log(`[deleteMatchesByDate] 📦 Total de partidas buscadas no Firestore: ${firestoreMatchesSnap.size}`);
+
+          const allTargetMatchesMap = new Map<string, Match>();
+
+          // Adicionar partidas do store local
+          localMatchesToDelete.forEach(m => {
+            if (m.id) allTargetMatchesMap.set(m.id, m);
+          });
+
+          // Cruzar com partidas do Firestore
+          firestoreMatchesSnap.forEach(docSnap => {
+            const data = docSnap.data();
+            if (isMatchForTargetDate(data)) {
+              allTargetMatchesMap.set(docSnap.id, { ...data, id: docSnap.id } as Match);
+            }
+          });
+
+          const matchesToDelete = Array.from(allTargetMatchesMap.values());
+          console.log(`[deleteMatchesByDate] 🗑️ Total de documentos unificados identificados para exclusão no Firestore: ${matchesToDelete.length}`, matchesToDelete.map(m => m.id));
+
           const batch = writeBatch(db);
           
           // Ordenar por timestamp decrescente para reverter do mais novo para o mais antigo
-          const sortedMatches = [...matchesToDelete].sort((a, b) => b.timestamp - a.timestamp);
+          const sortedMatches = [...matchesToDelete].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
           
           let localPlayers = [...players];
-          const today = getFirestoreDateKey();
-          const isToday = date === today;
           
           for (const match of sortedMatches) {
+            console.log(`[deleteMatchesByDate] ❌ Marcando para deleção - ID: ${match.id}, dailyNumber: ${match.dailyNumber}, date: ${match.date}`);
             batch.delete(doc(db, 'matches', match.id));
             await logAction(AuditAction.DELETE_MATCH, match.id, `Exclusão em massa: Partida #${match.dailyNumber || '?'}`);
             
@@ -2112,7 +2163,7 @@ const playersToNotify = [...teamA, ...teamB];
               const p = localPlayers[pIdx];
               
               const isWinner = (match.winner === 'A' && match.teamA.includes(pid)) || 
-                               (match.winner === 'B' && match.teamB.includes(pid));
+                                (match.winner === 'B' && match.teamB.includes(pid));
               const isTeamA = match.teamA.includes(pid);
               
               const eloChange = isWinner ? 20 : -20;
@@ -2120,7 +2171,7 @@ const playersToNotify = [...teamA, ...teamB];
               let updatedHistory = [...(p.eloHistory || [])];
               let previousElo = p.elo;
               
-              const matchTime = new Date(match.endTime).getTime();
+              const matchTime = new Date(match.endTime || match.timestamp || 0).getTime();
               const entryIndex = updatedHistory.findIndex(entry => {
                 const entryTime = new Date(entry.timestamp || 0).getTime();
                 if (entry.matchId === match.id) return true;
@@ -2154,9 +2205,9 @@ const playersToNotify = [...teamA, ...teamB];
                 ...p,
                 elo: previousElo,
                 matchesPlayed: Math.max(0, (p.matchesPlayed || 0) - 1),
-                pointsFor: Math.max(0, (p.pointsFor || 0) - (isTeamA ? match.scoreA : match.scoreB)),
-                pointsAgainst: Math.max(0, (p.pointsAgainst || 0) - (isTeamA ? match.scoreB : match.scoreA)),
-                pointsBalance: (p.pointsBalance || 0) - ((isTeamA ? match.scoreA : match.scoreB) - (isTeamA ? match.scoreB : match.scoreA)),
+                pointsFor: Math.max(0, (p.pointsFor || 0) - (isTeamA ? (match.scoreA || 0) : (match.scoreB || 0))),
+                pointsAgainst: Math.max(0, (p.pointsAgainst || 0) - (isTeamA ? (match.scoreB || 0) : (match.scoreA || 0))),
+                pointsBalance: (p.pointsBalance || 0) - (((isTeamA ? match.scoreA : match.scoreB) || 0) - ((isTeamA ? match.scoreB : match.scoreA) || 0)),
                 wins: isWinner ? Math.max(0, (p.wins || 0) - 1) : (p.wins || 0),
                 losses: !isWinner ? Math.max(0, (p.losses || 0) - 1) : (p.losses || 0),
                 dailyMatches: isToday ? Math.max(0, (p.dailyMatches || 0) - 1) : (p.dailyMatches || 0),
@@ -2173,7 +2224,7 @@ const playersToNotify = [...teamA, ...teamB];
           }
 
           if (isToday) {
-            // Forçar reset de todos os campos diários para garantir que a fila de espera esteja limpa
+            // Forçar reset de todos os campos diários para garantir que a fila de espera e performance estejam 100% zeradas
             localPlayers.forEach((p, idx) => {
               localPlayers[idx] = {
                 ...p,
@@ -2183,44 +2234,95 @@ const playersToNotify = [...teamA, ...teamB];
                 dailyEloGain: 0,
                 dailyResults: [],
                 playedLastMatch: false,
+                consecutivePlayed: 0,
                 consecutiveBenched: 0
               } as any;
             });
+
+            // Resetar metadados do sistema no Firestore
+            const now = Date.now();
+            batch.set(doc(db, 'metadata', 'system'), {
+              dailyMatchCount: 0,
+              matchStartTime: null,
+              lastResetTimestamp: now,
+              lastResetDate: today
+            }, { merge: true });
+
+            // Excluir documentos de partida ativa e preview
+            batch.delete(doc(db, 'metadata', 'currentMatch'));
+            batch.delete(doc(db, 'metadata', 'nextMatchPreview'));
           }
 
-          // Aplicar atualizações ao lote
-          // Identificar quem está presente hoje para não registrar ausentes por acidente
+          // Aplicar atualizações ao lote para players e attendance
           const attendanceIds = new Set(attendance.map(a => a.id));
           
           localPlayers.forEach(p => {
             const cleanedPlayer = cleanObject(p);
-            // Atualizar cadastro global
             batch.set(doc(db, 'players', p.id), cleanedPlayer, { merge: true });
             
-            // ATENÇÃO: Só atualizar o documento de presença se o sócio estiver realmente lá
-            // Caso contrário, o deleteMatches transformaria todos os sócios em "Presentes"
             if (attendanceIds.has(p.id)) {
               batch.set(doc(db, 'attendance', date, 'players', p.id), cleanedPlayer, { merge: true });
             }
           });
           
+          console.log(`[deleteMatchesByDate] 💾 Efetuando commit do batch no Firestore...`);
           await batch.commit();
+          console.log(`[deleteMatchesByDate] ✅ Batch commit concluído com sucesso no Firestore.`);
+
+          // 2. Acionar Agente Especializado em Purga para certificar integridade absoluta
+          const auditResult = await auditDayPurgeIntegrity(date);
+          console.info(`[DayPurgeAuditAgent] Auditoria de purga concluída para ${date}:`, auditResult);
           
-          // Atualizar o estado local imediatamente para evitar race conditions antes da sincronização
+          // 3. Atualizar o estado local imediatamente
           setPlayers(localPlayers);
           if (isToday) {
+            setGenerationResult(null);
+            setScoreA(0);
+            setScoreB(0);
+            setTempScoreA('0');
+            setTempScoreB('0');
+            setNarrationScript('');
+            setNarrationAudio(null);
+            setSystemMetadata({
+              ...systemMetadata,
+              dailyMatchCount: 0,
+              matchStartTime: null,
+              lastResetTimestamp: Date.now(),
+              lastResetDate: today
+            });
             setAttendance(prev => prev.map(a => {
               const updated = localPlayers.find(p => p.id === a.id);
-              if (updated) return { ...a, ...updated };
-              return a;
+              return {
+                ...(updated ? { ...a, ...updated } : a),
+                dailyMatches: 0,
+                dailyWins: 0,
+                dailyLosses: 0,
+                dailyEloGain: 0,
+                dailyResults: [],
+                playedLastMatch: false,
+                consecutivePlayed: 0,
+                consecutiveBenched: 0
+              };
             }));
           }
           
-          setMatches(matches.filter(m => m.date !== date));
+          // Verificação de estado pós-exclusão no store
+          setMatches(prevMatches => {
+            const updatedMatches = prevMatches.filter(m => !isMatchForTargetDate(m));
+            const remainingForDate = updatedMatches.filter(isMatchForTargetDate);
+            console.log(`[deleteMatchesByDate] 🛡️ Verificação de estado pós-exclusão no store: partidas restantes para a data ${date} = ${remainingForDate.length}. Total de partidas restantes no store = ${updatedMatches.length}`);
+            if (remainingForDate.length > 0) {
+              console.warn(`[deleteMatchesByDate] ⚠️ AVISO: Ainda restam ${remainingForDate.length} partidas no store para a data ${date}. Forçando remoção.`);
+              return updatedMatches.filter(m => !remainingForDate.some(rem => rem.id === m.id));
+            }
+            return updatedMatches;
+          });
+
           await refreshPlayers();
           
-          showNotification(`${matchesToDelete.length} partidas e estatísticas removidas.`, 'success');
+          showNotification(`Partidas do dia excluídas. Histórico e performance 100% zerados e certificados!`, 'success');
         } catch (error) {
+          console.error(`[deleteMatchesByDate] ❌ Erro durante a exclusão das partidas:`, error);
           handleFirestoreError(error, OperationType.DELETE, `matches-by-date/${date}`);
         } finally {
           setIsSyncing(false);
@@ -3286,6 +3388,40 @@ const playersToNotifyWithTokens = [
     // Enrich players with full data from the master players list and attendance state
     playersToUse = playersToUse.map(p => enrichPlayerImmutably(p, players, attendance));
 
+    // Garantia estatutária: Auditar contadores diários contra as partidas reais da sessão (Fonte da Verdade)
+    if (!isReshuffle) {
+      const todayDateKey = getFirestoreDateKey();
+      const now = Date.now();
+      const threshold = systemMetadata?.lastResetTimestamp || (now - (16 * 60 * 60 * 1000));
+      const sessionMatches = (matches || []).filter(m => m.date === todayDateKey || (m.timestamp && m.timestamp > threshold));
+
+      if (sessionMatches.length === 0) {
+        // Primeira partida do dia: todos partem rigorosamente zerados, prevalecendo 100% ordem de chegada
+        playersToUse = playersToUse.map(p => ({
+          ...p,
+          playedLastMatch: false,
+          dailyMatches: 0,
+          consecutivePlayed: 0,
+          consecutiveBenched: 0
+        }));
+      } else {
+        // Sessão em andamento: valida dailyMatches e playedLastMatch a partir do histórico real de partidas do dia
+        const sortedSession = [...sessionMatches].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+        const lastMatch = sortedSession[0];
+        const lastMatchParticipantIds = new Set(lastMatch ? [...(lastMatch.teamA || []), ...(lastMatch.teamB || [])] : []);
+
+        playersToUse = playersToUse.map(p => {
+          const playedLast = lastMatchParticipantIds.has(p.id);
+          const realDailyMatches = sessionMatches.filter(m => m.teamA?.includes(p.id) || m.teamB?.includes(p.id)).length;
+          return {
+            ...p,
+            playedLastMatch: playedLast,
+            dailyMatches: realDailyMatches
+          };
+        });
+      }
+    }
+
     if (playersToUse.length < 12) {
       showNotification("Para gerar uma partida equilibrada, são necessários no mínimo 12 sócios presentes.", "info");
       return;
@@ -3324,10 +3460,10 @@ const playersToNotifyWithTokens = [
         try {
           // Reunir formações anteriores para evitar repetições
           const previousFormations = sessionMatches.map(m => ({
-            setterA: m.teamA[0],
-            playersA: m.teamA.slice(1),
-            setterB: m.teamB[0],
-            playersB: m.teamB.slice(1)
+            setterA: Array.isArray(m.teamA) ? m.teamA[0] : undefined,
+            playersA: Array.isArray(m.teamA) ? m.teamA.slice(1) : [],
+            setterB: Array.isArray(m.teamB) ? m.teamB[0] : undefined,
+            playersB: Array.isArray(m.teamB) ? m.teamB.slice(1) : []
           }));
 
           // Reunir histórico completo para cálculo de sinergia negativa (Machine Learning Simulation)
@@ -4135,6 +4271,15 @@ const playersToNotify = [
       setIsSyncing(true);
       triggerDbStatus('writing');
 
+      // Validação: Mensalidade permitida estritamente para sócios ativos fora do DM
+      if (paymentData.playerId) {
+        const targetPlayer = players.find(p => p.id === paymentData.playerId);
+        if (targetPlayer && (targetPlayer.status !== 'active' || targetPlayer.isDM)) {
+          showNotification('Lançamento permitido apenas para sócios ativos e fora do DM.', 'error');
+          return false;
+        }
+      }
+
       // Prevent duplicates if it's a new entry
       if (!id) {
         // Find if there's any existing payment for this player and month that is PAID
@@ -4202,7 +4347,7 @@ const playersToNotify = [
 
       await setDoc(doc(db, 'payments', paymentId), cleanObject(payment), { merge: true });
       
-      showNotification(id ? 'Lançamento atualizado!' : 'Pagamento registrado!', 'success');
+      showNotification(id ? 'Lançamento de mensalidade atualizado com sucesso!' : 'Pagamento de mensalidade concluído com sucesso!', 'success');
       return true;
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'payments');
@@ -4233,7 +4378,7 @@ const playersToNotify = [
 
       await setDoc(doc(db, 'expenses', expenseId), cleanObject(expense), { merge: true });
       
-      showNotification(id ? 'Despesa atualizada!' : 'Despesa registrada!', 'success');
+      showNotification(id ? 'Lançamento de despesa atualizado com sucesso!' : 'Lançamento de despesa concluído com sucesso!', 'success');
       return true;
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'expenses');

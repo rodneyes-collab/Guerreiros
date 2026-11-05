@@ -1,13 +1,15 @@
 import { useShallow } from 'zustand/react/shallow';
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useStore } from '../store';
-import { calculateCompositePerformanceRating, calculatePracticalSkillsSum, enrichPlayerImmutably, verifyClubGenerationRules, validateTopBottomTolerance } from '../utils/teamLogic';
-import { BarChart3, Check, RefreshCw, X, UserCheck, History, Sparkles, AlertTriangle, Activity, Settings2, Info, Scale, Star, Shield } from 'lucide-react';
+import { calculateCompositePerformanceRating, calculatePracticalSkillsSum, enrichPlayerImmutably, verifyClubGenerationRules, validateTopBottomTolerance, autoFixAllInconsistencies } from '../utils/teamLogic';
+import { BarChart3, Check, RefreshCw, X, UserCheck, History, Sparkles, AlertTriangle, Activity, Settings2, Info, Scale, Star, Shield, ArrowLeftRight } from 'lucide-react';
 import { Player, Gender } from '../types';
 import { SKILL_WEIGHTS } from '../constants';
 import { TeamMetricsComparison } from './TeamMetricsComparison';
 import { RoundStatusCard } from '../src/components/RoundStatusCard';
+import { getAttendanceArrivalPosition } from '../utils/helpers';
+import { MatchQuickSwapModal } from '../src/components/MatchQuickSwapModal';
 
 // Constantes seguras de gênero que previnem ReferenceError em qualquer runtime mobile/PWA
 export const SAFE_MALE: Gender = (typeof Gender !== 'undefined' && Gender?.MALE) ? Gender.MALE : ('MALE' as Gender);
@@ -38,10 +40,20 @@ export const PreviewTeams: React.FC<{
   onRecalculate?: () => void;
   isRecalculating?: boolean;
   recalcCount?: number;
-}> = ({ result, onConfirm, onCancel, onRegenerate, onRecalculate, isRecalculating, recalcCount }) => {
+  onUpdateResult?: (updatedResult: any) => void;
+}> = ({ result, onConfirm, onCancel, onRegenerate, onRecalculate, isRecalculating, recalcCount, onUpdateResult }) => {
   const { players, attendance, matches } = useStore(useShallow(state => ({players: state.players, attendance: state.attendance, matches: state.matches})));
+  const [activeResult, setActiveResult] = useState<any>(result);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [showComparison, setShowComparison] = useState(false);
+  const [isQuickSwapOpen, setIsQuickSwapOpen] = useState(false);
+
+  // Sincroniza sempre que a prop result mudar do pai
+  React.useEffect(() => {
+    setActiveResult(result);
+  }, [result]);
+
+  const currentResult = activeResult || result;
 
   const getFullPlayer = (p: any): Player | undefined => {
     if (!p) return undefined;
@@ -56,12 +68,12 @@ export const PreviewTeams: React.FC<{
   };
 
   const allPlayersOnCourt = useMemo(() => {
-    if (!result) return [];
+    if (!currentResult) return [];
     return [
-      result.teamA?.setter,
-      ...(result.teamA?.players || []),
-      result.teamB?.setter,
-      ...(result.teamB?.players || [])
+      currentResult.teamA?.setter,
+      ...(currentResult.teamA?.players || []),
+      currentResult.teamB?.setter,
+      ...(currentResult.teamB?.players || [])
     ]
       .filter(Boolean)
       .map(p => {
@@ -69,42 +81,69 @@ export const PreviewTeams: React.FC<{
         return full ? { ...full, gender: getSafePlayerGender(full.gender ?? p?.gender) } : undefined;
       })
       .filter(Boolean) as Player[];
-  }, [result, players, attendance]);
+  }, [currentResult, players, attendance]);
 
   const sortedBySkills = useMemo(() => {
     return [...allPlayersOnCourt].sort((a, b) => calculatePracticalSkillsSum(b) - calculatePracticalSkillsSum(a));
   }, [allPlayersOnCourt]);
 
   const safeResultForAudit = useMemo(() => {
-    if (!result) return result;
+    if (!currentResult) return currentResult;
     const ensurePlayerGender = (p: any) => {
       if (!p) return null;
       const full = getFullPlayer(p);
       return full ? { ...full, gender: getSafePlayerGender(full?.gender ?? p?.gender) } : null;
     };
     return {
-      ...result,
+      ...currentResult,
       teamA: {
-        ...result.teamA,
-        setter: ensurePlayerGender(result.teamA?.setter),
-        players: (result.teamA?.players || []).map(ensurePlayerGender).filter(Boolean)
+        ...currentResult.teamA,
+        setter: ensurePlayerGender(currentResult.teamA?.setter),
+        players: (currentResult.teamA?.players || []).map(ensurePlayerGender).filter(Boolean)
       },
       teamB: {
-        ...result.teamB,
-        setter: ensurePlayerGender(result.teamB?.setter),
-        players: (result.teamB?.players || []).map(ensurePlayerGender).filter(Boolean)
+        ...currentResult.teamB,
+        setter: ensurePlayerGender(currentResult.teamB?.setter),
+        players: (currentResult.teamB?.players || []).map(ensurePlayerGender).filter(Boolean)
       },
-      remainingPlayers: (result.remainingPlayers || []).map(ensurePlayerGender).filter(Boolean)
+      remainingPlayers: (currentResult.remainingPlayers || []).map(ensurePlayerGender).filter(Boolean)
     };
-  }, [result, players, attendance]);
+  }, [currentResult, players, attendance]);
 
   const rulesStatus = useMemo(() => {
-    return verifyClubGenerationRules(safeResultForAudit || result);
-  }, [safeResultForAudit, result]);
+    return verifyClubGenerationRules(safeResultForAudit || currentResult);
+  }, [safeResultForAudit, currentResult]);
+
+  // Agente Autônomo de Auditoria e Auto-Correção Soberana (Guerreiros Intelligence)
+  // Se qualquer regra estatutária for violada (ex.: 2 levantadores em um time), corrige instantaneamente
+  const autoFixAttemptedRef = useRef<string>('');
+  useEffect(() => {
+    const target = safeResultForAudit || currentResult;
+    if (!target) return;
+    const currentRules = verifyClubGenerationRules(target);
+    if (!currentRules.allFulfilled) {
+      const formationKey = [
+        target.teamA?.setter?.id,
+        ...(target.teamA?.players || []).map((p: any) => p?.id),
+        target.teamB?.setter?.id,
+        ...(target.teamB?.players || []).map((p: any) => p?.id)
+      ].sort().join(',');
+
+      if (autoFixAttemptedRef.current !== formationKey) {
+        autoFixAttemptedRef.current = formationKey;
+        console.log('[PreviewTeams] Guerreiros Intelligence: Detectada inconsistência nas regras estatutárias. Executando auto-correção ativa...');
+        const fixed = autoFixAllInconsistencies(target, (attendance || []) as Player[]);
+        setActiveResult(fixed);
+        if (onUpdateResult) {
+          onUpdateResult(fixed);
+        }
+      }
+    }
+  }, [safeResultForAudit, currentResult, attendance, onUpdateResult]);
 
   const topBottomValidation = useMemo(() => {
-    return validateTopBottomTolerance(safeResultForAudit || result);
-  }, [safeResultForAudit, result]);
+    return validateTopBottomTolerance(safeResultForAudit || currentResult);
+  }, [safeResultForAudit, currentResult]);
 
   const getPlayerLedStatus = (playerId: string) => {
     const player = allPlayersOnCourt.find(p => p.id === playerId);
@@ -139,8 +178,8 @@ export const PreviewTeams: React.FC<{
 
   const effectiveTiers = useMemo(() => {
     const allLine = [
-      ...(result?.teamA?.players || []),
-      ...(result?.teamB?.players || [])
+      ...(currentResult?.teamA?.players || []),
+      ...(currentResult?.teamB?.players || [])
     ].filter(p => p && !p.isOfficialSetter);
 
     const sorted = [...allLine].sort((a, b) => {
@@ -149,13 +188,13 @@ export const PreviewTeams: React.FC<{
       return calculateCompositePerformanceRating(b) - calculateCompositePerformanceRating(a);
     });
 
-    const topTwo = result?.topTwoIds?.length ? result.topTwoIds : sorted.slice(0, 2).map(p => p.id);
-    const bottomTwo = result?.bottomTwoIds?.length ? result.bottomTwoIds : sorted.slice(-2).map(p => p.id);
-    const top4 = result?.techTierIds?.top4Ids?.length ? result.techTierIds.top4Ids : sorted.slice(0, 4).map(p => p.id);
-    const bottom4 = result?.techTierIds?.bottom4Ids?.length ? result.techTierIds.bottom4Ids : sorted.slice(-4).map(p => p.id);
+    const topTwo = currentResult?.topTwoIds?.length ? currentResult.topTwoIds : (Array.isArray(sorted) ? sorted.slice(0, 2).map(p => p.id) : []);
+    const bottomTwo = currentResult?.bottomTwoIds?.length ? currentResult.bottomTwoIds : (Array.isArray(sorted) ? sorted.slice(-2).map(p => p.id) : []);
+    const top4 = currentResult?.techTierIds?.top4Ids?.length ? currentResult.techTierIds.top4Ids : (Array.isArray(sorted) ? sorted.slice(0, 4).map(p => p.id) : []);
+    const bottom4 = currentResult?.techTierIds?.bottom4Ids?.length ? currentResult.techTierIds.bottom4Ids : (Array.isArray(sorted) ? sorted.slice(-4).map(p => p.id) : []);
 
     return { topTwo, bottomTwo, top4, bottom4 };
-  }, [result]);
+  }, [currentResult]);
 
   const getPlayerTechTier = (playerId: string): 'TOP4' | 'BOTTOM4' | 'TOP2' | 'BOTTOM2' | undefined => {
     if (effectiveTiers.topTwo?.includes(playerId)) return 'TOP2';
@@ -260,6 +299,18 @@ export const PreviewTeams: React.FC<{
                       <span className="">{p.name}</span>
 
                       {(() => {
+                        const arrivalPos = getAttendanceArrivalPosition(p?.id || '', attendance);
+                        return arrivalPos !== '?' ? (
+                          <span 
+                            className="text-[7.5px] font-black px-1.5 py-0.2 rounded bg-white/10 text-brand-primary border border-brand-primary/30 font-mono shadow-sm"
+                            title={`Posição de chegada na lista de presença: ${arrivalPos}º`}
+                          >
+                            #{arrivalPos}º
+                          </span>
+                        ) : null;
+                      })()}
+
+                      {(() => {
                         const gender = getSafePlayerGender(p?.gender);
                         const isFemale = gender === SAFE_FEMALE;
                         return (
@@ -291,7 +342,7 @@ export const PreviewTeams: React.FC<{
                       )}
                       {p.isOfficialSetter && (
                         <span className="text-[10px] font-black text-brand-primary border border-brand-primary/40 px-1 rounded" title={team?.setter?.id === p.id ? "Levantador Titular" : "Levantador (Linha)"}>
-                          {team?.setter?.id === p.id ? 'LEV' : 'LEV*'}
+                          {team?.setter?.id === p.id ? '(Lev)' : '(Lev)*'}
                         </span>
                       )}
                     </div>
@@ -597,23 +648,31 @@ export const PreviewTeams: React.FC<{
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 relative">
           <AnimatePresence mode="popLayout" initial={false}>
-            {renderTeamList(result.teamA, 'A')}
-            {renderTeamList(result.teamB, 'B')}
+            {renderTeamList(currentResult.teamA, 'A')}
+            {renderTeamList(currentResult.teamB, 'B')}
           </AnimatePresence>
         </div>
 
         {/* Status da Rodada (Feedback Imediato na Pré-visualização) */}
         <div className="mt-6">
-          <RoundStatusCard generationResult={safeResultForAudit || result} />
+          <RoundStatusCard generationResult={safeResultForAudit || currentResult} />
         </div>
 
         <div className="flex flex-col gap-3 mt-6">
           <button 
-            onClick={() => onConfirm(safeResultForAudit || result)} 
+            onClick={() => onConfirm(safeResultForAudit || currentResult)} 
             className="w-full bg-brand-primary text-black font-black py-4 rounded-2xl hover:bg-brand-primary/90 transition-all flex items-center justify-center gap-3 active:scale-[0.98] shadow-xl shadow-brand-primary/20 group cursor-pointer"
           >
               <Check className="w-5 h-5 text-black group-hover:scale-110 transition-transform" /> 
               <span className="uppercase tracking-widest text-xs sm:text-sm">Confirmar Escalação</span>
+          </button>
+
+          <button 
+            onClick={() => setIsQuickSwapOpen(true)}
+            className="w-full bg-white/10 hover:bg-white/15 text-white border border-white/20 font-black py-4 rounded-2xl transition-all flex items-center justify-center gap-3 active:scale-[0.98] shadow-xl group cursor-pointer"
+          >
+            <ArrowLeftRight className="w-4 h-4 text-brand-primary group-hover:rotate-180 transition-transform duration-500" />
+            <span className="uppercase tracking-widest text-xs sm:text-sm">Trocar / Substituir Atletas</span>
           </button>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -639,6 +698,18 @@ export const PreviewTeams: React.FC<{
             </button>
           </div>
         </div>
+
+        <MatchQuickSwapModal
+          isOpen={isQuickSwapOpen}
+          onClose={() => setIsQuickSwapOpen(false)}
+          generationResult={safeResultForAudit || currentResult}
+          onUpdateResult={(newRes) => {
+            setActiveResult(newRes);
+            if (onUpdateResult) {
+              onUpdateResult(newRes);
+            }
+          }}
+        />
     </div>
   );
 };

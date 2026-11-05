@@ -3,7 +3,7 @@ import { motion } from 'motion/react';
 import { useStore } from '../store';
 import { Player } from '../types';
 import { PlayerAvatar } from '../src/components/PlayerAvatar';
-import { calculateEffectiveElo, calculateCompositePerformanceRating } from '../utils/teamLogic';
+import { calculateEffectiveElo, calculateCompositePerformanceRating, isFemalePlayer } from '../utils/teamLogic';
 import { capitalizeName } from '../utils/helpers';
 import { 
   UserCheck, 
@@ -167,8 +167,11 @@ export const PlayerRowComponent: React.FC<PlayerRowProps> = ({
       )}
       <div className="flex items-center gap-2 sm:gap-6 min-w-0 relative z-10">
         <div className="relative shrink-0 flex items-center gap-2">
-          <div className={`w-7 h-7 sm:w-9 sm:h-9 rounded-full flex items-center justify-center text-xs sm:text-sm font-black ${isSetter ? (isTimeA ? 'bg-brand-primary/20 text-brand-primary' : 'bg-brand-primary/20 text-white') : 'bg-brand-primary/5 text-white/50'} border border-brand-primary/10 shadow-sm`}>
-            {attendancePosition && attendancePosition !== 0 ? attendancePosition : '?'}
+          <div 
+            className={`w-7 h-7 sm:w-9 sm:h-9 rounded-full flex items-center justify-center text-[10px] sm:text-xs font-black ${isSetter ? (isTimeA ? 'bg-brand-primary/20 text-brand-primary' : 'bg-brand-primary/20 text-white') : 'bg-brand-primary/5 text-white/50'} border border-brand-primary/10 shadow-sm font-mono`}
+            title={`Posição de chegada na presença: ${attendancePosition}º`}
+          >
+            {attendancePosition && attendancePosition !== 0 ? `#${attendancePosition}º` : '?'}
           </div>
           <PlayerAvatar player={fullPlayer || p} size="sm" />
           {isSetter && <div className="absolute -top-1 -right-1 sm:-top-1 sm:-right-1 w-4 h-4 sm:w-5 sm:h-5 bg-brand-primary rounded-full border-2 border-brand-nav flex items-center justify-center shadow-sm z-20"><UserCheck className="w-2 h-2 sm:w-3 h-3 text-brand-secondary" /></div>}
@@ -192,6 +195,40 @@ export const PlayerRowComponent: React.FC<PlayerRowProps> = ({
                {isBottomTwo && <div className="w-2.5 h-2.5 rounded-full bg-rose-500" title="Prioridade: Ajuste Técnico" />}
             </div>
             {displayName}
+            {/* Posição de Chegada na Lista de Presença */}
+            {attendancePosition && attendancePosition !== 0 && (
+              <span 
+                className="text-[9px] sm:text-[10px] font-black px-1.5 py-0.5 rounded border bg-white/10 text-white/90 border-white/20 font-mono shadow-sm shrink-0"
+                title={`Posição de chegada na lista de presença: ${attendancePosition}º`}
+              >
+                #{attendancePosition}º
+              </span>
+            )}
+            {/* Gênero do Jogador (M para homens e F para mulheres) */}
+            {(() => {
+              const isFemale = isFemalePlayer(p);
+              return (
+                <span 
+                  className={`text-[9px] sm:text-[10px] font-black px-1.5 py-0.5 rounded border shrink-0 ${
+                    isFemale 
+                      ? 'bg-pink-500/20 text-pink-300 border-pink-500/40' 
+                      : 'bg-blue-500/20 text-blue-300 border-blue-500/40'
+                  }`}
+                  title={isFemale ? 'Feminino' : 'Masculino'}
+                >
+                  {isFemale ? 'F' : 'M'}
+                </span>
+              );
+            })()}
+            {/* Identificador Exclusivo do Levantador: (Lev) */}
+            {isSetter && (
+              <span 
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-brand-primary/20 text-brand-primary border border-brand-primary/50 text-[10px] sm:text-xs font-black uppercase shadow-sm shrink-0"
+                title="Levantador da equipe"
+              >
+                (Lev)
+              </span>
+            )}
             {isActive && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-brand-primary text-black font-black text-[9px] sm:text-[10px] uppercase tracking-wider shadow-md shadow-brand-primary/30 shrink-0 border border-brand-primary/60 animate-pulse">
                 <Replace className="w-3 h-3 text-black" />
@@ -281,15 +318,6 @@ export const PlayerRowComponent: React.FC<PlayerRowProps> = ({
             <span className="text-[8px] sm:text-[11px] text-white/60 font-bold uppercase flex items-center gap-1 sm:gap-2">
               <span className="hidden xs:inline">EFIC:</span> <span className="text-brand-primary font-black" title={`Rating Híbrido de Equilíbrio (50% ELO Descontado de Bônus + 50% IC): ${Math.round(calculateEffectiveElo(p))}`}>{Math.round(calculateEffectiveElo(p))}</span>
               <span className="text-white/50 font-black" title={`Índice Composto (80% Habilidades + 20% Vitória): ${calculateCompositePerformanceRating(p)}`}>• IC {calculateCompositePerformanceRating(p)}</span>
-              {suggestedPosition && (
-                <span className={`${
-                  isTimeA 
-                    ? 'bg-brand-primary/10 text-brand-primary border-brand-primary/40 shadow-[0_0_10px_rgba(245,196,41,0.1)]' 
-                    : 'bg-white/10 text-white border-white/20'
-                } px-2.5 py-0.5 rounded text-[11px] sm:text-[15px] border font-black`}>
-                  P{suggestedPosition}
-                </span>
-              )}
             </span>
           </div>
           {synergyInfo && (synergyInfo.highSynergy.length > 0 || synergyInfo.lowSynergy.length > 0) && (

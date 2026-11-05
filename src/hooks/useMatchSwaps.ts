@@ -1,9 +1,9 @@
 import { useState, useCallback } from 'react';
 import { useStore } from '../../store';
 import { Player, GenerationResult, Team } from '../../types';
-import { calculateEffectiveElo } from '../../utils/teamLogic';
+import { calculateEffectiveElo, isFemalePlayer } from '../../utils/teamLogic';
 import { cleanObject } from '../../utils/helpers';
-import { db, doc, setDoc } from '../../firebase';
+import { db, doc, setDoc, deleteDoc, getFirestoreDateKey } from '../../firebase';
 
 export interface QuickSwapTarget {
   player: Player | null;
@@ -316,6 +316,195 @@ export const useMatchSwaps = () => {
     }
   }, [setSwapSelection, performSwap]);
 
+  // Direct swap between Team A and Team B (Manual balancing with gender parity)
+  const performTeamSwap = useCallback(async (idA: string, idB: string, customGenerationResult?: GenerationResult | null): Promise<{ success: boolean; updatedResult?: GenerationResult }> => {
+    const currentGen = customGenerationResult || useStore.getState().generationResult;
+    if (!currentGen) {
+      showNotification('Nenhuma formação de partida encontrada para realizar a troca.', 'error');
+      return { success: false };
+    }
+
+    const playerA = currentGen.teamA.setter?.id === idA
+      ? currentGen.teamA.setter
+      : (currentGen.teamA.players || []).find(p => p.id === idA);
+    const playerB = currentGen.teamB.setter?.id === idB
+      ? currentGen.teamB.setter
+      : (currentGen.teamB.players || []).find(p => p.id === idB);
+
+    if (!playerA || !playerB) {
+      showNotification('Atletas não encontrados nas equipes correspondentes.', 'error');
+      return { success: false };
+    }
+
+    // Gender check: only allow swapping if both are same gender (preserves strict gender parity)
+    if (isFemalePlayer(playerA) !== isFemalePlayer(playerB)) {
+      showNotification('Para manter a paridade de gênero da partida, a troca deve ser entre atletas do mesmo gênero.', 'info');
+      return { success: false };
+    }
+
+    const swapInTeamA = (t: Team): Team => {
+      let setter = t.setter;
+      if (t.setter?.id === idA) setter = playerB;
+      const players = (t.players || []).map(p => p.id === idA ? playerB : p);
+      return { ...t, setter, players };
+    };
+
+    const swapInTeamB = (t: Team): Team => {
+      let setter = t.setter;
+      if (t.setter?.id === idB) setter = playerA;
+      const players = (t.players || []).map(p => p.id === idB ? playerA : p);
+      return { ...t, setter, players };
+    };
+
+    const newTeamA = swapInTeamA(currentGen.teamA);
+    const newTeamB = swapInTeamB(currentGen.teamB);
+
+    const updatedResult: GenerationResult = {
+      ...currentGen,
+      teamA: {
+        ...newTeamA,
+        totalIC: calcIC(newTeamA),
+        totalEfficiency: calcEff(newTeamA)
+      },
+      teamB: {
+        ...newTeamB,
+        totalIC: calcIC(newTeamB),
+        totalEfficiency: calcEff(newTeamB)
+      }
+    };
+
+    // Atualiza o store apenas se já houver partida em andamento no store
+    if (useStore.getState().generationResult) {
+      setGenerationResult(updatedResult);
+      try {
+        await setDoc(doc(db, 'metadata', 'currentMatch'), cleanObject(updatedResult));
+      } catch (err) {
+        console.error('Erro ao sincronizar troca no Firestore:', err);
+      }
+    }
+
+    showNotification(`Troca efetuada: ${playerA.name} (Time A) ⇄ ${playerB.name} (Time B)`, 'success');
+    return { success: true, updatedResult };
+  }, [setGenerationResult, showNotification]);
+
+  // Bench substitution with fatigue or left club options
+  const performBenchSubstitution = useCallback(async (
+    outgoingPlayerId: string, 
+    reason: 'FATIGUE' | 'LEFT_CLUB',
+    customGenerationResult?: GenerationResult | null,
+    customReplacementId?: string
+  ): Promise<{ success: boolean; updatedResult?: GenerationResult }> => {
+    const currentGen = customGenerationResult || useStore.getState().generationResult;
+    if (!currentGen) {
+      showNotification('Nenhuma formação de partida encontrada para substituição.', 'error');
+      return { success: false };
+    }
+
+    // Find outgoing player
+    const isSetterA = currentGen.teamA.setter?.id === outgoingPlayerId;
+    const isSetterB = currentGen.teamB.setter?.id === outgoingPlayerId;
+    const isLineA = (currentGen.teamA.players || []).some(p => p.id === outgoingPlayerId);
+    const isLineB = (currentGen.teamB.players || []).some(p => p.id === outgoingPlayerId);
+
+    const outgoing = isSetterA ? currentGen.teamA.setter!
+      : isSetterB ? currentGen.teamB.setter!
+      : isLineA ? currentGen.teamA.players.find(p => p.id === outgoingPlayerId)!
+      : isLineB ? currentGen.teamB.players.find(p => p.id === outgoingPlayerId)!
+      : null;
+
+    if (!outgoing) {
+      showNotification('Atleta titular não encontrado na partida atual.', 'error');
+      return { success: false };
+    }
+
+    const reserves = currentGen.remainingPlayers || [];
+    if (reserves.length === 0) {
+      showNotification('Não há atletas reservas na fila de espera para substituição.', 'info');
+      return { success: false };
+    }
+
+    const outgoingIsFemale = isFemalePlayer(outgoing);
+    const isSetter = isSetterA || isSetterB;
+
+    let replacement: Player | undefined;
+
+    // Se um substituto específico foi selecionado
+    if (customReplacementId) {
+      replacement = reserves.find(r => r.id === customReplacementId);
+    }
+
+    // Se não ou não encontrado, busca o primeiro reserva do mesmo gênero (e mesma função se for levantador)
+    if (!replacement) {
+      replacement = reserves.find(r => isFemalePlayer(r) === outgoingIsFemale && (isSetter ? r.isOfficialSetter : true));
+      if (!replacement && isSetter) {
+        replacement = reserves.find(r => isFemalePlayer(r) === outgoingIsFemale);
+      }
+    }
+
+    if (!replacement) {
+      showNotification(`Nenhum atleta reserva do gênero ${outgoingIsFemale ? 'Feminino' : 'Masculino'} disponível na fila de espera.`, 'info');
+      return { success: false };
+    }
+
+    const replaceInTeam = (t: Team): Team => {
+      let setter = t.setter;
+      if (t.setter?.id === outgoingPlayerId) {
+        setter = replacement!;
+      }
+      const players = (t.players || []).map(p => p.id === outgoingPlayerId ? replacement! : p);
+      return { ...t, setter, players };
+    };
+
+    const newTeamA = (isSetterA || isLineA) ? replaceInTeam(currentGen.teamA) : currentGen.teamA;
+    const newTeamB = (isSetterB || isLineB) ? replaceInTeam(currentGen.teamB) : currentGen.teamB;
+
+    let newRemaining = reserves.filter(r => r.id !== replacement!.id);
+    if (reason === 'FATIGUE') {
+      newRemaining.push(outgoing);
+    }
+
+    const updatedResult: GenerationResult = {
+      ...currentGen,
+      teamA: {
+        ...newTeamA,
+        totalIC: calcIC(newTeamA),
+        totalEfficiency: calcEff(newTeamA)
+      },
+      teamB: {
+        ...newTeamB,
+        totalIC: calcIC(newTeamB),
+        totalEfficiency: calcEff(newTeamB)
+      },
+      remainingPlayers: newRemaining
+    };
+
+    if (useStore.getState().generationResult) {
+      setGenerationResult(updatedResult);
+      try {
+        await setDoc(doc(db, 'metadata', 'currentMatch'), cleanObject(updatedResult));
+      } catch (err) {
+        console.error('Erro ao sincronizar substituição no Firestore:', err);
+      }
+    }
+
+    if (reason === 'LEFT_CLUB') {
+      try {
+        const dateKey = getFirestoreDateKey();
+        await deleteDoc(doc(db, 'attendance', dateKey, 'players', outgoingPlayerId));
+        const currentAtt = useStore.getState().attendance;
+        useStore.getState().setAttendance(currentAtt.filter(p => p.id !== outgoingPlayerId));
+        showNotification(`${outgoing.name} removido da presença do dia. ${replacement.name} entrou na partida!`, 'info');
+      } catch (attErr) {
+        console.error('Erro ao remover atleta da presença:', attErr);
+        showNotification(`${replacement.name} entrou na partida!`, 'success');
+      }
+    } else {
+      showNotification(`${outgoing.name} foi para o banco. ${replacement.name} entrou na partida!`, 'success');
+    }
+
+    return { success: true, updatedResult };
+  }, [setGenerationResult, showNotification]);
+
   return {
     swapSelection,
     quickSwapTarget,
@@ -324,6 +513,8 @@ export const useMatchSwaps = () => {
     closeQuickSwap,
     executeQuickSwap,
     performSwap,
+    performTeamSwap,
+    performBenchSubstitution,
     movePlayerToSlot,
     promoteToSetter,
     handleRemovePlayer,

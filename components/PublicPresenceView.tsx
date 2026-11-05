@@ -39,7 +39,7 @@ export const PublicPresenceView: React.FC<PublicPresenceViewProps> = ({ onBackTo
   const attendance = useStore(state => state.attendance);
   const { intentions, isLoaded, setIntent, resetIntent } = useIntentions();
   const { monthBirthdays, getBirthdaysByMonth } = useBirthdays(players);
-  const [selectedMonth, setSelectedMonth] = useState<number>(0);
+  const [selectedMonth, setSelectedMonth] = useState<number>(() => (new Date().getMonth() + 1));
 
   useEffect(() => {
     if (monthBirthdays.month && selectedMonth === 0) {
@@ -76,7 +76,7 @@ export const PublicPresenceView: React.FC<PublicPresenceViewProps> = ({ onBackTo
 
   // Filter active and eligible players
   const eligiblePlayers = useMemo(() => {
-    return players.filter(p => (!p.status || p.status === 'active' || p.status === 'guest') && !p.isDM);
+    return players.filter(p => p.status === 'active' && !p.isDM);
   }, [players]);
 
   // Find players matching search term
@@ -86,7 +86,7 @@ export const PublicPresenceView: React.FC<PublicPresenceViewProps> = ({ onBackTo
     const term = norm(searchTerm);
     return eligiblePlayers.filter(p => 
       norm(p.name).includes(term) || (p.email && norm(p.email).includes(term))
-    ).slice(0, 8);
+    ).slice(0, 30);
   }, [searchTerm, eligiblePlayers]);
 
   // Get going and absent players for the Live Board
@@ -110,14 +110,34 @@ export const PublicPresenceView: React.FC<PublicPresenceViewProps> = ({ onBackTo
 
   const formatConfirmationTime = (timestamp?: number | null) => {
     if (!timestamp || isNaN(timestamp) || timestamp <= 0) return null;
-    const date = new Date(timestamp);
-    const day = String(date.getDate()).padStart(2, '0');
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    const weekdays = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
-    const weekDay = weekdays[date.getDay()];
-    return `${weekDay}, ${day}/${month} às ${hours}:${minutes}`;
+    try {
+      const date = new Date(timestamp);
+      const formatter = new Intl.DateTimeFormat('pt-BR', {
+        timeZone: 'America/Sao_Paulo',
+        weekday: 'short',
+        day: '2-digit',
+        month: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      });
+      const parts = formatter.formatToParts(date);
+      const getPart = (type: string) => parts.find(p => p.type === type)?.value || '';
+
+      let weekDay = getPart('weekday');
+      if (weekDay) {
+        weekDay = weekDay.replace('.', '');
+        weekDay = weekDay.charAt(0).toUpperCase() + weekDay.slice(1);
+      }
+      const day = getPart('day');
+      const month = getPart('month');
+      const hour = getPart('hour');
+      const minute = getPart('minute');
+
+      return `${weekDay}, ${day}/${month} às ${hour}:${minute}`;
+    } catch (e) {
+      return null;
+    }
   };
 
   const handleSelectPlayer = (player: any) => {
@@ -705,7 +725,7 @@ export const PublicPresenceView: React.FC<PublicPresenceViewProps> = ({ onBackTo
                 {goingPlayers.length === 0 ? (
                   <p className="text-xs text-slate-600 italic py-2">Ninguém confirmado na lista até o momento.</p>
                 ) : (
-                  <div className="space-y-1.5 max-h-[220px] overflow-y-auto pr-1">
+                  <div className="space-y-1.5 max-h-[380px] overflow-y-auto pr-1">
                     {goingPlayers.map((player, idx) => {
                       const isSetter = player.isOfficialSetter;
                       const timeStr = formatConfirmationTime(intentions.confirmationTimestamps?.[player.id]);

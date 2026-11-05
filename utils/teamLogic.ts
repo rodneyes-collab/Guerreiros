@@ -106,13 +106,24 @@ export const suggestPosition = (p: Player): string => {
 
 export const enrichPlayerImmutably = (p: Player, players: Player[] = [], attendance: Player[] = []): Player => {
   if (!p) return p;
-  const master = players.find(mp => mp.id === p.id) || attendance.find(ap => ap.id === p.id);
+  const master = players.find(mp => mp.id === p.id);
+  const att = attendance.find(ap => ap.id === p.id) || p;
   return {
-    ...p,
     ...(master || {}),
-    gender: getSafeGender(master?.gender || p.gender),
-    skills: master?.skills || p.skills || { attacking: 2, defense: 2, setting: 2, serving: 2 },
-    isOfficialSetter: master?.isOfficialSetter ?? p.isOfficialSetter ?? false
+    ...att,
+    ...p,
+    // Preserva estritamente os campos diários da sessão a partir da presença (attendance / p)
+    arrivalOrder: typeof p.arrivalOrder === 'number' && p.arrivalOrder > 0
+      ? p.arrivalOrder
+      : (typeof att.arrivalOrder === 'number' && att.arrivalOrder > 0 ? att.arrivalOrder : 999),
+    playedLastMatch: p.playedLastMatch ?? att.playedLastMatch ?? false,
+    dailyMatches: p.dailyMatches ?? att.dailyMatches ?? 0,
+    consecutiveBenched: p.consecutiveBenched ?? att.consecutiveBenched ?? 0,
+    consecutivePlayed: p.consecutivePlayed ?? att.consecutivePlayed ?? 0,
+    departureTime: p.departureTime ?? att.departureTime,
+    gender: getSafeGender(master?.gender || p.gender || att.gender),
+    skills: master?.skills || p.skills || att.skills || { attacking: 2, defense: 2, setting: 2, serving: 2 },
+    isOfficialSetter: master?.isOfficialSetter ?? p.isOfficialSetter ?? att.isOfficialSetter ?? false
   };
 };
 
@@ -139,37 +150,47 @@ export const cloneGenerationResultImmutably = (res: GenerationResult, players: P
  * Fila Inteligente (Guerreiros Intelligence Protocol)
  * Prioridade:
  * 1. Não jogou a última partida (playedLastMatch === false)
- * 2. Tempo de banco (consecutiveBenched maior primeiro)
- * 3. Menos partidas jogadas no dia (dailyMatches menor primeiro)
- * 4. Menos partidas consecutivas (consecutivePlayed menor primeiro)
- * 5. Ordem de chegada (arrivalOrder menor primeiro)
+ * 2. Trava de Partidas Consecutivas em Quadra (quem jogou a última, prioriza menor consecutivePlayed)
+ * 3. Prioridade de Saída Antecipada (departureTime)
+ * 4. Volume Diário de Jogos (dailyMatches menor primeiro)
+ * 5. Tempo de Banco (consecutiveBenched maior primeiro para quem não jogou a última)
+ * 6. Ordem de Chegada (arrivalOrder menor primeiro)
  */
 const sortPlayersByPriority = (list: Player[]): Player[] => {
   return [...list].sort((a, b) => {
-    // 1. Quem NÃO jogou a última tem prioridade máxima
+    // 1. Quem NÃO jogou a última tem prioridade máxima (Rodagem Imediata)
     const pA = a.playedLastMatch ? 1 : 0;
     const pB = b.playedLastMatch ? 1 : 0;
     if (pA !== pB) return pA - pB;
 
-    // 2. Se ambos não jogaram a última, prioriza quem está há mais tempo consecutivo no banco
+    // 2. Se ambos jogaram a última partida: prioriza quem jogou menos partidas consecutivas
+    if (a.playedLastMatch && b.playedLastMatch) {
+      const cA = a.consecutivePlayed || 0;
+      const cB = b.consecutivePlayed || 0;
+      if (cA !== cB) return cA - cB;
+    }
+
+    // 3. Prioridade de Saída Antecipada (departureTime)
+    if (a.departureTime && !b.departureTime) return -1;
+    if (!a.departureTime && b.departureTime) return 1;
+    if (a.departureTime && b.departureTime && a.departureTime !== b.departureTime) {
+      return a.departureTime.localeCompare(b.departureTime);
+    }
+
+    // 4. Volume Diário de Jogos (Menos partidas jogadas no dia corrente)
+    const dA = a.dailyMatches || 0;
+    const dB = b.dailyMatches || 0;
+    if (dA !== dB) return dA - dB;
+
+    // 5. Se ambos não jogaram a última partida: prioriza quem está há mais tempo consecutivo no banco
     if (!a.playedLastMatch && !b.playedLastMatch) {
       const bA = a.consecutiveBenched || 0;
       const bB = b.consecutiveBenched || 0;
       if (bA !== bB) return bB - bA;
     }
 
-    // 3. Menos partidas no dia
-    const dA = a.dailyMatches || 0;
-    const dB = b.dailyMatches || 0;
-    if (dA !== dB) return dA - dB;
-
-    // 4. Se ambos jogaram a última partida, prioriza quem jogou menos partidas consecutivas
-    const cA = a.consecutivePlayed || 0;
-    const cB = b.consecutivePlayed || 0;
-    if (cA !== cB) return cA - cB;
-
-    // 5. Ordem de chegada
-    return (a.arrivalOrder || 0) - (b.arrivalOrder || 0);
+    // 6. Ordem de chegada (arrivalOrder menor primeiro)
+    return (a.arrivalOrder ?? 999) - (b.arrivalOrder ?? 999);
   });
 };
 
@@ -187,25 +208,47 @@ export const getPriorityQueue = (
   const sortedLine = sortPlayersByPriority(linePlayers);
 
   let chosenSetters: Player[] = [];
+  let remainingSetters: Player[] = [];
   let linePool: Player[] = [...sortedLine];
 
   if (sortedSetters.length >= settersCount) {
     chosenSetters = sortedSetters.slice(0, settersCount);
-    // Levantadores oficiais excedentes vão para o pool de linha
-    linePool = [...linePool, ...sortedSetters.slice(settersCount)];
-    linePool = sortPlayersByPriority(linePool);
+    remainingSetters = sortedSetters.slice(settersCount);
   } else {
     chosenSetters = [...sortedSetters];
   }
 
   const neededLine = Math.max(0, count - chosenSetters.length);
+
+  // Se faltam jogadores de linha para atingir neededLine (ex: < 10 na lista),
+  // aí sim os levantadores excedentes completam as vagas de linha.
+  // Havendo sócios de linha suficientes (>= neededLine), os levantadores excedentes
+  // aguardam no banco (remainingPlayers) para rodar como titulares na próxima partida.
+  if (linePool.length < neededLine && remainingSetters.length > 0) {
+    const missing = neededLine - linePool.length;
+    const settersAsLine = remainingSetters.slice(0, missing);
+    remainingSetters = remainingSetters.slice(missing);
+    linePool = [...linePool, ...settersAsLine];
+  }
+
   const chosenLine = linePool.slice(0, neededLine);
   const remainingLine = linePool.slice(neededLine);
 
   const topPlayers = [...chosenSetters, ...chosenLine];
-  const remainingPlayers = [...remainingLine];
+  const remainingPlayers = [...remainingLine, ...remainingSetters];
 
   return { topPlayers, remainingPlayers };
+};
+
+
+export const sortLinePlayersBySkills = (linePlayers: Player[]): Player[] => {
+  return [...linePlayers].sort((a, b) => {
+    const diff = calculatePracticalSkillsSum(b) - calculatePracticalSkillsSum(a);
+    if (diff !== 0) return diff;
+    const icDiff = calculateCompositePerformanceRating(b) - calculateCompositePerformanceRating(a);
+    if (icDiff !== 0) return icDiff;
+    return (a.id || '').localeCompare(b.id || '');
+  });
 };
 
 /**
@@ -246,11 +289,8 @@ export const verifyClubGenerationRules = (result: GenerationResult): ClubGenerat
 
   let topBottomFulfilled = true;
   if (linePlayers.length >= 4) {
-    const sortedLine = [...linePlayers].sort((a, b) => {
-      const diff = calculatePracticalSkillsSum(b) - calculatePracticalSkillsSum(a);
-      if (diff !== 0) return diff;
-      return calculateCompositePerformanceRating(b) - calculateCompositePerformanceRating(a);
-    });
+    const sortedLine = sortLinePlayersBySkills(linePlayers);
+
 
     const top2Ids = new Set(sortedLine.slice(0, 2).map(p => p.id));
     const bottom2Ids = new Set(sortedLine.slice(-2).map(p => p.id));
@@ -355,12 +395,8 @@ export const findBestBalancingCombination = (
     setterA = officialSetters[0];
   }
 
-  // 3. Ordenar os jogadores de linha por Habilidades Práticas + IC
-  const sortedLine = [...matchLinePool].sort((a, b) => {
-    const diff = calculatePracticalSkillsSum(b) - calculatePracticalSkillsSum(a);
-    if (diff !== 0) return diff;
-    return calculateCompositePerformanceRating(b) - calculateCompositePerformanceRating(a);
-  });
+  // 3. Ordenar os jogadores de linha por Habilidades Práticas + IC de forma determinística estável
+  const sortedLine = sortLinePlayersBySkills(matchLinePool);
 
   const top2 = sortedLine.slice(0, 2);
   const bottom2 = sortedLine.slice(-2);
@@ -397,10 +433,16 @@ export const findBestBalancingCombination = (
     const menB = setterMenB + comboB.filter(p => !isFemalePlayer(p)).length;
     if (Math.abs(menA - menB) > 1) continue;
 
+    // Regra Estatutária: Exatamente 1 levantador por equipe (quando houver levantadores oficiais)
+    // Se o time já tem setter titular oficial, não pode ter outro levantador oficial na linha
+    if (setterA?.isOfficialSetter && comboA.some(p => p.isOfficialSetter)) continue;
+    if (setterB?.isOfficialSetter && comboB.some(p => p.isOfficialSetter)) continue;
+
     // Soberania de Top 2 e Bottom 2
     const t2A = comboA.filter(p => topTwoIds.includes(p.id)).length;
     const b2A = comboA.filter(p => bottomTwoIds.includes(p.id)).length;
     if (t2A !== 1 || b2A !== 1) continue;
+
     // Paridade estrita Top 4 e Bottom 4 (2 em cada time)
     const t4A = comboA.filter(p => top4Ids.includes(p.id)).length;
     const b4A = comboA.filter(p => bottom4Ids.includes(p.id)).length;
@@ -519,6 +561,7 @@ export const findBestBalancingCombination = (
   });
 
   const best = combinationsList[0];
+  const autoCorrected = autoFixAllInconsistencies(best.result, attendanceList, allMatchHistory);
 
   return {
     allCombinations: combinationsList,
@@ -528,10 +571,10 @@ export const findBestBalancingCombination = (
       balancingStrategy: 'BOTH',
       useTrueSkill: false
     },
-    bestGenerationResult: best.result,
-    minDeltaIC: best.deltaIC,
-    teamAIC: best.teamAIC,
-    teamBIC: best.teamBIC
+    bestGenerationResult: autoCorrected,
+    minDeltaIC: Number(Math.abs((autoCorrected.teamA?.totalIC || 0) - (autoCorrected.teamB?.totalIC || 0)).toFixed(1)),
+    teamAIC: autoCorrected.teamA?.totalIC || best.teamAIC,
+    teamBIC: autoCorrected.teamB?.totalIC || best.teamBIC
   };
 };
 
@@ -556,10 +599,11 @@ export function generateTeams(
     false
   );
   const bestRes = optResult.bestGenerationResult;
-  const toleranceValidation = validateTopBottomTolerance(bestRes);
+  const verifiedAndFixed = autoFixAllInconsistencies(bestRes, attendanceList, allMatchHistory);
+  const toleranceValidation = validateTopBottomTolerance(verifiedAndFixed);
 
   return {
-    ...bestRes,
+    ...verifiedAndFixed,
     topBottomValidation: toleranceValidation,
     diffTop: toleranceValidation.diffTop,
     diffBottom: toleranceValidation.diffBottom
@@ -576,11 +620,7 @@ export const runAutoCorrectionAgent = (result: GenerationResult): GenerationResu
   
   if (linePlayers.length < 4) return result;
 
-  const sortedLine = [...linePlayers].sort((a, b) => {
-    const diff = calculatePracticalSkillsSum(b) - calculatePracticalSkillsSum(a);
-    if (diff !== 0) return diff;
-    return calculateCompositePerformanceRating(b) - calculateCompositePerformanceRating(a);
-  });
+  const sortedLine = sortLinePlayersBySkills(linePlayers);
 
   const top4Ids = new Set(sortedLine.slice(0, 4).map(p => p.id));
   const bottom4Ids = new Set(sortedLine.slice(-4).map(p => p.id));
@@ -682,7 +722,170 @@ export const runAutoCorrectionAgent = (result: GenerationResult): GenerationResu
   };
 }
 export const runCriticalSynergySolverAgent = (result: GenerationResult, ...args: any[]): any => ({ ...result, updatedResult: result, resolvedPairsCount: 0 });
-export const autoFixAllInconsistencies = (res: any, ...args: any[]): any => res;
+
+/**
+ * Agente Soberano de Auto-Correção de Inconsistências Estatutárias:
+ * Identifica e corrige autonomamente:
+ * 1. Levantadores: garante que nenhuma equipe tenha 2 levantadores oficiais quando houver >= 2 em quadra.
+ *    Se o Time A tiver 2 levantadores (1 titular + 1 de linha), substitui o levantador excedente
+ *    por um jogador de linha da reserva (reserves/remainingPlayers/attendance) de mesmo gênero e IC compatível,
+ *    ou redistribui com a equipe B para manter a paridade estatutária (1A / 1B).
+ * 2. Paridade de Gênero: se |menA - menB| > 1, troca atletas de mesmo nível técnico entre A e B.
+ * 3. Soberania Top/Bottom: equilibra Top 2/4 e Bottom 2/4 da linha.
+ */
+export const autoFixAllInconsistencies = (
+  res: any,
+  attendance: Player[] = [],
+  allMatchHistory: any[] = []
+): GenerationResult => {
+  if (!res || !res.teamA || !res.teamB) return res;
+
+  let currentRes: GenerationResult = {
+    ...res,
+    teamA: {
+      ...res.teamA,
+      players: [...(res.teamA.players || [])]
+    },
+    teamB: {
+      ...res.teamB,
+      players: [...(res.teamB.players || [])]
+    },
+    remainingPlayers: [...(res.remainingPlayers || [])]
+  };
+
+  let rules = verifyClubGenerationRules(currentRes);
+  if (rules.allFulfilled) return currentRes;
+
+  let teamA = currentRes.teamA;
+  let teamB = currentRes.teamB;
+  let remainingPlayers = currentRes.remainingPlayers || [];
+
+  // Se remainingPlayers estiver vazio, tenta extrair da lista de presença oficial ativa
+  if (remainingPlayers.length === 0 && attendance && attendance.length > 0) {
+    const onCourtIds = new Set([
+      teamA.setter?.id,
+      ...(teamA.players || []).map(p => p.id),
+      teamB.setter?.id,
+      ...(teamB.players || []).map(p => p.id)
+    ].filter(Boolean));
+    remainingPlayers = attendance.filter(p => (!p.status || p.status === 'active') && !onCourtIds.has(p.id));
+  }
+
+  // 1. Correção Soberana de Levantadores
+  const countSetters = (t: any) => [t.setter, ...(t.players || [])].filter(p => p && p.isOfficialSetter).length;
+  let settersA = countSetters(teamA);
+  let settersB = countSetters(teamB);
+
+  if (settersA > 1 || settersB > 1) {
+    // Caso 1: Time A tem 2 ou mais levantadores
+    if (settersA > 1) {
+      const extraSetterIdx = teamA.players.findIndex(p => p && p.isOfficialSetter);
+      if (extraSetterIdx !== -1) {
+        const extraSetter = teamA.players[extraSetterIdx];
+        const isFemale = isFemalePlayer(extraSetter);
+
+        // Tentativa A: Substituir por um jogador de linha da reserva com mesmo gênero
+        const reserveCandidateIdx = remainingPlayers.findIndex(
+          p => p && !p.isOfficialSetter && isFemalePlayer(p) === isFemale
+        );
+
+        if (reserveCandidateIdx !== -1) {
+          const replacement = remainingPlayers[reserveCandidateIdx];
+          teamA.players[extraSetterIdx] = replacement;
+          remainingPlayers[reserveCandidateIdx] = extraSetter;
+        } else if (settersB === 0) {
+          // Time B não tem nenhum levantador oficial, passar para o Time B
+          const lineCandidateIdx = teamB.players.findIndex(p => isFemalePlayer(p) === isFemale);
+          if (lineCandidateIdx !== -1) {
+            const swapTarget = teamB.players[lineCandidateIdx];
+            teamA.players[extraSetterIdx] = swapTarget;
+            teamB.players[lineCandidateIdx] = extraSetter;
+          }
+        } else {
+          // Qualquer reserva de linha disponível
+          const anyReserveIdx = remainingPlayers.findIndex(p => p && !p.isOfficialSetter);
+          if (anyReserveIdx !== -1) {
+            const replacement = remainingPlayers[anyReserveIdx];
+            teamA.players[extraSetterIdx] = replacement;
+            remainingPlayers[anyReserveIdx] = extraSetter;
+          }
+        }
+      }
+    }
+
+    // Caso 2: Time B tem 2 ou mais levantadores
+    settersB = countSetters(teamB);
+    if (settersB > 1) {
+      const extraSetterIdx = teamB.players.findIndex(p => p && p.isOfficialSetter);
+      if (extraSetterIdx !== -1) {
+        const extraSetter = teamB.players[extraSetterIdx];
+        const isFemale = isFemalePlayer(extraSetter);
+
+        const reserveCandidateIdx = remainingPlayers.findIndex(
+          p => p && !p.isOfficialSetter && isFemalePlayer(p) === isFemale
+        );
+
+        if (reserveCandidateIdx !== -1) {
+          const replacement = remainingPlayers[reserveCandidateIdx];
+          teamB.players[extraSetterIdx] = replacement;
+          remainingPlayers[reserveCandidateIdx] = extraSetter;
+        } else if (settersA === 0) {
+          const lineCandidateIdx = teamA.players.findIndex(p => isFemalePlayer(p) === isFemale);
+          if (lineCandidateIdx !== -1) {
+            const swapTarget = teamA.players[lineCandidateIdx];
+            teamB.players[extraSetterIdx] = swapTarget;
+            teamA.players[lineCandidateIdx] = extraSetter;
+          }
+        } else {
+          const anyReserveIdx = remainingPlayers.findIndex(p => p && !p.isOfficialSetter);
+          if (anyReserveIdx !== -1) {
+            const replacement = remainingPlayers[anyReserveIdx];
+            teamB.players[extraSetterIdx] = replacement;
+            remainingPlayers[anyReserveIdx] = extraSetter;
+          }
+        }
+      }
+    }
+  }
+
+  // 2. Correção de Gênero (|menA - menB| <= 1)
+  const getMenCount = (team: any) => [team.setter, ...(team.players || [])].filter(p => p && !isFemalePlayer(p)).length;
+  let menA = getMenCount(teamA);
+  let menB = getMenCount(teamB);
+
+  if (Math.abs(menA - menB) > 1) {
+    const moreMenTeam = menA > menB ? 'A' : 'B';
+    const sourcePlayers = moreMenTeam === 'A' ? teamA.players : teamB.players;
+    const targetPlayers = moreMenTeam === 'A' ? teamB.players : teamA.players;
+
+    const maleIdx = sourcePlayers.findIndex(p => p && !isFemalePlayer(p) && !p.isOfficialSetter);
+    const femaleIdx = targetPlayers.findIndex(p => p && isFemalePlayer(p) && !p.isOfficialSetter);
+
+    if (maleIdx !== -1 && femaleIdx !== -1) {
+      const malePlayer = sourcePlayers[maleIdx];
+      const femalePlayer = targetPlayers[femaleIdx];
+      sourcePlayers[maleIdx] = femalePlayer;
+      targetPlayers[femaleIdx] = malePlayer;
+    }
+  }
+
+  // 3. Atualizar IC total
+  teamA.totalIC = calculateTeamTotalIC(teamA);
+  teamB.totalIC = calculateTeamTotalIC(teamB);
+
+  currentRes = {
+    ...currentRes,
+    teamA,
+    teamB,
+    remainingPlayers
+  };
+
+  // 4. Executar auto-balanceamento de Top/Bottom na linha
+  currentRes = runAutoCorrectionAgent(currentRes);
+
+  return currentRes;
+};
+
 export const optimizeTeamSynergyIteratively = (res: any, ...args: any[]): any => res;
 export const generateTournamentTeams = (list: Player[], numTeams: number = 2, ...args: any[]): any => ({ teams: [], reserves: [] });
 
@@ -706,11 +909,7 @@ export const validateTopBottomTolerance = (result: GenerationResult): TopBottomV
     return { isValid: true, diffTop: 0, diffBottom: 0, message: "Jogadores insuficientes para rigor de Top/Bottom" };
   }
 
-  const sortedLine = [...linePlayers].sort((a, b) => {
-    const diff = calculatePracticalSkillsSum(b) - calculatePracticalSkillsSum(a);
-    if (diff !== 0) return diff;
-    return calculateCompositePerformanceRating(b) - calculateCompositePerformanceRating(a);
-  });
+  const sortedLine = sortLinePlayersBySkills(linePlayers);
 
   const top2Ids = new Set(sortedLine.slice(0, 2).map(p => p.id));
   const bottom2Ids = new Set(sortedLine.slice(-2).map(p => p.id));

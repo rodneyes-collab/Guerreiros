@@ -72,35 +72,17 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
     return Array.from(dates).sort((a, b) => b.localeCompare(a));
   }, [matches]);
 
-  const [performanceDate, setPerformanceDate] = useState(() => {
-    const today = getFirestoreDateKey();
-    const hasToday = matches.some(m => {
-      const matchDate = getMatchStandardDate(m);
-      const directDate = m.date ? toStandardDateKey(m.date) : '';
-      return matchDate === today || directDate === today;
-    });
-    if (hasToday) return 'Hoje';
-    const dates = new Set<string>();
-    matches.forEach(m => {
-      const d = getMatchStandardDate(m);
-      if (d) dates.add(d);
-    });
-    const sorted = Array.from(dates).sort((a, b) => b.localeCompare(a));
-    return sorted[0] || 'Hoje';
-  });
+  const [performanceDate, setPerformanceDate] = useState<string>('Hoje');
 
-  // Sincronizar performanceDate caso hoje não tenha partidas e matches carreguem depois
+  // Sincronizar performanceDate: manter em 'Hoje' como padrão mesmo quando zerado
   React.useEffect(() => {
     const today = getFirestoreDateKey();
-    const hasToday = matches.some(m => {
-      const matchDate = getMatchStandardDate(m);
-      const directDate = m.date ? toStandardDateKey(m.date) : '';
-      return matchDate === today || directDate === today;
-    });
-    if (!hasToday && filterSessionDates.length > 0) {
-      if (performanceDate === 'Hoje' || performanceDate === today || !performanceDate) {
-        setPerformanceDate(filterSessionDates[0]);
-      }
+    if (performanceDate === 'Hoje' || performanceDate === today || !performanceDate) {
+      return; // Permanece estritamente em 'Hoje' para refletir o estado zerado
+    }
+    // Se a data selecionada não existe mais no histórico, retorna para Hoje
+    if (!filterSessionDates.includes(performanceDate)) {
+      setPerformanceDate('Hoje');
     }
   }, [matches, filterSessionDates, performanceDate]);
 
@@ -156,11 +138,11 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
         dates.add(d);
       }
     });
-    const hasToday = dates.has(today);
     // Remove a data de hoje do set para não duplicar com o rótulo "Hoje"
     dates.delete(today);
     const sortedDates = Array.from(dates).sort((a, b) => b.localeCompare(a));
-    return hasToday ? ['Hoje', ...sortedDates] : sortedDates;
+    // 'Hoje' sempre é a primeira opção, permitindo ver a rodada zerada
+    return ['Hoje', ...sortedDates];
   }, [matches]);
 
   const formatDateLabel = (dateStr: string) => {
@@ -231,7 +213,8 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
     reportText += `==================================\n\n`;
 
     filteredMatches.forEach((m, index) => {
-      const matchNum = m.dailyNumber || m.id.split('_')[1]?.slice(-3).toUpperCase() || `---`;
+      const matchIdStr = String(m.id || '');
+      const matchNum = m.dailyNumber || (matchIdStr.includes('_') ? matchIdStr.split('_')[1]?.slice(-3).toUpperCase() : matchIdStr.slice(-3).toUpperCase()) || '---';
       
       const mDateObj = new Date(m.timestamp);
       const mDate = mDateObj.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
@@ -325,7 +308,8 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
 
       // Filter by Match ID
       if (filterMatchId) {
-        const shortId = m.id.split('_')[1]?.slice(-3) || '';
+        const idStr = String(m.id || '');
+        const shortId = (idStr.includes('_') ? idStr.split('_')[1]?.slice(-3) : idStr.slice(-3)) || '';
         if (!shortId.includes(filterMatchId)) return false;
       }
 
@@ -985,7 +969,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
                 <div className="w-16 h-16 rounded-2xl bg-white/5 flex flex-col items-center justify-center border border-brand-primary/40 group-hover:bg-brand-primary/10 group-hover:border-brand-primary/40 transition-colors">
                   <span className="text-[10px] font-black text-white/60 uppercase group-hover:text-brand-primary/60">Partida</span>
                   <span className="text-lg font-black text-white group-hover:text-brand-primary">
-                    {match.dailyNumber || match.id.split('_')[1]?.slice(-3).toUpperCase() || '---'}
+                    {match.dailyNumber || (String(match.id || '').includes('_') ? String(match.id).split('_')[1]?.slice(-3).toUpperCase() : String(match.id || '').slice(-3).toUpperCase()) || '---'}
                   </span>
                 </div>
                 

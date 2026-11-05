@@ -404,18 +404,36 @@ async function startServer() {
 
       // Se hoje é dia de jogo (ou posterior) e o alvo ainda é o passado
       if (targetDate && targetDate < todayStr) {
-        console.log(`[Server Automation] Resetting intentions. Current target: ${targetDate}, Today: ${todayStr}, Day: ${day}`);
+        console.log(`[Firestore Intention Audit] Server daily reset check triggered. Target: "${targetDate}", Today (Brazil): "${todayStr}", DayOfWeek: ${day}`);
         
+        // Preservation Guard: Verify if any intentions in confirmationTimestamps were recorded today
+        const responses = data.responses || {};
+        const confirmationTimestamps = data.confirmationTimestamps || {};
+        const preservedResponses: Record<string, string> = {};
+        const preservedTimestamps: Record<string, number> = {};
+
+        Object.entries(confirmationTimestamps).forEach(([pId, ts]) => {
+          if (typeof ts === 'number' && ts > 0) {
+            const tsDateKey = getFirestoreDateKey(new Date(ts));
+            if (tsDateKey >= todayStr && responses[pId]) {
+              preservedResponses[pId] = responses[pId];
+              preservedTimestamps[pId] = ts;
+              console.log(`[Firestore Intention Audit] PRESERVED (Server Reset): Player "${pId}" (${responses[pId]}) recorded today (${tsDateKey}) retained during auto-reset.`);
+            }
+          }
+        });
+
         const nextThu = getNextThursday();
         const batch = writeBatch(db);
 
-        // 1. Reset intentions metadata
+        // 1. Reset intentions metadata while preserving records created today
         batch.set(intentionsRef, {
           targetDate: nextThu,
-          responses: {},
-          confirmationTimestamps: {},
+          responses: preservedResponses,
+          confirmationTimestamps: preservedTimestamps,
           remindersSent: {},
-          automationEnabled: data.automationEnabled ?? true
+          automationEnabled: data.automationEnabled ?? true,
+          lastUpdated: Date.now()
         }, { merge: true });
 
         // 2. Reset system metadata for the new session if needed
@@ -426,18 +444,24 @@ async function startServer() {
           lastResetTimestamp: Date.now()
         }, { merge: true });
 
-        // 3. Clean up preConfirmations
+        // 3. Clean up preConfirmations ONLY for old target dates (excluding preserved players)
         const playersRef = collection(db, 'preConfirmations', targetDate, 'players');
         const playersSnap = await getDocs(playersRef);
         playersSnap.forEach(pDoc => {
-          batch.delete(pDoc.ref);
+          if (!preservedResponses[pDoc.id]) {
+            batch.delete(pDoc.ref);
+          }
         });
 
         await batch.commit();
-        console.log(`[Server Automation] Intentions and System metadata successfully rotated. New target: ${nextThu}.`);
+        console.log(`[Server Automation] Intentions and System metadata successfully rotated. New target: ${nextThu}. Preserved today count: ${Object.keys(preservedResponses).length}.`);
       }
     } catch (err: any) {
-      console.error("[Server Automation] Failed to auto-reset intentions:", err.message);
+      if (err?.message && (err.message.includes("Quota limit exceeded") || err.message.includes("RESOURCE_EXHAUSTED") || err.message.includes("free quota limits"))) {
+        console.warn("[Server Automation] Cloud Firestore daily read/write quota reached. Auto-reset intentions paused until quota resets.");
+      } else {
+        console.error("[Server Automation] Failed to auto-reset intentions:", err?.message || err);
+      }
     }
   }
 
@@ -614,7 +638,7 @@ async function startServer() {
   });
 
   app.post("/api/gemini/stream", async (req, res) => {
-    const { prompt, model = "gemini-3.8-flash" } = req.body;
+    const { prompt, model = "gemini-3.8-flash", systemInstruction } = req.body;
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
@@ -625,6 +649,7 @@ async function startServer() {
       const responseStream = await ai.models.generateContentStream({
         model: model || "gemini-3.8-flash",
         contents: prompt,
+        config: systemInstruction ? { systemInstruction } : undefined,
       });
 
       for await (const chunk of responseStream) {

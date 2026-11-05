@@ -1,6 +1,7 @@
 import { 
   generateTeams, 
   verifyClubGenerationRules, 
+  autoFixAllInconsistencies,
   calculatePracticalSkillsSum,
   calculateCompositePerformanceRating 
 } from '../utils/teamLogic';
@@ -167,6 +168,56 @@ async function runTests() {
   const b2LinhaInB = teamBPlayers2.filter(p => b2LinhaIds.has(p.id)).length;
 
   assert(b2LinhaInA === 1 && b2LinhaInB === 1, 'Regra de Ouro: Anne e Betinha separadas na LINHA mesmo com Bibi levantadora fraca');
+
+  // Cenário 3: 3 Levantadores presentes e quorum de linha suficiente (14 jogadores)
+  // Exatamente 2 levantadores em quadra (1 em A e 1 em B), 3º levantador no banco
+  const pool3: Player[] = [
+    createMockPlayer('s1', 'Alberto', Gender.MALE, true, 3),
+    createMockPlayer('s2', 'Fatinha', Gender.FEMALE, true, 2),
+    createMockPlayer('s3', 'Iale', Gender.FEMALE, true, 3),
+    createMockPlayer('l1', 'Ana Maria', Gender.FEMALE, false, 2),
+    createMockPlayer('l2', 'Betinha', Gender.FEMALE, false, 1),
+    createMockPlayer('l3', 'Flavinha', Gender.FEMALE, false, 3),
+    createMockPlayer('l4', 'Marcelo', Gender.MALE, false, 1),
+    createMockPlayer('l5', 'Juliana', Gender.FEMALE, false, 2),
+    createMockPlayer('l6', 'Leyla', Gender.FEMALE, false, 1),
+    createMockPlayer('l7', 'Thiago', Gender.MALE, false, 3),
+    createMockPlayer('l8', 'Alê', Gender.FEMALE, false, 2),
+    createMockPlayer('l9', 'Lu Lima', Gender.FEMALE, false, 3),
+    createMockPlayer('l10', 'Linha Extra 1', Gender.MALE, false, 2),
+    createMockPlayer('l11', 'Linha Extra 2', Gender.FEMALE, false, 2),
+  ];
+
+  const res3 = generateTeams(pool3);
+  const settersA3 = [res3.teamA.setter, ...res3.teamA.players].filter(p => p?.isOfficialSetter);
+  const settersB3 = [res3.teamB.setter, ...res3.teamB.players].filter(p => p?.isOfficialSetter);
+
+  assert(settersA3.length === 1, 'Time A possui rigorosamente 1 levantador (não duplica com 3 presentes)');
+  assert(settersB3.length === 1, 'Time B possui rigorosamente 1 levantador (não duplica com 3 presentes)');
+  assert(res3.remainingPlayers.some(p => p.id === 's3' || p.isOfficialSetter), '3º levantador excedente aguarda no banco para rotação');
+  
+  const audit3 = verifyClubGenerationRules(res3);
+  assert(audit3.setter.fulfilled, 'Auditoria de levantadores atesta conformidade 1A / 1B com 3 levantadores presentes');
+
+  // Cenário 4: Auto-Correção Automática de Inconsistência de 2 Levantadores no mesmo time
+  const violatedSetterResult = {
+    ...res3,
+    teamA: {
+      ...res3.teamA,
+      players: [pool3[2], ...res3.teamA.players.slice(1)] // Insere Iale forçadamente no Time A
+    }
+  };
+
+  const auditViolated = verifyClubGenerationRules(violatedSetterResult);
+  assert(!auditViolated.setter.fulfilled, 'Auditoria reprova corretamente escalação com 2 levantadores no Time A');
+
+  const autoRepaired = autoFixAllInconsistencies(violatedSetterResult, pool3);
+  const auditRepaired = verifyClubGenerationRules(autoRepaired);
+  const settersRepairedA = [autoRepaired.teamA.setter, ...autoRepaired.teamA.players].filter(p => p?.isOfficialSetter);
+  const settersRepairedB = [autoRepaired.teamB.setter, ...autoRepaired.teamB.players].filter(p => p?.isOfficialSetter);
+
+  assert(auditRepaired.setter.fulfilled, 'Agente de auto-correção ativa restaura cumprimento da regra de levantadores');
+  assert(settersRepairedA.length === 1 && settersRepairedB.length === 1, 'Auto-correção garantiu exatamente 1 levantador em cada equipe');
 
   console.log(`\n🎉 Todos os ${passedTests}/${totalTests} testes de integridade de regras passaram com sucesso!`);
 }

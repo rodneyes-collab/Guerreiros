@@ -25,6 +25,8 @@ import {
 
 import { HelpTooltip } from '../src/components/HelpTooltip';
 import { capitalizeName } from '../utils/helpers';
+import { cleanPhoneNumber } from '../utils/whatsapp';
+import { SystemMetadata } from '../types';
 
 interface PaymentsViewProps {
   deletePayment: (id: string) => void;
@@ -34,6 +36,7 @@ interface PaymentsViewProps {
   setEditingExpense: (expense: Expense | null) => void;
   setIsExpenseFormOpen: (open: boolean) => void;
   updateMonthlyFee: (fee: number) => void;
+  updateSystemMetadata?: (metadata: Partial<SystemMetadata>) => void;
   handleFinancialIntegrityAudit?: () => Promise<void>;
 }
 
@@ -45,17 +48,50 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
   setEditingExpense,
   setIsExpenseFormOpen,
   updateMonthlyFee,
+  updateSystemMetadata,
   handleFinancialIntegrityAudit
 }) => {
   const { payments, expenses, userRole, systemMetadata, players: allPlayers } = useStore(useShallow(state => ({payments: state.payments, expenses: state.expenses, userRole: state.userRole, systemMetadata: state.systemMetadata, players: state.players})));
-  const players = React.useMemo(() => allPlayers.filter(p => (p.status === 'active' || p.status === 'guest' || !p.status || p.status === '') && !p.isDM), [allPlayers]);
-  const [activeTab, setActiveTab] = useState<'RECEIPTS' | 'EXPENSES' | 'COMPLIANCE' | 'STATEMENT'>('RECEIPTS');
-  const [filterMonth, setFilterMonth] = useState('');
+  const players = React.useMemo(() => allPlayers.filter(p => p.status === 'active' && !p.isDM), [allPlayers]);
+  const getCurrentMonthKey = () => {
+    const now = new Date();
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Sao_Paulo',
+      year: 'numeric',
+      month: '2-digit'
+    });
+    return formatter.format(now).slice(0, 7);
+  };
+  const [activeTab, setActiveTab] = useState<'RECEIPTS' | 'COMPLIANCE' | 'EXPENSES' | 'STATEMENT'>('RECEIPTS');
+  const [filterMonth, setFilterMonth] = useState<string>(() => getCurrentMonthKey());
   const [filterDate, setFilterDate] = useState('');
   const [filterPlayer, setFilterPlayer] = useState('');
   const [filterStatus, setFilterStatus] = useState<PaymentStatus | ''>('');
   const [isEditingFee, setIsEditingFee] = useState(false);
   const [tempFee, setTempFee] = useState(systemMetadata.monthlyFee || 0);
+  const [isEditingPix, setIsEditingPix] = useState(false);
+  const [tempPixKey, setTempPixKey] = useState(systemMetadata.pixKey || 'elizabeth.santos.pe@gmail.com');
+
+  useEffect(() => {
+    if (!isEditingPix) {
+      setTempPixKey(systemMetadata.pixKey || 'elizabeth.santos.pe@gmail.com');
+    }
+  }, [systemMetadata.pixKey, isEditingPix]);
+
+  const handleUpdatePixKey = () => {
+    const raw = tempPixKey.trim();
+    const digits = raw.replace(/\D/g, '');
+    let formatted = raw;
+    if (digits.length >= 10 && digits.length <= 13) {
+      formatted = cleanPhoneNumber(raw) || raw;
+    }
+    if (updateSystemMetadata) {
+      updateSystemMetadata({ pixKey: formatted });
+    }
+    setIsEditingPix(false);
+    setToastMessage('Chave Pix atualizada com sucesso!');
+    setTimeout(() => setToastMessage(''), 3000);
+  };
   const [toastMessage, setToastMessage] = useState('');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [pullStartY, setPullStartY] = useState(0);
@@ -213,7 +249,8 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
       text += `${(index + 1).toString().padStart(2, ' ')}. [${isPaid ? '✅' : '   '}] ${player.name}\n`;
     });
 
-    text += `\n*PIX Copia e Cola:*\n00020126580014BR.GOV.BCB.PIX01360a037bb4-fce6-4971-b751-a6185cde5f6d520400005303986540550.005802BR5925Elizabeth de Souza Santos6009SAO PAULO62140510wu4xDTVIft63040EA7\n`;
+    const pixKey = systemMetadata.pixKey || 'elizabeth.santos.pe@gmail.com';
+    text += `\n*Chave Pix:* ${pixKey}\n`;
     text += `*Favorecido:* Elizabeth de Souza Santos\n`;
     text += `*Banco:* NUBANK\n\n`;
     text += `--- \nAtualizado pelo App Guerreiros`;
@@ -236,13 +273,14 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
     const [year, month] = filterMonth.split('-');
     const monthName = new Date(parseInt(year), parseInt(month) - 1).toLocaleDateString('pt-BR', { month: 'long' }).toUpperCase();
     const feeAmount = (systemMetadata.monthlyFee || 0).toFixed(2).replace('.', ',');
+    const pixKey = systemMetadata.pixKey || 'elizabeth.santos.pe@gmail.com';
 
     let reportText = `Pagamento Mensal - ${monthName}\n\n`;
     reportText += `*Local: Santos Dumont*\n`;
     reportText += `*Horário: 19:30 às 22 h*\n\n`;
     reportText += `*R$ ${feeAmount}*\n\n`;
     reportText += `*Pagamento até dia 05 - de cada mês*\n\n`;
-    reportText += `*PIX Copia e Cola:*\n\`00020126580014BR.GOV.BCB.PIX01360a037bb4-fce6-4971-b751-a6185cde5f6d520400005303986540550.005802BR5925Elizabeth de Souza Santos6009SAO PAULO62140510wu4xDTVIft63040EA7\`\n\n`;
+    reportText += `*Chave Pix:* \`${pixKey}\`\n\n`;
     reportText += `*Favorecido:* Elizabeth de Souza Santos\n`;
     reportText += `*Banco:* NUBANK\n\n`;
 
@@ -613,6 +651,38 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
               </div>
             </div>
           )}
+
+          {userRole === 'ADMIN' && (
+            <div className="bg-black/40 px-6 py-4 rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-2xl flex items-center gap-6 backdrop-blur-xl group hover:border-brand-primary/40 transition-all">
+              <div className="p-3 bg-brand-primary/10 rounded-2xl border border-brand-primary/40 group-hover:bg-brand-primary/20 transition-colors">
+                <CreditCard className="w-5 h-5 text-brand-primary" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-[9px] font-black text-brand-primary uppercase tracking-[0.3em]">Chave Pix Configurada</p>
+                {isEditingPix ? (
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="text"
+                      value={tempPixKey}
+                      onChange={e => setTempPixKey(e.target.value)}
+                      className="w-44 bg-black/60 border border-brand-primary/30 rounded-xl px-3 py-2 font-black text-xs text-white outline-none focus:border-brand-primary transition-all shadow-inner"
+                      placeholder="E-mail, Tel ou CPF"
+                      autoFocus
+                    />
+                    <div className="flex gap-2">
+                      <button onClick={handleUpdatePixKey} className="p-2 bg-brand-primary text-brand-secondary rounded-xl hover:scale-110 transition-transform shadow-lg shadow-brand-primary/20"><CheckCircle2 className="w-4 h-4" /></button>
+                      <button onClick={() => { setIsEditingPix(false); setTempPixKey(systemMetadata.pixKey || 'elizabeth.santos.pe@gmail.com'); }} className="p-2 bg-rose-500/10 text-rose-500 rounded-xl hover:scale-110 transition-transform border border-rose-500/20"><X className="w-4 h-4" /></button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-4">
+                    <p className="text-sm font-black text-white font-mono tracking-tighter truncate max-w-[180px]">{systemMetadata.pixKey || 'elizabeth.santos.pe@gmail.com'}</p>
+                    <button onClick={() => setIsEditingPix(true)} className="p-2 text-brand-primary/40 hover:text-brand-primary hover:bg-brand-primary/10 rounded-xl transition-all border border-transparent hover:border-brand-primary/40"><Edit2 className="w-4 h-4" /></button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
           {userRole === 'ADMIN' && (
             <button 
               onClick={() => { 
@@ -715,7 +785,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
       <div className="bg-black backdrop-blur-xl p-6 rounded-[2rem] border border-brand-primary/40 shadow-sm flex flex-col md:flex-row items-center gap-6">
         <div className="bg-white p-3 rounded-2xl border border-brand-primary/40 flex-shrink-0">
           <img 
-            src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=00020126580014BR.GOV.BCB.PIX01360a037bb4-fce6-4971-b751-a6185cde5f6d520400005303986540550.005802BR5925Elizabeth de Souza Santos6009SAO PAULO62140510wu4xDTVIft63040EA7" 
+            src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(systemMetadata.pixKey || 'elizabeth.santos.pe@gmail.com')}`} 
             alt="Pix QR Code" 
             className="w-32 h-32 md:w-36 md:h-36 object-contain"
             referrerPolicy="no-referrer"
@@ -725,28 +795,30 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
           <div className="space-y-1">
             <h3 className="text-lg font-black text-brand-primary uppercase tracking-tight flex items-center justify-center md:justify-start gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-brand-primary animate-pulse" />
-              QR Code Inteligente
+              Chave Pix (Formato WhatsApp)
             </h3>
             <p className="text-xs font-semibold text-white/60">
-              O QR Code de pagamento gerado na tela agora está apontando diretamente para o seu Pix Copia e Cola, pronto para ser lido por qualquer aplicativo de banco.
+              Copie a chave Pix da tesouraria para envio direto no WhatsApp com o nome do favorecido em evidência.
             </p>
           </div>
           
           <div className="flex flex-col sm:flex-row items-center gap-3 w-full">
-            <div className="w-full sm:flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 font-mono text-[10px] text-white/40 truncate text-left">
-              00020126580014BR.GOV.BCB.PIX01360a037bb4-fce6-4971-b751-a6185cde5f6d520400005303986540550.005802BR5925Elizabeth de Souza Santos6009SAO PAULO62140510wu4xDTVIft63040EA7
+            <div className="w-full sm:flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 font-mono text-xs text-white truncate text-left">
+              {systemMetadata.pixKey || 'elizabeth.santos.pe@gmail.com'}
             </div>
             <button
               onClick={() => {
-                navigator.clipboard.writeText("00020126580014BR.GOV.BCB.PIX01360a037bb4-fce6-4971-b751-a6185cde5f6d520400005303986540550.005802BR5925Elizabeth de Souza Santos6009SAO PAULO62140510wu4xDTVIft63040EA7");
-                setToastMessage("Pix Copia e Cola copiado! ⚡");
+                const pixKeyVal = systemMetadata.pixKey || 'elizabeth.santos.pe@gmail.com';
+                const whatsappPix = `*Chave Pix:*\n${pixKeyVal}\n\n*Favorecido:* Elizabeth de Souza Santos\n*Banco:* NUBANK`;
+                navigator.clipboard.writeText(whatsappPix);
+                setToastMessage("Chave Pix copiada para o WhatsApp! 📋");
                 setTimeout(() => setToastMessage(""), 3500);
               }}
               className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-brand-primary text-brand-secondary rounded-xl font-black text-[10px] uppercase tracking-widest hover:scale-105 active:scale-95 transition-all shadow-md shadow-brand-primary/10"
-              title="Copiar código Pix Copia e Cola"
+              title="Copiar chave Pix no formato do WhatsApp"
             >
               <Copy className="w-4 h-4" />
-              Copiar Código
+              Copiar Chave p/ WhatsApp
             </button>
           </div>
           
@@ -1226,7 +1298,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                                       playerId: player.id,
                                       playerName: player.name,
                                       amount: systemMetadata.monthlyFee || 0,
-                                      month: filterMonth,
+                                      month: filterMonth || getCurrentMonthKey(),
                                       dueDate: getFirestoreDateKey(),
                                       status: PaymentStatus.PENDING
                                     });
@@ -1288,7 +1360,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                                   playerId: player.id,
                                   playerName: player.name,
                                   amount: systemMetadata.monthlyFee || 0,
-                                  month: filterMonth,
+                                  month: filterMonth || getCurrentMonthKey(),
                                   dueDate: getFirestoreDateKey(),
                                   status: PaymentStatus.PENDING
                                 });

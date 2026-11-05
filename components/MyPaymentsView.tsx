@@ -221,7 +221,7 @@ export const MyPaymentsView: React.FC<MyPaymentsViewProps> = ({ playerId }) => {
       <div className="bg-black/40 backdrop-blur-xl p-6 rounded-[2.5rem] border border-brand-primary/40 shadow-2xl flex flex-col md:flex-row items-center gap-6 mt-8">
         <div className="bg-white p-3 rounded-2xl border border-brand-primary/40 flex-shrink-0 shadow-lg">
           <img 
-            src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=00020126580014BR.GOV.BCB.PIX01360a037bb4-fce6-4971-b751-a6185cde5f6d520400005303986540550.005802BR5925Elizabeth de Souza Santos6009SAO PAULO62140510wu4xDTVIft63040EA7" 
+            src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=elizabeth.santos.pe@gmail.com" 
             alt="Pix QR Code" 
             className="w-32 h-32 md:w-36 md:h-36 object-contain"
             referrerPolicy="no-referrer"
@@ -231,28 +231,29 @@ export const MyPaymentsView: React.FC<MyPaymentsViewProps> = ({ playerId }) => {
           <div className="space-y-1">
             <h3 className="text-lg font-black text-brand-primary uppercase tracking-tight flex items-center justify-center md:justify-start gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-brand-primary animate-pulse" />
-              QR Code de Pagamento Inteligente
+              Chave Pix (Formato WhatsApp)
             </h3>
             <p className="text-xs font-semibold text-white/60">
-              Aponte a câmera do celular para pagar diretamente via Pix, ou copie o código "Copia e Cola" abaixo. Após a transferência pelo seu banco, lembre-se de enviar o comprovante ao administrador.
+              Copie a chave Pix da tesouraria para pagamento via aplicativo do banco ou envio direto no WhatsApp.
             </p>
           </div>
           
           <div className="flex flex-col sm:flex-row items-center gap-3 w-full">
-            <div className="w-full sm:flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 font-mono text-[10px] text-white/40 truncate text-left">
-              00020126580014BR.GOV.BCB.PIX01360a037bb4-fce6-4971-b751-a6185cde5f6d520400005303986540550.005802BR5925Elizabeth de Souza Santos6009SAO PAULO62140510wu4xDTVIft63040EA7
+            <div className="w-full sm:flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 font-mono text-xs text-white truncate text-left">
+              elizabeth.santos.pe@gmail.com
             </div>
             <button
               onClick={() => {
-                navigator.clipboard.writeText("00020126580014BR.GOV.BCB.PIX01360a037bb4-fce6-4971-b751-a6185cde5f6d520400005303986540550.005802BR5925Elizabeth de Souza Santos6009SAO PAULO62140510wu4xDTVIft63040EA7");
-                setToastMessage("Pix Copia e Cola copiado! ⚡");
+                const whatsappPix = `*Chave Pix (E-mail):*\nelizabeth.santos.pe@gmail.com\n\n*Favorecido:* Elizabeth de Souza Santos\n*Banco:* NUBANK`;
+                navigator.clipboard.writeText(whatsappPix);
+                setToastMessage("Chave Pix copiada para o WhatsApp! 📋");
                 setTimeout(() => setToastMessage(""), 3500);
               }}
               className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-brand-primary text-brand-secondary rounded-xl font-black text-[10px] uppercase tracking-widest hover:scale-105 active:scale-95 transition-all shadow-md shadow-brand-primary/10 hover:bg-brand-primary/95"
-              title="Copiar código Pix Copia e Cola"
+              title="Copiar chave Pix no formato do WhatsApp"
             >
               <Copy className="w-4 h-4" />
-              Copiar Código
+              Copiar Chave p/ WhatsApp
             </button>
           </div>
           

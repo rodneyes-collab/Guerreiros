@@ -172,6 +172,7 @@ export interface SystemMetadata {
   minMatchesForDailyBonus?: number;
   appVersion?: string;
   versionNumber?: number;
+  pixKey?: string;
 }
 
 export enum PaymentStatus {

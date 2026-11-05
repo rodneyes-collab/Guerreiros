@@ -129,7 +129,7 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
               className="flex-1 bg-brand-primary text-brand-secondary px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-brand-primary/90 shadow-xl shadow-brand-primary/10 transition-all"
             >
               <Save className="w-5 h-5" />
-              {editingExpense ? 'Salvar Alterações' : 'Registrar Despesa'}
+              {editingExpense ? 'Confirmar e Salvar' : 'Confirmar e Registrar Despesa'}
             </button>
           </div>
         </form>

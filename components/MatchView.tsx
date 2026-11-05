@@ -10,7 +10,8 @@ import { RoundStatusCard } from '../src/components/RoundStatusCard';
 import { DepartureTimeModal } from './DepartureTimeModal';
 import { QuickPlayerSwapModal } from '../src/components/QuickPlayerSwapModal';
 import { useMatchSwaps } from '../src/hooks/useMatchSwaps';
-import { formatTime, cleanObject } from '../utils/helpers';
+import { formatTime, cleanObject, getAttendanceArrivalPosition } from '../utils/helpers';
+import { toStandardDateKey } from '../src/utils/dateUtils';
 import { getFirestoreDateKey, db } from '../firebase';
 import { doc, setDoc, deleteDoc } from 'firebase/firestore';
 import { useNarration } from '../src/hooks/useNarration';
@@ -25,7 +26,9 @@ import {
   BalancingOptimizationResult,
   enrichPlayerImmutably,
   cloneGenerationResultImmutably,
-  verifyClubGenerationRules
+  verifyClubGenerationRules,
+  autoFixAllInconsistencies,
+  isFemalePlayer
 } from '../utils/teamLogic';
 import { 
   Swords, 
@@ -78,6 +81,7 @@ import { PlayerStatusCard } from '../src/components/PlayerStatusCard';
 import { HelpTooltip } from '../src/components/HelpTooltip';
 import { Tooltip } from '../src/components/Tooltip';
 import { MatchBalanceCharts } from '../src/components/MatchBalanceCharts';
+import { MatchQuickSwapModal } from '../src/components/MatchQuickSwapModal';
 
 import { getPriorityQueue, calculateEffectiveElo, suggestPosition, calculateTeamPositions, runAutoCorrectionAgent, calculatePracticalSkillsSum, runCriticalSynergySolverAgent, calculateCompositePerformanceRating } from '../utils/teamLogic';
 import { Player, SystemMetadata } from '../types';
@@ -211,11 +215,11 @@ export const MatchView: React.FC<MatchViewProps> = ({
     return verifyClubGenerationRules(storeGenerationResult);
   }, [storeGenerationResult]);
 
+  const { currentPlayer, user } = useStore(useShallow(state => ({ currentPlayer: state.currentPlayer, user: state.user })));
   const userRole = userRoleProp || storeUserRole || 'ADMIN';
-  const isAdmin = userRole === 'ADMIN' || userRole === 'DIRETORIA';
+  const isAdmin = userRole === 'ADMIN' || userRole === 'DIRETORIA' || !!currentPlayer?.isAdmin || (currentPlayer as any)?.role === 'ADMIN' || (currentPlayer as any)?.role === 'DIRETORIA' || user?.email === 'rodneyes@gmail.com';
   const updateDepartureTime = updateDepartureTimeProp;
   const attendance = React.useMemo(() => allAttendance.filter(p => p.status !== 'inactive'), [allAttendance]);
-  const { currentPlayer } = useStore(useShallow(state => ({ currentPlayer: state.currentPlayer })));
 
   // Identificador único dos 12 jogadores escalados para a quadra (Fila de Prioridade)
   // Utilizado como dependência estrita para garantir que a geração seja persistente e não resete
@@ -228,6 +232,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
 
   const [previewResult, setPreviewResult] = useState<any>(null);
   const [simulationCount, setSimulationCount] = useState(1);
+  const [isQuickSwapModalOpen, setIsQuickSwapModalOpen] = useState(false);
   const seenCombinationsHistoryRef = React.useRef<string[]>([]);
 
   const previewUpdateTimerRef = React.useRef<any>(null);
@@ -381,10 +386,10 @@ export const MatchView: React.FC<MatchViewProps> = ({
     const threshold = systemMetadata?.lastResetTimestamp || (now - (16 * 60 * 60 * 1000));
     const sessionMatches = (matches || []).filter(m => m.timestamp > threshold);
     const previousFormations = sessionMatches.map(m => ({
-      setterA: m.teamA[0],
-      playersA: m.teamA.slice(1),
-      setterB: m.teamB[0],
-      playersB: m.teamB.slice(1)
+      setterA: Array.isArray(m.teamA) ? m.teamA[0] : undefined,
+      playersA: Array.isArray(m.teamA) ? m.teamA.slice(1) : [],
+      setterB: Array.isArray(m.teamB) ? m.teamB[0] : undefined,
+      playersB: Array.isArray(m.teamB) ? m.teamB.slice(1) : []
     }));
 
     const allMatchHistory = (matches || []).map(m => ({
@@ -441,8 +446,9 @@ export const MatchView: React.FC<MatchViewProps> = ({
       immutableResult.remainingPlayers = immutableResult.remainingPlayers.map(mapGender).filter(Boolean);
     }
 
+    const verifiedResult = autoFixAllInconsistencies(immutableResult, (attendance || []) as Player[], allMatchHistory);
     setSimulationCount(1);
-    setPreviewResult(immutableResult);
+    setPreviewResult(verifiedResult);
     setIsSimulating(false);
   };
 
@@ -505,10 +511,10 @@ export const MatchView: React.FC<MatchViewProps> = ({
         const threshold = systemMetadata?.lastResetTimestamp || (now - (16 * 60 * 60 * 1000));
         const sessionMatches = (matches || []).filter(m => m.timestamp > threshold);
         const previousFormations = sessionMatches.map(m => ({
-          setterA: m.teamA[0],
-          playersA: m.teamA.slice(1),
-          setterB: m.teamB[0],
-          playersB: m.teamB.slice(1)
+          setterA: Array.isArray(m.teamA) ? m.teamA[0] : undefined,
+          playersA: Array.isArray(m.teamA) ? m.teamA.slice(1) : [],
+          setterB: Array.isArray(m.teamB) ? m.teamB[0] : undefined,
+          playersB: Array.isArray(m.teamB) ? m.teamB.slice(1) : []
         }));
 
         const allMatchHistory = (matches || []).map(m => ({
@@ -607,8 +613,9 @@ export const MatchView: React.FC<MatchViewProps> = ({
               immutableChosenResult.remainingPlayers = immutableChosenResult.remainingPlayers.map(mapGender).filter(Boolean);
             }
 
-            // Atualiza a pré-visualização para o resultado otimizado estritamente imutável
-            setPreviewResult(immutableChosenResult);
+            // Atualiza a pré-visualização para o resultado otimizado estritamente imutável e auditado
+            const verifiedChosenResult = autoFixAllInconsistencies(immutableChosenResult, (attendance || []) as Player[], allMatchHistory);
+            setPreviewResult(verifiedChosenResult);
             playSound('announce');
           }
         }
@@ -948,31 +955,25 @@ export const MatchView: React.FC<MatchViewProps> = ({
   const sixteenHoursAgo = Date.now() - (16 * 60 * 60 * 1000);
   const resetThreshold = systemMetadata.lastResetTimestamp || sixteenHoursAgo;
   
-  const matchesForToday = (matches || []).filter(m => {
-    const mDate = m.date ? (m.date.includes('T') ? m.date.split('T')[0] : m.date) : '';
-    return mDate === today && (m.timestamp || 0) > resetThreshold;
-  });
+  const matchesForToday = useMemo(() => {
+    return (matches || []).filter(m => {
+      const mDate = m.date ? toStandardDateKey(m.date) : '';
+      let mTsDate = '';
+      if (m.timestamp) {
+        try {
+          mTsDate = new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'America/Sao_Paulo',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
+          }).format(new Date(m.timestamp));
+        } catch {}
+      }
+      return (mDate === today || mTsDate === today) && (m.timestamp || 0) > resetThreshold;
+    }).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+  }, [matches, today, resetThreshold]);
 
-  const activeSessionDate = useMemo(() => {
-    if (matchesForToday.length > 0) return today;
-    const dates = new Set<string>();
-    (matches || []).forEach(m => {
-      const d = m.date ? (m.date.includes('T') ? m.date.split('T')[0] : m.date) : '';
-      if (d) dates.add(d);
-    });
-    const sorted = Array.from(dates).sort((a, b) => b.localeCompare(a));
-    return sorted[0] || today;
-  }, [matches, matchesForToday.length, today]);
-
-  const todayMatches = useMemo(() => {
-    if (matchesForToday.length > 0) return matchesForToday;
-    return (matches || [])
-      .filter(m => {
-        const mDate = m.date ? (m.date.includes('T') ? m.date.split('T')[0] : m.date) : '';
-        return mDate === activeSessionDate;
-      })
-      .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-  }, [matches, matchesForToday, activeSessionDate]);
+  const todayMatches = matchesForToday;
   
   const hiddenTodayMatches = (matches || [])
     .filter(m => {
@@ -2054,7 +2055,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
       )}
 
       {/* Botões de Ação Administrativa */}
-      {userRole === 'ADMIN' && (
+      {isAdmin && (
         <div className="bg-black/40 backdrop-blur-md p-4 sm:p-6 rounded-[2rem] sm:rounded-[3rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-inner mb-6 flex flex-col sm:flex-row gap-4">
           <button 
             onClick={onFinishDay} 
@@ -2145,12 +2146,13 @@ export const MatchView: React.FC<MatchViewProps> = ({
                 onRecalculate={handleAutoOptimizeCombinations}
                 isRecalculating={isAutoSimulating}
                 recalcCount={analyzedCombinationsCount}
+                onUpdateResult={(newRes) => setPreviewResult(newRes)}
               />
             </div>
           )}
 
           {/* Painel Central de Geração Manual (Posicionado abaixo do preview) */}
-          {userRole === 'ADMIN' && attendance.length >= 12 && (
+          {isAdmin && attendance.length >= 12 && (
             <div className="w-full max-w-3xl mt-4 flex flex-col items-center gap-6">
               
               {/* Botão Geração Manual (Exibe/Oculta Opções Avançadas) */}
@@ -2396,7 +2398,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
         <>
           <div className="flex flex-col gap-6 mb-8">
             {/* Botões de Ação */}
-            {userRole === 'ADMIN' && (
+            {isAdmin && (
               <div className="bg-black/40 backdrop-blur-md p-4 sm:p-6 rounded-[2rem] sm:rounded-[3rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-inner">
 
                 <button
@@ -2525,7 +2527,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
                     </button>
 
                     {/* Simulador da Próxima Partida em Andamento */}
-                    {userRole === 'ADMIN' && showSimulatorInMatch && (
+                    {isAdmin && showSimulatorInMatch && (
                       <div className="w-full mt-8 animate-in fade-in zoom-in-95 duration-300">
                         <TeamBalancingSimulatorCard onApplyToMatch={(res) => {
                           if (onApplyPreview) onApplyPreview(res);
@@ -2542,7 +2544,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
 
 
           {/* Análise IA */}
-          {userRole === 'ADMIN' && showAnalysis && (analysis || isAnalyzing) && (
+          {isAdmin && showAnalysis && (analysis || isAnalyzing) && (
             <div className="bg-brand-primary/5 rounded-[2.5rem] p-10 mb-10 border border-white/5 border-l-[8px] border-l-brand-primary shadow-2xl relative overflow-hidden group animate-in slide-in-from-top-6 duration-700">
               <div className="absolute top-0 right-0 p-10 opacity-5 group-hover:opacity-10 transition-all duration-700">
                 <Sparkles className="w-40 h-40 text-brand-primary" />
@@ -2574,7 +2576,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
           )}
 
           {/* Auditoria IA */}
-          {userRole === 'ADMIN' && showAudit && (ruleVerification || isVerifyingRules) && (
+          {isAdmin && showAudit && (ruleVerification || isVerifyingRules) && (
             <div className="bg-brand-secondary rounded-[2.5rem] p-10 mb-10 border border-white/5 border-l-[8px] border-l-brand-primary shadow-2xl relative overflow-hidden group animate-in slide-in-from-top-6 duration-700">
               <div className="absolute top-0 right-0 p-10 opacity-5 group-hover:opacity-10 transition-all duration-700">
                 <ShieldCheck className="w-40 h-40 text-brand-primary" />
@@ -3062,6 +3064,15 @@ export const MatchView: React.FC<MatchViewProps> = ({
                                <span>DESVIO PADRÃO:</span>
                                <span className="text-white font-bold">{stdDevPercent.toFixed(1)}%</span>
                              </span>
+                             <button
+                               type="button"
+                               onClick={() => setIsQuickSwapModalOpen(true)}
+                               className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-brand-primary hover:bg-yellow-400 text-slate-950 text-[9px] sm:text-[10px] font-black uppercase tracking-wider transition-all shadow-md hover:scale-105 cursor-pointer"
+                               title="Abrir Central de Substituições e Trocas Rápidas"
+                             >
+                               <ArrowLeftRight className="w-3 h-3 text-slate-950" />
+                               <span>Trocar / Substituir</span>
+                             </button>
                            </div>
                          );
                        })()}
@@ -3146,6 +3157,41 @@ export const MatchView: React.FC<MatchViewProps> = ({
                               >
                                 {p?.name}
                                 {(() => {
+                                  const isFemale = isFemalePlayer(p);
+                                  const isSetter = generationResult?.teamA?.setter?.id === p?.id;
+                                  const arrivalPos = getAttendanceArrivalPosition(p?.id || '', attendance);
+                                  return (
+                                    <>
+                                      {arrivalPos !== '?' && (
+                                        <span 
+                                          className="text-[8px] sm:text-[9px] font-black px-1.5 py-0.5 rounded border ml-1.5 align-middle bg-brand-primary/10 text-brand-primary border-brand-primary/40 font-mono shadow-sm"
+                                          title={`Posição de chegada na lista de presença: ${arrivalPos}º`}
+                                        >
+                                          #{arrivalPos}º
+                                        </span>
+                                      )}
+                                      <span 
+                                        className={`text-[8px] sm:text-[9px] font-black px-1.5 py-0.5 rounded border ml-1.5 align-middle ${
+                                          isFemale 
+                                            ? 'bg-pink-500/20 text-pink-300 border-pink-500/40' 
+                                            : 'bg-blue-500/20 text-blue-300 border-blue-500/40'
+                                        }`}
+                                        title={isFemale ? 'Feminino' : 'Masculino'}
+                                      >
+                                        {isFemale ? 'F' : 'M'}
+                                      </span>
+                                      {isSetter && (
+                                        <span 
+                                          className="text-[10px] sm:text-xs font-black text-brand-primary bg-brand-primary/20 border border-brand-primary/50 px-1.5 py-0.5 rounded ml-1.5 align-middle"
+                                          title="Levantador"
+                                        >
+                                          (Lev)
+                                        </span>
+                                      )}
+                                    </>
+                                  );
+                                })()}
+                                {(() => {
                                   const icInfo = getPlayerLedStatus(p?.id || '');
                                   const isTop4 = generationResult?.techTierIds?.top4Ids?.includes(p?.id || '');
                                   const isTop2 = generationResult?.topTwoIds?.includes(p?.id || '');
@@ -3179,15 +3225,6 @@ export const MatchView: React.FC<MatchViewProps> = ({
                                     </>
                                   );
                                 })()}
-                                <span className={`text-[11px] sm:text-[14px] font-black px-2.5 py-1 rounded border ml-2 transition-all ${
-                                  isHovered 
-                                    ? 'bg-brand-primary text-black border-brand-primary scale-110 shadow-lg' 
-                                    : isRival
-                                      ? 'bg-brand-primary border-brand-primary text-black'
-                                      : 'bg-brand-primary/20 text-brand-primary border-brand-primary/30'
-                                }`}>
-                                  P{suggestedPositionsA[p?.id || '']}
-                                </span>
                                 <span className="text-[9px] sm:text-[11px] font-black opacity-40 ml-1.5 sm:ml-2 tracking-widest" title={`Índice Composto (Técnica + WinRate): ${calculateCompositePerformanceRating(p).toFixed(1)}`}>
                                   IC {calculateCompositePerformanceRating(p).toFixed(1)}
                                 </span>
@@ -3249,6 +3286,41 @@ export const MatchView: React.FC<MatchViewProps> = ({
                               >
                                 {p?.name}
                                 {(() => {
+                                  const isFemale = isFemalePlayer(p);
+                                  const isSetter = generationResult?.teamB?.setter?.id === p?.id;
+                                  const arrivalPos = getAttendanceArrivalPosition(p?.id || '', attendance);
+                                  return (
+                                    <>
+                                      {arrivalPos !== '?' && (
+                                        <span 
+                                          className="text-[8px] sm:text-[9px] font-black px-1.5 py-0.5 rounded border ml-1.5 align-middle bg-white/10 text-white border-white/30 font-mono shadow-sm"
+                                          title={`Posição de chegada na lista de presença: ${arrivalPos}º`}
+                                        >
+                                          #{arrivalPos}º
+                                        </span>
+                                      )}
+                                      <span 
+                                        className={`text-[8px] sm:text-[9px] font-black px-1.5 py-0.5 rounded border ml-1.5 align-middle ${
+                                          isFemale 
+                                            ? 'bg-pink-500/20 text-pink-300 border-pink-500/40' 
+                                            : 'bg-blue-500/20 text-blue-300 border-blue-500/40'
+                                        }`}
+                                        title={isFemale ? 'Feminino' : 'Masculino'}
+                                      >
+                                        {isFemale ? 'F' : 'M'}
+                                      </span>
+                                      {isSetter && (
+                                        <span 
+                                          className="text-[10px] sm:text-xs font-black text-white bg-white/20 border border-white/50 px-1.5 py-0.5 rounded ml-1.5 align-middle"
+                                          title="Levantador"
+                                        >
+                                          (Lev)
+                                        </span>
+                                      )}
+                                    </>
+                                  );
+                                })()}
+                                {(() => {
                                   const icInfo = getPlayerLedStatus(p?.id || '');
                                   const isTop4 = generationResult?.techTierIds?.top4Ids?.includes(p?.id || '');
                                   const isTop2 = generationResult?.topTwoIds?.includes(p?.id || '');
@@ -3282,15 +3354,6 @@ export const MatchView: React.FC<MatchViewProps> = ({
                                     </>
                                   );
                                 })()}
-                                <span className={`text-[11px] sm:text-[14px] font-black px-2.5 py-1 rounded border ml-2 transition-all ${
-                                  isHovered 
-                                    ? 'bg-white text-black border-white scale-110 shadow-lg' 
-                                    : isRival
-                                      ? 'bg-white border-white text-black'
-                                      : 'bg-white/10 text-white border-white/20'
-                                }`}>
-                                  P{suggestedPositionsB[p?.id || '']}
-                                </span>
                                 <span className="text-[9px] sm:text-[11px] font-black opacity-40 ml-1.5 sm:ml-2 tracking-widest" title={`Índice Composto (Técnica + WinRate): ${calculateCompositePerformanceRating(p).toFixed(1)}`}>
                                   IC {calculateCompositePerformanceRating(p).toFixed(1)}
                                 </span>
@@ -3398,7 +3461,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
               </div>
 
               {/* Segmented Controller de Modo de Placar */}
-              {userRole === 'ADMIN' && (
+              {isAdmin && (
                 <div className="flex items-center justify-center gap-2 mb-8 relative z-10 mx-auto max-w-sm w-full">
                   <div className="flex-1 flex bg-brand-secondary p-1 rounded-2xl border border-white/5">
                     <button
@@ -3452,7 +3515,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
               )}
 
               <div className="flex flex-col items-center justify-center gap-6 sm:gap-8 relative z-10 w-full">
-                {userRole === 'ADMIN' && (
+                {isAdmin && (
                   <div className="flex flex-col items-center justify-center gap-6 w-full">
                     {scoringTab === 'simple' ? (
                       // --- ORIGINAL SIMPLE VIEW ---
@@ -3460,21 +3523,21 @@ export const MatchView: React.FC<MatchViewProps> = ({
                         {!confirmingWinner ? (
                           <div className="flex flex-row items-center justify-center gap-3 sm:gap-8 w-full">
                             <button 
+                              type="button"
                               onClick={() => handleWinnerClick('A')}
-                              disabled={isSyncing}
-                              className={`w-1/2 px-2 py-4 sm:px-8 sm:py-6 rounded-2xl sm:rounded-3xl font-black text-[10px] sm:text-sm uppercase tracking-widest shadow-xl transition-all flex flex-col sm:flex-row items-center justify-center gap-1.5 sm:gap-3 ${isSyncing ? 'bg-brand-primary/50 text-black/50 cursor-not-allowed opacity-50' : 'bg-brand-primary hover:bg-brand-primary/90 text-black hover:scale-105 active:scale-95 shadow-brand-primary/20'}`}
+                              className="w-1/2 px-2 py-4 sm:px-8 sm:py-6 rounded-2xl sm:rounded-3xl font-black text-[10px] sm:text-sm uppercase tracking-widest shadow-xl transition-all flex flex-col sm:flex-row items-center justify-center gap-1.5 sm:gap-3 bg-brand-primary hover:bg-brand-primary/90 text-black hover:scale-105 active:scale-95 shadow-brand-primary/20 cursor-pointer"
                             >
-                              <span>{isSyncing ? 'Carregando...' : 'Vitória A'}</span> <Trophy className="w-4 h-4 sm:w-5 sm:h-5" />
+                              <span>Vitória A</span> <Trophy className="w-4 h-4 sm:w-5 sm:h-5" />
                             </button>
 
                             <div className="hidden sm:block w-px h-16 bg-white/10" />
 
                             <button 
+                              type="button"
                               onClick={() => handleWinnerClick('B')}
-                              disabled={isSyncing}
-                              className={`w-1/2 px-2 py-4 sm:px-8 sm:py-6 rounded-2xl sm:rounded-3xl font-black text-[10px] sm:text-sm uppercase tracking-widest shadow-xl transition-all flex flex-col sm:flex-row items-center justify-center gap-1.5 sm:gap-3 ${isSyncing ? 'bg-white/50 text-black/50 cursor-not-allowed opacity-50' : 'bg-white hover:bg-gray-200 text-black hover:scale-105 active:scale-95 shadow-white/20'}`}
+                              className="w-1/2 px-2 py-4 sm:px-8 sm:py-6 rounded-2xl sm:rounded-3xl font-black text-[10px] sm:text-sm uppercase tracking-widest shadow-xl transition-all flex flex-col sm:flex-row items-center justify-center gap-1.5 sm:gap-3 bg-white hover:bg-gray-200 text-black hover:scale-105 active:scale-95 shadow-white/20 cursor-pointer"
                             >
-                              <span>{isSyncing ? 'Carregando...' : 'Vitória B'}</span> <Trophy className="w-4 h-4 sm:w-5 sm:h-5" />
+                              <span>Vitória B</span> <Trophy className="w-4 h-4 sm:w-5 sm:h-5" />
                             </button>
                           </div>
                         ) : (
@@ -3886,22 +3949,26 @@ export const MatchView: React.FC<MatchViewProps> = ({
                         </div>
 
                         {/* 6. TRIUMPHANT SET COMPLETION BANNER */}
-                        {(scoreA >= 15 || scoreB >= 15) && (
+                        {(scoreA >= 15 || scoreB >= 15 || (scoreA > 0 && scoreB > 0 && scoreA !== scoreB)) ? (
                           <motion.button
                             initial={{ opacity: 0, scale: 0.95 }}
                             animate={{ opacity: 1, scale: 1 }}
                             type="button"
-                            disabled={isSyncing}
+                            disabled={isSyncing || scoreA === scoreB}
                             onClick={() => {
+                              if (scoreA === scoreB) {
+                                showNotification("Não é possível finalizar com empate. Defina o ponto desempate!", "error");
+                                return;
+                              }
                               const winner = scoreA > scoreB ? 'A' : 'B';
                               onFinishMatch(winner, scoreA, scoreB, playEvents);
                               announceWinner(winner, scoreA, scoreB);
                               playSound(winner === 'A' ? 'winA' : 'winB');
                             }}
                             className={`w-full py-4 font-black uppercase text-xs tracking-widest rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2 relative overflow-hidden ${
-                              isSyncing 
+                              isSyncing || scoreA === scoreB
                                 ? 'bg-zinc-800 text-white/30 cursor-not-allowed border border-white/5' 
-                                : 'bg-brand-primary text-black hover:scale-[1.02] active:scale-[0.98] shadow-brand-primary/20'
+                                : 'bg-brand-primary text-black hover:scale-[1.02] active:scale-[0.98] shadow-brand-primary/20 cursor-pointer'
                             }`}
                           >
                             {isSyncing ? (
@@ -3912,10 +3979,40 @@ export const MatchView: React.FC<MatchViewProps> = ({
                             ) : (
                               <>
                                 <Trophy className="w-4 h-4 animate-bounce" />
-                                <span>FINALIZAR PARTIDA ({scoreA} x {scoreB})</span>
+                                <span>FINALIZAR PARTIDA ({scoreA} x {scoreB}) • VITÓRIA EQUIPE {scoreA > scoreB ? 'A' : 'B'}</span>
                               </>
                             )}
                           </motion.button>
+                        ) : (
+                          <div className="w-full flex flex-col items-center gap-2 pt-2 border-t border-white/5">
+                            <span className="text-[9px] font-black text-white/40 uppercase tracking-widest">
+                              Finalização Rápida Direta:
+                            </span>
+                            <div className="flex items-center gap-3 w-full">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setScoringTab('simple');
+                                  handleWinnerClick('A');
+                                }}
+                                className="flex-1 py-3 px-4 bg-brand-primary/20 hover:bg-brand-primary/30 text-brand-primary border border-brand-primary/40 rounded-xl font-black text-[10px] sm:text-xs uppercase tracking-widest transition-all cursor-pointer flex items-center justify-center gap-2"
+                              >
+                                <span>Vitória A (Rápida)</span>
+                                <Trophy className="w-3.5 h-3.5 text-brand-primary" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setScoringTab('simple');
+                                  handleWinnerClick('B');
+                                }}
+                                className="flex-1 py-3 px-4 bg-white/10 hover:bg-white/20 text-white border border-white/20 rounded-xl font-black text-[10px] sm:text-xs uppercase tracking-widest transition-all cursor-pointer flex items-center justify-center gap-2"
+                              >
+                                <span>Vitória B (Rápida)</span>
+                                <Trophy className="w-3.5 h-3.5 text-white" />
+                              </button>
+                            </div>
+                          </div>
                         )}
                       </div>
                     )}
@@ -4069,7 +4166,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
                           layoutId={`player-card-${player.id}`}
                           transition={{ type: "spring", stiffness: 320, damping: 28 }}
                           onClick={() => {
-                            if (userRole === 'ADMIN') {
+                            if (isAdmin) {
                               if (swapSelection) {
                                 onSwapClick('Bench', player.id);
                               } else {
@@ -4130,7 +4227,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
                                   (player.consecutiveBenched || 0) >= 0 
                                     ? 'text-brand-primary animate-pulse' 
                                     : 'text-white/40'
-                                }`}>
+                                }}`}>
                                   {(player.consecutiveBenched || 0) + 1} fora
                                 </span>
                                 <span className="text-white/30 text-[9px]">•</span>
@@ -4140,7 +4237,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
                               </div>
                             </div>
                           </div>
-                          {userRole === 'ADMIN' && (
+                          {isAdmin && (
                             <button 
                               type="button"
                               onClick={(e) => {
@@ -4172,7 +4269,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
           </LayoutGroup>
 
           {/* Botão e Card do Simulador da Próxima Partida (Abaixo da Fila de Espera) */}
-          {userRole === 'ADMIN' && attendance.length >= 12 && (
+          {isAdmin && attendance.length >= 12 && (
             <div className="w-full mb-10 flex flex-col items-center gap-4">
               <button
                 type="button"
@@ -4208,36 +4305,46 @@ export const MatchView: React.FC<MatchViewProps> = ({
                     <p className="text-[10px] font-black text-white uppercase tracking-[0.2em] mt-1">Histórico de Partidas do Dia</p>
                   </div>
                 </div>
+
+                {isAdmin && onDeleteMatchesByDate && todayMatches.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => onDeleteMatchesByDate(today)}
+                    disabled={isSyncing}
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-[10px] font-black text-rose-400 hover:text-rose-300 uppercase tracking-widest transition-all cursor-pointer shadow-lg active:scale-95 disabled:opacity-50"
+                    title="Excluir todas as partidas de hoje e zerar a performance"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                    <span>Excluir Partidas de Hoje</span>
+                  </button>
+                )}
               </div>
 
             <div className="relative">
-              <div className="overflow-x-auto pb-6 -mx-10 px-10">
-                <table className="min-w-full border-separate border-spacing-y-2">
-                  <thead>
-                    <tr>
-                      <th className="text-left py-4 px-6 text-[10px] font-black text-white/40 uppercase tracking-[0.2em] sticky left-0 bg-black z-20">Guerreiro</th>
-                      {todayMatches.map((match, i) => (
-                        <th key={match.id || i} className="py-4 px-2 text-center min-w-[64px]">
-                          <div 
-                            className="mx-auto px-2 h-10 rounded-xl bg-black border border-brand-primary/40 text-brand-primary flex flex-col items-center justify-center text-[10px] font-black shadow-lg uppercase tracking-wider"
-                            title={`Partida #${match.dailyNumber || (i + 1)}`}
-                          >
-                            <span className="text-[7.5px] text-white/50 leading-tight">PARTIDA</span>
-                            <span className="leading-tight text-brand-primary">#{match.dailyNumber || (i + 1)}</span>
-                          </div>
-                        </th>
-                      ))}
-                      {todayMatches.length === 0 && (
-                        <th className="py-4 px-2 text-center min-w-[64px]">
-                          <div className="mx-auto px-2 h-10 rounded-xl bg-black border border-brand-primary/40 text-brand-primary flex flex-col items-center justify-center text-[10px] font-black shadow-lg uppercase tracking-wider">
-                            <span className="text-[7.5px] text-white/50 leading-tight">PARTIDA</span>
-                            <span className="leading-tight text-brand-primary">#1</span>
-                          </div>
-                        </th>
-                      )}
-                      <th className="py-4 px-6 text-center text-[10px] font-black text-white/40 uppercase tracking-[0.2em] min-w-[100px]">Saldo</th>
-                    </tr>
-                  </thead>
+              {todayMatches.length === 0 ? (
+                <div className="py-12 text-center bg-brand-secondary/30 rounded-2xl border border-white/5">
+                  <p className="text-xs font-black text-white/40 uppercase tracking-widest">Nenhuma partida realizada hoje. A performance está zerada.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto pb-6 -mx-10 px-10">
+                  <table className="min-w-full border-separate border-spacing-y-2">
+                    <thead>
+                      <tr>
+                        <th className="text-left py-4 px-6 text-[10px] font-black text-white/40 uppercase tracking-[0.2em] sticky left-0 bg-black z-20">Guerreiro</th>
+                        {todayMatches.map((match, i) => (
+                          <th key={match.id || i} className="py-4 px-2 text-center min-w-[64px]">
+                            <div 
+                              className="mx-auto px-2 h-10 rounded-xl bg-black border border-brand-primary/40 text-brand-primary flex flex-col items-center justify-center text-[10px] font-black shadow-lg uppercase tracking-wider"
+                              title={`Partida #${match.dailyNumber || (i + 1)}`}
+                            >
+                              <span className="text-[7.5px] text-white/50 leading-tight">PARTIDA</span>
+                              <span className="leading-tight text-brand-primary">#{match.dailyNumber || (i + 1)}</span>
+                            </div>
+                          </th>
+                        ))}
+                        <th className="py-4 px-6 text-center text-[10px] font-black text-white/40 uppercase tracking-[0.2em] min-w-[100px]">Saldo</th>
+                      </tr>
+                    </thead>
                   <tbody>
                     {[...attendance].sort((a, b) => (a.arrivalOrder || 0) - (b.arrivalOrder || 0)).map((player, idx) => {
                       const players = useStore.getState().players;
@@ -4304,12 +4411,13 @@ export const MatchView: React.FC<MatchViewProps> = ({
                   </tbody>
                 </table>
               </div>
+            )}
             </div>
-            </div>
-          )}
+          </div>
+        )}
 
           {/* Finalizar Dia */}
-          {userRole === 'ADMIN' && (
+          {isAdmin && (
             <div className="flex justify-center pt-16 mt-10 border-t border-brand-primary/10">
               <button 
                 onClick={onFinishDay}
@@ -4325,7 +4433,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
             </div>
           )}
           {/* Botão Flutuante de Microfone do Cockpit */}
-          {userRole === 'ADMIN' && generationResult && (
+          {isAdmin && generationResult && (
             <div id="voice-recognition-fab-container">
               <button
                 onClick={startVoiceListening}
@@ -4802,6 +4910,13 @@ export const MatchView: React.FC<MatchViewProps> = ({
             allMembers={players}
             attendance={attendance}
             onSelectReplacement={executeQuickSwap}
+          />
+          {/* Nova Central de Substituições e Trocas Rápidas */}
+          <MatchQuickSwapModal
+            isOpen={isQuickSwapModalOpen}
+            onClose={() => setIsQuickSwapModalOpen(false)}
+            generationResult={generationResult}
+            onUpdateResult={(newRes) => setGenerationResult(newRes)}
           />
         </>
       )}

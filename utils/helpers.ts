@@ -174,3 +174,13 @@ export const getSafePlayer = (playerId: string, players: Player[]): Player => {
     status: 'inactive'
   } as Player;
 };
+
+export const getAttendanceArrivalPosition = (playerId: string, attendance: Player[] = []): number | string => {
+  if (!playerId || !attendance || attendance.length === 0) return '?';
+  const sorted = [...attendance].sort((a, b) => (a.arrivalOrder || 0) - (b.arrivalOrder || 0));
+  const idx = sorted.findIndex(ap => ap.id === playerId);
+  if (idx === -1) return '?';
+  const player = sorted[idx];
+  const rawArrivalOrder = player?.arrivalOrder || 0;
+  return (rawArrivalOrder && rawArrivalOrder < 999) ? rawArrivalOrder : (idx + 1);
+};

@@ -64,7 +64,9 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
   userRole,
   setViewMode
 }) => {
-  const { attendance: allAttendance, preConfirmations: allPreConfirmations, isSyncing, matches, players: allPlayers } = useStore(useShallow(state => ({attendance: state.attendance, preConfirmations: state.preConfirmations, isSyncing: state.isSyncing, matches: state.matches, players: state.players})));
+  const { attendance: allAttendance, preConfirmations: allPreConfirmations, isSyncing, matches, players: allPlayers, user } = useStore(useShallow(state => ({attendance: state.attendance, preConfirmations: state.preConfirmations, isSyncing: state.isSyncing, matches: state.matches, players: state.players, user: state.user})));
+
+  const isAdmin = userRole === 'ADMIN' || !!currentPlayer?.isAdmin || (user?.email?.trim().toLowerCase() === 'rodneyes@gmail.com');
 
   const { avgMatchDuration, todayMatchesCount, firstMatchStartTimeStr } = React.useMemo(() => {
     const today = new Date().toISOString().split('T')[0];
@@ -128,9 +130,22 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
   const [editingArrival, setEditingArrival] = React.useState<string | null>(null);
   const [tempDepartureTime, setTempDepartureTime] = React.useState("");
   const [tempArrivalTime, setTempArrivalTime] = React.useState("");
+  const [addingPlayerId, setAddingPlayerId] = React.useState<string | null>(null);
   const [startY, setStartY] = React.useState(0);
   const [pullDistance, setPullDistance] = React.useState(0);
   const [isPulling, setIsPulling] = React.useState(false);
+
+  const handleRegisterPlayer = async (player: Player) => {
+    if (addingPlayerId === player.id) return;
+    setAddingPlayerId(player.id);
+    try {
+      await registerAttendance(player);
+    } catch (e) {
+      console.error('[AttendanceView] Erro ao registrar presença:', e);
+    } finally {
+      setTimeout(() => setAddingPlayerId(null), 400);
+    }
+  };
 
   const handleTouchStart = (e: React.TouchEvent) => {
     if (window.scrollY === 0) {
@@ -209,7 +224,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
 
   // Strictly filter active members for convocation list (excluding inactive, dm, and waiting list)
   const activeAvailablePlayers = React.useMemo(() => {
-    return (availablePlayers || []).filter(p => p.status === 'active' || (!p.status && p.status !== 'inactive' && p.status !== 'dm' && p.status !== 'waiting' && p.status !== 'lista_espera'));
+    return (availablePlayers || []).filter(p => p.status === 'active');
   }, [availablePlayers]);
 
   return (
@@ -234,10 +249,10 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
       </div>
 
       {/* PHASE: GAME DAY (Thu) or ADMIN OVERRIDE */}
-      {(isGameDay || userRole === 'ADMIN') && (
+      {(isGameDay || isAdmin) && (
         <>
           {/* Admin Override Badge */}
-          {userRole === 'ADMIN' && !isGameDay && (
+          {isAdmin && !isGameDay && (
             <div className="lg:col-span-12 bg-brand-primary text-brand-secondary px-10 py-4 rounded-2xl text-xs font-black uppercase tracking-[0.3em] inline-block text-center mb-6 shadow-2xl shadow-brand-primary/20 border border-brand-primary/30">
               Modo Administrador: Gestão de Presença (Fora do Ciclo)
             </div>
@@ -258,6 +273,18 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                   <p className="text-[10px] text-brand-primary font-black uppercase tracking-widest mt-1.5">{attendance.length} Guerreiros Escalados</p>
                 </div>
                 <div className="flex items-center gap-2">
+                  <Tooltip content="Sincronizar Dados com o Servidor">
+                    <button 
+                      onClick={async () => {
+                        if (refreshPlayers) await refreshPlayers();
+                        useStore.getState().setIsBackgroundSyncing(true);
+                        setTimeout(() => useStore.getState().setIsBackgroundSyncing(false), 800);
+                      }} 
+                      className="p-3 text-white/40 hover:text-brand-primary hover:bg-brand-primary/10 rounded-xl transition-all group/btn"
+                    >
+                      <RotateCcw className={`w-6 h-6 group-hover/btn:scale-110 transition-transform ${isSyncing ? 'animate-spin text-brand-primary' : ''}`}/>
+                    </button>
+                  </Tooltip>
                   <Tooltip content="Ver Relatório de Presença">
                     <button 
                       onClick={() => setViewMode('attendance_report')} 
@@ -266,7 +293,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                       <BarChart3 className="w-6 h-6 group-hover/btn:scale-110 transition-transform"/>
                     </button>
                   </Tooltip>
-                  {userRole === 'ADMIN' && (
+                  {isAdmin && (
                     <>
                       <Tooltip content="Limpar lista" position="left">
                         <button 
@@ -529,7 +556,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                 <p className="text-xs text-white/40 font-black uppercase text-center italic leading-relaxed tracking-widest">
                   {attendance.length < 12 
                     ? `Mínimo de 12 guerreiros para escalar (Faltam ${12 - attendance.length})` 
-                    : "Elite convocada. Vá para a aba Partida para escalar."}
+                    : `Quorum de quadra atingido (${attendance.length} atletas convocados). Você pode convocar todos os sócios ativos para a fila de rodagem.`}
                 </p>
               </div>
             </section>
@@ -541,7 +568,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                 <div className="space-y-2">
                   <h3 className="text-3xl font-black text-white uppercase tracking-tighter">Guerreiros Disponíveis</h3>
                   <p className="text-[10px] font-black text-brand-primary uppercase tracking-[0.3em]">
-                    {userRole === 'ADMIN' ? 'Selecione para convocar ao campo' : 'Visualização restrita para o comando'}
+                    {isAdmin ? 'Selecione para convocar ao campo' : 'Visualização restrita para o comando'}
                   </p>
                 </div>
                 <div className="flex items-center gap-3 text-xs font-black text-brand-primary uppercase tracking-widest bg-brand-primary/10 px-5 py-3 rounded-2xl border border-brand-primary/40">
@@ -550,7 +577,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                 </div>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-6">
-                {userRole !== 'ADMIN' ? (
+                {!isAdmin ? (
                   <span className="col-span-full py-32 text-center bg-white/5 rounded-[2.5rem] border-2 border-dashed border-brand-primary/40 space-y-6">
                     <Users className="w-20 h-20 text-white/20 mx-auto" />
                     <p className="text-white/40 text-sm font-black uppercase tracking-[0.3em] max-w-md mx-auto leading-relaxed">Apenas o comando administrativo pode realizar convocações diretas.</p>
@@ -580,9 +607,9 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                           animate={{ opacity: 1, scale: 1 }}
                           exit={{ opacity: 0, scale: 0.92 }}
                           transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-                          onClick={() => registerAttendance(player)} 
-                          disabled={isSyncing}
-                          className={`flex items-center justify-between p-2 rounded-xl border hover:shadow-xl transition-all text-left group bg-brand-light border-brand-primary/40 hover:border-brand-primary/50 ${isSyncing ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          onClick={() => handleRegisterPlayer(player)} 
+                          disabled={addingPlayerId === player.id}
+                          className={`flex items-center justify-between p-2 rounded-xl border hover:shadow-xl transition-all text-left group bg-brand-light border-brand-primary/40 hover:border-brand-primary/50 cursor-pointer active:scale-95 ${addingPlayerId === player.id ? 'opacity-50 cursor-wait' : ''}`}
                         >
                           <span className="min-w-0">
                             <p className={`text-[12px] font-black uppercase flex items-center gap-1.5 leading-tight tracking-tighter ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
@@ -590,7 +617,13 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                               {player.isOfficialSetter && <span className="text-[7px] font-black uppercase bg-brand-primary/10 text-brand-primary px-1.5 py-0.5 rounded-full border border-brand-primary/40 leading-none">L</span>}
                             </p>
                           </span>
-                          <span className="p-1 bg-brand-primary/10 text-brand-primary group-hover:bg-brand-primary group-hover:text-brand-secondary rounded-lg shadow-lg transition-all border border-brand-primary/40 shrink-0"><Plus className="w-4 h-4" /></span>
+                          <span className="p-1 bg-brand-primary/10 text-brand-primary group-hover:bg-brand-primary group-hover:text-brand-secondary rounded-lg shadow-lg transition-all border border-brand-primary/40 shrink-0">
+                            {addingPlayerId === player.id ? (
+                              <span className="w-4 h-4 border-2 border-brand-primary border-t-transparent rounded-full animate-spin inline-block"></span>
+                            ) : (
+                              <Plus className="w-4 h-4" />
+                            )}
+                          </span>
                         </motion.button>
                       ))}
                   </AnimatePresence>
@@ -602,7 +635,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
       )}
 
       {/* PHASE: OFF-CYCLE (Fri-Wed) - Hidden for Admin */}
-      {!isGameDay && userRole !== 'ADMIN' && (
+      {!isGameDay && !isAdmin && (
         <span className="lg:col-span-12 py-40 text-center space-y-10 animate-in zoom-in duration-1000">
           <span className="relative inline-block">
             <span className="absolute inset-0 bg-brand-primary/30 blur-[100px] rounded-full animate-pulse"></span>

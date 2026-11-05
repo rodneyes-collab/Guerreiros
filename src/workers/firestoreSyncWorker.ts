@@ -37,7 +37,7 @@ self.onmessage = (e: MessageEvent) => {
             pointsFor: data.pointsFor || 0,
             pointsAgainst: data.pointsAgainst || 0,
             pointsBalance: data.pointsBalance || 0,
-            arrivalOrder: data.arrivalOrder || 999,
+            arrivalOrder: typeof data.arrivalOrder === 'number' ? data.arrivalOrder : undefined,
             ...data
           };
 

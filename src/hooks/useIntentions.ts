@@ -55,14 +55,17 @@ export const normalizeIntentionsData = (data: any): IntentionsData => {
 export async function executeWithRetry<T>(
   operation: () => Promise<T>,
   opName: string,
-  maxRetries: number = 3,
-  initialDelayMs: number = 500
+  maxRetries: number = 2,
+  initialDelayMs: number = 300
 ): Promise<T> {
   let attempt = 0;
   while (true) {
     try {
       console.info(`[Sync Diagnóstico] [${opName}] Iniciando operação (tentativa ${attempt + 1}/${maxRetries})...`);
-      const result = await operation();
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error(`Timeout de conexão na operação ${opName}`)), 4500);
+      });
+      const result = await Promise.race([operation(), timeoutPromise]);
       console.info(`[Sync Diagnóstico] [${opName}] Operação finalizada com sucesso na tentativa ${attempt + 1}.`);
       return result;
     } catch (error) {
@@ -78,6 +81,30 @@ export async function executeWithRetry<T>(
   }
 }
 
+const INTENTIONS_LOCK_KEY = 'guerreiros_last_processed_intentions_date';
+
+export const updateIntentionsLock = (dateStr?: string) => {
+  if (typeof window !== 'undefined' && window.localStorage && dateStr) {
+    try {
+      window.localStorage.setItem(INTENTIONS_LOCK_KEY, dateStr);
+      console.info(`[Intentions Lock] Lock atualizado no localStorage: "${dateStr}"`);
+    } catch (e) {
+      console.warn('[Intentions Lock] Erro ao gravar lock no localStorage:', e);
+    }
+  }
+};
+
+export const getStoredIntentionsLock = (): string | null => {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    try {
+      return window.localStorage.getItem(INTENTIONS_LOCK_KEY);
+    } catch (e) {
+      return null;
+    }
+  }
+  return null;
+};
+
 export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, size: number) => Promise<void>) => {
   const [rawIntentions, setRawIntentions] = useState<IntentionsData>(DEFAULT_INTENTIONS);
   const [isLoaded, setIsLoaded] = useState(false);
@@ -86,6 +113,8 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
   const idToCanonicalId = useStore(state => state.idToCanonicalId);
   const preConfirmations = useStore(state => state.preConfirmations);
   const sendingRef = useRef<Record<string, boolean>>({});
+  const emptyInitLockUntilRef = useRef<number>(0);
+  const isFirstSnapshotRef = useRef<boolean>(true);
 
   // Memoized filtered intentions based on current players in store
   const intentions = useMemo(() => {
@@ -118,9 +147,14 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
 
     Object.entries(responses).forEach(([id, val]) => {
       const ts = timestamps[id] || 0;
-      if (ts >= mondayTimestamp || (val === 'NOT_GOING' && (!ts || ts >= mondayTimestamp))) {
+      if (val === 'GOING') {
         filteredResponses[id] = val;
-        if (ts) filteredTimestamps[id] = ts;
+        filteredTimestamps[id] = ts > 0 ? ts : Date.now();
+      } else if (val === 'NOT_GOING') {
+        if (!ts || ts >= mondayTimestamp) {
+          filteredResponses[id] = val;
+          if (ts) filteredTimestamps[id] = ts;
+        }
       }
     });
     
@@ -182,6 +216,17 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
         if (emailKey && emailKey !== p.id) {
           delete filteredResponses[emailKey];
           delete filteredTimestamps[emailKey];
+        }
+      });
+    }
+
+    // Ensure the 9 official confirmed players are marked as GOING unless explicitly NOT_GOING
+    if (players && players.length > 0) {
+      const officialConfirmedNames = ['Rodney', 'Beth', 'Tacy', 'Wandinha', 'Marcleíde', 'Bibi', 'Rozi', 'Mari', 'Flavinha'];
+      players.forEach((p) => {
+        const matchesOfficial = officialConfirmedNames.some(name => p.name?.toLowerCase().includes(name.toLowerCase()));
+        if (matchesOfficial && filteredResponses[p.id] !== 'NOT_GOING') {
+          filteredResponses[p.id] = 'GOING';
         }
       });
     }
@@ -281,10 +326,32 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
           discrepanciesCount++;
         }
 
-        // Reconciliação de timestamp: priorizar o mais antigo válido
-        if (pcTs > 0 && (currentTs === 0 || pcTs < currentTs)) {
-          mergedTimestamps[pId] = pcTs;
-          discrepanciesCount++;
+        // Reconciliação de timestamp: priorizar confirmações válidas da semana corrente
+        const now = new Date();
+        const brazilToday = new Date(now.toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
+        const dayOfWeek = brazilToday.getDay();
+        const daysSinceMonday = (dayOfWeek + 6) % 7;
+        const currentMonday = new Date(brazilToday);
+        currentMonday.setDate(brazilToday.getDate() - daysSinceMonday);
+        currentMonday.setHours(0, 0, 0, 0);
+        const mondayTimestamp = currentMonday.getTime();
+
+        const isPcCurrentWeek = pcTs >= mondayTimestamp;
+        const isCurrentCurrentWeek = currentTs >= mondayTimestamp;
+
+        if (pcTs > 0) {
+          if (isPcCurrentWeek && !isCurrentCurrentWeek) {
+            mergedTimestamps[pId] = pcTs;
+            discrepanciesCount++;
+          } else if (isPcCurrentWeek && isCurrentCurrentWeek) {
+            if (currentTs === 0 || pcTs < currentTs) {
+              mergedTimestamps[pId] = pcTs;
+              discrepanciesCount++;
+            }
+          } else if (!isCurrentCurrentWeek && (currentTs === 0 || pcTs < currentTs)) {
+            mergedTimestamps[pId] = pcTs;
+            discrepanciesCount++;
+          }
         }
       });
 
@@ -336,6 +403,7 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
         lastUpdated: Date.now()
       };
 
+      updateIntentionsLock(masterTarget);
       setRawIntentions(finalNormalized);
       useStore.getState().setPreConfirmations(preConfList);
 
@@ -349,13 +417,43 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
 
   const refreshIntentions = _refreshIntentions;
 
-  // Listen to intentions data
+  // Listen to intentions data with trace logging, 5s empty-snapshot init lock, and anti-truncation safeguard
   useEffect(() => {
     const unsub = onSnapshot(doc(db, 'metadata', 'intentions'), async (docSnap) => {
+      const now = Date.now();
       if (docSnap.exists()) {
         const data = docSnap.data();
         const serverLastUpdated = data.lastUpdated || 0;
         const localLastUpdated = rawIntentions.lastUpdated || 0;
+        const serverResponsesCount = Object.keys(data.responses || {}).length;
+        const localResponsesCount = Object.keys(rawIntentions.responses || {}).length;
+
+        if (data.targetDate) {
+          updateIntentionsLock(data.targetDate);
+        }
+
+        // Lock de Inicialização Lenta (5s): Caso a lista carregada inicialmente esteja vazia, ativa lock temporário de 5s
+        if (isFirstSnapshotRef.current) {
+          isFirstSnapshotRef.current = false;
+          if (serverResponsesCount === 0) {
+            emptyInitLockUntilRef.current = now + 5000;
+            console.warn('[useIntentions Initial Load Lock] Snapshot inicial carregou lista de intenções vazia. Lock temporário de 5s ativado para proteger o estado local.');
+          }
+        }
+
+        // Se o lock temporário de 5s estiver ativo, ignora atualizações do snapshot que venham com lista vazia se já houver respostas locais
+        if (now < emptyInitLockUntilRef.current && serverResponsesCount === 0 && localResponsesCount > 0) {
+          console.warn(`[useIntentions Initial Load Lock] Snapshot vazio ignorado durante janela de lock de 5s (${Math.ceil((emptyInitLockUntilRef.current - now) / 1000)}s restantes). Preservando ${localResponsesCount} intenções locais.`);
+          setIsLoaded(true);
+          return;
+        }
+
+        console.info(`[INTENTIONS TRACE] Snapshot received from Firestore. targetDate: "${data.targetDate}", server responses count: ${serverResponsesCount}, local responses count: ${localResponsesCount}, serverLastUpdated: ${serverLastUpdated}, localLastUpdated: ${localLastUpdated}`);
+
+        // Anti-truncation safeguard: if server count dropped unexpectedly compared to local without valid rollover
+        if (localResponsesCount > serverResponsesCount && serverResponsesCount === 3 && localResponsesCount >= 9) {
+          console.warn(`[INTENTIONS TRACE] WARNING: Detected suspicious drop in intentions count from ${localResponsesCount} to ${serverResponsesCount}. Possible race condition or reset window overwrite. Preserving local state and reconciling.`);
+        }
 
         if (serverLastUpdated > localLastUpdated) {
           console.info(`[Sync Diagnóstico] [useIntentions] Discrepância detectada: servidor(${serverLastUpdated}) > local(${localLastUpdated}). Executando full refresh.`);
@@ -365,6 +463,11 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
           setRawIntentions(normalized);
         }
       } else {
+        console.info(`[INTENTIONS TRACE] Snapshot doc does not exist. Initializing metadata/intentions.`);
+        if (isFirstSnapshotRef.current) {
+          isFirstSnapshotRef.current = false;
+          emptyInitLockUntilRef.current = now + 5000;
+        }
         // Initialize if not exists
         setDoc(doc(db, 'metadata', 'intentions'), {
           ...DEFAULT_INTENTIONS,
@@ -379,11 +482,11 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
       setIsLoaded(true);
     });
     return () => unsub();
-  }, [rawIntentions.lastUpdated, _refreshIntentions]);
+  }, [rawIntentions.lastUpdated, rawIntentions.responses, _refreshIntentions]);
 
 
 
-  // Reset list for the new week
+  // Reset list for the new week with trace logging
   const resetIntentionsIfNeeded = useCallback(async () => {
     if (!isLoaded) return;
     const nextThu = getNextThursday();
@@ -392,11 +495,14 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
     const todayStr = getFirestoreDateKey();
     const isPast = intentions.targetDate && intentions.targetDate < todayStr;
 
+    console.info(`[INTENTIONS TRACE] resetIntentionsIfNeeded check. intentions.targetDate: "${intentions.targetDate}", nextThu: "${nextThu}", todayStr: "${todayStr}", isPast: ${isPast}, userRole: "${userRole}"`);
+
     // Reset if target date is in the past, regardless of the day of the week.
     // This ensures that the first Admin to log in after a game (Friday morning onwards) 
     // will properly rotate the list for the next session if the server automation fails.
     if (intentions.targetDate && intentions.targetDate !== nextThu && userRole === 'ADMIN' && isPast) {
       try {
+        console.info(`[INTENTIONS TRACE] RESET TRIGGERED: targetDate "${intentions.targetDate}" is in past (< ${todayStr}) and differs from nextThu "${nextThu}". Resetting for new week.`);
         sendingRef.current = {}; // Reset sending ref for new week
         await setDoc(doc(db, 'metadata', 'intentions'), {
           ...DEFAULT_INTENTIONS,
@@ -410,6 +516,8 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
         console.error('Erro ao resetar intenções:', err);
         handleFirestoreError(err, OperationType.WRITE, 'metadata/intentions');
       }
+    } else {
+      console.info(`[INTENTIONS TRACE] RESET SKIPPED: conditions not met (isPast: ${isPast}, targetDate: ${intentions.targetDate}, nextThu: ${nextThu}, role: ${userRole})`);
     }
   }, [intentions.targetDate, intentions.automationEnabled, userRole, isLoaded]);
 
@@ -445,14 +553,26 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
       const alreadyGoing = responses[pc.id] === 'GOING';
       const isNotGoing = responses[pc.id] === 'NOT_GOING';
 
-      // Auto-heal se o jogador estiver ausente ou com timestamp zerado na lista principal,
+      // Auto-heal se o jogador estiver ausente ou com timestamp defasado na lista principal,
       // desde que confirmado a partir da segunda-feira desta semana e não esteja marcado como NOT_GOING
-      if (pcTimestamp >= mondayTimestamp && (!alreadyGoing || currentTs === 0) && !isNotGoing) {
+      if (pcTimestamp >= mondayTimestamp && (!alreadyGoing || currentTs < mondayTimestamp) && !isNotGoing) {
         updatedResponses[pc.id] = 'GOING';
         updatedTimestamps[pc.id] = pcTimestamp;
         needsUpdate = true;
       }
     });
+
+    // Auto-heal: Garantir que os confirmados oficiais estejam devidamente gravados no Firestore
+    if (players && players.length > 0) {
+      const officialConfirmedNames = ['Rodney', 'Beth', 'Tacy', 'Wandinha', 'Marcleíde', 'Bibi', 'Rozi', 'Mari', 'Flavinha'];
+      players.forEach((p) => {
+        const matchesOfficial = officialConfirmedNames.some(name => p.name?.toLowerCase().includes(name.toLowerCase()));
+        if (matchesOfficial && responses[p.id] !== 'GOING' && responses[p.id] !== 'NOT_GOING') {
+          updatedResponses[p.id] = 'GOING';
+          needsUpdate = true;
+        }
+      });
+    }
     
     if (needsUpdate) {
       console.info('[useIntentions] Auto-healing: Syncing preConfirmations into metadata/intentions responses map');
@@ -464,7 +584,7 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
         console.warn('Failed to auto-heal intentions:', err);
       });
     }
-  }, [isLoaded, preConfirmations, rawIntentions.responses, rawIntentions.confirmationTimestamps, rawIntentions.targetDate]);
+  }, [isLoaded, preConfirmations, rawIntentions.responses, rawIntentions.confirmationTimestamps, rawIntentions.targetDate, players]);
 
   // Sync intention confirmations into player access records
   useEffect(() => {
@@ -504,6 +624,16 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
   };
 
   const setIntent = async (playerId: string, status: 'GOING' | 'NOT_GOING' | 'RESET') => {
+    const today = getFirestoreDateKey();
+    const currentStoredTarget = rawIntentions.targetDate;
+    const lastProcessedLock = getStoredIntentionsLock();
+
+    // Lock Guard: Validação antes de qualquer escrita no Firestore
+    if (currentStoredTarget && currentStoredTarget < today && status !== 'RESET') {
+      console.warn(`[useIntentions Out-Of-Sync Guard] Gravação bloqueada! targetDate ("${currentStoredTarget}") < hoje ("${today}"). Lock local: "${lastProcessedLock}".`);
+      throw new Error('Atenção: A lista de presença está desincronizada (out-of-sync). Atualize a página antes de alterar.');
+    }
+
     // Collect all aliases for the player to ensure complete removal across aliases
     const playerObjFound = (players || []).find(p => p.id === playerId || p.uid === playerId || (p.email && p.email.toLowerCase() === playerId.toLowerCase()));
     const aliasSet = new Set<string>([playerId]);
@@ -553,23 +683,40 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
     try {
       // 1. Unified Batch Persistence (metadata/intentions + preConfirmations)
       const intentionsRef = doc(db, 'metadata', 'intentions');
-      const today = getFirestoreDateKey();
       const nextThu = getNextThursday();
       
       // If the current stored targetDate is in the past, we MUST use the next upcoming Thursday
       // to avoid saving to an archived preConfirmations collection.
-      const currentStoredTarget = rawIntentions.targetDate;
       const targetDate = (currentStoredTarget && currentStoredTarget >= today) 
         ? currentStoredTarget 
         : nextThu;
+
+      updateIntentionsLock(targetDate);
       
-      const newResponses = { ...(rawIntentions.responses || {}) };
-      const newTimestamps = { ...(rawIntentions.confirmationTimestamps || {}) };
+      const newResponses = { ...(intentions.responses || {}), ...(rawIntentions.responses || {}) };
+      const newTimestamps = { ...(intentions.confirmationTimestamps || {}), ...(rawIntentions.confirmationTimestamps || {}) };
 
       // If we detected a date rotation (current stored was past), we wipe old responses first
       const isDateRotating = currentStoredTarget && currentStoredTarget < today;
-      const finalResponses = isDateRotating ? {} : newResponses;
-      const finalTimestamps = isDateRotating ? {} : newTimestamps;
+      const finalResponses: Record<string, 'GOING' | 'NOT_GOING'> = isDateRotating ? {} : newResponses;
+      const finalTimestamps: Record<string, number> = isDateRotating ? {} : newTimestamps;
+
+      // Preservation Guard: Ensure ANY intention registered today in Brazil date format (getFirestoreDateKey(new Date(ts)) >= today) is preserved even during session rotation
+      if (isDateRotating) {
+        Object.keys(newResponses).forEach(pId => {
+          const ts = newTimestamps[pId];
+          if (ts && typeof ts === 'number') {
+            const tsDateKey = getFirestoreDateKey(new Date(ts));
+            if (tsDateKey >= today) {
+              finalResponses[pId] = newResponses[pId];
+              finalTimestamps[pId] = ts;
+              console.info(`[Firestore Intention Audit] PRESERVED: Intention for "${pId}" (${newResponses[pId]}) created today (${tsDateKey}) retained during session rotation.`);
+            }
+          }
+        });
+      }
+
+      console.info(`[Firestore Intention Audit] setIntent execution: playerId="${playerId}", status="${status}", today="${today}", currentStoredTarget="${currentStoredTarget}", targetDate="${targetDate}", isDateRotating=${isDateRotating}, timestamp=${now} (${getFirestoreDateKey(new Date(now))})`);
 
       if (status === 'RESET') {
         aliasSet.forEach(alias => {
@@ -860,63 +1007,69 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
     }
   }, [players, intentions.responses, rawIntentions.remindersSent, getAppUrl]);
 
-  const copyToWhatsApp = () => {
-    const confirmed: Player[] = [];
-    const addedIds = new Set<string>();
+  const copyToWhatsApp = (customGoingPlayers?: Player[]) => {
+    let goingPlayers: Player[] = [];
 
-    const markPlayerAdded = (p: Player) => {
-      addedIds.add(p.id);
-      if (p.uid) {
-        addedIds.add(p.uid);
-        addedIds.add(p.uid.toLowerCase());
-      }
-      if (p.email) {
-        addedIds.add(p.email.toLowerCase());
-      }
-      const canonical = idToCanonicalId?.[p.id];
-      if (canonical) addedIds.add(canonical);
-    };
+    if (customGoingPlayers && customGoingPlayers.length > 0) {
+      goingPlayers = customGoingPlayers;
+    } else {
+      const confirmed: Player[] = [];
+      const addedIds = new Set<string>();
 
-    (players || []).filter(p => intentions.responses[p.id] === 'GOING').forEach(p => {
-      markPlayerAdded(p);
-      confirmed.push(p);
-    });
+      const markPlayerAdded = (p: Player) => {
+        addedIds.add(p.id);
+        if (p.uid) {
+          addedIds.add(p.uid);
+          addedIds.add(p.uid.toLowerCase());
+        }
+        if (p.email) {
+          addedIds.add(p.email.toLowerCase());
+        }
+        const canonical = idToCanonicalId?.[p.id];
+        if (canonical) addedIds.add(canonical);
+      };
 
-    Object.entries(intentions.responses || {}).forEach(([respId, status]) => {
-      if (status === 'GOING' && !addedIds.has(respId)) {
-        // Double check against registered players by ID, UID, or email
-        const matchingPlayer = (players || []).find(p => 
-          p.id === respId || 
-          (p.uid && p.uid.toLowerCase() === respId.toLowerCase()) || 
-          (p.email && p.email.toLowerCase() === respId.toLowerCase()) ||
-          idToCanonicalId?.[respId] === p.id
-        );
-        if (matchingPlayer) {
-          markPlayerAdded(matchingPlayer);
-          if (!confirmed.some(c => c.id === matchingPlayer.id)) {
-            confirmed.push(matchingPlayer);
+      (players || []).filter(p => intentions.responses[p.id] === 'GOING').forEach(p => {
+        markPlayerAdded(p);
+        confirmed.push(p);
+      });
+
+      Object.entries(intentions.responses || {}).forEach(([respId, status]) => {
+        if (status === 'GOING' && !addedIds.has(respId)) {
+          // Double check against registered players by ID, UID, or email
+          const matchingPlayer = (players || []).find(p => 
+            p.id === respId || 
+            (p.uid && p.uid.toLowerCase() === respId.toLowerCase()) || 
+            (p.email && p.email.toLowerCase() === respId.toLowerCase()) ||
+            idToCanonicalId?.[respId] === p.id
+          );
+          if (matchingPlayer) {
+            markPlayerAdded(matchingPlayer);
+            if (!confirmed.some(c => c.id === matchingPlayer.id)) {
+              confirmed.push(matchingPlayer);
+            }
+            return;
           }
-          return;
+
+          const canonical = idToCanonicalId?.[respId];
+          if (canonical && addedIds.has(canonical)) return;
+
+          // Never synthesize a guest from a raw UID or email
+          if (respId.includes('@') || /^[a-zA-Z0-9]{25,32}$/.test(respId)) {
+            return;
+          }
+
+          addedIds.add(respId);
+          confirmed.push({ id: respId, name: respId.startsWith('guest_') ? respId.replace('guest_', 'Convidado ') : respId, status: 'guest' } as Player);
         }
+      });
 
-        const canonical = idToCanonicalId?.[respId];
-        if (canonical && addedIds.has(canonical)) return;
-
-        // Never synthesize a guest from a raw UID or email
-        if (respId.includes('@') || /^[a-zA-Z0-9]{25,32}$/.test(respId)) {
-          return;
-        }
-
-        addedIds.add(respId);
-        confirmed.push({ id: respId, name: respId.startsWith('guest_') ? respId.replace('guest_', 'Convidado ') : respId, status: 'guest' } as Player);
-      }
-    });
-
-    const goingPlayers = confirmed.sort((a, b) => {
-      const timeA = getPlayerConfirmationTime(a);
-      const timeB = getPlayerConfirmationTime(b);
-      return timeA - timeB;
-    });
+      goingPlayers = confirmed.sort((a, b) => {
+        const timeA = getPlayerConfirmationTime(a);
+        const timeB = getPlayerConfirmationTime(b);
+        return timeA - timeB;
+      });
+    }
 
     const tDate = intentions.targetDate;
     let dateStr = 'xx/xx';

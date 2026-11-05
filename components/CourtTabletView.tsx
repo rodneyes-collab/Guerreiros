@@ -17,12 +17,14 @@ import {
   CheckCircle2,
   RefreshCw,
   AlertTriangle,
-  Check
+  Check,
+  ArrowLeftRight
 } from 'lucide-react';
 import { useStore } from '../store';
 import { Player, Team, Gender } from '../types';
-import { calculateCompositePerformanceRating, verifyClubGenerationRules } from '../utils/teamLogic';
-import { formatTime } from '../utils/helpers';
+import { calculateCompositePerformanceRating, verifyClubGenerationRules, isFemalePlayer } from '../utils/teamLogic';
+import { formatTime, getAttendanceArrivalPosition } from '../utils/helpers';
+import { MatchQuickSwapModal } from '../src/components/MatchQuickSwapModal';
 
 interface CourtTabletViewProps {
   onBack?: () => void;
@@ -40,6 +42,7 @@ export const CourtTabletView: React.FC<CourtTabletViewProps> = ({ onBack }) => {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [matchDuration, setMatchDuration] = useState<number>(0);
+  const [isQuickSwapModalOpen, setIsQuickSwapModalOpen] = useState(false);
 
   // Memoize rule verification to prevent heavy calculations on every second re-render
   const rules = useMemo(() => {
@@ -194,12 +197,26 @@ export const CourtTabletView: React.FC<CourtTabletViewProps> = ({ onBack }) => {
                 </h2>
               </div>
               
-              <div className="flex flex-col items-end">
-                <div className="flex items-center gap-2 text-sm font-black text-brand-primary uppercase tracking-[0.2em]">
-                  <Clock className="w-4 h-4" />
-                  <span>{formatTime(matchDuration)}</span>
+              <div className="flex items-center gap-3">
+                {generationResult && (
+                  <button
+                    type="button"
+                    onClick={() => setIsQuickSwapModalOpen(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-brand-primary hover:bg-yellow-400 text-slate-950 text-xs font-black uppercase tracking-wider transition-all shadow-md hover:scale-105 cursor-pointer"
+                    title="Abrir Central de Substituições e Trocas Rápidas"
+                  >
+                    <ArrowLeftRight className="w-3.5 h-3.5 text-slate-950" />
+                    <span>Troca / Substituição</span>
+                  </button>
+                )}
+
+                <div className="flex flex-col items-end">
+                  <div className="flex items-center gap-2 text-sm font-black text-brand-primary uppercase tracking-[0.2em]">
+                    <Clock className="w-4 h-4" />
+                    <span>{formatTime(matchDuration)}</span>
+                  </div>
+                  <span className="text-[9px] font-bold text-white/40 uppercase tracking-widest">Tempo de Jogo</span>
                 </div>
-                <span className="text-[9px] font-bold text-white/40 uppercase tracking-widest">Tempo de Jogo</span>
               </div>
             </div>
 
@@ -256,10 +273,21 @@ export const CourtTabletView: React.FC<CourtTabletViewProps> = ({ onBack }) => {
                       <div className="mb-3 p-2.5 bg-brand-primary/10 border border-brand-primary/30 rounded-2xl flex items-center justify-between">
                         <div className="flex items-center gap-2">
                           <span className="px-2 py-0.5 bg-brand-primary text-black text-[9px] font-black uppercase tracking-wider rounded-md">
-                            LEV
+                            (Lev)
                           </span>
-                          <span className="text-sm font-black text-white uppercase tracking-tight">
+                          <span className="text-sm font-black text-white uppercase tracking-tight flex items-center gap-1.5">
                             {generationResult.teamA.setter.name}
+                            {(() => {
+                              const pos = getAttendanceArrivalPosition(generationResult.teamA.setter.id, attendance);
+                              return pos !== '?' ? (
+                                <span className="text-[8px] font-black px-1.5 py-0.2 rounded border bg-brand-primary/20 text-brand-primary border-brand-primary/40 font-mono">
+                                  #{pos}º
+                                </span>
+                              ) : null;
+                            })()}
+                            <span className={`text-[8px] font-black px-1.5 py-0.2 rounded border ${isFemalePlayer(generationResult.teamA.setter) ? 'bg-pink-500/20 text-pink-300 border-pink-500/40' : 'bg-blue-500/20 text-blue-300 border-blue-500/40'}`}>
+                              {isFemalePlayer(generationResult.teamA.setter) ? 'F' : 'M'}
+                            </span>
                           </span>
                         </div>
                         {renderPlayerMetricBadge(generationResult.teamA.setter)}
@@ -273,8 +301,19 @@ export const CourtTabletView: React.FC<CourtTabletViewProps> = ({ onBack }) => {
                       </p>
                       {generationResult.teamA.players.map(player => (
                         <div key={player.id} className="p-2 bg-white/5 border border-white/10 rounded-xl flex items-center justify-between hover:border-brand-primary/30 transition-all">
-                          <span className="text-xs font-bold text-white/90 uppercase tracking-tight">
+                          <span className="text-xs font-bold text-white/90 uppercase tracking-tight flex items-center gap-1.5">
                             {player.name}
+                            {(() => {
+                              const pos = getAttendanceArrivalPosition(player.id, attendance);
+                              return pos !== '?' ? (
+                                <span className="text-[8px] font-black px-1.5 py-0.2 rounded border bg-brand-primary/20 text-brand-primary border-brand-primary/40 font-mono">
+                                  #{pos}º
+                                </span>
+                              ) : null;
+                            })()}
+                            <span className={`text-[8px] font-black px-1.5 py-0.2 rounded border ${isFemalePlayer(player) ? 'bg-pink-500/20 text-pink-300 border-pink-500/40' : 'bg-blue-500/20 text-blue-300 border-blue-500/40'}`}>
+                              {isFemalePlayer(player) ? 'F' : 'M'}
+                            </span>
                           </span>
                           {renderPlayerMetricBadge(player)}
                         </div>
@@ -300,10 +339,21 @@ export const CourtTabletView: React.FC<CourtTabletViewProps> = ({ onBack }) => {
                       <div className="mb-3 p-2.5 bg-white/10 border border-white/20 rounded-2xl flex items-center justify-between">
                         <div className="flex items-center gap-2">
                           <span className="px-2 py-0.5 bg-white text-black text-[9px] font-black uppercase tracking-wider rounded-md">
-                            LEV
+                            (Lev)
                           </span>
-                          <span className="text-sm font-black text-white uppercase tracking-tight">
+                          <span className="text-sm font-black text-white uppercase tracking-tight flex items-center gap-1.5">
                             {generationResult.teamB.setter.name}
+                            {(() => {
+                              const pos = getAttendanceArrivalPosition(generationResult.teamB.setter.id, attendance);
+                              return pos !== '?' ? (
+                                <span className="text-[8px] font-black px-1.5 py-0.2 rounded border bg-white/20 text-white border-white/40 font-mono">
+                                  #{pos}º
+                                </span>
+                              ) : null;
+                            })()}
+                            <span className={`text-[8px] font-black px-1.5 py-0.2 rounded border ${isFemalePlayer(generationResult.teamB.setter) ? 'bg-pink-500/20 text-pink-300 border-pink-500/40' : 'bg-blue-500/20 text-blue-300 border-blue-500/40'}`}>
+                              {isFemalePlayer(generationResult.teamB.setter) ? 'F' : 'M'}
+                            </span>
                           </span>
                         </div>
                         {renderPlayerMetricBadge(generationResult.teamB.setter)}
@@ -317,8 +367,19 @@ export const CourtTabletView: React.FC<CourtTabletViewProps> = ({ onBack }) => {
                       </p>
                       {generationResult.teamB.players.map(player => (
                         <div key={player.id} className="p-2 bg-white/5 border border-white/10 rounded-xl flex items-center justify-between hover:border-white/30 transition-all">
-                          <span className="text-xs font-bold text-white/90 uppercase tracking-tight">
+                          <span className="text-xs font-bold text-white/90 uppercase tracking-tight flex items-center gap-1.5">
                             {player.name}
+                            {(() => {
+                              const pos = getAttendanceArrivalPosition(player.id, attendance);
+                              return pos !== '?' ? (
+                                <span className="text-[8px] font-black px-1.5 py-0.2 rounded border bg-white/20 text-white border-white/40 font-mono">
+                                  #{pos}º
+                                </span>
+                              ) : null;
+                            })()}
+                            <span className={`text-[8px] font-black px-1.5 py-0.2 rounded border ${isFemalePlayer(player) ? 'bg-pink-500/20 text-pink-300 border-pink-500/40' : 'bg-blue-500/20 text-blue-300 border-blue-500/40'}`}>
+                              {isFemalePlayer(player) ? 'F' : 'M'}
+                            </span>
                           </span>
                           {renderPlayerMetricBadge(player)}
                         </div>
@@ -618,6 +679,14 @@ export const CourtTabletView: React.FC<CourtTabletViewProps> = ({ onBack }) => {
         </div>
 
       </div>
+
+      {/* Central de Substituições e Trocas Rápidas */}
+      <MatchQuickSwapModal
+        isOpen={isQuickSwapModalOpen}
+        onClose={() => setIsQuickSwapModalOpen(false)}
+        generationResult={generationResult}
+        onUpdateResult={(newRes) => useStore.getState().setGenerationResult(newRes)}
+      />
     </div>
   );
 };

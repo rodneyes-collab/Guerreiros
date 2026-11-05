@@ -325,7 +325,22 @@ export const useStore = create<AppState>((set) => ({
   },
   setSelectedRankingPlayerId: (selectedRankingPlayerId) => set({ selectedRankingPlayerId }),
   setIsInitialLoading: (isInitialLoading) => set({ isInitialLoading }),
-  setIsSyncing: (isSyncing) => set({ isSyncing }),
+  setIsSyncing: (isSyncing) => {
+    if (typeof window !== 'undefined') {
+      const win = window as any;
+      if (win.__syncingWatchdog) {
+        clearTimeout(win.__syncingWatchdog);
+        win.__syncingWatchdog = null;
+      }
+      if (isSyncing) {
+        win.__syncingWatchdog = setTimeout(() => {
+          console.warn('[Sync Watchdog] Auto-releasing stuck isSyncing lock');
+          set({ isSyncing: false });
+        }, 5000);
+      }
+    }
+    set({ isSyncing });
+  },
   setIsBackgroundSyncing: (isBackgroundSyncing) => set({ isBackgroundSyncing }),
   setSyncError: (syncError) => set({ syncError }),
   setDbStatus: (dbStatus) => set({ dbStatus }),

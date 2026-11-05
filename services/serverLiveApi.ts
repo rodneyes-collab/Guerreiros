@@ -21,7 +21,7 @@ export const setupGeminiLiveWebSocket = (server: http.Server) => {
   wss.on("connection", async (clientWs: WebSocket) => {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      clientWs.send(JSON.stringify({ error: "GEMINI_API_KEY not configured" }));
+      clientWs.send(JSON.stringify({ error: "GEMINI_API_KEY is not configured on the server. Please verify your API key in the Settings > Secrets panel." }));
       clientWs.close();
       return;
     }
@@ -47,9 +47,16 @@ export const setupGeminiLiveWebSocket = (server: http.Server) => {
         },
         callbacks: {
           onmessage: (message: LiveServerMessage) => {
-            const audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
-            if (audio && clientWs.readyState === WebSocket.OPEN) {
-              clientWs.send(JSON.stringify({ audio }));
+            const parts = message.serverContent?.modelTurn?.parts;
+            if (parts && clientWs.readyState === WebSocket.OPEN) {
+              for (const part of parts) {
+                if (part.text) {
+                  clientWs.send(JSON.stringify({ text: part.text }));
+                }
+                if (part.inlineData?.data) {
+                  clientWs.send(JSON.stringify({ audio: part.inlineData.data }));
+                }
+              }
             }
             if (message.serverContent?.interrupted && clientWs.readyState === WebSocket.OPEN) {
               clientWs.send(JSON.stringify({ interrupted: true }));

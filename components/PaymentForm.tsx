@@ -24,6 +24,13 @@ export const PaymentForm: React.FC<PaymentFormProps> = ({
   players,
   isSyncing = false
 }) => {
+  const eligiblePlayers = React.useMemo(() => {
+    return (players || []).filter(p => 
+      (p.status === 'active' && !p.isDM) || 
+      (editingPayment && p.id === paymentFormData.playerId)
+    );
+  }, [players, editingPayment, paymentFormData.playerId]);
+
   if (!isOpen) return null;
 
   return (
@@ -48,8 +55,8 @@ export const PaymentForm: React.FC<PaymentFormProps> = ({
               onChange={e => setPaymentFormData({ ...paymentFormData, playerId: e.target.value })}
               className="w-full px-6 py-4 bg-white/5 border border-brand-primary/40 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none appearance-none"
             >
-              <option value="" className="bg-brand-secondary text-white">Selecione um sócio...</option>
-              {players.sort((a,b) => (a.name || '').localeCompare(b.name || '')).map(p => (
+              <option value="" className="bg-brand-secondary text-white">Selecione um sócio ativo...</option>
+              {eligiblePlayers.sort((a,b) => (a.name || '').localeCompare(b.name || '')).map(p => (
                 <option key={p.id} value={p.id} className="bg-brand-secondary text-white">{p.name}</option>
               ))}
             </select>
@@ -153,7 +160,7 @@ export const PaymentForm: React.FC<PaymentFormProps> = ({
               disabled={isSyncing}
               className={`flex-[2] px-8 py-4 bg-brand-primary text-brand-secondary rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-brand-primary/90 shadow-xl shadow-brand-primary/10 transition-all ${isSyncing ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
-              {isSyncing ? 'Processando...' : (editingPayment ? 'Salvar Alterações' : 'Registrar Pagamento')}
+              {isSyncing ? 'Processando...' : (editingPayment ? 'Confirmar e Salvar' : 'Confirmar e Registrar Pagamento')}
             </button>
           </div>
         </form>
