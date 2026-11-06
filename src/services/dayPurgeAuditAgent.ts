@@ -10,6 +10,14 @@ import {
 import { cleanObject } from '../../utils/helpers';
 import { toStandardDateKey } from '../utils/dateUtils';
 
+// Cache Intl.DateTimeFormat instance to avoid recreating it in loops
+const dateFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Sao_Paulo',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit'
+});
+
 export interface DayPurgeAuditResult {
   isClean: boolean;
   targetDate: string;
@@ -50,12 +58,7 @@ export const auditDayPurgeIntegrity = async (targetDate?: string): Promise<DayPu
 
     // Checagem redundante por timestamp (fuso de Brasília)
     if (data.timestamp) {
-      const matchBrasiliaDate = new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'America/Sao_Paulo',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit'
-      }).format(new Date(data.timestamp));
+      const matchBrasiliaDate = dateFormatter.format(new Date(data.timestamp));
 
       if (matchBrasiliaDate === dateKey) {
         isMatchFromDate = true;
