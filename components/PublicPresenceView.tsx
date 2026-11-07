@@ -29,6 +29,17 @@ import { playFeedbackSound, triggerHaptic } from '../src/utils/feedback';
 import { getPriorityQueue } from '../utils/teamLogic';
 import { Flame, Star, ArrowRight } from 'lucide-react';
 
+const monthFormatter = new Intl.DateTimeFormat('pt-BR', { month: 'long' });
+const timeFormatter = new Intl.DateTimeFormat('pt-BR', {
+  timeZone: 'America/Sao_Paulo',
+  weekday: 'short',
+  day: '2-digit',
+  month: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false
+});
+
 interface PublicPresenceViewProps {
   onBackToLogin: () => void;
   handleGoogleLogin: () => void;
@@ -112,16 +123,7 @@ export const PublicPresenceView: React.FC<PublicPresenceViewProps> = ({ onBackTo
     if (!timestamp || isNaN(timestamp) || timestamp <= 0) return null;
     try {
       const date = new Date(timestamp);
-      const formatter = new Intl.DateTimeFormat('pt-BR', {
-        timeZone: 'America/Sao_Paulo',
-        weekday: 'short',
-        day: '2-digit',
-        month: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false
-      });
-      const parts = formatter.formatToParts(date);
+      const parts = timeFormatter.formatToParts(date);
       const getPart = (type: string) => parts.find(p => p.type === type)?.value || '';
 
       let weekDay = getPart('weekday');
@@ -309,7 +311,7 @@ export const PublicPresenceView: React.FC<PublicPresenceViewProps> = ({ onBackTo
               >
                 {Array.from({ length: 12 }, (_, i) => (
                   <option key={i + 1} value={i + 1}>
-                    {new Intl.DateTimeFormat('pt-BR', { month: 'long' }).format(new Date(2024, i))}
+                    {monthFormatter.format(new Date(2024, i))}
                   </option>
                 ))}
               </select>
