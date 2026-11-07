@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 
 import ViewManager from './src/components/ViewManager';
+import TimerTracker from './src/components/TimerTracker';
 
 import { getBrazilDay, getFirestoreDateKey, db, doc, updateDoc, setDoc, clearIndexedDbPersistence } from './firebase';
 import { useStore } from './store';
@@ -102,8 +103,6 @@ const App: React.FC = () => {
   const hideConfirmModal = useStore(state => state.hideConfirmModal);
   const swapSelection = useStore(state => state.swapSelection);
   const setSwapSelection = useStore(state => state.setSwapSelection);
-  const elapsedTime = useStore(state => state.elapsedTime);
-  const setElapsedTime = useStore(state => state.setElapsedTime);
   const systemMetadata = useStore(state => state.systemMetadata);
   const setGenerationResult = useStore(state => state.setGenerationResult);
   const showNotification = useStore(state => state.showNotification);
@@ -556,30 +555,6 @@ const App: React.FC = () => {
     }
   };
 
-  // --- Timer Logic ---
-  useEffect(() => {
-    let interval: NodeJS.Timeout;
-
-    if (generationResult && systemMetadata.matchStartTime) {
-      // Update immediately
-      const updateTimer = () => {
-        const now = Date.now();
-        const start = systemMetadata.matchStartTime || now;
-        const elapsed = Math.floor((now - start) / 1000);
-        setElapsedTime(Math.max(0, elapsed));
-      };
-
-      updateTimer();
-      interval = setInterval(updateTimer, 1000);
-    } else {
-      setElapsedTime(0);
-    }
-
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [generationResult, systemMetadata.matchStartTime, setElapsedTime]);
-
   useEffect(() => {
     if (editingPayment) {
       setPaymentFormData({
@@ -679,8 +654,10 @@ const App: React.FC = () => {
   }
 
   return (
-    <ViewManager 
-      hasNewVersion={hasNewVersion}
+    <>
+      <TimerTracker />
+      <ViewManager
+        hasNewVersion={hasNewVersion}
       serverVersion={serverVersion}
       isLoggingOut={isLoggingOut} 
       isAuthReady={isAuthReady} 
@@ -824,8 +801,9 @@ const App: React.FC = () => {
       exportMatchesCSV={exportMatchesCSV}
       exportPaymentsCSV={exportPaymentsCSV}
       handleRecoverFinancials={handleRecoverFinancials}
-      recreateOctober15Matches={recreateOctober15Matches}
-    />
+        recreateOctober15Matches={recreateOctober15Matches}
+      />
+    </>
   );
 };
 export default App;
