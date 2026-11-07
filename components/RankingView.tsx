@@ -79,6 +79,12 @@ import { GlobalStats } from './DashboardView';
 import { EvasionIcon } from './EvasionIcon';
 import { calculateEvasionLevel } from '../utils/evasion';
 
+const dateFormatter = new Intl.DateTimeFormat('pt-BR', {
+  timeZone: 'America/Sao_Paulo',
+  day: '2-digit',
+  month: '2-digit'
+});
+
 interface RankingViewProps {
   userRole: 'ADMIN' | 'MEMBER';
   refreshPlayers: () => Promise<void>;
@@ -265,11 +271,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
         dateObj = new Date(dateString); // Timestamp number
       }
 
-      return new Intl.DateTimeFormat('pt-BR', { 
-        timeZone: 'America/Sao_Paulo', 
-        day: '2-digit', 
-        month: '2-digit' 
-      }).format(dateObj);
+      return dateFormatter.format(dateObj);
     } catch {
       return 'Data';
     }
