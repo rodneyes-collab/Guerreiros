@@ -1,0 +1,3 @@
+## 2025-01-20 - Timer Tracker Extracted from App.tsx
+**Learning:** React 19's `useShallow` from `zustand` prevents re-renders when picking properties from the store, but NOT if those properties are primitives (like `number`) that update frequently. The `elapsedTime` variable in `App.tsx` updates every second, causing the entire root component and its children to unnecessarily re-render.
+**Action:** Isolate frequently changing primitive state subscriptions, such as the `elapsedTime` and `setInterval` logic, into a small, dedicated child component (`TimerTracker`) to avoid re-rendering the massive parent component.
