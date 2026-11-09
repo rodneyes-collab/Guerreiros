@@ -9,6 +9,7 @@ import {
 } from 'firebase/firestore';
 import { cleanObject } from '../../utils/helpers';
 import { toStandardDateKey } from '../utils/dateUtils';
+import { dateFormatter } from '../utils/date';
 
 export interface DayPurgeAuditResult {
   isClean: boolean;
@@ -50,12 +51,7 @@ export const auditDayPurgeIntegrity = async (targetDate?: string): Promise<DayPu
 
     // Checagem redundante por timestamp (fuso de Brasília)
     if (data.timestamp) {
-      const matchBrasiliaDate = new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'America/Sao_Paulo',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit'
-      }).format(new Date(data.timestamp));
+      const matchBrasiliaDate = dateFormatter.format(new Date(data.timestamp));
 
       if (matchBrasiliaDate === dateKey) {
         isMatchFromDate = true;
