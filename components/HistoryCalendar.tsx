@@ -1,3 +1,4 @@
+import { dateFormatter } from '../src/utils/date';
 import React, { useState, useMemo } from 'react';
 import { ChevronLeft, ChevronRight, Trophy, Calendar as CalendarIcon } from 'lucide-react';
 import { Match, Tournament } from '../types';
@@ -54,12 +55,7 @@ export const HistoryCalendar: React.FC<HistoryCalendarProps> = ({ matches, tourn
       if (d) dates.add(d);
 
       if (m.timestamp) {
-        const tsDate = new Intl.DateTimeFormat('en-CA', {
-          timeZone: 'America/Sao_Paulo',
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit'
-        }).format(new Date(m.timestamp));
+        const tsDate = dateFormatter.format(new Date(m.timestamp));
         if (tsDate) dates.add(tsDate);
       }
     });

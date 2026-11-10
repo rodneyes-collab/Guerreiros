@@ -1,5 +1,6 @@
 import { useShallow } from 'zustand/react/shallow';
 import React, { useState, useMemo, useEffect } from 'react';
+import { monthYearFormatter } from '../src/utils/date';
 import { useStore } from '../store';
 import { Payment, PaymentStatus, Expense } from '../types';
 import { db, doc, updateDoc, getFirestoreDateKey, clearIndexedDbPersistence, getDocsFromServer, collection } from '../firebase';
@@ -55,11 +56,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
   const players = React.useMemo(() => allPlayers.filter(p => p.status === 'active' && !p.isDM), [allPlayers]);
   const getCurrentMonthKey = () => {
     const now = new Date();
-    const formatter = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'America/Sao_Paulo',
-      year: 'numeric',
-      month: '2-digit'
-    });
+    const formatter = monthYearFormatter;
     return formatter.format(now).slice(0, 7);
   };
   const [activeTab, setActiveTab] = useState<'RECEIPTS' | 'COMPLIANCE' | 'EXPENSES' | 'STATEMENT'>('RECEIPTS');

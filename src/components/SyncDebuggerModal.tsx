@@ -1,3 +1,4 @@
+import { dateFormatter } from '../utils/date';
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Database, RefreshCw, X, AlertTriangle, CheckCircle2, ShieldCheck, HardDrive, Trash2, Calendar, Users, Clock } from 'lucide-react';
@@ -5,12 +6,7 @@ import { useStore } from '../../store';
 import { db, collection, getDocs, doc, deleteDoc } from '../../firebase';
 import { Match, Player } from '../../types';
 
-const dateCache = new Intl.DateTimeFormat('en-CA', {
-  timeZone: 'America/Sao_Paulo',
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit'
-});
+const dateCache = dateFormatter;
 
 export const SyncDebuggerModal: React.FC = () => {
   const isOpen = useStore(state => state.isSyncDebuggerOpen);

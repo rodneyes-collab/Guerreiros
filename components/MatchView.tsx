@@ -1,3 +1,4 @@
+import { dateFormatter } from '../src/utils/date';
 import { useShallow } from 'zustand/react/shallow';
 import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence, LayoutGroup } from 'motion/react';
@@ -961,12 +962,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
       let mTsDate = '';
       if (m.timestamp) {
         try {
-          mTsDate = new Intl.DateTimeFormat('en-CA', {
-            timeZone: 'America/Sao_Paulo',
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit'
-          }).format(new Date(m.timestamp));
+          mTsDate = dateFormatter.format(new Date(m.timestamp));
         } catch {}
       }
       return (mDate === today || mTsDate === today) && (m.timestamp || 0) > resetThreshold;

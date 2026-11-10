@@ -1,13 +1,10 @@
+import { hourNumericFormatterPtBR } from '../utils/date';
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { db, doc, updateDoc, getFirestoreDateKey, getBrazilDay } from '../../firebase';
 import { Player } from '../../types';
 import { getIntentionReminderText, sendIntentionReminderPush } from '../utils/pushNotificationHelper';
 
-const hourFormatter = new Intl.DateTimeFormat('pt-BR', {
-  timeZone: 'America/Sao_Paulo',
-  hour: 'numeric',
-  hour12: false
-});
+const hourFormatter = hourNumericFormatterPtBR;
 
 export interface UseIntentionsReminderScheduleProps {
   players: Player[];
