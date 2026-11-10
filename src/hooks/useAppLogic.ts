@@ -41,14 +41,10 @@ import { calculateTrueSkillUpdate } from '../utils/trueSkill';
 import { Player, Team, Match, Gender, Tournament, TournamentTeam, TournamentMatch, SetScore, SystemMetadata, TournamentStrategy, Payment, Expense } from '../../types';
 import { generateTeams, generateTournamentTeams, getPriorityQueue, autoFixAllInconsistencies, optimizeTeamSynergyIteratively, enrichPlayerImmutably, cloneGenerationResultImmutably, calculateCompositePerformanceRating } from '../../utils/teamLogic';
 import { playerSchema, matchSchema } from '../lib/schemas';
+import { dateFormatter } from '../utils/date';
 import { auditDayPurgeIntegrity } from '../services/dayPurgeAuditAgent';
 
-const dateFormatter = new Intl.DateTimeFormat('en-CA', {
-  timeZone: 'America/Sao_Paulo',
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit'
-});
+
 
 const getCorrectDate = (ts: number) => dateFormatter.format(new Date(ts));
 
@@ -60,12 +56,7 @@ import { playFeedbackSound, triggerHaptic } from '../utils/feedback';
 let activeBirthdaysSyncId: string | null = null;
 let activeGuardianId: string | null = null;
 
-const dateCache = new Intl.DateTimeFormat('en-CA', {
-  timeZone: 'America/Sao_Paulo',
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-});
+const dateCache = dateFormatter;
 
 export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, size: number) => Promise<void>) => {
   const [instanceId] = useState(() => generateUUID());
@@ -2097,12 +2088,7 @@ const playersToNotify = [...teamA, ...teamB];
       let mTsDate = '';
       if (m.timestamp) {
         try {
-          mTsDate = new Intl.DateTimeFormat('en-CA', {
-            timeZone: 'America/Sao_Paulo',
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit'
-          }).format(new Date(m.timestamp));
+          mTsDate = dateFormatter.format(new Date(m.timestamp));
         } catch {}
       }
       return mDate === stdTarget || mTsDate === stdTarget;
@@ -3858,12 +3844,7 @@ const playersToNotify = [
       const getCorrectDate = (m: any) => {
         if (m.timestamp) {
           try {
-            return new Intl.DateTimeFormat('en-CA', {
-              timeZone: 'America/Sao_Paulo',
-              year: 'numeric',
-              month: '2-digit',
-              day: '2-digit'
-            }).format(new Date(m.timestamp));
+            return dateFormatter.format(new Date(m.timestamp));
           } catch {
             // fallback
           }

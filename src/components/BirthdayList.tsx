@@ -1,10 +1,11 @@
+import { monthFormatterPtBR } from '../utils/date';
 import React, { useEffect, useState, useMemo } from 'react';
 import { Player } from '../../types';
 import { Cake, PartyPopper, ChevronDown, ChevronUp, Star, Calendar } from 'lucide-react';
 import { useBirthdays } from '../hooks/useBirthdays';
 import { PlayerAvatar } from './PlayerAvatar';
 
-const monthFormatter = new Intl.DateTimeFormat('pt-BR', { month: 'long' });
+const monthFormatter = monthFormatterPtBR;
 
 interface BirthdayListProps {
   todayBirthdays?: Player[];

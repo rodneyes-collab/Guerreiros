@@ -1,3 +1,4 @@
+import { shortDateFormatterPtBR } from '../src/utils/date';
 
 import { Player, Gender } from '../types';
 import { getFirestoreDateKey } from '../firebase';
@@ -114,11 +115,7 @@ export const formatBrazilianDate = (dateString: string | number) => {
       dateObj = new Date(dateString);
     }
 
-    return new Intl.DateTimeFormat('pt-BR', { 
-      timeZone: 'America/Sao_Paulo', 
-      day: '2-digit', 
-      month: '2-digit' 
-    }).format(dateObj);
+    return shortDateFormatterPtBR.format(dateObj);
   } catch {
     return 'Data';
   }

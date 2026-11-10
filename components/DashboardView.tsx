@@ -1,4 +1,5 @@
 import React, { useMemo } from 'react';
+import { monthFormatterPtBR } from '../src/utils/date';
 import { getFirestoreDateKey } from '../firebase';
 import { useBirthdays } from '../src/hooks/useBirthdays';
 import { PlayerAvatar } from '../src/components/PlayerAvatar';
@@ -350,7 +351,7 @@ export const GlobalStats: React.FC<DashboardViewProps> = ({
                 >
                   {Array.from({ length: 12 }, (_, i) => (
                     <option key={i + 1} value={i + 1}>
-                      {new Intl.DateTimeFormat('pt-BR', { month: 'long' }).format(new Date(2024, i))}
+                      {monthFormatterPtBR.format(new Date(2024, i))}
                     </option>
                   ))}
                 </select>
