@@ -2,6 +2,13 @@
 import { Player, Gender } from '../types';
 import { getFirestoreDateKey } from '../firebase';
 
+// ⚡ Bolt: Cache Intl.DateTimeFormat at module level to prevent expensive instantiation during render loop.
+const brazilianDateFormatter = new Intl.DateTimeFormat('pt-BR', {
+  timeZone: 'America/Sao_Paulo',
+  day: '2-digit',
+  month: '2-digit'
+});
+
 export const capitalizeName = (name: string): string => {
   if (!name) return '';
   return name
@@ -114,11 +121,7 @@ export const formatBrazilianDate = (dateString: string | number) => {
       dateObj = new Date(dateString);
     }
 
-    return new Intl.DateTimeFormat('pt-BR', { 
-      timeZone: 'America/Sao_Paulo', 
-      day: '2-digit', 
-      month: '2-digit' 
-    }).format(dateObj);
+    return brazilianDateFormatter.format(dateObj);
   } catch {
     return 'Data';
   }
