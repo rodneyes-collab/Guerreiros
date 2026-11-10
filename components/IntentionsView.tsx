@@ -21,6 +21,19 @@ import { playFeedbackSound, triggerHaptic } from '../src/utils/feedback';
 import { sendIntentionConfirmationPush } from '../src/utils/pushNotificationHelper';
 import { useIntentionsReminderSchedule } from '../src/hooks/useIntentionsReminderSchedule';
 
+// ⚡ Bolt: Cache Intl.DateTimeFormat at module level to prevent expensive instantiation during render loop.
+const timeFormatter = new Intl.DateTimeFormat('pt-BR', {
+  timeZone: 'America/Sao_Paulo',
+  weekday: 'short',
+  day: '2-digit',
+  month: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false
+});
+
+const monthFormatter = new Intl.DateTimeFormat('pt-BR', { month: 'long' });
+
 interface IntentionsViewProps {
   userRole: 'ADMIN' | 'MEMBER' | null;
   currentPlayer: Player | null;
@@ -439,16 +452,7 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
     if (!timestamp || isNaN(timestamp) || timestamp <= 0) return null;
     try {
       const date = new Date(timestamp);
-      const formatter = new Intl.DateTimeFormat('pt-BR', {
-        timeZone: 'America/Sao_Paulo',
-        weekday: 'short',
-        day: '2-digit',
-        month: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false
-      });
-      const parts = formatter.formatToParts(date);
+      const parts = timeFormatter.formatToParts(date);
       const getPart = (type: string) => parts.find(p => p.type === type)?.value || '';
 
       let weekDay = getPart('weekday');
@@ -786,7 +790,7 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
               >
                 {Array.from({ length: 12 }, (_, i) => (
                   <option key={i + 1} value={i + 1}>
-                    {new Intl.DateTimeFormat('pt-BR', { month: 'long' }).format(new Date(2024, i))}
+                    {monthFormatter.format(new Date(2024, i))}
                   </option>
                 ))}
               </select>
