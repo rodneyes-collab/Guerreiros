@@ -102,7 +102,6 @@ const App: React.FC = () => {
   const hideConfirmModal = useStore(state => state.hideConfirmModal);
   const swapSelection = useStore(state => state.swapSelection);
   const setSwapSelection = useStore(state => state.setSwapSelection);
-  const elapsedTime = useStore(state => state.elapsedTime);
   const setElapsedTime = useStore(state => state.setElapsedTime);
   const systemMetadata = useStore(state => state.systemMetadata);
   const setGenerationResult = useStore(state => state.setGenerationResult);
