@@ -1,7 +1,15 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { db, doc, getDoc, onSnapshot, setDoc, updateDoc, writeBatch, collection, serverTimestamp, handleFirestoreError, OperationType, getDocs, query, where, deleteDoc, deleteField, getFirestoreDateKey, getBrazilDay, trackAccess, getNextThursday } from '../../firebase';
+import { db, doc, getDoc, getDocFromServer, onSnapshot, setDoc, updateDoc, writeBatch, collection, serverTimestamp, handleFirestoreError, OperationType, getDocs, getDocsFromServer, query, where, deleteDoc, deleteField, getFirestoreDateKey, getBrazilDay, trackAccess, getNextThursday } from '../../firebase';
 import { IntentionsData, Player } from '../../types';
 import { useStore } from '../../store';
+import {
+  getWeeklyCutoffTimestamp,
+  isValidWeeklyConfirmationTimestamp,
+  purgeStaleLocalStorageIntentions,
+  runAdminIntentionsCleanupOnLoad
+} from '../utils/intentionsCleanup';
+
+let adminCleanupExecutedThisSession = false;
 
 const DEFAULT_INTENTIONS: IntentionsData = {
   targetDate: '',
@@ -55,20 +63,24 @@ export const normalizeIntentionsData = (data: any): IntentionsData => {
 export async function executeWithRetry<T>(
   operation: () => Promise<T>,
   opName: string,
-  maxRetries: number = 2,
-  initialDelayMs: number = 300
+  maxRetries: number = 3,
+  initialDelayMs: number = 300,
+  timeoutMs: number = 15000
 ): Promise<T> {
   let attempt = 0;
   while (true) {
+    let timeoutHandle: any;
     try {
       console.info(`[Sync Diagnóstico] [${opName}] Iniciando operação (tentativa ${attempt + 1}/${maxRetries})...`);
       const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error(`Timeout de conexão na operação ${opName}`)), 4500);
+        timeoutHandle = setTimeout(() => reject(new Error(`Timeout de conexão na operação ${opName}`)), timeoutMs);
       });
       const result = await Promise.race([operation(), timeoutPromise]);
+      clearTimeout(timeoutHandle);
       console.info(`[Sync Diagnóstico] [${opName}] Operação finalizada com sucesso na tentativa ${attempt + 1}.`);
       return result;
     } catch (error) {
+      clearTimeout(timeoutHandle);
       attempt++;
       if (attempt >= maxRetries) {
         console.error(`[Sync Diagnóstico] [${opName}] Falha permanente após ${maxRetries} tentativas:`, error);
@@ -110,13 +122,18 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
   const [isLoaded, setIsLoaded] = useState(false);
   const players = useStore(state => state.players);
   const userRole = useStore(state => state.userRole);
+  const user = useStore(state => state.user);
+  const currentPlayer = useStore(state => state.currentPlayer);
   const idToCanonicalId = useStore(state => state.idToCanonicalId);
   const preConfirmations = useStore(state => state.preConfirmations);
   const sendingRef = useRef<Record<string, boolean>>({});
-  const emptyInitLockUntilRef = useRef<number>(0);
-  const isFirstSnapshotRef = useRef<boolean>(true);
 
-  // Memoized filtered intentions based on current players in store
+  // Limpa chaves locais obsoletas ao montar o hook em qualquer dispositivo (especialmente mobile PWA)
+  useEffect(() => {
+    purgeStaleLocalStorageIntentions(getNextThursday());
+  }, []);
+
+  // Memoized filtered intentions based on current players in store and strict weekly/7-day cutoff
   const intentions = useMemo(() => {
     const responses = rawIntentions.responses || {};
     const timestamps = rawIntentions.confirmationTimestamps || {};
@@ -132,29 +149,27 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
       };
     }
 
-    // Filtro Semanal Estrito: Exibir apenas confirmações realizadas a partir de segunda-feira da semana corrente
-    const now = new Date();
-    const brazilToday = new Date(now.toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
-    const dayOfWeek = brazilToday.getDay(); // 0 (Sun) - 6 (Sat)
-    const daysSinceMonday = (dayOfWeek + 6) % 7; // Monday = 0
-    const currentMonday = new Date(brazilToday);
-    currentMonday.setDate(brazilToday.getDate() - daysSinceMonday);
-    currentMonday.setHours(0, 0, 0, 0);
-    const mondayTimestamp = currentMonday.getTime();
+    // Filtro Semanal Estrito: Descartar estritamente todos os registros com timestamp anterior à data da semana corrente (Segunda-feira 00:00 BRT / 7 Dias)
+    const { cutoffTimestamp, mondayTimestamp } = getWeeklyCutoffTimestamp();
+
+    const preConfTsMap: Record<string, number> = {};
+    (preConfirmations || []).forEach(pc => {
+      if (pc && pc.id && pc.timestamp && pc.timestamp >= cutoffTimestamp) {
+        preConfTsMap[pc.id] = pc.timestamp;
+      }
+    });
 
     const filteredResponses: Record<string, 'GOING' | 'NOT_GOING'> = {};
     const filteredTimestamps: Record<string, number> = {};
 
     Object.entries(responses).forEach(([id, val]) => {
-      const ts = timestamps[id] || 0;
-      if (val === 'GOING') {
-        filteredResponses[id] = val;
-        filteredTimestamps[id] = ts > 0 ? ts : Date.now();
-      } else if (val === 'NOT_GOING') {
-        if (!ts || ts >= mondayTimestamp) {
-          filteredResponses[id] = val;
-          if (ts) filteredTimestamps[id] = ts;
-        }
+      const canonical = idToCanonicalId?.[id] || id;
+      const ts = Number(timestamps[id] || timestamps[canonical] || preConfTsMap[id] || preConfTsMap[canonical] || 0);
+
+      // Descarte estrito: Somente confirmações com timestamp igual ou posterior ao limite da semana corrente (>= cutoffTimestamp)
+      if (ts >= cutoffTimestamp && (val === 'GOING' || val === 'NOT_GOING')) {
+        filteredResponses[canonical] = val;
+        filteredTimestamps[canonical] = ts;
       }
     });
     
@@ -168,19 +183,21 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
         
         if (!currentVal || val === 'GOING') {
           filteredResponses[canonicalId] = val;
-          // Use the EARLIEST non-zero timestamp for the queue position
           const combinedTs = (currentTs > 0 && newTs > 0) 
             ? Math.min(currentTs, newTs) 
             : (currentTs || newTs);
           
-          if (combinedTs > 0) {
+          if (combinedTs >= cutoffTimestamp) {
             filteredTimestamps[canonicalId] = combinedTs;
+          } else {
+            delete filteredResponses[canonicalId];
+            delete filteredTimestamps[canonicalId];
           }
         }
       }
     });
 
-    // 2. Unify and map responses strictly to the player's canonical ID (p.id)
+    // 2. Unify and map responses strictly to the player's canonical ID (p.id) and discard any outdated entries
     if (players && players.length > 0) {
       players.forEach(p => {
         const uidKey = p.uid;
@@ -198,17 +215,19 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
                    (uidKey ? filteredTimestamps[uidKey] : 0) || 
                    (emailKey ? filteredTimestamps[emailKey] : 0) || 0;
 
-        if (isGoing) {
+        // Descarte estrito de qualquer confirmação com timestamp anterior ao limite da semana corrente
+        if (isGoing && ts >= cutoffTimestamp) {
           filteredResponses[p.id] = 'GOING';
-          if (ts) {
-            filteredTimestamps[p.id] = ts;
-          }
-        } else if (isNotGoing) {
+          filteredTimestamps[p.id] = ts;
+        } else if (isNotGoing && ts >= cutoffTimestamp) {
           filteredResponses[p.id] = 'NOT_GOING';
+          filteredTimestamps[p.id] = ts;
+        } else {
+          delete filteredResponses[p.id];
+          delete filteredTimestamps[p.id];
         }
 
-        // CRITICAL: Clean up any separate alias keys (UID or email) from responses and timestamps
-        // so that registered club members never generate duplicate guest records (e.g. email or UID as 'Convidado')
+        // Limpeza de chaves de alias redundantes (UID ou email)
         if (uidKey && uidKey !== p.id) {
           delete filteredResponses[uidKey];
           delete filteredTimestamps[uidKey];
@@ -220,178 +239,179 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
       });
     }
 
-    // Ensure the 9 official confirmed players are marked as GOING unless explicitly NOT_GOING
-    if (players && players.length > 0) {
-      const officialConfirmedNames = ['Rodney', 'Beth', 'Tacy', 'Wandinha', 'Marcleíde', 'Bibi', 'Rozi', 'Mari', 'Flavinha'];
-      players.forEach((p) => {
-        const matchesOfficial = officialConfirmedNames.some(name => p.name?.toLowerCase().includes(name.toLowerCase()));
-        if (matchesOfficial && filteredResponses[p.id] !== 'NOT_GOING') {
-          filteredResponses[p.id] = 'GOING';
-        }
-      });
-    }
-
     return {
       ...rawIntentions,
       responses: filteredResponses,
       confirmationTimestamps: filteredTimestamps
     };
-  }, [rawIntentions, players, idToCanonicalId]);
+  }, [rawIntentions, players, idToCanonicalId, preConfirmations]);
 
   const getPlayerConfirmationTime = useCallback((p: Player) => {
     const tsMap = intentions.confirmationTimestamps || {};
     let ts = tsMap[p.id];
-    
-    // REMOVED: if (!ts && (p as any).timestamp) ts = (p as any).timestamp; 
-    // This fallback was causing old timestamps (from registration or previous games) 
-    // to be displayed when the current session's timestamp was missing.
 
     if (!ts && p.uid && tsMap[p.uid]) ts = tsMap[p.uid];
     if (!ts && p.email && tsMap[p.email.toLowerCase()]) ts = tsMap[p.email.toLowerCase()];
     if (!ts && idToCanonicalId?.[p.id] && tsMap[idToCanonicalId[p.id]]) ts = tsMap[idToCanonicalId[p.id]];
     
-    // If still not found, check if this player is an alias for another ID that has a timestamp
     if (!ts && idToCanonicalId) {
       const canonicalId = idToCanonicalId[p.id];
       if (canonicalId && tsMap[canonicalId]) ts = tsMap[canonicalId];
     }
 
-    return ts || 0;
+    return isValidWeeklyConfirmationTimestamp(ts) ? ts : 0;
   }, [intentions.confirmationTimestamps, idToCanonicalId]);
 
   // Helper to get the correct app URL (Shared vs Dev)
   const getAppUrl = useCallback(() => {
-    // 1. Check for explicit env variable
     const envUrl = import.meta.env.VITE_APP_URL;
     if (envUrl) return envUrl.replace(/\/$/, '');
     
-    // 2. Official Production URL provided by user
     const PROD_URL = 'https://guerreiros-volleyball-club-238897290870.us-west1.run.app';
-    
     const origin = window.location.origin;
-    
-    // If we are in production, use the current origin
     if (origin.includes('guerreiros-volleyball-club')) {
       return origin;
     }
-
-    // Default to the official PROD_URL for sharing, unless it's a dev environment where we might want to test
-    // but the user specifically asked to fix the dev URL in messages.
     return PROD_URL;
   }, []);
 
   const _refreshIntentions = useCallback(async () => {
-    console.info('[Sync Diagnóstico] [_refreshIntentions] Iniciando sincronização manual de intenções com Firestore...');
+    console.info('[Sync Diagnóstico] [_refreshIntentions] Iniciando sincronização direta com o servidor Firestore...');
     try {
-      // 1. Obter metadata/intentions com retry
-      const snap = await executeWithRetry(() => getDoc(doc(db, 'metadata', 'intentions')), 'Leitura metadata/intentions');
+      const { cutoffTimestamp } = getWeeklyCutoffTimestamp();
+
+      // 1. Obter metadata/intentions diretamente do servidor (bypass de cache IndexedDB)
+      const snap = await executeWithRetry(async () => {
+        try {
+          return await getDocFromServer(doc(db, 'metadata', 'intentions'));
+        } catch {
+          return await getDoc(doc(db, 'metadata', 'intentions'));
+        }
+      }, 'Leitura metadata/intentions (Server)');
+
       let masterTarget = getNextThursday();
       let normalized = DEFAULT_INTENTIONS;
       
       if (snap.exists()) {
         normalized = normalizeIntentionsData(snap.data());
-        masterTarget = normalized.targetDate || masterTarget;
+        const todayStr = getFirestoreDateKey();
+        if (normalized.targetDate && normalized.targetDate >= todayStr) {
+          masterTarget = normalized.targetDate;
+        }
       }
 
-      console.info(`[Sync Diagnóstico] [_refreshIntentions] metadata/intentions targetDate: "${masterTarget}". Respostas locais:`, Object.keys(normalized.responses || {}).length);
-
-      // 2. Buscar preConfirmations/{masterTarget}/players no servidor
-      console.info(`[Sync Diagnóstico] [_refreshIntentions] Buscando preConfirmations/${masterTarget}/players no servidor...`);
+      // 2. Buscar preConfirmations/{masterTarget}/players diretamente no servidor
       const preConfSnap = await executeWithRetry(
-        () => getDocs(collection(db, 'preConfirmations', masterTarget, 'players')),
-        `Leitura preConfirmations/${masterTarget}`
+        async () => {
+          try {
+            return await getDocsFromServer(collection(db, 'preConfirmations', masterTarget, 'players'));
+          } catch {
+            return await getDocs(collection(db, 'preConfirmations', masterTarget, 'players'));
+          }
+        },
+        `Leitura preConfirmations/${masterTarget} (Server)`
       );
 
-      console.info(`[Sync Diagnóstico] [_refreshIntentions] Documentos encontrados em preConfirmations/${masterTarget}: ${preConfSnap.size}`);
-
-      const mergedResponses: Record<string, 'GOING' | 'NOT_GOING'> = { ...(normalized.responses || {}) };
-      const mergedTimestamps: Record<string, number> = { ...(normalized.confirmationTimestamps || {}) };
-      const preConfList: Player[] = [];
+      const mergedResponses: Record<string, 'GOING' | 'NOT_GOING'> = {};
+      const mergedTimestamps: Record<string, number> = {};
       let discrepanciesCount = 0;
 
-      preConfSnap.forEach(d => {
-        const pData = d.data();
-        const pId = d.id;
-        preConfList.push({ ...pData, id: pId } as Player);
-
-        const currentResp = mergedResponses[pId];
-        const currentTs = mergedTimestamps[pId] || 0;
-        const pcTs = pData.timestamp ? Number(pData.timestamp) : 0;
-
-        console.info(`[Sync Diagnóstico] [_refreshIntentions] Sócio ${pData.name || pId} - Status metadata: ${currentResp || 'Nenhum'}, TS metadata: ${currentTs}, TS preConfirmations: ${pcTs}`);
-
-        // Se está na subcoleção preConfirmations, sua intenção é GOING
-        if (currentResp !== 'GOING') {
-          mergedResponses[pId] = 'GOING';
+      // Filtrar respostas do metadata/intentions mantendo apenas as que pertencem a esta semana (>= cutoffTimestamp)
+      Object.entries(normalized.responses || {}).forEach(([rawId, status]) => {
+        const canonicalId = idToCanonicalId?.[rawId] || rawId;
+        const ts = Number(normalized.confirmationTimestamps?.[rawId] || normalized.confirmationTimestamps?.[canonicalId] || 0);
+        if (ts >= cutoffTimestamp && (status === 'GOING' || status === 'NOT_GOING')) {
+          mergedResponses[canonicalId] = status;
+          mergedTimestamps[canonicalId] = mergedTimestamps[canonicalId]
+            ? Math.min(mergedTimestamps[canonicalId], ts)
+            : ts;
+          if (rawId !== canonicalId) discrepanciesCount++;
+        } else {
+          // Entrada antiga (> 7 dias ou semana passada) descartada
           discrepanciesCount++;
-        }
-
-        // Reconciliação de timestamp: priorizar confirmações válidas da semana corrente
-        const now = new Date();
-        const brazilToday = new Date(now.toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
-        const dayOfWeek = brazilToday.getDay();
-        const daysSinceMonday = (dayOfWeek + 6) % 7;
-        const currentMonday = new Date(brazilToday);
-        currentMonday.setDate(brazilToday.getDate() - daysSinceMonday);
-        currentMonday.setHours(0, 0, 0, 0);
-        const mondayTimestamp = currentMonday.getTime();
-
-        const isPcCurrentWeek = pcTs >= mondayTimestamp;
-        const isCurrentCurrentWeek = currentTs >= mondayTimestamp;
-
-        if (pcTs > 0) {
-          if (isPcCurrentWeek && !isCurrentCurrentWeek) {
-            mergedTimestamps[pId] = pcTs;
-            discrepanciesCount++;
-          } else if (isPcCurrentWeek && isCurrentCurrentWeek) {
-            if (currentTs === 0 || pcTs < currentTs) {
-              mergedTimestamps[pId] = pcTs;
-              discrepanciesCount++;
-            }
-          } else if (!isCurrentCurrentWeek && (currentTs === 0 || pcTs < currentTs)) {
-            mergedTimestamps[pId] = pcTs;
-            discrepanciesCount++;
-          }
         }
       });
 
-      // Verificar atletas em metadata/intentions marcados como GOING que estejam ausentes na subcoleção preConfirmations
+      const preConfList: Player[] = [];
+      const stalePreConfIdsToDelete: string[] = [];
+
+      preConfSnap.forEach(d => {
+        const pData = d.data();
+        const rawId = d.id;
+        const canonicalId = idToCanonicalId?.[rawId] || rawId;
+        const pcTs = pData.timestamp ? Number(pData.timestamp) : 0;
+        const currentTs = mergedTimestamps[canonicalId] || 0;
+        const effectiveTs = pcTs > 0 ? pcTs : currentTs;
+
+        // Somente aceitar preConfirmations desta semana e <= 7 dias
+        if (!effectiveTs || effectiveTs < cutoffTimestamp) {
+          stalePreConfIdsToDelete.push(rawId);
+          discrepanciesCount++;
+          return;
+        }
+
+        const matchedPlayer = (players || []).find(p => p.id === canonicalId);
+        preConfList.push({
+          ...(matchedPlayer || (pData as Player)),
+          id: canonicalId,
+          timestamp: effectiveTs
+        } as Player);
+
+        if (mergedResponses[canonicalId] !== 'GOING') {
+          mergedResponses[canonicalId] = 'GOING';
+          discrepanciesCount++;
+        }
+
+        if (!mergedTimestamps[canonicalId] || effectiveTs < mergedTimestamps[canonicalId]) {
+          mergedTimestamps[canonicalId] = effectiveTs;
+          discrepanciesCount++;
+        }
+      });
+
+      // Verificar atletas em metadata/intentions marcados como GOING nesta semana que estejam ausentes em preConfirmations
       const missingInPreConf: string[] = [];
       Object.entries(mergedResponses).forEach(([pId, status]) => {
-        if (status === 'GOING' && !preConfList.some(p => p.id === pId)) {
+        if (status === 'GOING' && mergedTimestamps[pId] >= cutoffTimestamp && !preConfList.some(p => p.id === pId)) {
           missingInPreConf.push(pId);
         }
       });
 
-      console.info(`[Sync Diagnóstico] [_refreshIntentions] Discrepâncias: ${discrepanciesCount}. Pendentes em preConfirmations: ${missingInPreConf.length}`);
+      // Persistir limpeza/reconciliação no Firestore caso detectada discrepância
+      const isAdminUser = userRole === 'ADMIN' || Boolean(currentPlayer?.isAdmin) || (user?.email?.trim().toLowerCase() === 'rodneyes@gmail.com');
+      if (isAdminUser && (discrepanciesCount > 0 || missingInPreConf.length > 0 || stalePreConfIdsToDelete.length > 0)) {
+        try {
+          await executeWithRetry(async () => {
+            const batch = writeBatch(db);
+            batch.set(doc(db, 'metadata', 'intentions'), {
+              targetDate: masterTarget,
+              automationEnabled: normalized.automationEnabled ?? true,
+              responses: mergedResponses,
+              confirmationTimestamps: mergedTimestamps,
+              remindersSent: normalized.remindersSent || {},
+              lastUpdated: Date.now()
+            });
 
-      // Persistir correções no Firestore caso detectada discrepância
-      if (discrepanciesCount > 0 || missingInPreConf.length > 0) {
-        console.info('[Sync Diagnóstico] [_refreshIntentions] Persistindo reconciliação unificada no Firestore...');
-        await executeWithRetry(async () => {
-          const batch = writeBatch(db);
-          batch.set(doc(db, 'metadata', 'intentions'), {
-            targetDate: masterTarget,
-            automationEnabled: normalized.automationEnabled ?? true,
-            responses: mergedResponses,
-            confirmationTimestamps: mergedTimestamps,
-            remindersSent: normalized.remindersSent || {},
-            lastUpdated: Date.now()
-          }, { merge: true });
+            stalePreConfIdsToDelete.forEach(staleId => {
+              batch.delete(doc(db, 'preConfirmations', masterTarget, 'players', staleId));
+            });
 
-          missingInPreConf.forEach(pId => {
-            const playerMaster = (players || []).find(p => p.id === pId);
-            const ref = doc(db, 'preConfirmations', masterTarget, 'players', pId);
-            batch.set(ref, {
-              id: pId,
-              name: playerMaster?.name || pId,
-              status: playerMaster?.status || 'active',
-              timestamp: mergedTimestamps[pId] || Date.now()
-            }, { merge: true });
-          });
+            missingInPreConf.forEach(pId => {
+              const playerMaster = (players || []).find(p => p.id === pId);
+              const ref = doc(db, 'preConfirmations', masterTarget, 'players', pId);
+              batch.set(ref, {
+                ...(playerMaster ? Object.fromEntries(Object.entries(playerMaster).filter(([_, v]) => v !== undefined)) : {}),
+                id: pId,
+                name: playerMaster?.name || pId,
+                status: playerMaster?.status || 'active',
+                timestamp: mergedTimestamps[pId]
+              }, { merge: true });
+            });
 
-          await batch.commit();
-        }, 'Persistência de Reconciliação');
+            await batch.commit();
+          }, 'Persistência de Reconciliação Semanal', 2, 400, 15000);
+        } catch (reconcileErr) {
+          console.warn('[Sync Diagnóstico] [_refreshIntentions] Aviso na reconciliação em background:', reconcileErr);
+        }
       }
 
       const finalNormalized: IntentionsData = {
@@ -407,73 +427,37 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
       setRawIntentions(finalNormalized);
       useStore.getState().setPreConfirmations(preConfList);
 
-      console.info(`[Sync Diagnóstico] [_refreshIntentions] Sincronização finalizada com sucesso! Total confirmados: ${Object.values(mergedResponses).filter(v => v === 'GOING').length}`);
       return finalNormalized;
     } catch (err) {
       console.error('[Sync Diagnóstico] [_refreshIntentions] Erro ao sincronizar com Firestore:', err);
       throw err;
     }
-  }, [players]);
+  }, [players, idToCanonicalId, userRole, currentPlayer?.isAdmin, user?.email]);
 
   const refreshIntentions = _refreshIntentions;
 
-  // Listen to intentions data with trace logging, 5s empty-snapshot init lock, and anti-truncation safeguard
+  // Escuta em tempo real de metadata/intentions (sem bloqueio de deleção ou retenção de cache obsoleto)
   useEffect(() => {
-    const unsub = onSnapshot(doc(db, 'metadata', 'intentions'), async (docSnap) => {
-      const now = Date.now();
+    const unsub = onSnapshot(doc(db, 'metadata', 'intentions'), (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
-        const serverLastUpdated = data.lastUpdated || 0;
-        const localLastUpdated = rawIntentions.lastUpdated || 0;
-        const serverResponsesCount = Object.keys(data.responses || {}).length;
-        const localResponsesCount = Object.keys(rawIntentions.responses || {}).length;
-
         if (data.targetDate) {
           updateIntentionsLock(data.targetDate);
         }
-
-        // Lock de Inicialização Lenta (5s): Caso a lista carregada inicialmente esteja vazia, ativa lock temporário de 5s
-        if (isFirstSnapshotRef.current) {
-          isFirstSnapshotRef.current = false;
-          if (serverResponsesCount === 0) {
-            emptyInitLockUntilRef.current = now + 5000;
-            console.warn('[useIntentions Initial Load Lock] Snapshot inicial carregou lista de intenções vazia. Lock temporário de 5s ativado para proteger o estado local.');
-          }
-        }
-
-        // Se o lock temporário de 5s estiver ativo, ignora atualizações do snapshot que venham com lista vazia se já houver respostas locais
-        if (now < emptyInitLockUntilRef.current && serverResponsesCount === 0 && localResponsesCount > 0) {
-          console.warn(`[useIntentions Initial Load Lock] Snapshot vazio ignorado durante janela de lock de 5s (${Math.ceil((emptyInitLockUntilRef.current - now) / 1000)}s restantes). Preservando ${localResponsesCount} intenções locais.`);
-          setIsLoaded(true);
-          return;
-        }
-
-        console.info(`[INTENTIONS TRACE] Snapshot received from Firestore. targetDate: "${data.targetDate}", server responses count: ${serverResponsesCount}, local responses count: ${localResponsesCount}, serverLastUpdated: ${serverLastUpdated}, localLastUpdated: ${localLastUpdated}`);
-
-        // Anti-truncation safeguard: if server count dropped unexpectedly compared to local without valid rollover
-        if (localResponsesCount > serverResponsesCount && serverResponsesCount === 3 && localResponsesCount >= 9) {
-          console.warn(`[INTENTIONS TRACE] WARNING: Detected suspicious drop in intentions count from ${localResponsesCount} to ${serverResponsesCount}. Possible race condition or reset window overwrite. Preserving local state and reconciling.`);
-        }
-
-        if (serverLastUpdated > localLastUpdated) {
-          console.info(`[Sync Diagnóstico] [useIntentions] Discrepância detectada: servidor(${serverLastUpdated}) > local(${localLastUpdated}). Executando full refresh.`);
-          await _refreshIntentions();
-        } else {
-          const normalized = normalizeIntentionsData(data);
-          setRawIntentions(normalized);
+        const normalized = normalizeIntentionsData(data);
+        setRawIntentions(normalized);
+        if (Object.keys(normalized.responses || {}).length === 0) {
+          useStore.getState().setPreConfirmations([]);
         }
       } else {
-        console.info(`[INTENTIONS TRACE] Snapshot doc does not exist. Initializing metadata/intentions.`);
-        if (isFirstSnapshotRef.current) {
-          isFirstSnapshotRef.current = false;
-          emptyInitLockUntilRef.current = now + 5000;
-        }
-        // Initialize if not exists
-        setDoc(doc(db, 'metadata', 'intentions'), {
+        const nextThu = getNextThursday();
+        const emptyData: IntentionsData = {
           ...DEFAULT_INTENTIONS,
-          targetDate: getNextThursday(),
+          targetDate: nextThu,
           lastUpdated: Date.now()
-        });
+        };
+        setRawIntentions(emptyData);
+        setDoc(doc(db, 'metadata', 'intentions'), emptyData).catch(() => {});
       }
       setIsLoaded(true);
     }, (err) => {
@@ -482,109 +466,95 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
       setIsLoaded(true);
     });
     return () => unsub();
-  }, [rawIntentions.lastUpdated, rawIntentions.responses, _refreshIntentions]);
+  }, []);
 
+  // Limpeza Automatizada ao Carregar o App para todos os usuários:
+  // Expurga entradas de 'Intention' anteriores à semana corrente no Firestore e no localStorage móvel
+  useEffect(() => {
+    if (!isLoaded || adminCleanupExecutedThisSession) return;
 
+    adminCleanupExecutedThisSession = true;
+    const targetDate = rawIntentions.targetDate || getNextThursday();
+    runAdminIntentionsCleanupOnLoad({
+      currentTargetDate: targetDate,
+      players,
+      idToCanonicalId
+    }).then(() => {
+      _refreshIntentions().catch(() => {});
+    }).catch(err => {
+      console.warn('[useIntentions] Falha não impeditiva na limpeza automática de intenções:', err);
+    });
+  }, [isLoaded, rawIntentions.targetDate, players, idToCanonicalId, _refreshIntentions]);
 
   // Reset list for the new week with trace logging
   const resetIntentionsIfNeeded = useCallback(async () => {
     if (!isLoaded) return;
     const nextThu = getNextThursday();
-    
-    // Only reset if we have a target date and it's strictly in the past (before today's Brazil date)
     const todayStr = getFirestoreDateKey();
     const isPast = intentions.targetDate && intentions.targetDate < todayStr;
+    const isAdminUser = userRole === 'ADMIN' || Boolean(currentPlayer?.isAdmin) || (user?.email?.trim().toLowerCase() === 'rodneyes@gmail.com');
 
-    console.info(`[INTENTIONS TRACE] resetIntentionsIfNeeded check. intentions.targetDate: "${intentions.targetDate}", nextThu: "${nextThu}", todayStr: "${todayStr}", isPast: ${isPast}, userRole: "${userRole}"`);
-
-    // Reset if target date is in the past, regardless of the day of the week.
-    // This ensures that the first Admin to log in after a game (Friday morning onwards) 
-    // will properly rotate the list for the next session if the server automation fails.
-    if (intentions.targetDate && intentions.targetDate !== nextThu && userRole === 'ADMIN' && isPast) {
+    if (intentions.targetDate && intentions.targetDate !== nextThu && isAdminUser && isPast) {
       try {
-        console.info(`[INTENTIONS TRACE] RESET TRIGGERED: targetDate "${intentions.targetDate}" is in past (< ${todayStr}) and differs from nextThu "${nextThu}". Resetting for new week.`);
-        sendingRef.current = {}; // Reset sending ref for new week
+        sendingRef.current = {};
         await setDoc(doc(db, 'metadata', 'intentions'), {
           ...DEFAULT_INTENTIONS,
           targetDate: nextThu,
           responses: {},
           confirmationTimestamps: {},
-          automationEnabled: intentions.automationEnabled // preserve automation setting
+          automationEnabled: intentions.automationEnabled,
+          lastUpdated: Date.now()
         });
-        console.log('Lista de intenções resetada para a nova semana:', nextThu);
       } catch (err) {
         console.error('Erro ao resetar intenções:', err);
         handleFirestoreError(err, OperationType.WRITE, 'metadata/intentions');
       }
-    } else {
-      console.info(`[INTENTIONS TRACE] RESET SKIPPED: conditions not met (isPast: ${isPast}, targetDate: ${intentions.targetDate}, nextThu: ${nextThu}, role: ${userRole})`);
     }
-  }, [intentions.targetDate, intentions.automationEnabled, userRole, isLoaded]);
+  }, [intentions.targetDate, intentions.automationEnabled, userRole, currentPlayer?.isAdmin, user?.email, isLoaded]);
 
   useEffect(() => {
     resetIntentionsIfNeeded();
   }, [intentions.targetDate, resetIntentionsIfNeeded]);
 
-  // Auto-heal: If preConfirmations from store has players that are missing in rawIntentions.responses,
-  // we restore them in metadata/intentions.responses so the list is always complete and correct.
+  // Auto-heal: Restaurar preConfirmations válidas (estritamente desta semana e <= 7 dias) ausentes em metadata/intentions
   useEffect(() => {
     if (!isLoaded || !rawIntentions.targetDate) return;
-    
+    const todayStr = getFirestoreDateKey();
+    if (rawIntentions.targetDate < todayStr) return;
+
+    const { cutoffTimestamp } = getWeeklyCutoffTimestamp();
     const responses = rawIntentions.responses || {};
     const timestamps = rawIntentions.confirmationTimestamps || {};
     let needsUpdate = false;
     
     const updatedResponses = { ...responses };
     const updatedTimestamps = { ...timestamps };
-    
-    // Auto-heal: Restaurar preConfirmations válidas para a semana corrente
-    const now = new Date();
-    const brazilToday = new Date(now.toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
-    const dayOfWeek = brazilToday.getDay();
-    const daysSinceMonday = (dayOfWeek + 6) % 7;
-    const currentMonday = new Date(brazilToday);
-    currentMonday.setDate(brazilToday.getDate() - daysSinceMonday);
-    currentMonday.setHours(0, 0, 0, 0);
-    const mondayTimestamp = currentMonday.getTime();
 
     (preConfirmations || []).forEach(pc => {
-      const pcTimestamp = pc.timestamp || 0;
-      const currentTs = timestamps[pc.id] || 0;
-      const alreadyGoing = responses[pc.id] === 'GOING';
-      const isNotGoing = responses[pc.id] === 'NOT_GOING';
+      const canonicalId = idToCanonicalId?.[pc.id] || pc.id;
+      const pcTimestamp = Number(pc.timestamp || 0);
+      const currentTs = Number(timestamps[canonicalId] || timestamps[pc.id] || 0);
+      const alreadyGoing = responses[canonicalId] === 'GOING' || responses[pc.id] === 'GOING';
+      const isNotGoing = responses[canonicalId] === 'NOT_GOING' || responses[pc.id] === 'NOT_GOING';
 
-      // Auto-heal se o jogador estiver ausente ou com timestamp defasado na lista principal,
-      // desde que confirmado a partir da segunda-feira desta semana e não esteja marcado como NOT_GOING
-      if (pcTimestamp >= mondayTimestamp && (!alreadyGoing || currentTs < mondayTimestamp) && !isNotGoing) {
-        updatedResponses[pc.id] = 'GOING';
-        updatedTimestamps[pc.id] = pcTimestamp;
+      if (pcTimestamp >= cutoffTimestamp && (!alreadyGoing || currentTs < cutoffTimestamp) && !isNotGoing) {
+        updatedResponses[canonicalId] = 'GOING';
+        updatedTimestamps[canonicalId] = pcTimestamp;
         needsUpdate = true;
       }
     });
-
-    // Auto-heal: Garantir que os confirmados oficiais estejam devidamente gravados no Firestore
-    if (players && players.length > 0) {
-      const officialConfirmedNames = ['Rodney', 'Beth', 'Tacy', 'Wandinha', 'Marcleíde', 'Bibi', 'Rozi', 'Mari', 'Flavinha'];
-      players.forEach((p) => {
-        const matchesOfficial = officialConfirmedNames.some(name => p.name?.toLowerCase().includes(name.toLowerCase()));
-        if (matchesOfficial && responses[p.id] !== 'GOING' && responses[p.id] !== 'NOT_GOING') {
-          updatedResponses[p.id] = 'GOING';
-          needsUpdate = true;
-        }
-      });
-    }
     
     if (needsUpdate) {
-      console.info('[useIntentions] Auto-healing: Syncing preConfirmations into metadata/intentions responses map');
       const intentionsRef = doc(db, 'metadata', 'intentions');
       updateDoc(intentionsRef, {
         responses: updatedResponses,
-        confirmationTimestamps: updatedTimestamps
+        confirmationTimestamps: updatedTimestamps,
+        lastUpdated: Date.now()
       }).catch(err => {
         console.warn('Failed to auto-heal intentions:', err);
       });
     }
-  }, [isLoaded, preConfirmations, rawIntentions.responses, rawIntentions.confirmationTimestamps, rawIntentions.targetDate, players]);
+  }, [isLoaded, preConfirmations, rawIntentions.responses, rawIntentions.confirmationTimestamps, rawIntentions.targetDate, idToCanonicalId]);
 
   // Sync intention confirmations into player access records
   useEffect(() => {
@@ -666,17 +636,14 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
         });
       } else {
         newResponses[playerId] = status as 'GOING' | 'NOT_GOING';
-        if (status === 'GOING') {
-          newTimestamps[playerId] = now;
-        } else {
-          delete newTimestamps[playerId];
-        }
+        newTimestamps[playerId] = now;
       }
       
       return {
         ...prev,
         responses: newResponses,
-        confirmationTimestamps: newTimestamps
+        confirmationTimestamps: newTimestamps,
+        lastUpdated: now
       };
     });
 
@@ -684,6 +651,7 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
       // 1. Unified Batch Persistence (metadata/intentions + preConfirmations)
       const intentionsRef = doc(db, 'metadata', 'intentions');
       const nextThu = getNextThursday();
+      const { cutoffTimestamp } = getWeeklyCutoffTimestamp();
       
       // If the current stored targetDate is in the past, we MUST use the next upcoming Thursday
       // to avoid saving to an archived preConfirmations collection.
@@ -693,30 +661,34 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
 
       updateIntentionsLock(targetDate);
       
-      const newResponses = { ...(intentions.responses || {}), ...(rawIntentions.responses || {}) };
-      const newTimestamps = { ...(intentions.confirmationTimestamps || {}), ...(rawIntentions.confirmationTimestamps || {}) };
+      // Use strictly the weekly-filtered intentions so stale entries are never re-persisted
+      const newResponses: Record<string, 'GOING' | 'NOT_GOING'> = {};
+      const newTimestamps: Record<string, number> = {};
 
-      // If we detected a date rotation (current stored was past), we wipe old responses first
-      const isDateRotating = currentStoredTarget && currentStoredTarget < today;
+      Object.entries(intentions.responses || {}).forEach(([id, val]) => {
+        const ts = Number(intentions.confirmationTimestamps?.[id] || 0);
+        if (ts >= cutoffTimestamp && (val === 'GOING' || val === 'NOT_GOING')) {
+          newResponses[id] = val;
+          newTimestamps[id] = ts;
+        }
+      });
+
+      const isDateRotating = Boolean(currentStoredTarget && currentStoredTarget < today);
       const finalResponses: Record<string, 'GOING' | 'NOT_GOING'> = isDateRotating ? {} : newResponses;
       const finalTimestamps: Record<string, number> = isDateRotating ? {} : newTimestamps;
 
-      // Preservation Guard: Ensure ANY intention registered today in Brazil date format (getFirestoreDateKey(new Date(ts)) >= today) is preserved even during session rotation
       if (isDateRotating) {
         Object.keys(newResponses).forEach(pId => {
           const ts = newTimestamps[pId];
-          if (ts && typeof ts === 'number') {
+          if (ts && typeof ts === 'number' && ts >= cutoffTimestamp) {
             const tsDateKey = getFirestoreDateKey(new Date(ts));
             if (tsDateKey >= today) {
               finalResponses[pId] = newResponses[pId];
               finalTimestamps[pId] = ts;
-              console.info(`[Firestore Intention Audit] PRESERVED: Intention for "${pId}" (${newResponses[pId]}) created today (${tsDateKey}) retained during session rotation.`);
             }
           }
         });
       }
-
-      console.info(`[Firestore Intention Audit] setIntent execution: playerId="${playerId}", status="${status}", today="${today}", currentStoredTarget="${currentStoredTarget}", targetDate="${targetDate}", isDateRotating=${isDateRotating}, timestamp=${now} (${getFirestoreDateKey(new Date(now))})`);
 
       if (status === 'RESET') {
         aliasSet.forEach(alias => {
@@ -726,88 +698,100 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
       } else {
         finalResponses[playerId] = status;
         if (status === 'GOING') {
-          // Só atualiza o timestamp se o jogador ainda não estiver como 'GOING',
-          // se não houver um timestamp prévio registrado, OU se estivermos rotacionando a data.
-          // Isso evita que re-confirmações (cliques duplos ou admin refrescando) 
-          // joguem o sócio para o final da fila, mas garante o reset semanal.
-          const alreadyGoing = rawIntentions.responses?.[playerId] === 'GOING';
-          const hasTimestamp = Boolean(rawIntentions.confirmationTimestamps?.[playerId]);
-          
-          if (!alreadyGoing || !hasTimestamp || isDateRotating) {
+          const existingTs = Number(rawIntentions.confirmationTimestamps?.[playerId] || 0);
+          const alreadyGoing = rawIntentions.responses?.[playerId] === 'GOING' && existingTs >= cutoffTimestamp;
+          if (!alreadyGoing || isDateRotating) {
             finalTimestamps[playerId] = now;
+          } else {
+            finalTimestamps[playerId] = existingTs;
           }
         } else {
-          delete finalTimestamps[playerId];
+          finalTimestamps[playerId] = now;
         }
       }
 
-      const batch = writeBatch(db);
-      let batchSize = 1;
+      console.info(`[Sync Diagnóstico] [setIntent] Persistindo intenção "${status}" para sócio "${playerId}"...`);
+      await executeWithRetry(
+        async () => {
+          const batch = writeBatch(db);
+          let currentBatchSize = 1;
 
-      if (status === 'RESET') {
-        // When resetting, explicitly delete all alias keys from responses and confirmationTimestamps
-        const intentionsUpdates: Record<string, any> = {
-          targetDate: targetDate,
-          automationEnabled: rawIntentions.automationEnabled ?? true,
-          responses: finalResponses,
-          confirmationTimestamps: finalTimestamps,
-          lastUpdated: now
-        };
-        aliasSet.forEach(alias => {
-          intentionsUpdates[`responses.${alias}`] = deleteField();
-          intentionsUpdates[`confirmationTimestamps.${alias}`] = deleteField();
-        });
-        batch.update(intentionsRef, intentionsUpdates);
-      } else {
-        batch.set(intentionsRef, {
-          targetDate: targetDate,
-          automationEnabled: rawIntentions.automationEnabled ?? true,
-          responses: finalResponses,
-          confirmationTimestamps: finalTimestamps,
-          remindersSent: isDateRotating ? {} : (rawIntentions.remindersSent || {}),
-          lastUpdated: now
-        }, { merge: !isDateRotating });
-      }
+          if (status === 'RESET') {
+            batch.set(intentionsRef, {
+              targetDate: targetDate,
+              automationEnabled: rawIntentions.automationEnabled ?? true,
+              responses: finalResponses,
+              confirmationTimestamps: finalTimestamps,
+              remindersSent: rawIntentions.remindersSent || {},
+              lastUpdated: now
+            });
+          } else {
+            batch.set(intentionsRef, {
+              targetDate: targetDate,
+              automationEnabled: rawIntentions.automationEnabled ?? true,
+              responses: finalResponses,
+              confirmationTimestamps: finalTimestamps,
+              remindersSent: isDateRotating ? {} : (rawIntentions.remindersSent || {}),
+              lastUpdated: now
+            });
+          }
 
+          if (status === 'GOING') {
+            const preConfirmationRef = doc(db, 'preConfirmations', targetDate, 'players', playerId);
+            const playerObjRaw = playerObjFound || {
+              id: playerId,
+              name: playerId.startsWith('guest_') ? playerId.replace('guest_', 'Convidado ') : playerId,
+              status: 'guest'
+            };
+
+            const playerObj = Object.fromEntries(
+              Object.entries(playerObjRaw).filter(([_, v]) => v !== undefined)
+            );
+
+            const effectiveTs = finalTimestamps[playerId] || now;
+            batch.set(preConfirmationRef, { ...playerObj, timestamp: effectiveTs, id: playerId }, { merge: true });
+            currentBatchSize++;
+          } else {
+            const datesToClean = Array.from(new Set([
+              targetDate,
+              currentStoredTarget,
+              rawIntentions.targetDate,
+              today,
+              nextThu
+            ].filter(Boolean) as string[]));
+
+            datesToClean.forEach(dKey => {
+              aliasSet.forEach(alias => {
+                const pRef = doc(db, 'preConfirmations', dKey, 'players', alias);
+                batch.delete(pRef);
+                currentBatchSize++;
+              });
+            });
+          }
+
+          return commitBatchWithLog 
+            ? commitBatchWithLog(batch, 'Atualização de Intenção', currentBatchSize) 
+            : batch.commit();
+        },
+        `Escrita setIntent (${status})`
+      );
+
+      // Optimistically update Zustand store after successful Firestore write
       if (status === 'GOING') {
-        const preConfirmationRef = doc(db, 'preConfirmations', targetDate, 'players', playerId);
         const playerObjRaw = playerObjFound || {
           id: playerId,
           name: playerId.startsWith('guest_') ? playerId.replace('guest_', 'Convidado ') : playerId,
           status: 'guest'
         };
-
-        // Sanitize object to remove undefined values, which are not allowed in Firestore
         const playerObj = Object.fromEntries(
           Object.entries(playerObjRaw).filter(([_, v]) => v !== undefined)
         );
-
-        batch.set(preConfirmationRef, { ...playerObj, timestamp: now, id: playerId }, { merge: true });
-        batchSize++;
-
+        const effectiveTs = finalTimestamps[playerId] || now;
         useStore.getState().setPreConfirmations((prev: Player[]) => {
           const filtered = (prev || []).filter(p => !aliasSet.has(p.id));
-          return [...filtered, { ...playerObj, timestamp: now, id: playerId } as Player];
+          return [...filtered, { ...playerObj, timestamp: effectiveTs, id: playerId } as Player];
         });
       } else {
-        // RESET or NOT_GOING: delete across all candidate target dates and aliases
-        const datesToClean = Array.from(new Set([
-          targetDate,
-          currentStoredTarget,
-          rawIntentions.targetDate,
-          today,
-          nextThu
-        ].filter(Boolean) as string[]));
-
-        datesToClean.forEach(dKey => {
-          aliasSet.forEach(alias => {
-            const pRef = doc(db, 'preConfirmations', dKey, 'players', alias);
-            batch.delete(pRef);
-            batchSize++;
-          });
-        });
-
-        // Optimistically clean Zustand store of all aliases to prevent auto-heal resurrecting
         useStore.getState().setPreConfirmations((prev: Player[]) => {
           return (prev || []).filter(p => {
             if (aliasSet.has(p.id)) return false;
@@ -817,12 +801,7 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
           });
         });
       }
-
-      console.info(`[Sync Diagnóstico] [setIntent] Persistindo intenção "${status}" para sócio "${playerId}"...`);
-      await executeWithRetry(
-        () => commitBatchWithLog ? commitBatchWithLog(batch, 'Atualização de Intenção', batchSize) : batch.commit(),
-        `Escrita setIntent (${status})`
-      );
+      
       console.info(`[Sync Diagnóstico] [setIntent] Intenção "${status}" para sócio "${playerId}" persistida com sucesso.`);
 
       // 3. Background call to server endpoint (for telemetry / server-side validations)
@@ -860,11 +839,56 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
 
   const resetIntent = async (playerId: string) => {
     try {
-      // Use the API to reset intent to bypass permission issues
+      console.info(`[useIntentions] Resetting intent for player: ${playerId}`);
       await setIntent(playerId, 'RESET');
     } catch (err) {
-      console.error('Erro ao resetar intenção:', err);
-      throw err;
+      console.warn('[useIntentions] setIntent RESET falhou, tentando fallback direto com deleteField...', err);
+      try {
+        const intentionsRef = doc(db, 'metadata', 'intentions');
+        const updates: Record<string, any> = {};
+        updates[`responses.${playerId}`] = deleteField();
+        updates[`confirmationTimestamps.${playerId}`] = deleteField();
+        
+        const playerObjFound = (players || []).find(p => p.id === playerId || p.uid === playerId || (p.email && p.email.toLowerCase() === playerId.toLowerCase()));
+        if (playerObjFound) {
+          updates[`responses.${playerObjFound.id}`] = deleteField();
+          updates[`confirmationTimestamps.${playerObjFound.id}`] = deleteField();
+          if (playerObjFound.uid) {
+            updates[`responses.${playerObjFound.uid}`] = deleteField();
+            updates[`confirmationTimestamps.${playerObjFound.uid}`] = deleteField();
+          }
+        }
+        
+        await updateDoc(intentionsRef, updates);
+        
+        const nextThu = getNextThursday();
+        const candidateDates = [nextThu, getFirestoreDateKey()];
+        const batch = writeBatch(db);
+        candidateDates.forEach(dKey => {
+          batch.delete(doc(db, 'preConfirmations', dKey, 'players', playerId));
+          if (playerObjFound) {
+            batch.delete(doc(db, 'preConfirmations', dKey, 'players', playerObjFound.id));
+          }
+        });
+        await batch.commit().catch(() => {});
+
+        setRawIntentions(prev => {
+          const newResponses = { ...prev.responses };
+          const newTimestamps = { ...prev.confirmationTimestamps };
+          delete newResponses[playerId];
+          delete newTimestamps[playerId];
+          if (playerObjFound) {
+            delete newResponses[playerObjFound.id];
+            delete newTimestamps[playerObjFound.id];
+          }
+          return { ...prev, responses: newResponses, confirmationTimestamps: newTimestamps, lastUpdated: Date.now() };
+        });
+
+        console.info('[useIntentions] Fallback de reset de intenção concluído com sucesso.');
+      } catch (fallbackErr) {
+        console.error('Erro fatal ao resetar intenção:', fallbackErr);
+        throw fallbackErr;
+      }
     }
   };
 
@@ -883,12 +907,64 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
 
   const clearIntentions = async () => {
     try {
-      console.info('[Sync Diagnóstico] [clearIntentions] Limpando lista de intenções...');
-      await executeWithRetry(() => setDoc(doc(db, 'metadata', 'intentions'), {
-        ...DEFAULT_INTENTIONS,
-        targetDate: getNextThursday()
-      }), 'Limpeza de Intenções');
-      console.info('[Sync Diagnóstico] [clearIntentions] Lista de intenções limpa com sucesso.');
+      console.info('[Sync Diagnóstico] [clearIntentions] Limpando lista de intenções e subcoleções preConfirmations...');
+      const nextThu = getNextThursday();
+      const now = Date.now();
+      const clearedState: IntentionsData = {
+        targetDate: nextThu,
+        automationEnabled: rawIntentions.automationEnabled ?? true,
+        responses: {},
+        confirmationTimestamps: {},
+        remindersSent: {},
+        lastUpdated: now
+      };
+
+      // 1. Atualização otimista imediata na memória e store para evitar ressurreição por auto-heal
+      setRawIntentions(clearedState);
+      useStore.getState().setPreConfirmations([]);
+      purgeStaleLocalStorageIntentions(nextThu);
+
+      // 2. Excluir todos os documentos em preConfirmations para as datas candidatas e persistir estado limpo
+      const candidateDates = Array.from(new Set([
+        nextThu,
+        rawIntentions.targetDate,
+        getFirestoreDateKey()
+      ].filter(Boolean) as string[]));
+
+      await executeWithRetry(
+        async () => {
+          const batch = writeBatch(db);
+          let currentBatchCount = 1;
+
+          for (const dKey of candidateDates) {
+            try {
+              let snap;
+              try {
+                snap = await getDocsFromServer(collection(db, 'preConfirmations', dKey, 'players'));
+              } catch {
+                snap = await getDocs(collection(db, 'preConfirmations', dKey, 'players'));
+              }
+              snap.forEach(docSnap => {
+                batch.delete(doc(db, 'preConfirmations', dKey, 'players', docSnap.id));
+                currentBatchCount++;
+              });
+            } catch (e) {
+              // Ignorar erro de leitura em datas vazias
+            }
+          }
+
+          // Sobrescrever metadata/intentions integralmente (sem merge) com lastUpdated atualizado
+          batch.set(doc(db, 'metadata', 'intentions'), clearedState);
+
+          return commitBatchWithLog 
+            ? commitBatchWithLog(batch, 'Limpar Lista de Intenções', currentBatchCount) 
+            : batch.commit();
+        },
+        'Limpeza Completa de Intenções'
+      );
+
+      fetch('/api/presence/clear', { method: 'POST' }).catch(() => {});
+      console.info('[Sync Diagnóstico] [clearIntentions] Lista de intenções e preConfirmations limpas com sucesso.');
     } catch (err) {
       console.error('Erro ao limpar intenções:', err);
       handleFirestoreError(err, OperationType.WRITE, 'metadata/intentions');
@@ -910,7 +986,7 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
         const isAlreadyInAttendance = currentAttendance.some(a => a.id === p.id);
         const hasResponded = currentIntentions.responses[p.id] === 'GOING' || currentIntentions.responses[p.id] === 'NOT_GOING';
         
-        if (p.status === 'active' && !hasResponded && !isAlreadyInAttendance && p.fcmToken) {
+        if (p.status === 'active' && !p.isDM && !hasResponded && !isAlreadyInAttendance && p.fcmToken) {
           try {
             const q = query(collection(db, 'notifications'), where('playerUid', '==', p.uid), where('read', '==', false));
             const snap = await getDocs(q);
@@ -931,7 +1007,7 @@ export const useIntentions = (commitBatchWithLog?: (batch: any, label: string, s
         const isAlreadyInAttendance = currentAttendance.some(a => a.id === player.id);
         const hasResponded = currentIntentions.responses[player.id] === 'GOING' || currentIntentions.responses[player.id] === 'NOT_GOING';
         
-        if (player.status === 'active' && !hasResponded && !isAlreadyInAttendance) {
+        if (player.status === 'active' && !player.isDM && !hasResponded && !isAlreadyInAttendance) {
           const appLink = `${getAppUrl()}?tab=intentions`;
           const unreadCount = notificationData.find(d => d.id === player.id)?.unreadCount || 1;
           

@@ -288,6 +288,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
     prevStoreGenResultRef.current = storeGenerationResult;
 
     if (isActive) {
+      setPreviewResult(null);
       // Se acabou de iniciar uma partida, vamos gerar AUTOMATICAMENTE o preview da PRÓXIMA
       // para que o telão (CourtTabletView) já exiba o "Em Breve" atendendo as regras do clube
       if (!wasActive && attendance.length >= 12 && isAdmin) {
@@ -463,8 +464,8 @@ export const MatchView: React.FC<MatchViewProps> = ({
     const { attendance: storeAttendance, players, matches, generationResult: activeMatch } = useStore.getState();
     
     // Filtramos apenas os jogadores ativos/presentes que PODEM jogar
-    // Note: DMs também jogam se estiverem na lista de presença como ativos
-    let present = (storeAttendance || []).filter(p => p.status === 'active');
+    // Note: DMs são estritamente excluídos da escalação automática
+    let present = (storeAttendance || []).filter(p => p.status === 'active' && !p.isDM);
     if (present.length < 12) {
       return;
     }
@@ -2140,6 +2141,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
                   } else {
                     handleTriggerGenerate();
                   }
+                  setPreviewResult(null);
                 }}
                 onCancel={() => setPreviewResult(null)}
                 onRegenerate={() => setPreviewResult(null)}
@@ -2532,6 +2534,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
                         <TeamBalancingSimulatorCard onApplyToMatch={(res) => {
                           if (onApplyPreview) onApplyPreview(res);
                           setShowSimulatorInMatch(false);
+                          setPreviewResult(null);
                         }} />
                       </div>
                     )}
@@ -4025,7 +4028,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
                     <span className="text-red-400 bg-red-400/10 px-2 py-1.5 sm:px-4 sm:py-2 rounded-lg sm:rounded-xl border border-red-400/20 whitespace-nowrap">Derrota: {eloChanges.aLoss} ELO</span>
                   </div>
                   <div className="flex items-center justify-center gap-2 text-white/60 bg-white/5 px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg sm:rounded-xl border border-brand-primary/40 w-full sm:w-auto">
-                    <Users className="w-3 h-3 sm:w-4 sm:h-4" />
+                    <Users className="w-3 h-3 sm:w-4 sm:h-4 text-brand-primary" />
                     <span>{attendance.length} Sócios Presentes</span>
                   </div>
                 </div>
@@ -4285,6 +4288,7 @@ export const MatchView: React.FC<MatchViewProps> = ({
                   <TeamBalancingSimulatorCard onApplyToMatch={(res) => {
                     if (onApplyPreview) onApplyPreview(res);
                     setShowSimulatorInMatch(false);
+                    setPreviewResult(null);
                   }} />
                 </div>
               )}

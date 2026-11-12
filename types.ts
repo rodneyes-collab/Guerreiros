@@ -392,3 +392,40 @@ export interface SyncModeOption {
   networkImpact: 'high' | 'medium' | 'low' | 'minimal' | 'none';
   recommendedFor?: string;
 }
+
+export interface CollectionSyncMeta {
+  collectionName: string;
+  displayName: string;
+  lastSyncTimestamp: number;
+  serverLastUpdated?: number;
+  hasDiscrepancy?: boolean;
+  itemCount: number;
+  serverCount?: number;
+  source: 'server' | 'cache' | 'pending';
+  hasPendingWrites: boolean;
+  status: 'synced' | 'syncing' | 'error' | 'stale';
+  error?: string | null;
+}
+
+export interface SelectiveSyncResult {
+  collectionKey: string;
+  displayName: string;
+  actionTaken: 'UPDATED' | 'ALREADY_SYNCED' | 'ERROR';
+  localTimestamp: number;
+  serverTimestamp: number;
+  itemsUpdated: number;
+  details?: string;
+}
+
+export interface SyncDiagnosticReport {
+  isOnline: boolean;
+  connectionLatencyMs: number | null;
+  firestoreStatus: 'connected' | 'connecting' | 'offline' | 'error';
+  lastPingTimestamp: number | null;
+  appVersionInstalled: string;
+  serverVersion: string | null;
+  hasVersionMismatch: boolean;
+  localStorageEntries: { key: string; sizeBytes: number; summary: string }[];
+  collections: Record<string, CollectionSyncMeta>;
+}
+

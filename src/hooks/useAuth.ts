@@ -20,7 +20,8 @@ import {
   getFirestoreDateKey,
   addDoc,
   collection,
-  serverTimestamp
+  serverTimestamp,
+  resetFirestoreNetworkSession
 } from '../../firebase';
 import { useStore } from '../../store';
 import { cleanObject } from '../../utils/helpers';
@@ -116,6 +117,8 @@ export const useAuth = () => {
 
     const unsubscribeAuth = onAuthStateChanged(auth, async (u) => {
       console.log('useAuth: onAuthStateChanged fired', u?.uid);
+      // Alterna preventivamente o estado de rede e expurga alvos obsoletos ao mudar sessão
+      resetFirestoreNetworkSession().catch(err => console.warn('[useAuth] Reset de rede no auth state change:', err));
       if (u) {
         setUser(u);
         setIsAuthReady(true);

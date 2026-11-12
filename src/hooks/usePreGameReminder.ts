@@ -94,7 +94,7 @@ export const usePreGameReminder = ({
 
   // ZONA DE NÃO INTERFERÊNCIA: Filtro estrito de sócios ativos
   const activePlayers = useMemo(() => {
-    return (players || []).filter(p => p.status === 'active');
+    return (players || []).filter(p => p.status === 'active' && !p.isDM);
   }, [players]);
 
   // Lista de sócios ativos indecisos

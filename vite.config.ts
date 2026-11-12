@@ -19,6 +19,7 @@ export default defineConfig(() => {
         tailwindcss(),
         VitePWA({
           registerType: 'autoUpdate',
+          injectRegister: 'auto',
           includeAssets: ['logo.png'],
           manifest: {
             name: 'Guerreiros Volleyball Club',
@@ -30,6 +31,28 @@ export default defineConfig(() => {
                 src: 'logo.png',
                 sizes: '192x192',
                 type: 'image/png',
+              }
+            ]
+          },
+          workbox: {
+            cleanupOutdatedCaches: true,
+            clientsClaim: true,
+            skipWaiting: true,
+            navigateFallbackDenylist: [/^\/api/],
+            runtimeCaching: [
+              {
+                urlPattern: ({ url }) => url.pathname === '/' || url.pathname === '/index.html',
+                handler: 'NetworkFirst',
+                options: {
+                  cacheName: 'html-cache',
+                  expiration: {
+                    maxEntries: 1,
+                  },
+                },
+              },
+              {
+                urlPattern: ({ url }) => url.pathname.startsWith('/api/'),
+                handler: 'NetworkOnly',
               }
             ]
           }

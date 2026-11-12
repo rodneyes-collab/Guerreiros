@@ -37,6 +37,7 @@ interface AppState {
   lastSyncTimestamp: number | null;
   isSyncSettingsOpen: boolean;
   isSyncDebuggerOpen: boolean;
+  collectionsSyncMeta: Record<string, import('./types').CollectionSyncMeta>;
   dateKey: string;
   idToCanonicalId: Record<string, string>;
   
@@ -141,10 +142,12 @@ interface AppState {
   setTournaments: (tournaments: Tournament[] | ((prev: Tournament[]) => Tournament[])) => void;
   setActiveTournament: (tournament: Tournament | null) => void;
   triggerSync: () => void;
+  hardSync: () => Promise<boolean>;
   setSyncMode: (mode: SyncFrequencyMode) => void;
   setLastSyncTimestamp: (ts: number | null) => void;
   setIsSyncSettingsOpen: (open: boolean) => void;
   setIsSyncDebuggerOpen: (open: boolean) => void;
+  setCollectionSyncMeta: (name: string, meta: Partial<import('./types').CollectionSyncMeta>) => void;
   setIdToCanonicalId: (map: Record<string, string>) => void;
   
   setAnalysis: (analysis: string) => void;
@@ -235,6 +238,7 @@ export const useStore = create<AppState>((set) => ({
   lastSyncTimestamp: null,
   isSyncSettingsOpen: false,
   isSyncDebuggerOpen: false,
+  collectionsSyncMeta: {},
   dateKey: '',
   idToCanonicalId: {},
   generationResult: null,
@@ -377,6 +381,7 @@ export const useStore = create<AppState>((set) => ({
   })),
   setActiveTournament: (activeTournament) => set({ activeTournament }),
   triggerSync: () => set((state) => ({ syncTrigger: state.syncTrigger + 1, isBackgroundSyncing: true })),
+  hardSync: async () => false,
   setSyncMode: (syncMode) => {
     if (typeof window !== 'undefined') {
       localStorage.setItem('guerreiros_sync_mode', syncMode);
@@ -386,6 +391,23 @@ export const useStore = create<AppState>((set) => ({
   setLastSyncTimestamp: (lastSyncTimestamp) => set({ lastSyncTimestamp }),
   setIsSyncSettingsOpen: (isSyncSettingsOpen) => set({ isSyncSettingsOpen }),
   setIsSyncDebuggerOpen: (isSyncDebuggerOpen) => set({ isSyncDebuggerOpen }),
+  setCollectionSyncMeta: (name, meta) => set((state) => {
+    const existing = state.collectionsSyncMeta[name] || {
+      collectionName: name,
+      displayName: name,
+      lastSyncTimestamp: Date.now(),
+      itemCount: 0,
+      source: 'server',
+      hasPendingWrites: false,
+      status: 'synced'
+    };
+    return {
+      collectionsSyncMeta: {
+        ...state.collectionsSyncMeta,
+        [name]: { ...existing, ...meta, collectionName: name }
+      }
+    };
+  }),
   setIdToCanonicalId: (idToCanonicalId) => set({ idToCanonicalId }),
   setAnalysis: (analysis) => set({ analysis }),
   setRuleVerification: (ruleVerification) => set({ ruleVerification }),

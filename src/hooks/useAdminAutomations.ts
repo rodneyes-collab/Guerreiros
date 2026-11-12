@@ -1,20 +1,77 @@
-import { useEffect } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useStore } from '../../store';
-import { db, doc, getDoc, setDoc, updateDoc, getFirestoreDateKey, getBrazilDay } from '../../firebase';
+import { db, doc, getDoc, onSnapshot, setDoc, getFirestoreDateKey, getBrazilDay } from '../../firebase';
 import { analyzeBillingCosts } from '../../services/geminiService';
+import { runAdminIntentionsCleanupOnLoad } from '../utils/intentionsCleanup';
+
+export interface IntentionCleanupReportData {
+  lastPurgeTimestamp?: number;
+  lastPurgeDateStr?: string;
+  purgedResponsesCount?: number;
+  purgedPreConfirmationsCount?: number;
+  purgedLocalStorageKeys?: number;
+  totalPurgedCount?: number;
+  preservedActiveConfirmations?: number;
+  targetDate?: string;
+  cutoffTimestamp?: number;
+  status?: 'SUCCESS' | 'ERROR';
+}
 
 export const useAdminAutomations = () => {
   const user = useStore(state => state.user);
   const userRole = useStore(state => state.userRole);
+  const currentPlayer = useStore(state => state.currentPlayer);
   const monthlyUsageStats = useStore(state => state.monthlyUsageStats);
   const showNotification = useStore(state => state.showNotification);
+  const players = useStore(state => state.players);
+  const idToCanonicalId = useStore(state => state.idToCanonicalId);
 
+  const [cleanupStatus, setCleanupStatus] = useState<IntentionCleanupReportData | null>(null);
+  const [isPurging, setIsPurging] = useState(false);
+
+  const isAdmin = userRole === 'ADMIN' || Boolean(currentPlayer?.isAdmin) || (user?.email?.trim().toLowerCase() === 'rodneyes@gmail.com');
+
+  // 1. Escuta em tempo real do relatório de purga de 7 dias
+  useEffect(() => {
+    if (!isAdmin) return;
+
+    const unsub = onSnapshot(doc(db, 'metadata', 'intentions_cleanup_status'), (snapshot) => {
+      if (snapshot.exists()) {
+        setCleanupStatus(snapshot.data() as IntentionCleanupReportData);
+      } else {
+        // Inicialização se ainda não existir
+        runAdminIntentionsCleanupOnLoad({ players, idToCanonicalId }).catch(console.warn);
+      }
+    }, (err) => {
+      console.warn('[useAdminAutomations] Erro ao escutar status de limpeza de intenções:', err);
+    });
+
+    return () => unsub();
+  }, [isAdmin, players, idToCanonicalId]);
+
+  // 2. Método para disparar limpeza manual de intenções > 7 dias
+  const triggerManualPurge = useCallback(async () => {
+    setIsPurging(true);
+    try {
+      const result = await runAdminIntentionsCleanupOnLoad({ players, idToCanonicalId });
+      showNotification(
+        `Limpeza concluída! ${result.purgedResponsesCount + result.purgedPreConfirmationsCount + result.purgedLocalStorageKeys} itens obsoletos expurgados com sucesso.`,
+        'success'
+      );
+      return result;
+    } catch (err) {
+      showNotification('Erro ao executar limpeza manual de intenções.', 'error');
+      throw err;
+    } finally {
+      setIsPurging(false);
+    }
+  }, [players, idToCanonicalId, showNotification]);
+
+  // 3. Automação Semanal de Relatório de Faturamento
   useEffect(() => {
     const checkWeeklyBillingReport = async () => {
-      // 1. Only run for MASTER ADMIN
       if (!user || user.email !== 'rodneyes@gmail.com' || userRole !== 'ADMIN') return;
 
-      // 2. Only run on FRIDAY (Day 5)
       const isFriday = getBrazilDay() === 5;
       if (!isFriday) return;
 
@@ -25,12 +82,10 @@ export const useAdminAutomations = () => {
         const snap = await getDoc(automationRef);
         const lastRun = snap.exists() ? snap.data().lastRun : null;
 
-        // 3. Check if already run this week (Friday to Friday)
         if (lastRun === today) return;
 
         console.log('[Automation] Iniciando Relatório de Faturamento Semanal...');
 
-        // Dados simulados baseados no relato do usuário para calibração
         const baseCloudRun = 58.73;
         const savingCloudRun = 31.07;
         const costGemini = 12.38;
@@ -51,8 +106,7 @@ export const useAdminAutomations = () => {
         const mWrites = monthlyUsageStats?.writes || 0;
         const mAiCalls = monthlyUsageStats?.aiCalls || 0;
 
-        // Armazenar os custos do mês para consulta histórica
-        const monthKey = today.slice(0, 7); // YYYY-MM
+        const monthKey = today.slice(0, 7);
         const monthRef = doc(db, 'billing_history', monthKey);
         await setDoc(monthRef, {
           month: monthKey,
@@ -72,7 +126,6 @@ export const useAdminAutomations = () => {
           usage: { reads: mReads, writes: mWrites, aiCalls: mAiCalls }
         });
 
-        // Save report to history
         const reportId = `billing_report_${today}`;
         await setDoc(doc(db, 'reports', reportId), {
           type: 'WEEKLY_BILLING',
@@ -82,13 +135,8 @@ export const useAdminAutomations = () => {
           createdAt: new Date().toISOString()
         });
 
-        // Mark as run for today
         await setDoc(automationRef, { lastRun: today }, { merge: true });
-
-        // Notify Master Admin
         showNotification('Relatório de Faturamento Semanal Gerado com IA! Verifique no Dashboard.', 'success');
-        
-        console.log('[Automation] Relatório semanal concluído com sucesso.');
       } catch (err) {
         console.error('[Automation] Erro no relatório semanal:', err);
       }
@@ -96,4 +144,10 @@ export const useAdminAutomations = () => {
 
     checkWeeklyBillingReport();
   }, [user, userRole, monthlyUsageStats, showNotification]);
+
+  return {
+    cleanupStatus,
+    isPurging,
+    triggerManualPurge
+  };
 };

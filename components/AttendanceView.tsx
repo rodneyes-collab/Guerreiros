@@ -104,7 +104,14 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
     };
   }, [matches]);
 
-  const attendance = React.useMemo(() => allAttendance.filter(p => p.status !== 'left' && !p.isDM && p.status !== 'dm'), [allAttendance]);
+  const attendance = React.useMemo(() => {
+    return allAttendance.filter(p => {
+      const master = allPlayers.find(m => m.id === p.id || (m.uid && m.uid === p.uid));
+      const status = master?.status || p.status || 'active';
+      const isDM = Boolean(master?.isDM || p.isDM || status === 'dm');
+      return (status === 'active' || status === 'guest') && !isDM;
+    });
+  }, [allAttendance, allPlayers]);
 
   const displayedAttendance = React.useMemo(() => {
     return [...attendance].sort((a, b) => {
@@ -224,7 +231,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
 
   // Strictly filter active members for convocation list (excluding inactive, dm, and waiting list)
   const activeAvailablePlayers = React.useMemo(() => {
-    return (availablePlayers || []).filter(p => p.status === 'active');
+    return (availablePlayers || []).filter(p => p.status === 'active' && !p.isDM);
   }, [availablePlayers]);
 
   return (
@@ -553,11 +560,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                 )}
                 </div>
               <div className="p-8 bg-brand-primary/5 border-t border-brand-primary/40">
-                <p className="text-xs text-white/40 font-black uppercase text-center italic leading-relaxed tracking-widest">
-                  {attendance.length < 12 
-                    ? `Mínimo de 12 guerreiros para escalar (Faltam ${12 - attendance.length})` 
-                    : `Quorum de quadra atingido (${attendance.length} atletas convocados). Você pode convocar todos os sócios ativos para a fila de rodagem.`}
-                </p>
+                <p className="text-xs text-white/40 font-black uppercase text-center italic leading-relaxed tracking-widest">{attendance.length < 12 ? `Mínimo de 12 guerreiros para escalar (Faltam ${12 - attendance.length})` : `Quorum de quadra atingido (${attendance.length} atletas convocados). Você pode convocar todos os sócios ativos para a fila de rodagem.`}</p>
               </div>
             </section>
           </div>

@@ -71,6 +71,7 @@ import { Player } from '../types';
 import { APP_VERSION } from '../constants';
 import { generateUUID } from '../utils/helpers';
 import { ServiceWorkerDiagnostics } from '../src/components/ServiceWorkerDiagnostics';
+import { DiagnosticDashboard } from '../src/components/DiagnosticDashboard';
 import { DbAutoCorrectionPanel } from './DbAutoCorrectionPanel';
 import Markdown from 'react-markdown';
 import { Logo } from '../src/components/Logo';
@@ -202,7 +203,7 @@ interface AdminViewProps {
   savePlayer: (player: Player) => Promise<void>;
 }
 
-type AdminTab = 'dashboard' | 'members' | 'sentinel' | 'tournaments' | 'system' | 'notifications' | 'audit' | 'security' | 'maintenance' | 'qrcode' | 'elo-audit';
+type AdminTab = 'dashboard' | 'diagnostics' | 'members' | 'sentinel' | 'tournaments' | 'system' | 'notifications' | 'audit' | 'security' | 'maintenance' | 'qrcode' | 'elo-audit';
 
 export const AdminView: React.FC<AdminViewProps> = ({
   resetDailyStats,
@@ -965,6 +966,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
 
   const tabs: { id: AdminTab; label: string; icon: any }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'diagnostics', label: 'Diagnóstico & Sync', icon: Activity },
     { id: 'members', label: 'Sócios & Acesso', icon: UsersIcon },
     { id: 'sentinel', label: 'Agente Sentinela', icon: Bot },
     { id: 'qrcode', label: 'Check-in Físico', icon: QrCode },
@@ -1032,6 +1034,12 @@ export const AdminView: React.FC<AdminViewProps> = ({
             exit={{ opacity: 0, y: -10 }}
             transition={{ duration: 0.3 }}
           >
+            {activeTab === 'diagnostics' && (
+              <div className="space-y-8">
+                <DiagnosticDashboard onTriggerSync={triggerSync} />
+              </div>
+            )}
+
             {activeTab === 'dashboard' && (
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 <div className="lg:col-span-2 space-y-8">
@@ -1912,6 +1920,9 @@ export const AdminView: React.FC<AdminViewProps> = ({
               <div className="space-y-8">
                 {/* Simulador de Balanceamento de Times (IC) */}
                 <TeamBalancingSimulatorCard />
+
+                {/* Painel de Diagnóstico de Conexão, Firestore e Cache */}
+                <DiagnosticDashboard onTriggerSync={triggerSync} />
 
                 {/* Diagnóstico Service Worker */}
                 <ServiceWorkerDiagnostics />

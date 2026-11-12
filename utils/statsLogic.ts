@@ -14,27 +14,27 @@ export const getPlayerSkillsSum = (player: Player | null): number => {
 };
 
 /**
- * Calcula o Índice Composto (IC): 80% Habilidades Práticas + 20% Win Rate real.
+ * Calcula o Índice Composto (IC): 80% Habilidades Práticas + 20% Win Rate real (Carreira)
+ * ou 40% Habilidades Práticas + 60% Win Rate real (Sessão Diária).
  */
 export const calculatePlayerCompositeIndex = (
   player: Player | null,
-  winRate: number
+  winRate: number,
+  isDaily: boolean = false
 ): number => {
   if (!player) return 0;
   const skillsSum = getPlayerSkillsSum(player);
   const techScore = (skillsSum / 20) * 100;
   const wrPercent = winRate <= 1.0 ? winRate * 100 : winRate;
-  return (techScore * 0.8) + (wrPercent * 0.2);
+  
+  const techWeight = isDaily ? 0.4 : 0.8;
+  const wrWeight = isDaily ? 0.6 : 0.2;
+  
+  return (techScore * techWeight) + (wrPercent * wrWeight);
 };
 
 /**
  * Calcula o Score Oficial de MVP (Opção B-1: Desempenho Técnico + Bônus de Volume).
- * 
- * Fórmula:
- * Pilar Desempenho = IC (60% Tech + 40% Win Rate) + (Saldo Médio de Pontos * 1.5)
- * Pilar Volume:
- *   - Acumulado (Carreira): até 15 pts com teto de 45 partidas (min(15, (partidas / 45) * 15))
- *   - Diário (Sessão): +2.0 pts por partida disputada na data
  * 
  * @param player Objeto do sócio
  * @param winRate Aproveitamento no período (0.0 a 1.0)
@@ -56,18 +56,30 @@ export const calculateMvpEfficiencyScore = (
 ): number => {
   if (!player || matches === 0) return 0;
 
-  // 1. Índice Composto (60% Habilidades + 40% Win Rate do período)
-  const ic = calculatePlayerCompositeIndex(player, winRate);
+  // 1. Índice Composto (Ponderado por tipo de período)
+  const ic = calculatePlayerCompositeIndex(player, winRate, isDaily);
 
   // 2. Saldo Médio de Pontos por Partida (Multiplicador 1.5 de domínio)
   const saldoMedio = (pointsFor - pointsAgainst) / matches;
-  const pilarDesempenho = ic + (saldoMedio * 1.5);
+  let pilarDesempenho = ic + (saldoMedio * 1.5);
 
-  // 3. Pilar de Volume
+  // 3. Calibração para a Sessão Diária:
+  // Previne que sócios sem vitórias ou com aproveitamento fraco no dia sejam coroados MVP da rodada
+  // puramente por suas habilidades técnicas de carreira.
+  if (isDaily) {
+    if (winRate === 0) {
+      pilarDesempenho = Math.max(0, pilarDesempenho * 0.5);
+    } else if (winRate < 0.35) {
+      pilarDesempenho = pilarDesempenho * (0.5 + winRate);
+    }
+  }
+
+  // 4. Pilar de Volume
   const pilarVolume = isDaily
     ? matches * 2.0
     : Math.min(15, (matches / 45) * 15);
 
-  return Number((pilarDesempenho + pilarVolume).toFixed(2));
+  return Number(Math.max(0, pilarDesempenho + pilarVolume).toFixed(2));
 };
+
 

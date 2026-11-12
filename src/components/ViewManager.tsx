@@ -28,6 +28,9 @@ import { PaymentForm } from '../../components/PaymentForm';
 import { ExpenseForm } from '../../components/ExpenseForm';
 import { SidebarNavigation } from './SidebarNavigation';
 import { PreGameReminderContainer } from './PreGameReminderContainer';
+import { QuotaExceededModal } from './QuotaExceededModal';
+import { useQuotaErrorMonitor } from '../hooks/useQuotaErrorMonitor';
+import { useSyncHealthCheck } from '../hooks/useSyncHealthCheck';
 
 // Atomic Lazy Loaded Views to isolate bundle chunks and prevent dependency cycles
 const AttendanceView = safeLazy(() => import('../../components/AttendanceView').then(m => ({ default: m.AttendanceView })));
@@ -354,6 +357,67 @@ export const ViewManager: React.FC<ViewManagerProps> = (props) => {
   } = props;
 
   const isAdmin = userRole === 'ADMIN';
+  const { isQuotaModalOpen, setIsQuotaModalOpen, errorMessage } = useQuotaErrorMonitor();
+  useSyncHealthCheck();
+
+  // Helper to render version banners on any screen
+  const renderVersionOverlay = () => (
+    <>
+      <ReloadPrompt />
+      <UpdateNotificationToast needRefresh={needRefresh} updateServiceWorker={updateServiceWorker} />
+      {hasNewVersion && (
+        <motion.div 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="fixed inset-0 z-[9999] bg-black/90 backdrop-blur-2xl flex flex-col items-center justify-center p-6 text-center"
+        >
+          <motion.div 
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="max-w-xs w-full space-y-8"
+          >
+            <div className="relative mx-auto w-24 h-24">
+              <div className="absolute inset-0 bg-brand-primary/20 rounded-full animate-ping" />
+              <div className="relative flex items-center justify-center w-full h-full bg-brand-primary/10 border-2 border-brand-primary/40 rounded-full">
+                <RefreshCw className="w-10 h-10 text-brand-primary animate-spin-slow" />
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <h2 className="text-2xl font-black uppercase tracking-tighter italic text-white">
+                Atualização Obrigatória
+              </h2>
+              <p className="text-sm text-white/60 font-medium leading-relaxed">
+                Uma nova versão crítica (**v{serverVersion || '?.?.?'}**) está disponível para garantir a integridade dos seus dados.
+              </p>
+            </div>
+
+            <div className="p-4 bg-white/5 border border-white/10 rounded-2xl space-y-2">
+              <div className="flex justify-between text-[10px] font-black uppercase tracking-widest text-white/40">
+                <span>Versão Atual:</span>
+                <span className="text-rose-400">v{APP_VERSION}</span>
+              </div>
+              <div className="flex justify-between text-[10px] font-black uppercase tracking-widest text-white/40">
+                <span>Nova Versão:</span>
+                <span className="text-emerald-400 font-mono">v{serverVersion || '?.?.?'}</span>
+              </div>
+            </div>
+
+            <button 
+              onClick={() => forceUpdate()}
+              className="w-full py-4 bg-brand-primary text-black font-black uppercase tracking-[0.2em] text-xs rounded-2xl shadow-xl shadow-brand-primary/20 hover:scale-[1.02] active:scale-95 transition-all cursor-pointer"
+            >
+              Atualizar Agora
+            </button>
+
+            <p className="text-[10px] text-white/20 font-bold uppercase tracking-widest">
+              Limpando cache persistente e reiniciando...
+            </p>
+          </motion.div>
+        </motion.div>
+      )}
+    </>
+  );
 
   // 1. Logging out screen
   if (isLoggingOut) {
@@ -418,34 +482,6 @@ export const ViewManager: React.FC<ViewManagerProps> = (props) => {
     );
   }
 
-  // Helper to render version banners on any screen
-  const renderVersionOverlay = () => (
-    <>
-      <ReloadPrompt />
-      <UpdateNotificationToast needRefresh={needRefresh} updateServiceWorker={updateServiceWorker} />
-      {hasNewVersion && (
-        <motion.div 
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="fixed top-4 right-4 z-[100] bg-amber-500 text-black px-4 py-2 rounded-xl shadow-2xl flex items-center gap-3 border border-amber-400/50"
-        >
-          <div className="p-1.5 bg-black/10 rounded-lg">
-            <RefreshCw className="w-4 h-4 animate-spin-slow" />
-          </div>
-          <div className="flex flex-col">
-            <span className="text-[10px] font-black uppercase tracking-widest leading-none">Nova Versão Disponível</span>
-            <span className="text-[9px] font-bold opacity-80 italic">v{serverVersion || '?.?.?'} detectada</span>
-          </div>
-          <button 
-            onClick={() => forceUpdate()}
-            className="ml-2 px-3 py-1.5 bg-black text-white text-[10px] font-black uppercase tracking-widest rounded-lg hover:bg-zinc-800 transition-colors cursor-pointer"
-          >
-            Atualizar Agora
-          </button>
-        </motion.div>
-      )}
-    </>
-  );
 
   // 3. Unauthenticated Screen
   if (!user) {
@@ -525,32 +561,9 @@ export const ViewManager: React.FC<ViewManagerProps> = (props) => {
 
       {/* Main Content Area (Offset by sidebar width on desktop) */}
       <div className="md:pl-64 flex flex-col min-h-screen">
+        {renderVersionOverlay()}
         {/* Network & Diagnostics */}
         <NetworkStatusIndicator />
-        <UpdateNotificationToast needRefresh={needRefresh} updateServiceWorker={updateServiceWorker} />
-        
-        {/* Manual Version Update Banner */}
-        {hasNewVersion && (
-          <motion.div 
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="fixed top-4 right-4 z-[100] bg-amber-500 text-black px-4 py-2 rounded-xl shadow-2xl flex items-center gap-3 border border-amber-400/50"
-          >
-            <div className="p-1.5 bg-black/10 rounded-lg">
-              <RefreshCw className="w-4 h-4 animate-spin-slow" />
-            </div>
-            <div className="flex flex-col">
-              <span className="text-[10px] font-black uppercase tracking-widest leading-none">Nova Versão Disponível</span>
-              <span className="text-[9px] font-bold opacity-80 italic">v{serverVersion || '?.?.?'} detectada</span>
-            </div>
-            <button 
-              onClick={() => forceUpdate()}
-              className="ml-2 px-3 py-1.5 bg-black text-white text-[10px] font-black uppercase tracking-widest rounded-lg hover:bg-zinc-800 transition-colors cursor-pointer"
-            >
-              Atualizar Agora
-            </button>
-          </motion.div>
-        )}
         <BirthdayBanner birthdays={todayBirthdays} />
         <WelcomeBanner show={showWelcome} onClose={() => setShowWelcome(false)} playerName={currentPlayer?.name || ''} />
 
@@ -805,6 +818,11 @@ export const ViewManager: React.FC<ViewManagerProps> = (props) => {
       <SetterStrategyModal />
       <SyncSettingsModal />
       <SyncDebuggerModal />
+      <QuotaExceededModal 
+        isOpen={isQuotaModalOpen} 
+        onClose={() => setIsQuotaModalOpen(false)} 
+        errorMessage={errorMessage} 
+      />
       <PreGameReminderContainer 
         currentPlayer={currentPlayer} 
         userRole={userRole} 

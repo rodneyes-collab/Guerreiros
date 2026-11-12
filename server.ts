@@ -434,7 +434,7 @@ async function startServer() {
           remindersSent: {},
           automationEnabled: data.automationEnabled ?? true,
           lastUpdated: Date.now()
-        }, { merge: true });
+        });
 
         // 2. Reset system metadata for the new session if needed
         const systemRef = doc(db, 'metadata', 'system');
@@ -472,7 +472,7 @@ async function startServer() {
 
   // IA Sentinel Deep Scan Endpoint
   app.post("/api/sentinel/deep-scan", async (req, res) => {
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
     if (!apiKey) {
       return res.status(500).json({ error: "GEMINI_API_KEY is not configured" });
     }
@@ -500,7 +500,7 @@ async function startServer() {
 
   // AI Coach Feedback Endpoint
   app.post("/api/ai/coach-feedback", async (req, res) => {
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
     if (!apiKey) {
       return res.status(500).json({ error: "GEMINI_API_KEY is not configured" });
     }
@@ -529,7 +529,7 @@ async function startServer() {
 
   // AI Chat Bot Endpoint
   app.post("/api/ai/chat", async (req, res) => {
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
     if (!apiKey) {
       return res.status(500).json({ error: "GEMINI_API_KEY is not configured" });
     }
@@ -1085,19 +1085,14 @@ app.get("/api/billing/real-time", async (req, res) => {
             delete timestamps[alias];
           });
 
-          const { deleteField, updateDoc } = await import("firebase/firestore");
-          const updatePayload: Record<string, any> = {
-            targetDate: existingData.targetDate || getFirestoreDateKey(),
+          await setDoc(intentionsRef, {
+            targetDate: existingData.targetDate || getNextThursday(),
             automationEnabled: existingData.automationEnabled ?? true,
             responses,
             confirmationTimestamps: timestamps,
+            remindersSent: existingData.remindersSent || {},
             lastUpdated: Date.now()
-          };
-          aliasSet.forEach(alias => {
-            updatePayload[`responses.${alias}`] = deleteField();
-            updatePayload[`confirmationTimestamps.${alias}`] = deleteField();
           });
-          await updateDoc(intentionsRef, updatePayload);
         } else {
           responses[playerId] = status;
           if (status === 'GOING') {
@@ -1107,12 +1102,13 @@ app.get("/api/billing/real-time", async (req, res) => {
           }
 
           await setDoc(intentionsRef, {
-            targetDate: existingData.targetDate || getFirestoreDateKey(),
+            targetDate: existingData.targetDate || getNextThursday(),
             automationEnabled: existingData.automationEnabled ?? true,
             responses,
             confirmationTimestamps: timestamps,
+            remindersSent: existingData.remindersSent || {},
             lastUpdated: Date.now()
-          }, { merge: true });
+          });
         }
 
         // Also update preConfirmations
@@ -1194,6 +1190,42 @@ app.get("/api/billing/real-time", async (req, res) => {
     } catch (e: any) {
         console.error("[Presence API] Error Details:", { message: e.message, code: e.code, stack: e.stack });
         res.status(500).json({ error: e.message, details: e.toString() });
+    }
+  });
+
+  // Server endpoint for clearing all intentions across Firestore
+  app.post("/api/presence/clear", async (_req, res) => {
+    try {
+      const db = await getWebFirestoreInstance();
+      if (!db) return res.status(500).json({ error: "Firebase não configurado" });
+      const { doc, setDoc, getDocs, collection, deleteDoc } = await import("firebase/firestore");
+      const nextThu = getNextThursday();
+      const now = Date.now();
+
+      await setDoc(doc(db, "metadata", "intentions"), {
+        targetDate: nextThu,
+        automationEnabled: true,
+        responses: {},
+        confirmationTimestamps: {},
+        remindersSent: {},
+        lastUpdated: now
+      });
+
+      const datesToClear = [nextThu, getFirestoreDateKey()];
+      for (const dKey of datesToClear) {
+        try {
+          const snap = await getDocs(collection(db, 'preConfirmations', dKey, 'players'));
+          for (const d of snap.docs) {
+            await deleteDoc(d.ref).catch(() => {});
+          }
+        } catch (e) {}
+      }
+
+      console.log(`[Presence API] Cleared intentions list and preConfirmations collections.`);
+      res.json({ success: true, message: "Lista de intenções zerada com sucesso" });
+    } catch (err: any) {
+      console.error("[Presence API] Clear error:", err);
+      res.status(500).json({ error: err.message });
     }
   });
 
@@ -1822,15 +1854,33 @@ app.get("/api/billing/real-time", async (req, res) => {
     }
   } else {
     const distPath = path.join(process.cwd(), 'dist');
+    
+    // Aggressive cache control middleware for production-like mode
+    app.use((req, res, next) => {
+      const isHtml = req.path === '/' || req.path.endsWith('.html');
+      const isPwa = req.path.endsWith('sw.js') || req.path.endsWith('manifest.webmanifest');
+      
+      if (isHtml || isPwa) {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+      }
+      next();
+    });
+
     app.use(express.static(distPath, {
       setHeaders: (res, filePath) => {
         if (filePath.endsWith('index.html') || filePath.endsWith('sw.js') || filePath.endsWith('manifest.webmanifest')) {
           res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
           res.setHeader('Pragma', 'no-cache');
           res.setHeader('Expires', '0');
+        } else {
+          // Other assets can be cached for a short time but with revalidation
+          res.setHeader('Cache-Control', 'public, no-cache, max-age=0');
         }
       }
     }));
+
     app.get('*', (req, res) => {
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
       res.setHeader('Pragma', 'no-cache');

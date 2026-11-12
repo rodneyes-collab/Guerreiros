@@ -12,7 +12,7 @@ export const AdminEloSummaryTableCard: React.FC<AdminEloSummaryTableCardProps> =
   // Filtrar apenas sócios estritamente ativos conforme regras do clube
   const activePlayers = useMemo(() => {
     return players
-      .filter(p => p.status === 'active')
+      .filter(p => p.status === 'active' && !p.isDM)
       .map(player => {
         const wins = player.wins || 0;
         const losses = player.losses || 0;

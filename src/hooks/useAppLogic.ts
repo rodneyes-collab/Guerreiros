@@ -402,6 +402,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
               dailyEloGain: 0,
               dailyResults: [],
               playedLastMatch: false,
+              consecutivePlayed: 0,
               consecutiveBenched: 0
             }));
 
@@ -422,6 +423,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
                   p.dailyEloGain = (p.dailyEloGain || 0) + 20; // Base estimate for Guardian
                   p.dailyResults = [...(p.dailyResults || []), 'V' as const];
                   p.playedLastMatch = true;
+                  p.consecutivePlayed = (p.consecutivePlayed || 0) + 1;
                   p.consecutiveBenched = 0;
                 }
               });
@@ -434,6 +436,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
                   p.dailyEloGain = (p.dailyEloGain || 0) - 20; // Base estimate for Guardian
                   p.dailyResults = [...(p.dailyResults || []), 'D' as const];
                   p.playedLastMatch = true;
+                  p.consecutivePlayed = (p.consecutivePlayed || 0) + 1;
                   p.consecutiveBenched = 0;
                 }
               });
@@ -445,6 +448,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
                   const p = resetPlayers.find(rp => rp.id === attPlayer.id);
                   if (p) {
                     p.playedLastMatch = false;
+                    p.consecutivePlayed = 0;
                     p.consecutiveBenched = (p.consecutiveBenched || 0) + 1;
                   }
                 }
@@ -454,7 +458,14 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
             // Write corrected player stats to batch
             resetPlayers.forEach(p => {
               const original = players.find(op => op.id === p.id);
-              if (original && (p.dailyMatches !== original.dailyMatches || p.dailyWins !== original.dailyWins || p.dailyLosses !== original.dailyLosses)) {
+              if (original && (
+                p.dailyMatches !== original.dailyMatches || 
+                p.dailyWins !== original.dailyWins || 
+                p.dailyLosses !== original.dailyLosses ||
+                p.consecutiveBenched !== (original.consecutiveBenched || 0) ||
+                p.consecutivePlayed !== (original.consecutivePlayed || 0) ||
+                p.playedLastMatch !== original.playedLastMatch
+              )) {
                 batch.set(doc(db, 'players', p.id), {
                   dailyMatches: p.dailyMatches,
                   dailyWins: p.dailyWins,
@@ -462,6 +473,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
                   dailyEloGain: p.dailyEloGain,
                   dailyResults: p.dailyResults,
                   playedLastMatch: p.playedLastMatch,
+                  consecutivePlayed: p.consecutivePlayed,
                   consecutiveBenched: p.consecutiveBenched
                 }, { merge: true });
               }
@@ -1325,6 +1337,7 @@ const playersToNotify = [...teamA, ...teamB];
     const previousAttendance = [...attendance];
     
     try {
+      setIsSyncing(true);
       triggerDbStatus('writing');
       const dateKey = getFirestoreDateKey();
       
@@ -1334,10 +1347,7 @@ const playersToNotify = [...teamA, ...teamB];
       const attendanceRef = doc(db, 'attendance', dateKey, 'players', playerId);
       const batch = writeBatch(db);
       
-      batch.update(attendanceRef, {
-        status: 'left',
-        leftAt: Date.now()
-      });
+      batch.delete(attendanceRef);
 
       if (commitBatchWithLog) {
         await commitBatchWithLog(batch, 'Remover Presença Individual', 1);
@@ -1351,6 +1361,8 @@ const playersToNotify = [...teamA, ...teamB];
       console.error("Reverting optimistic UI due to network error:", error);
       setAttendance(previousAttendance);
       handleFirestoreError(error, OperationType.WRITE, 'attendance');
+    } finally {
+      setIsSyncing(false);
     }
   };
 
@@ -1805,6 +1817,7 @@ const playersToNotify = [...teamA, ...teamB];
                 dailyLosses: 0, 
                 dailyResults: [], 
                 dailyEloGain: 0,
+                consecutivePlayed: 0,
                 consecutiveBenched: 0 
               };
               batch.set(doc(db, 'players', p.id), cleanObject(updates), { merge: true });
@@ -2717,7 +2730,7 @@ const playersToNotify = [...teamA, ...teamB];
       let finalStatus = playerData.status || 'active';
 
       if (isNewPlayer) {
-        const activeCount = players.filter(p => p.status === 'active').length;
+        const activeCount = players.filter(p => p.status === 'active' && !p.isDM).length;
         const waitlistCount = players.filter(p => p.status === 'waitlist').length;
 
         if (activeCount >= MAX_ACTIVE_MEMBERS) {
@@ -2780,9 +2793,20 @@ const playersToNotify = [...teamA, ...teamB];
       const today = getFirestoreDateKey();
       const attendanceRef = doc(db, 'attendance', today, 'players', id);
       
-      // Verificamos se o jogador está na lista de presença atual
+      // Check if player is currently in local attendance list
       const isInAttendance = attendance.some(p => p.id === id);
-      if (isInAttendance) {
+
+      // If player is marked as DM or non-active, remove them from attendance, preConfirmations, and intentions
+      const isNotActive = finalStatus !== 'active' || Boolean(validatedData.isDM);
+      if (isNotActive) {
+        batch.delete(attendanceRef);
+        batch.delete(doc(db, 'preConfirmations', id));
+        const intentionsRef = doc(db, 'metadata', 'intentions');
+        batch.update(intentionsRef, {
+          [`responses.${id}`]: deleteField(),
+          [`confirmationTimestamps.${id}`]: deleteField()
+        });
+      } else if (isInAttendance) {
         batch.set(attendanceRef, {
           isOfficialSetter: validatedData.isOfficialSetter,
           setterStartDate: (validatedData as any).setterStartDate || null
@@ -3203,7 +3227,7 @@ const playersToNotify = [...teamA, ...teamB];
         hasNotifications = true;
       }
 
-      const attendanceList = attendance.filter(p => !p.status || p.status === 'active');
+      const attendanceList = attendance.filter(p => (!p.status || p.status === 'active') && !p.isDM);
       for (const att of attendanceList) {
         if (!onCourtIds.has(att.id)) {
           const playerRef = doc(db, 'attendance', getFirestoreDateKey(), 'players', att.id);
@@ -3337,15 +3361,19 @@ const playersToNotifyWithTokens = [
         await batch.commit();
       }
 
-      setGenerationResult(result);
+      // Verificação de estado pós-confirmação para garantir transição imediata da UI
+      useStore.setState({
+        generationResult: result,
+        viewMode: 'generation',
+        scoreA: 0,
+        scoreB: 0,
+        tempScoreA: '0',
+        tempScoreB: '0',
+        scoreMode: 'QUICK'
+      });
+
       setAnalysis('');
       setRuleVerification('');
-      setViewMode('generation');
-      setScoreA(0);
-      setScoreB(0);
-      setTempScoreA('0');
-      setTempScoreB('0');
-      setScoreMode('QUICK');
 
       generateTeamAnnouncementAudio(result.teamA, result.teamB).then(audio => {
         if (audio) setNarrationAudio(audio);
@@ -3380,7 +3408,7 @@ const playersToNotifyWithTokens = [
           ...(generationResult.teamB.setter ? [generationResult.teamB.setter] : []),
           ...generationResult.teamB.players
         ]
-      : attendance.filter(p => !p.status || p.status === 'active');
+      : attendance.filter(p => (!p.status || p.status === 'active') && !p.isDM);
 
     // Filter out DMs
     playersToUse = playersToUse.filter(p => !p.isDM);
@@ -3829,8 +3857,24 @@ const playersToNotify = [
   };
 
   const triggerSync = async () => {
-    showNotification('Sincronização forçada iniciada...', 'info');
-    window.location.reload();
+    showNotification('Limpando cache e sincronizando com o servidor...', 'info');
+    try {
+      if (typeof window !== 'undefined') {
+        if ('caches' in window && typeof caches.keys === 'function') {
+          const names = await caches.keys();
+          await Promise.all(names.map(name => caches.delete(name)));
+        }
+        if ('serviceWorker' in navigator) {
+          const regs = await navigator.serviceWorker.getRegistrations();
+          for (const r of regs) {
+            await r.unregister();
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Erro ao limpar caches locais:', e);
+    }
+    window.location.href = window.location.origin + window.location.pathname + '?refresh=' + Date.now();
   };
 
   const recalculateDailyStats = async () => {
@@ -3851,6 +3895,7 @@ const playersToNotify = [
         dailyEloGain: 0,
         dailyResults: [],
         playedLastMatch: false,
+        consecutivePlayed: 0,
         consecutiveBenched: 0
       }));
 
@@ -3889,6 +3934,7 @@ const playersToNotify = [
             p.dailyEloGain = (p.dailyEloGain || 0) + 20;
             p.dailyResults = [...(p.dailyResults || []), 'V' as const];
             p.playedLastMatch = true;
+            p.consecutivePlayed = (p.consecutivePlayed || 0) + 1;
             p.consecutiveBenched = 0;
           }
         });
@@ -3901,6 +3947,7 @@ const playersToNotify = [
             p.dailyEloGain = (p.dailyEloGain || 0) - 20;
             p.dailyResults = [...(p.dailyResults || []), 'D' as const];
             p.playedLastMatch = true;
+            p.consecutivePlayed = (p.consecutivePlayed || 0) + 1;
             p.consecutiveBenched = 0;
           }
         });
@@ -3913,6 +3960,7 @@ const playersToNotify = [
             const p = resetPlayers.find(rp => rp.id === attPlayer.id);
             if (p) {
               p.playedLastMatch = false;
+              p.consecutivePlayed = 0;
               p.consecutiveBenched = (p.consecutiveBenched || 0) + 1;
             }
           }
@@ -3921,17 +3969,18 @@ const playersToNotify = [
 
       // 4. Atualizar Firestore
       resetPlayers.forEach(p => {
-        if (p.dailyMatches > 0 || p.consecutiveBenched > 0) {
-          batch.set(doc(db, 'players', p.id), {
-            dailyMatches: p.dailyMatches,
-            dailyWins: p.dailyWins,
-            dailyLosses: p.dailyLosses,
-            dailyEloGain: p.dailyEloGain,
-            dailyResults: p.dailyResults,
-            playedLastMatch: p.playedLastMatch,
-            consecutiveBenched: p.consecutiveBenched
-          }, { merge: true });
-        }
+        // Removida a condicional restritiva para garantir que jogadores com stats residuais (ex: 7 partidas) 
+        // sejam efetivamente zerados se não houverem partidas registradas hoje.
+        batch.set(doc(db, 'players', p.id), {
+          dailyMatches: p.dailyMatches,
+          dailyWins: p.dailyWins,
+          dailyLosses: p.dailyLosses,
+          dailyEloGain: p.dailyEloGain,
+          dailyResults: p.dailyResults,
+          playedLastMatch: p.playedLastMatch,
+          consecutivePlayed: p.consecutivePlayed,
+          consecutiveBenched: p.consecutiveBenched
+        }, { merge: true });
       });
 
       // Calculate start of day for lastResetTimestamp to avoid fetching full history

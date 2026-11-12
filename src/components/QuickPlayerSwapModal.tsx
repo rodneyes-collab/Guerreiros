@@ -74,8 +74,8 @@ export const QuickPlayerSwapModal: React.FC<QuickPlayerSwapModalProps> = ({
 
   // Strict check for active members rule
   const isStrictlyActive = (p: Player) => {
-    if (p.status && p.status !== 'active') return false;
-    return true;
+    const status = p.status || 'active';
+    return status === 'active' && !p.isDM;
   };
 
   // Group candidates

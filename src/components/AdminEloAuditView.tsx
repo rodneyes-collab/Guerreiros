@@ -20,7 +20,7 @@ export const AdminEloAuditView: React.FC<AdminEloAuditViewProps> = ({
   // Filtrar apenas sócios estritamente ativos conforme regras do clube
   const activePlayers = useMemo(() => {
     return players
-      .filter(p => p.status === 'active')
+      .filter(p => p.status === 'active' && !p.isDM)
       .sort((a, b) => (b.elo || 1200) - (a.elo || 1200));
   }, [players]);
 

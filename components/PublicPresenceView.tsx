@@ -91,18 +91,18 @@ export const PublicPresenceView: React.FC<PublicPresenceViewProps> = ({ onBackTo
 
   // Get going and absent players for the Live Board
   const goingPlayers = useMemo(() => {
-    return players
+    return eligiblePlayers
       .filter(p => intentions.responses[p.id] === 'GOING')
       .sort((a, b) => {
         const timeA = intentions.confirmationTimestamps?.[a.id] || 0;
         const timeB = intentions.confirmationTimestamps?.[b.id] || 0;
         return timeA - timeB;
       });
-  }, [players, intentions.responses, intentions.confirmationTimestamps]);
+  }, [eligiblePlayers, intentions.responses, intentions.confirmationTimestamps]);
 
   const absentPlayers = useMemo(() => {
-    return players.filter(p => intentions.responses[p.id] === 'NOT_GOING');
-  }, [players, intentions.responses]);
+    return eligiblePlayers.filter(p => intentions.responses[p.id] === 'NOT_GOING');
+  }, [eligiblePlayers, intentions.responses]);
 
   const undecidedCount = useMemo(() => {
     return eligiblePlayers.length - goingPlayers.length - absentPlayers.length;

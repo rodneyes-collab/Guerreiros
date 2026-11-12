@@ -3,7 +3,7 @@ import { GenerationResult, Player, Match, Team } from "../types";
 import { calculateCompositePerformanceRating } from "../utils/teamLogic";
 
 export const getAI = () => {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
   if (!apiKey) {
     throw new Error("GEMINI_API_KEY is not configured on the server. Please verify your API key in the Settings > Secrets panel.");
   }

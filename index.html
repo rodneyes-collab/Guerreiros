@@ -5,14 +5,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Guerreiros Volleyball Club</title>
-    <meta name="description" content="Guerreiros Volleyball Club v3.3.0 - Ranking ELO e Gestão de Sócios">
+    <meta name="description" content="Guerreiros Volleyball Club v3.9.0 - Ranking ELO e Gestão de Sócios">
     <meta property="og:title" content="Guerreiros Volleyball Club">
-    <meta property="og:description" content="Guerreiros Volleyball Club v3.3.0 - Ranking ELO e Gestão de Sócios">
+    <meta property="og:description" content="Guerreiros Volleyball Club v3.9.0 - Ranking ELO e Gestão de Sócios">
     <meta name="theme-color" content="#000000">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <link rel="icon" type="image/png" href="/logo.png">
     <link rel="apple-touch-icon" href="/logo.png">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <script>
       // Global Gender runtime polyfill for mobile PWA standalone mode
       window.Gender = window.Gender || { MALE: 'MALE', FEMALE: 'FEMALE' };
@@ -37,57 +40,98 @@
       };
 
       (function() {
-        var lastReload = sessionStorage.getItem('last_version_reload');
-        var now = Date.now();
-        if (lastReload && now - parseInt(lastReload, 10) < 15000) return;
-
-        var currentInstalled = localStorage.getItem('guerreiros_app_version');
+        var EXPECTED_VERSION = '3.9.0';
         
+        // Helper para comparar versões (ex: "3.9.0" >= "3.3.8")
+        function isAtLeast(current, target) {
+          if (!current || !target) return false;
+          var c = current.split('.').map(Number);
+          var t = target.split('.').map(Number);
+          for (var x = 0; t.length > x || c.length > x; x++) {
+            var cv = c[x] || 0;
+            var tv = t[x] || 0;
+            if (cv > tv) return true;
+            if (cv < tv) return false;
+          }
+          return true; // Iguais
+        }
+
         var xhr = new XMLHttpRequest();
-        xhr.open('GET', '/api/version?v=' + now + '&r=' + Math.random(), true);
+        xhr.open('GET', '/api/version?v=' + Date.now() + '&r=' + Math.random(), true);
         xhr.timeout = 5000;
         xhr.onreadystatechange = function() {
           if (xhr.readyState === 4 && xhr.status === 200) {
             try {
               var data = JSON.parse(xhr.responseText);
-              if (data && data.version) {
-                if (currentInstalled && currentInstalled !== data.version) {
-                  console.log('[AutoUpdater] UPDATE DETECTED: ' + currentInstalled + ' -> ' + data.version);
-                  
-                  // Visual Feedback
-                  var root = document.getElementById('root');
-                  if (root) {
-                    root.innerHTML = '<div style="height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#000;color:#F5C429;font-family:sans-serif;text-align:center;padding:20px;">' +
-                      '<div style="width:50px;height:50px;border:4px solid #F5C429;border-top-color:transparent;border-radius:50%;animation:spin 1s linear infinite;margin-bottom:20px;"></div>' +
-                      '<h1 style="font-weight:900;text-transform:uppercase;letter-spacing:2px;margin:0;">Atualizando App</h1>' +
-                      '<p style="color:#666;font-size:12px;margin-top:10px;">Instalando versão ' + data.version + '...</p>' +
-                      '<style>@keyframes spin{to{transform:rotate(360deg)}}</style>' +
-                    '</div>';
-                  }
+              var serverVer = (data && data.version) ? data.version : EXPECTED_VERSION;
+              
+              var confirmedVersion = sessionStorage.getItem('guerreiros_confirmed_version');
+              var runningVersion = window.__RUNNING_APP_VERSION__;
+              
+              // Verificação semântica: Só força atualização se a versão rodando for estritamente MENOR que a do servidor
+              var isUpToDate = isAtLeast(confirmedVersion, serverVer) || isAtLeast(runningVersion, serverVer);
 
-                  localStorage.setItem('guerreiros_app_version', data.version);
-                  sessionStorage.setItem('last_version_reload', String(Date.now()));
-                  
-                  // Unregister and Clear
-                  if ('serviceWorker' in navigator) {
-                    navigator.serviceWorker.getRegistrations().then(function(regs) {
-                      if (regs) regs.forEach(function(r) { r.unregister(); });
-                    });
-                  }
-                  if ('caches' in window && typeof caches.keys === 'function') {
-                    caches.keys().then(function(names) {
-                      if (names) names.forEach(function(name) { caches.delete(name); });
-                    });
-                  }
-                  
-                  setTimeout(function() {
-                    window.location.href = window.location.origin + window.location.pathname + '?v_upd=' + data.version;
-                  }, 1500);
-                } else {
-                  localStorage.setItem('guerreiros_app_version', data.version);
+              if (!isUpToDate) {
+                console.warn('[AutoUpdater] Version mismatch detected: Running is older than Server (' + serverVer + '). Forcing cache purge...');
+                
+                // Limpa marcas no localStorage que possam ter sido gravadas prematuramente
+                localStorage.removeItem('guerreiros_app_version');
+                localStorage.removeItem('last_auto_update_target');
+                
+                // Desregistra todos os Service Workers ativados
+                if ('serviceWorker' in navigator) {
+                  navigator.serviceWorker.getRegistrations().then(function(regs) {
+                    if (regs && regs.length > 0) {
+                      for (var i = 0; i < regs.length; i++) {
+                        regs[i].unregister();
+                      }
+                    }
+                  });
                 }
+                
+                // Limpa todas as instâncias de CacheStorage
+                if ('caches' in window && typeof caches.keys === 'function') {
+                  caches.keys().then(function(names) {
+                    if (names && names.length > 0) {
+                      for (var j = 0; j < names.length; j++) {
+                        caches.delete(names[j]);
+                      }
+                    }
+                  });
+                }
+
+                // Cria overlay em tela cheia com JavaScript puro
+                var overlay = document.getElementById('critical-update-overlay');
+                if (!overlay && document.body) {
+                  overlay = document.createElement('div');
+                  overlay.id = 'critical-update-overlay';
+                  overlay.style.cssText = 'position:fixed;inset:0;z-index:999999;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#F5C429;font-family:system-ui,-apple-system,sans-serif;text-align:center;padding:30px;';
+                  overlay.innerHTML = 
+                    '<div style="width:50px;height:50px;border:4px solid #F5C429;border-top-color:transparent;border-radius:50%;animation:spin 1s linear infinite;margin-bottom:24px;"></div>' +
+                    '<h1 style="font-size:22px;font-weight:900;text-transform:uppercase;letter-spacing:1px;margin:0;color:#FFF;">Atualização Obrigatória v' + serverVer + '</h1>' +
+                    '<p style="color:#AAA;font-size:13px;margin-top:12px;max-width:280px;line-height:1.5;">Sua versão está desatualizada. Instalando versão crítica para garantir a sincronia...</p>' +
+                    '<button id="upd-now-btn" style="margin-top:30px;width:100%;max-width:260px;padding:16px;background:#F5C429;color:#000;border:none;border-radius:16px;font-weight:900;text-transform:uppercase;letter-spacing:1px;font-size:12px;cursor:pointer;box-shadow:0 8px 24px rgba(245,196,41,0.3);">Atualizar Agora</button>' +
+                    '<style>@keyframes spin{to{transform:rotate(360deg)}}</style>';
+                  document.body.appendChild(overlay);
+
+                  var doReload = function() {
+                    sessionStorage.clear();
+                    localStorage.removeItem('guerreiros_app_version');
+                    var freshUrl = window.location.origin + window.location.pathname + '?nocache=' + Date.now();
+                    window.location.replace(freshUrl);
+                  };
+
+                  var btn = document.getElementById('upd-now-btn');
+                  if (btn) btn.onclick = doReload;
+
+                  setTimeout(doReload, 3000);
+                }
+              } else {
+                console.log('[AutoUpdater] App is running version v' + (runningVersion || confirmedVersion) + '. Up to date with server v' + serverVer);
               }
-            } catch (e) {}
+            } catch (e) {
+              console.error('[AutoUpdater] Error in HTML update script:', e);
+            }
           }
         };
         xhr.send();

@@ -19,7 +19,7 @@ export const setupGeminiLiveWebSocket = (server: http.Server) => {
   });
 
   wss.on("connection", async (clientWs: WebSocket) => {
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
     if (!apiKey) {
       clientWs.send(JSON.stringify({ error: "GEMINI_API_KEY is not configured on the server. Please verify your API key in the Settings > Secrets panel." }));
       clientWs.close();

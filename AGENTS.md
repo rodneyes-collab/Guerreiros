@@ -8,13 +8,24 @@ Este documento detalha o padrão visual, a arquitetura de dados, os fluxos de au
 - **Nunca** utilize dados simulados, sintéticos, gerados por script ou inventados para partidas, histórico ou estatísticas.
 - **Sempre** utilize dados reais extraídos diretamente das interações e registros do clube.
 - **Verificação de Presença Obrigatória:** Qualquer partida ou histórico deve ser validado contra a **lista de presença oficial** (`attendance` collection) do respectivo dia. Nenhum atleta que não conste na lista de presença do dia pode figurar como participante em partidas daquela data.
+
+---
+
+## 🛑 DIRETRIZ ESTATUTÁRIA DE BANCO DE DADOS ÚNICO (UNIFIED DATABASE RULE)
+- **Proibição Absoluta de Múltiplos Bancos de Dados:** A aplicação NÃO PODE utilizar outro banco de dados. É estritamente proibido criar, provisionar, alternar ou apontar para instâncias secundárias ou bancos isolados (ex.: namespaces como `ai-studio-guerreirosvolley-...`).
+- **Banco Oficial Único:** Tanto o aplicativo instalado no celular (PWA / Produção) quanto o ambiente de desenvolvimento (AI Studio / Web) DEVEM utilizar obrigatoriamente a MESMA e ÚNICA instância do banco de dados Firestore: a base principal `(default)` do projeto `volleyclub-manager` (`"firestoreDatabaseId": "(default)"`).
+- **Diretriz para MCP, Skills e Agentes (Firebase / Firestore):**
+  - Qualquer ferramenta de provisionamento (`set_up_firebase`), skill (`firebase-integration-rpc`) ou protocolo MCP DEVE operar estritamente sobre a instância `(default)`.
+  - É expressamente proibido a qualquer agente, skill ou automação alterar o campo `firestoreDatabaseId` no `firebase-applet-config.json` para qualquer valor diferente de `"(default)"`.
+  - Todas as partidas, presenças oficiais (68+ rodadas históricas), rankings, intenções e perfis de sócios pertencem única e exclusivamente à base `(default)` unificada.
 Antes de executar QUALQUER alteração, a IA DEVE seguir estritamente este fluxo:
 
 1. **ANÁLISE DE IMPACTO:** Identifique os arquivos e funções que serão alterados. Se a alteração envolver `App.tsx`, a IA deve planejar a extração do código para um arquivo isolado antes de editá-lo.
 2. **PLANO DE EXECUÇÃO:** Apresente um plano de no máximo 3 etapas. Não comece a codificar antes do usuário confirmar.
 3. **ISOLAMENTO:** Jamais altere uma funcionalidade se ela estiver dentro de um componente genérico (como `App.tsx`) sem antes refatorá-la para um componente ou hook dedicado.
 4. **ZONAS DE NÃO INTERFERÊNCIA:** 
-    - **Filtro de Sócios Ativos:** Na lista de presença e na seleção para convocar (chamada, intenções e presenças pública/interna), SOMENTE sócios com status de cadastro estritamente ATIVO (`status === 'active'`) podem ser exibidos ou selecionados. Sócios com status Inativo (`status === 'inactive'`), DM (`status === 'dm'`), Departamento Médico ou Lista de Espera (`status === 'waiting'`) são estritamente proibidos de figurar em qualquer lista de presença ou convocação. Atualmente o clube conta com 30 sócios ativos.
+    - **Filtro de Sócios Ativos e DM (Departamento Médico):** Na lista de presença, na seleção para convocar (chamada, intenções e presenças pública/interna) e no motor de geração de times, SOMENTE sócios com status de cadastro estritamente ATIVO (`status === 'active'`) e que NÃO estejam marcados como DM (`isDM: true` ou `status === 'dm'`) podem ser exibidos ou selecionados. Sócios com status Inativo (`status === 'inactive'`), DM, Departamento Médico ou Lista de Espera (`status === 'waiting'`) são estritamente proibidos de figurar em qualquer lista de presença ou convocação. Atualmente o clube conta com 30 sócios ativos.
+    - **Gestão de Status de Saúde (Paulo Henrique e outros):** Sócios em DM (ex: Paulo Henrique) devem ser automaticamente ocultados de todas as interfaces de operação (Lista de Intenção, Presença e Escalação) até que seu status seja revertido para Ativo e o marcador `isDM` seja removido.
     - **Verificação e Comunicação Direta:** Após QUALQUER alteração, o agente deve validar o código (linter e build). A resposta enviada ao usuário NÃO deve detalhar arquivos modificados nem relatórios de testes, informando apenas que a solicitação foi verificada e testada com sucesso.
     - **Proibido "God Components":** É proibido adicionar lógica de negócio diretamente no `App.tsx`.
     - **Regra do Arquivo Único:** Todo componente novo deve ter seu próprio arquivo em `/src/components/`. Todo hook novo deve ir para `/src/hooks/`.
@@ -51,6 +62,7 @@ Para garantir a confiabilidade absoluta do histórico e dos rankings do Guerreir
 
 6. **Auto-Heal e Recuperação de Integridade:**
    - Em caso de discrepância entre o contador de partidas exibido no perfil do jogador e o número real de partidas registradas na coleção `matches` para o dia, o agente deve priorizar o reprocessamento baseado nos documentos de partida (Fonte da Verdade).
+   - **Reset Manual Soberano (`recalculateDailyStats`):** Ao disparar o recálculo manual ou finalizar o dia, o sistema DEVE obrigatoriamente realizar a escrita de todos os campos diários (`dailyMatches`, `dailyWins`, `dailyLosses`, `dailyEloGain`, `dailyResults`, `playedLastMatch`, `consecutivePlayed`, `consecutiveBenched`) para TODOS os jogadores, removendo qualquer trava condicional que impeça o zeramento de valores residuais de sessões anteriores.
 
 ---
 
@@ -156,12 +168,40 @@ Para garantir total transparência no motor de balanceamento e facilitar a corre
      - **Top / Bottom:** Separação obrigatória de destaques e atletas da base.
    - Em caso de descumprimento, badges de alerta vermelhos piscam na tela indicando a violação.
 
-3. **Logs de Auditoria de Console (`[IC AUDIT] / [ELO AUDIT]`):**
+3. **Auditoria de Camadas de Versão (`AppUpdateAuditPanel`):**
+   - Exibe em tempo real as versões reportadas pelo Bundle, Contexto JS, LocalStorage e SessionStorage.
+   - Permite identificar "Bypass de Cache" com falha quando o JS Context difere da Bundle Constant.
+
+4. **Monitoramento de Tráfego do Service Worker (`ServiceWorkerFetchLogPanel`):**
+   - Audita em tempo real se as requisições de rede estão sendo servidas pelo Cache do SW ou diretamente pela Rede, essencial para diagnosticar PWAs travados em assets antigos.
+
+5. **Logs de Auditoria de Console (`[IC AUDIT] / [ELO AUDIT]`):**
    - O sistema dispara logs automáticos no console durante a geração para atletas com IC > 75 ou nomes específicos solicitados para auditoria (ex: "Ana Maria").
    - Registra o detalhamento matemático da normalização técnica, pesos aplicados e do cálculo do IC final.
 
-4. **Trava de Sincronização e Auditoria de ELO:**
+6. **Trava de Sincronização e Auditoria de ELO:**
    - Toda alteração de ELO é auditada cronologicamente. Discrepâncias entre o saldo de vitórias/derrotas e o ELO atual disparam alertas no pipeline de dados.
+
+---
+
+## 🚀 Ciclo de Vida, Versionamento Crítico e Recuperação (PWA)
+
+Para garantir que todos os usuários operem na mesma versão e evitar corrupção de dados por scripts obsoletos:
+
+1. **Versionamento Semântico Estrito (`isAtLeast`):**
+   - A comparação de versões (`APP_VERSION`) segue estritamente a lógica semântica. O sistema **NUNCA** deve forçar uma atualização se a versão em execução (`runningVersion`) ou confirmada (`confirmedVersion`) for maior ou igual à versão reportada pelo servidor/API.
+   - O overlay de "Atualização Obrigatória" no `index.html` e o hook `useAutoVersionCheck` são os guardiões finais da integridade.
+
+2. **Protocolo de Auditoria Remota de Falhas (`system_audit_logs`):**
+   - Todo disparo de atualização crítica (`forceAppUpdate`) deve ser registrado preventivamente na coleção `system_audit_logs`.
+   - O log deve conter: versão atual, versão alvo, e-mail do usuário, User Agent e estado dos marcadores de versão (`localStorage` / `sessionStorage`).
+
+3. **Recuperação Nuclear (Deep Cache Wipe):**
+   - Em casos de instabilidade severa ou loop de versão, o sistema dispõe do **Deep Cache Wipe (Nuclear)**.
+   - **Ação:** Desregistra todos os Service Workers, limpa o Cache Storage, apaga as bases IndexedDB do Firebase (`volleyclub-manager/main`) e reseta os marcadores de versão. Isso garante um download 100% limpo do bundle na próxima recarga.
+
+4. **Promoção de Versão Global:**
+   - Através do painel administrativo, é possível promover a versão local `vX.Y.Z` como a versão oficial no Firestore (`metadata/system/appVersion`). Isso dispara o trigger de atualização obrigatória em todos os dispositivos conectados.
 
 ---
 
@@ -269,8 +309,9 @@ Para garantir a transparência histórica e a exatidão estatística de todos os
      - **Relatório WhatsApp (`handleCopyTextSummary`):** Seção dedicada exportando as duplas com menor taxa de vitórias no período (sessão ou acumulado).
    - **Critério de Elegibilidade:** Mínimo de 1 partida em sessões diárias e 2 partidas no ranking acumulado, ordenando por menor taxa de vitória e pontuação bayesiana (Laplace smoothing).
 
-3. **Validação Resiliente de Fuso Horário nos Resultados Diários:**
+3. **Validação Resiliente de Fuso Horário e Reset de Performance:**
    - As rotinas de recuperação e auditoria de estatísticas diárias (`recalculateDailyStats` em `useAppLogic.ts`) utilizam conversão explícita baseada no fuso de Brasília (`America/Sao_Paulo`) para cruzar `m.date` e `m.timestamp`, garantindo que nenhuma partida do dia seja desconsiderada por variações de formato (data simples vs ISO) ou deslocamento de fuso.
+   - **Garantia de Zeramento:** Operações de purga ou reset manual (`deleteMatchesByDate`, `recalculateDailyStats`) garantem a limpeza absoluta do `consecutivePlayed` e `dailyMatches`, prevenindo que atletas iniciem novas sessões com contadores inflados.
 
 ---
 
@@ -285,5 +326,7 @@ Para garantir a transparência histórica e a exatidão estatística de todos os
 ## 🛡️ Diretrizes Gerais de Implementação
 - **Fidelidade ao Layout Existente:** Toda inclusão, modificação ou alteração de layout de todo o aplicativo DEVE obedecer rigorosamente às regras, padrões visuais e layouts já implantados.
 - **Proteção de Sincronização:** Exibir sempre o indicador visual "Guerreiros Intelligence" e desabilitar controles durante salvamentos ou sorteios.
+- **Resiliência de Escrita (Batches):** Operações críticas que utilizam `writeBatch` (ex: `useIntentions`) devem obrigatoriamente instanciar o objeto batch dentro do loop de tentativa/retry para evitar erros de reuso após commit.
 - **Respeito ao Tema:** Manter o efeito "vazado" em status e utilizar exclusivamente a paleta oficial.
 - **Tailwind CSS First:** Prioridade absoluta para classes utilitárias sem arquivos CSS extras.
+- **PWA Integrity:** Jamais remover as verificações de versão do `index.html`, pois são o último recurso de defesa contra versões zumbis em navegadores mobile.

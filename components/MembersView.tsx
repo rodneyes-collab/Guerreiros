@@ -292,7 +292,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
   const [selectedPlayerHistory, setSelectedPlayerHistory] = React.useState<Player | null>(null);
 
   const generateBirthdayList = () => {
-    const activeMembers = players.filter(p => (p.status === 'active' || !p.status || p.status === ''));
+    const activeMembers = players.filter(p => (p.status === 'active' || !p.status || p.status === '') && !p.isDM);
     
     const birthdayMembers = activeMembers.filter(p => {
       if (!p.birthDate) return false;

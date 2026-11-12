@@ -32,7 +32,8 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
   const { intentions, isLoaded, setIntent, resetIntent, clearIntentions, toggleAutomation, sendReminders, copyToWhatsApp, copyReminder, getPlayerConfirmationTime, refreshIntentions } = useIntentions();
   const { players, attendance, preConfirmations, idToCanonicalId, showConfirmModal, isInitialLoading, user } = useStore(useShallow(state => ({players: state.players, attendance: state.attendance, preConfirmations: state.preConfirmations, idToCanonicalId: state.idToCanonicalId, showConfirmModal: state.showConfirmModal, isInitialLoading: state.isInitialLoading, user: state.user})));
   
-  const isAdmin = userRole === 'ADMIN' || !!currentPlayer?.isAdmin || (user?.email?.trim().toLowerCase() === 'rodneyes@gmail.com');
+  const simpleEmail = typeof window !== 'undefined' ? window.localStorage.getItem('simpleLoginEmail')?.trim().toLowerCase() : null;
+  const isAdmin = userRole === 'ADMIN' || !!currentPlayer?.isAdmin || (user?.email?.trim().toLowerCase() === 'rodneyes@gmail.com') || (simpleEmail === 'rodneyes@gmail.com') || useStore.getState().userRole === 'ADMIN';
   const { monthBirthdays, getBirthdaysByMonth } = useBirthdays(players);
   const [selectedMonth, setSelectedMonth] = React.useState<number>(() => (new Date().getMonth() + 1));
   const [isRefreshing, setIsRefreshing] = React.useState(false);
@@ -424,7 +425,11 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
 
   const [searchTerm, setSearchTerm] = React.useState('');
 
-  const isActiveStatus = (p: Player) => (p.status === 'active' || p.status === 'guest' || !p.status || p.status === '') && !p.isDM && p.status !== 'dm';
+  const isActiveStatus = (p: Player) => {
+    const status = p.status || 'active';
+    const isDM = Boolean(p.isDM || status === 'dm');
+    return (status === 'active' || status === 'guest') && !isDM;
+  };
 
   const checkPlayerIntent = React.useCallback((p: Player) => {
     if (!intentions.responses) return null;
@@ -485,7 +490,7 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
     };
 
     // 1. Check known active players
-    (players || []).filter(p => p.status === 'active' || (!p.status && p.status !== 'inactive')).forEach(p => {
+    (players || []).filter(p => isActiveStatus(p)).forEach(p => {
       const intent = checkPlayerIntent(p);
       if (intent === 'GOING' && !addedIds.has(p.id)) {
         markPlayerAdded(p);
@@ -505,8 +510,10 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
         );
         if (matchingPlayer) {
           markPlayerAdded(matchingPlayer);
-          if (!confirmed.some(c => c.id === matchingPlayer.id)) {
-            confirmed.push(matchingPlayer);
+          if (isActiveStatus(matchingPlayer)) {
+            if (!confirmed.some(c => c.id === matchingPlayer.id)) {
+              confirmed.push(matchingPlayer);
+            }
           }
           return;
         }
@@ -548,7 +555,7 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
   }, [players, intentions.responses, idToCanonicalId, preConfirmations, checkPlayerIntent, getPlayerConfirmationTime]);
 
   const notGoingPlayers = React.useMemo(() => {
-    return (players || []).filter(p => checkPlayerIntent(p) === 'NOT_GOING');
+    return (players || []).filter(p => checkPlayerIntent(p) === 'NOT_GOING' && isActiveStatus(p));
   }, [players, checkPlayerIntent]);
 
   const undecidedPlayers = React.useMemo(() => {
@@ -602,7 +609,13 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
   const displayDate = intentions.targetDate || getNextThursday();
   const formattedDate = displayDate.split('-').reverse().slice(0, 2).join('/');
 
-  if (!isLoaded || isInitialLoading || (players.length === 0 && Object.keys(intentions?.responses || {}).length > 0)) {
+  const [forceLoad, setForceLoad] = React.useState(false);
+  React.useEffect(() => {
+    const t = setTimeout(() => setForceLoad(true), 1500);
+    return () => clearTimeout(t);
+  }, []);
+
+  if (!forceLoad && (!isLoaded || isInitialLoading || (players.length === 0 && Object.keys(intentions?.responses || {}).length > 0))) {
     return (
       <div className="flex flex-col items-center justify-center py-20 space-y-4">
         <div className="w-12 h-12 border-4 border-brand-primary border-t-transparent rounded-full animate-spin"></div>
@@ -1076,9 +1089,13 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
                   showConfirmModal(
                     'Zerar Lista de Intenção',
                     'Tem certeza que deseja apagar todas as respostas e zerar a lista atual? Esta ação não pode ser desfeita.',
-                    () => {
-                      clearIntentions();
-                      showNotification('Lista zerada com sucesso!', 'success');
+                    async () => {
+                      try {
+                        await clearIntentions();
+                        showNotification('Lista zerada com sucesso!', 'success');
+                      } catch (err) {
+                        showNotification('Erro ao zerar lista de intenção.', 'error');
+                      }
                     }
                   );
                 }}
@@ -1108,7 +1125,7 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
             <AnimatePresence mode="popLayout">
               {goingPlayers.map((p, i) => {
                 const isCheckedIn = (attendance || []).some(a => a.id === p.id);
-                const canReset = !isCheckedIn && (currentPlayer?.id === p.id || isAdmin);
+                const canReset = isAdmin || (!isCheckedIn && currentPlayer?.id === p.id);
                 const timeStr = formatConfirmationTime(getPlayerConfirmationTime(p));
                 return (
                   <ConfirmedPlayerItem
@@ -1186,7 +1203,7 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({ userRole, curren
             ) : (
               <AnimatePresence mode="popLayout">
                 {notGoingPlayers.map((p, i) => {
-                  const canReset = currentPlayer?.id === p.id || userRole === 'ADMIN';
+                  const canReset = isAdmin || currentPlayer?.id === p.id;
                   return (
                     <NotGoingPlayerItem
                       key={p.id}

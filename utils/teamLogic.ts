@@ -199,7 +199,11 @@ export const getPriorityQueue = (
   count: number = 12,
   settersCount: number = 2
 ): { topPlayers: Player[]; remainingPlayers: Player[] } => {
-  const activePlayers = (list || []).filter(p => !p.status || p.status === 'active');
+  const activePlayers = (list || []).filter(p => {
+    const status = p.status || 'active';
+    const isDM = Boolean(p.isDM || status === 'dm');
+    return status === 'active' && !isDM;
+  });
   
   const officialSetters = activePlayers.filter(p => p.isOfficialSetter);
   const linePlayers = activePlayers.filter(p => !p.isOfficialSetter);
@@ -768,7 +772,11 @@ export const autoFixAllInconsistencies = (
       teamB.setter?.id,
       ...(teamB.players || []).map(p => p.id)
     ].filter(Boolean));
-    remainingPlayers = attendance.filter(p => (!p.status || p.status === 'active') && !onCourtIds.has(p.id));
+    remainingPlayers = attendance.filter(p => {
+      const status = p.status || 'active';
+      const isDM = Boolean(p.isDM || status === 'dm');
+      return status === 'active' && !isDM && !onCourtIds.has(p.id);
+    });
   }
 
   // 1. Correção Soberana de Levantadores

@@ -33,7 +33,7 @@ import {
 
 import ViewManager from './src/components/ViewManager';
 
-import { getBrazilDay, getFirestoreDateKey, db, doc, updateDoc, setDoc, clearIndexedDbPersistence } from './firebase';
+import { getBrazilDay, getFirestoreDateKey, db, doc, updateDoc, setDoc, clearIndexedDbPersistence, onSnapshot } from './firebase';
 import { useStore } from './store';
 import { useAuth } from './src/hooks/useAuth';
 import { useFirestoreSync } from './src/hooks/useFirestoreSync';
@@ -204,17 +204,24 @@ const App: React.FC = () => {
   
   const { needRefresh, updateServiceWorker } = useServiceWorkerUpdate();
 
-  // Automatic consecutive version marker with module-level safeguard
+  // 1. Force Reload Listener: Monitora se o Admin disparou um comando de recarregamento nuclear no Firestore
   useEffect(() => {
-    if (userRole === 'ADMIN' && systemMetadata && systemMetadata.appVersion !== APP_VERSION && !versionUpdateChecked) {
-      versionUpdateChecked = true;
-      const nextBuildNumber = (systemMetadata.versionNumber || 0) + 1;
-      updateSystemMetadata({
-        appVersion: APP_VERSION,
-        versionNumber: nextBuildNumber
-      }).catch(() => {});
-    }
-  }, [userRole, systemMetadata, updateSystemMetadata]);
+    if (!db) return;
+    const unsub = onSnapshot(doc(db, 'metadata', 'system'), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        const forceReloadId = data.forceReloadId;
+        const lastLocalReload = localStorage.getItem('guerreiros_last_force_reload');
+        
+        if (forceReloadId && forceReloadId !== lastLocalReload) {
+          console.warn('[System] COMANDO DE RECARREGAMENTO FORÇADO DETECTADO!');
+          localStorage.setItem('guerreiros_last_force_reload', forceReloadId);
+          forceUpdate();
+        }
+      }
+    });
+    return () => unsub();
+  }, [forceUpdate]);
 
   useEffect(() => {
     if (!user) {

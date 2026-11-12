@@ -43,6 +43,8 @@ import {
   initializeFirestore,
   persistentLocalCache,
   persistentMultipleTabManager,
+  memoryLocalCache,
+  CACHE_SIZE_UNLIMITED,
   clearIndexedDbPersistence, 
   enableNetwork, 
   disableNetwork,
@@ -68,24 +70,94 @@ if (typeof window !== 'undefined') {
   } catch (e) {}
 }
 
-// Multi-Tab Persistence Setup for Firebase 11
+// Selector e Gerenciador de Persistência / Cache no Firestore para evitar QuotaExceededError
+export type FirestorePersistenceMode = 'bounded' | 'memory' | 'unlimited';
+
+export const getFirestorePersistenceMode = (): FirestorePersistenceMode => {
+  if (typeof window === 'undefined' || !window.localStorage) return 'bounded';
+  const saved = window.localStorage.getItem('guerreiros_firestore_persistence_mode');
+  if (saved === 'memory' || saved === 'unlimited' || saved === 'bounded') return saved;
+  return 'bounded';
+};
+
+export const purgeFirestoreLocalStorageKeys = (): number => {
+  if (typeof window === 'undefined' || !window.localStorage) return 0;
+  let count = 0;
+  try {
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const k = window.localStorage.key(i);
+      if (k && (
+        k.includes('firestore_targets_') || 
+        k.includes('firebaseLocalStorage') || 
+        k.includes('firestore_client_side_state') || 
+        k.includes('volleyclub-manager')
+      )) {
+        keysToRemove.push(k);
+      }
+    }
+    keysToRemove.forEach(k => {
+      window.localStorage.removeItem(k);
+      count++;
+    });
+  } catch (err) {
+    console.warn('[Firestore] Erro ao expurgar chaves do LocalStorage:', err);
+  }
+  return count;
+};
+
+export const setFirestorePersistenceMode = (mode: FirestorePersistenceMode): void => {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  window.localStorage.setItem('guerreiros_firestore_persistence_mode', mode);
+  purgeFirestoreLocalStorageKeys();
+  window.location.reload();
+};
+
 let dbInstance;
-// Prioriza o banco customizado se definido
+export let isMemoryFallbackActive = false;
+
+// Prioriza o banco customizado se definido (ex.: volleyclub-manager)
 const dbId = (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)') 
   ? firebaseConfig.firestoreDatabaseId 
   : undefined;
 
 if (typeof window !== 'undefined') {
+  const currentMode = getFirestorePersistenceMode();
+  
+  // Limpa alvos velhos do localStorage para não exceder cota do projeto volleyclub-manager
+  if (currentMode !== 'unlimited') {
+    purgeFirestoreLocalStorageKeys();
+  }
+
+  let localCacheSetting;
+  if (currentMode === 'memory') {
+    localCacheSetting = memoryLocalCache();
+  } else if (currentMode === 'unlimited') {
+    localCacheSetting = persistentLocalCache({
+      tabManager: persistentMultipleTabManager(),
+      cacheSizeBytes: CACHE_SIZE_UNLIMITED
+    });
+  } else {
+    // 'bounded' - 10MB limit especificamente calibrado para a instância volleyclub-manager
+    localCacheSetting = persistentLocalCache({
+      tabManager: persistentMultipleTabManager(),
+      cacheSizeBytes: 10 * 1024 * 1024 // 10 MB
+    });
+  }
+
   try {
-    const settings = {
-      localCache: persistentLocalCache({
-        tabManager: persistentMultipleTabManager()
-      })
-    };
+    const settings = { localCache: localCacheSetting };
     dbInstance = dbId ? initializeFirestore(app, settings, dbId) : initializeFirestore(app, settings);
-  } catch (e) {
-    console.warn('[Firestore] Modern persistence init skipped or already initialized, using existing instance:', e);
-    dbInstance = dbId ? getFirestore(app, dbId) : getFirestore(app);
+  } catch (e: any) {
+    console.warn('[Firestore] Modern persistence init failed or quota exceeded, activating memoryLocalCache fallback:', e);
+    isMemoryFallbackActive = true;
+    purgeFirestoreLocalStorageKeys();
+    try {
+      const memSettings = { localCache: memoryLocalCache() };
+      dbInstance = dbId ? initializeFirestore(app, memSettings, dbId) : initializeFirestore(app, memSettings);
+    } catch (fallbackErr) {
+      dbInstance = dbId ? getFirestore(app, dbId) : getFirestore(app);
+    }
   }
 
   // Auto-reconnect when device regains connectivity
@@ -142,13 +214,39 @@ export interface FirestoreErrorInfo {
   }
 }
 
+/**
+ * Alterna temporariamente disableNetwork/enableNetwork e expurga alvos locais
+ * do LocalStorage para prevenir QuotaExceededError durante o onAuthStateChanged
+ * ou em resposta a erros críticos de cota.
+ */
+export const resetFirestoreNetworkSession = async (): Promise<void> => {
+  if (typeof window === 'undefined' || !db) return;
+  try {
+    console.info('[Firestore Network Manager] Alternando estado de rede (disableNetwork -> enableNetwork) para rotacionar persistência...');
+    await disableNetwork(db);
+    purgeFirestoreLocalStorageKeys();
+    await enableNetwork(db);
+    console.info('[Firestore Network Manager] Rede reabilitada com sucesso com cache purgado.');
+  } catch (err) {
+    console.warn('[Firestore Network Manager] Erro ao alternar rede do Firestore:', err);
+    try {
+      await enableNetwork(db);
+    } catch (e) {}
+  }
+};
+
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
   const message = error instanceof Error ? error.message : String(error);
   const code = (error as any)?.code;
 
-  if (code === 'resource-exhausted' || message.includes('bandwidth for writes') || message.includes('quota exceeded')) {
+  if (code === 'resource-exhausted' || message.includes('bandwidth for writes') || message.includes('quota exceeded') || message.includes('QuotaExceededError') || message.includes('maximum bandwidth')) {
     isQuotaExceeded = true;
-    console.error('[Firestore] Quota exceeded! Disabling background writes.');
+    console.warn('[Firestore Quota Handled] Cota excedida ou limite de armazenamento atingido. Executando disableNetwork/enableNetwork e expurgo preventivo:', message);
+    purgeFirestoreLocalStorageKeys();
+    if (typeof window !== 'undefined' && db) {
+      resetFirestoreNetworkSession().catch(err => console.warn('[Firestore] Erro no reset de rede por quota:', err));
+    }
+    return;
   }
 
   if (code === 'unavailable' || message.includes('unavailable') || message.includes('Could not reach Cloud Firestore backend') || message.includes('client is offline')) {
@@ -558,6 +656,8 @@ export {
   serverTimestamp,
   collectionGroup,
   clearIndexedDbPersistence,
+  enableNetwork,
+  disableNetwork,
   getDocsFromServer,
   deleteField,
   getStorage,

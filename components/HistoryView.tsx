@@ -7,6 +7,7 @@ import { formatTime } from '../utils/helpers';
 import { WinLossChart } from '../src/components/WinLossChart';
 import { getFirestoreDateKey } from '../firebase';
 import { toStandardDateKey } from '../src/utils/dateUtils';
+import { standardizeMatchesList } from '../src/utils/matchIntegrity';
 import { 
   Trophy, 
   Clock, 
@@ -45,7 +46,8 @@ interface HistoryViewProps {
 export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDeleteMatchesByDate, onUpdateMatchResult, onReprocessAllMatches }) => {
   const [editingMatch, setEditingMatch] = useState<Match | null>(null);
   const [isReprocessing, setIsReprocessing] = useState(false);
-  const { matches, players: allPlayers, userRole, currentPlayer, attendance: allAttendance, tournaments } = useStore(useShallow(state => ({matches: state.matches, players: state.players, userRole: state.userRole, currentPlayer: state.currentPlayer, attendance: state.attendance, tournaments: state.tournaments})));
+  const { matches: rawMatches, players: allPlayers, userRole, currentPlayer, attendance: allAttendance, tournaments } = useStore(useShallow(state => ({matches: state.matches, players: state.players, userRole: state.userRole, currentPlayer: state.currentPlayer, attendance: state.attendance, tournaments: state.tournaments})));
+  const matches = React.useMemo(() => standardizeMatchesList(rawMatches || []), [rawMatches]);
   const players = React.useMemo(() => allPlayers.filter(p => p.status !== 'inactive'), [allPlayers]);
   const attendance = React.useMemo(() => allAttendance.filter(p => p.status !== 'inactive'), [allAttendance]);
   
@@ -72,17 +74,40 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
     return Array.from(dates).sort((a, b) => b.localeCompare(a));
   }, [matches]);
 
-  const [performanceDate, setPerformanceDate] = useState<string>('Hoje');
+  const [performanceDate, setPerformanceDate] = useState<string>(() => {
+    const today = getFirestoreDateKey();
+    const todayMatches = (rawMatches || []).filter(m => {
+      const matchDate = m.timestamp ? new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Sao_Paulo',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      }).format(new Date(m.timestamp)) : (m.date ? toStandardDateKey(m.date) : '');
+      return matchDate === today;
+    });
+    if (todayMatches.length > 0) return 'Hoje';
+    // Se hoje não teve partidas, inicializa com a sessão de jogos mais recente
+    return filterSessionDates[0] || 'Hoje';
+  });
 
-  // Sincronizar performanceDate: manter em 'Hoje' como padrão mesmo quando zerado
+  // Sincronizar performanceDate: se hoje não tiver partidas e estiver sem data ou em Hoje sem partidas, direciona para a última sessão disponível
   React.useEffect(() => {
     const today = getFirestoreDateKey();
-    if (performanceDate === 'Hoje' || performanceDate === today || !performanceDate) {
-      return; // Permanece estritamente em 'Hoje' para refletir o estado zerado
+    const todayMatches = matches.filter(m => getMatchStandardDate(m) === today);
+    
+    // Se o usuário selecionou uma data específica que ainda existe, mantém
+    if (performanceDate && performanceDate !== 'Hoje' && filterSessionDates.includes(performanceDate)) {
+      return;
     }
-    // Se a data selecionada não existe mais no histórico, retorna para Hoje
-    if (!filterSessionDates.includes(performanceDate)) {
-      setPerformanceDate('Hoje');
+
+    // Se selecionou 'Hoje' mas hoje tem partidas, mantém 'Hoje'
+    if (performanceDate === 'Hoje' && todayMatches.length > 0) {
+      return;
+    }
+
+    // Se hoje não tem partidas e a data atual não existe ou está vazia, direciona para a última sessão com jogos
+    if (filterSessionDates.length > 0 && (!performanceDate || !filterSessionDates.includes(performanceDate))) {
+      setPerformanceDate(todayMatches.length > 0 ? 'Hoje' : filterSessionDates[0]);
     }
   }, [matches, filterSessionDates, performanceDate]);
 

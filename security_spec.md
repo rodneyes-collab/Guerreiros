@@ -7,6 +7,7 @@
 4. Pending requests can be created by anyone (authenticated), but only viewed/modified by Admins.
 5. Payments are strictly controlled by Admins.
 6. Audit logs and login logs are append-only by the system or Admins.
+7. Single Unified Database Invariant: The application MUST strictly use the '(default)' database across all environments (mobile PWA and development). Multiple or isolated databases are prohibited.
 
 ## The Dirty Dozen Payloads
 
