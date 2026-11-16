@@ -1,8 +1,8 @@
 import { useShallow } from 'zustand/react/shallow';
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useStore } from '../store';
-import { Payment, PaymentStatus, Expense } from '../types';
-import { db, doc, updateDoc, getFirestoreDateKey, clearIndexedDbPersistence, getDocsFromServer, collection } from '../firebase';
+import { Payment, PaymentStatus, Expense, SystemMetadata, Player } from '../types';
+import { db, doc, setDoc, writeBatch, getFirestoreDateKey, getDocs, collection } from '../firebase';
 import { 
   Trash2, 
   Plus, 
@@ -17,16 +17,13 @@ import {
   MessageSquare,
   Copy,
   History,
-  ExternalLink,
-  TrendingUp,
-  Shield,
-  RefreshCw
+  RefreshCw,
+  Zap
 } from 'lucide-react';
 
 import { HelpTooltip } from '../src/components/HelpTooltip';
 import { capitalizeName } from '../utils/helpers';
 import { cleanPhoneNumber } from '../utils/whatsapp';
-import { SystemMetadata } from '../types';
 
 interface PaymentsViewProps {
   deletePayment: (id: string) => void;
@@ -51,8 +48,21 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
   updateSystemMetadata,
   handleFinancialIntegrityAudit
 }) => {
-  const { payments, expenses, userRole, systemMetadata, players: allPlayers } = useStore(useShallow(state => ({payments: state.payments, expenses: state.expenses, userRole: state.userRole, systemMetadata: state.systemMetadata, players: state.players})));
-  const players = React.useMemo(() => allPlayers.filter(p => p.status === 'active' && !p.isDM), [allPlayers]);
+  const { payments, expenses, userRole, systemMetadata, players: allPlayers } = useStore(
+    useShallow(state => ({
+      payments: state.payments,
+      expenses: state.expenses,
+      userRole: state.userRole,
+      systemMetadata: state.systemMetadata,
+      players: state.players
+    }))
+  );
+
+  const players = useMemo(
+    () => allPlayers.filter(p => p.status === 'active' && !p.isDM),
+    [allPlayers]
+  );
+
   const getCurrentMonthKey = () => {
     const now = new Date();
     const formatter = new Intl.DateTimeFormat('en-CA', {
@@ -62,7 +72,8 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
     });
     return formatter.format(now).slice(0, 7);
   };
-  const [activeTab, setActiveTab] = useState<'RECEIPTS' | 'COMPLIANCE' | 'EXPENSES' | 'STATEMENT'>('RECEIPTS');
+
+  const [activeTab, setActiveTab] = useState<'RECEIPTS' | 'COMPLIANCE' | 'EXPENSES' | 'STATEMENT'>('COMPLIANCE');
   const [filterMonth, setFilterMonth] = useState<string>(() => getCurrentMonthKey());
   const [filterDate, setFilterDate] = useState('');
   const [filterPlayer, setFilterPlayer] = useState('');
@@ -71,12 +82,30 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
   const [tempFee, setTempFee] = useState(systemMetadata.monthlyFee || 0);
   const [isEditingPix, setIsEditingPix] = useState(false);
   const [tempPixKey, setTempPixKey] = useState(systemMetadata.pixKey || 'elizabeth.santos.pe@gmail.com');
+  const [toastMessage, setToastMessage] = useState('');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isGeneratingBatch, setIsGeneratingBatch] = useState(false);
+  const [processingPlayerId, setProcessingPlayerId] = useState<string | null>(null);
+  const [pullStartY, setPullStartY] = useState(0);
+  const [pullDist, setPullDist] = useState(0);
+  const migrationExecutedRef = useRef(false);
+
+  const showToast = (msg: string, duration = 3000) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(''), duration);
+  };
 
   useEffect(() => {
     if (!isEditingPix) {
       setTempPixKey(systemMetadata.pixKey || 'elizabeth.santos.pe@gmail.com');
     }
   }, [systemMetadata.pixKey, isEditingPix]);
+
+  useEffect(() => {
+    if (!isEditingFee) {
+      setTempFee(systemMetadata.monthlyFee || 0);
+    }
+  }, [systemMetadata.monthlyFee, isEditingFee]);
 
   const handleUpdatePixKey = () => {
     const raw = tempPixKey.trim();
@@ -89,60 +118,15 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
       updateSystemMetadata({ pixKey: formatted });
     }
     setIsEditingPix(false);
-    setToastMessage('Chave Pix atualizada com sucesso!');
-    setTimeout(() => setToastMessage(''), 3000);
+    showToast('Chave Pix atualizada com sucesso!');
   };
-  const [toastMessage, setToastMessage] = useState('');
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [pullStartY, setPullStartY] = useState(0);
-  const [pullDist, setPullDist] = useState(0);
-
-  const [isForcingSync, setIsForcingSync] = useState(false);
 
   const handleRefresh = async () => {
-    if (handleFinancialIntegrityAudit) {
-      setIsRefreshing(true);
-      try {
-        await handleFinancialIntegrityAudit();
-        setToastMessage('Dados financeiros sincronizados!');
-        setTimeout(() => setToastMessage(''), 3000);
-      } catch (err) {
-        setToastMessage('Erro ao sincronizar.');
-        setTimeout(() => setToastMessage(''), 3000);
-      } finally {
-        setIsRefreshing(false);
-      }
-    }
-  };
-
-  const handleForceSyncFinancials = async () => {
-    setIsForcingSync(true);
-    setToastMessage('Limpando cache e forçando busca do servidor...');
+    setIsRefreshing(true);
     try {
-      // 1. Invoca clearIndexedDbPersistence para invalidar cache do IndexedDB
-      try {
-        if (typeof clearIndexedDbPersistence === 'function') {
-          await clearIndexedDbPersistence(db);
-        }
-      } catch (cacheErr) {
-        console.info('[Financeiro Cache] clearIndexedDbPersistence ignorado (instância ativa):', cacheErr);
-      }
-
-      // 2. Limpa quaisquer entradas de cache em localStorage específicas de pagamentos e despesas
-      try {
-        if (typeof window !== 'undefined' && window.localStorage) {
-          Object.keys(window.localStorage).forEach(k => {
-            if (k.toLowerCase().includes('payment') || k.toLowerCase().includes('expense')) {
-              window.localStorage.removeItem(k);
-            }
-          });
-        }
-      } catch (e) {}
-
-      // 3. Força busca do SERVIDOR Firestore sem passar pelo cache local
       const [paymentsSnap, expensesSnap] = await Promise.all([
-        getDocsFromServer(collection(db, 'payments')),
-        getDocsFromServer(collection(db, 'expenses'))
+        getDocs(collection(db, 'payments')),
+        getDocs(collection(db, 'expenses'))
       ]);
 
       const freshPayments: Payment[] = [];
@@ -152,40 +136,24 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
       expensesSnap.forEach(d => freshExpenses.push({ ...d.data(), id: d.id } as Expense));
 
       useStore.setState({ payments: freshPayments, expenses: freshExpenses });
-
-      setToastMessage(`Sincronização forçada concluída! ${freshPayments.length} pagamentos carregados.`);
-      setTimeout(() => setToastMessage(''), 4000);
+      showToast('Dados financeiros sincronizados!');
     } catch (err) {
-      console.error('[Financeiro] Erro ao sincronizar forçadamente:', err);
       if (handleFinancialIntegrityAudit) {
         await handleFinancialIntegrityAudit();
       }
-      setToastMessage('Sincronização concluída via integridade.');
-      setTimeout(() => setToastMessage(''), 3000);
     } finally {
-      setIsForcingSync(false);
+      setIsRefreshing(false);
     }
   };
 
-  useEffect(() => {
-    if (handleFinancialIntegrityAudit) {
-      handleRefresh();
-    }
-  }, []);
-
   const handleTouchStart = (e: React.TouchEvent) => {
-    if (window.scrollY === 0) {
-      setPullStartY(e.touches[0].clientY);
-    }
+    if (window.scrollY === 0) setPullStartY(e.touches[0].clientY);
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
     if (pullStartY > 0 && window.scrollY === 0) {
-      const currentY = e.touches[0].clientY;
-      const diff = currentY - pullStartY;
-      if (diff > 0) {
-        setPullDist(Math.min(diff * 0.5, 100));
-      }
+      const diff = e.touches[0].clientY - pullStartY;
+      if (diff > 0) setPullDist(Math.min(diff * 0.5, 100));
     }
   };
 
@@ -197,55 +165,194 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
     setPullDist(0);
   };
 
-  const copyList = (statusType: 'PAID' | 'UNPAID', label: string) => {
-    if (!filterMonth) {
-      setToastMessage('Selecione um mês!');
-      setTimeout(() => setToastMessage(''), 3000);
+  const formatMonth = (m: string) => {
+    if (!m || !m.includes('-')) return m || '';
+    const [year, month] = m.split('-');
+    const monthName = new Date(parseInt(year), parseInt(month) - 1).toLocaleDateString('pt-BR', { month: 'long' });
+    return `${monthName.charAt(0).toUpperCase() + monthName.slice(1)}/${year}`;
+  };
+
+  const getCalculatedStatus = (payment: Payment | undefined, playerId: string, monthStr: string) => {
+    const player = allPlayers.find(p => p.id === playerId);
+    if (player?.isExempt) return PaymentStatus.PAID;
+
+    if (payment && payment.status === PaymentStatus.PAID) {
+      return PaymentStatus.PAID;
+    }
+
+    if (!monthStr || !monthStr.includes('-')) {
+      return payment ? payment.status : PaymentStatus.PENDING;
+    }
+
+    const today = new Date();
+    const [year, month] = monthStr.split('-');
+    const fifthDay = new Date(parseInt(year), parseInt(month) - 1, 5, 23, 59, 59, 999);
+
+    if (today > fifthDay) {
+      return PaymentStatus.OVERDUE;
+    }
+
+    return PaymentStatus.PENDING;
+  };
+
+  /**
+   * 1-Click PIX: Dá baixa imediata na mensalidade do sócio sem precisar abrir modal
+   */
+  const handleQuickMarkPaid = async (player: Player, existingPayment?: Payment) => {
+    const targetMonth = filterMonth || getCurrentMonthKey();
+    if (processingPlayerId) return;
+    setProcessingPlayerId(player.id);
+
+    try {
+      const todayStr = getFirestoreDateKey();
+      const [year, month] = targetMonth.split('-');
+      const dueDate = existingPayment?.dueDate || `${year}-${month}-05`;
+      const amount = existingPayment?.amount || systemMetadata.monthlyFee || 0;
+      const paymentId = existingPayment?.id || `pay_${targetMonth}_${player.id}`;
+
+      const updatedPayment: Payment = {
+        id: paymentId,
+        playerId: player.id,
+        playerName: player.name,
+        month: targetMonth,
+        amount,
+        dueDate,
+        status: PaymentStatus.PAID,
+        method: 'PIX',
+        paymentDate: todayStr
+      };
+
+      await setDoc(doc(db, 'payments', paymentId), updatedPayment, { merge: true });
+
+      // Atualização otimista imediata na Store
+      useStore.setState(state => {
+        const others = state.payments.filter(p => p.id !== paymentId);
+        return { payments: [updatedPayment, ...others] };
+      });
+
+      showToast(`PIX de ${capitalizeName(player.name)} confirmado!`);
+    } catch (err) {
+      console.error('Erro ao confirmar PIX rápido:', err);
+      showToast('Erro ao confirmar pagamento.');
+    } finally {
+      setProcessingPlayerId(null);
+    }
+  };
+
+  /**
+   * Geração em Lote (1-Click): Cria lançamentos PENDING para todos os sócios ativos do mês selecionado
+   */
+  const handleGenerateMonthlyBatch = async () => {
+    const targetMonth = filterMonth || getCurrentMonthKey();
+    if (!targetMonth || isGeneratingBatch) return;
+
+    const missingPlayers = players.filter(player => {
+      if (player.isExempt) return false;
+      return !payments.some(p => p.playerId === player.id && p.month === targetMonth);
+    });
+
+    if (missingPlayers.length === 0) {
+      showToast(`Todos os sócios ativos já possuem lançamento em ${formatMonth(targetMonth)}!`);
       return;
     }
 
-    const filtered = players.filter(player => {
-      const payment = payments.find(p => p.playerId === player.id && p.month === filterMonth);
-      const status = getCalculatedStatus(payment, player.id, filterMonth);
-      if (statusType === 'PAID') return status === PaymentStatus.PAID;
-      return status !== PaymentStatus.PAID;
-    }).sort((a, b) => a.name.localeCompare(b.name));
+    setIsGeneratingBatch(true);
+    try {
+      const [year, month] = targetMonth.split('-');
+      const dueDate = `${year}-${month}-05`;
+      const fee = systemMetadata.monthlyFee || 0;
+      const batch = writeBatch(db);
+      const createdList: Payment[] = [];
+
+      missingPlayers.forEach(player => {
+        const paymentId = `pay_${targetMonth}_${player.id}`;
+        const newPayment: Payment = {
+          id: paymentId,
+          playerId: player.id,
+          playerName: player.name,
+          month: targetMonth,
+          amount: fee,
+          dueDate,
+          status: PaymentStatus.PENDING,
+          method: '',
+          paymentDate: ''
+        };
+        batch.set(doc(db, 'payments', paymentId), newPayment, { merge: true });
+        createdList.push(newPayment);
+      });
+
+      await batch.commit();
+      useStore.setState(state => ({
+        payments: [...createdList, ...state.payments]
+      }));
+
+      showToast(`${createdList.length} mensalidades geradas para ${formatMonth(targetMonth)}!`);
+    } catch (err) {
+      console.error('Erro ao gerar mensalidades do mês:', err);
+      showToast('Erro ao gerar mensalidades em lote.');
+    } finally {
+      setIsGeneratingBatch(false);
+    }
+  };
+
+  /**
+   * Link de Cobrança Amigável Individual via WhatsApp com Chave PIX
+   */
+  const getWhatsAppReminderUrl = (player: Player, amount: number) => {
+    const cleanPhone = cleanPhoneNumber(player.phone || '');
+    if (!cleanPhone) return null;
+    const pixKey = systemMetadata.pixKey || 'elizabeth.santos.pe@gmail.com';
+    const firstName = capitalizeName(player.name.split(' ')[0]);
+    const monthLabel = formatMonth(filterMonth || getCurrentMonthKey());
+    const msg =
+      `Olá, *${firstName}*! Tudo bem? 🏐🔥\n\n` +
+      `Passando para lembrar da mensalidade do *Guerreiros Volleyball Club* referente a *${monthLabel}*:\n\n` +
+      `💰 *Valor:* R$ ${amount.toFixed(2).replace('.', ',')}\n` +
+      `🔑 *Chave PIX:* ${pixKey}\n` +
+      `👤 *Favorecido:* Elizabeth de Souza Santos (Nubank)\n\n` +
+      `Assim que fizer, manda o comprovante por aqui. Valeu!`;
+    return `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`;
+  };
+
+  const copyList = (statusType: 'PAID' | 'UNPAID', label: string) => {
+    if (!filterMonth) {
+      showToast('Selecione um mês!');
+      return;
+    }
+
+    const filtered = players
+      .filter(player => {
+        const payment = payments.find(p => p.playerId === player.id && p.month === filterMonth);
+        const status = getCalculatedStatus(payment, player.id, filterMonth);
+        if (statusType === 'PAID') return status === PaymentStatus.PAID;
+        return status !== PaymentStatus.PAID;
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
 
     let text = `Lista de Sócios - ${formatMonth(filterMonth)} (${label})\n\n`;
     filtered.forEach((player, index) => {
       text += `${index + 1}. ${player.name}\n`;
     });
 
-    navigator.clipboard.writeText(text).then(() => {
-      setToastMessage(`Lista de ${label} copiada!`);
-      setTimeout(() => setToastMessage(''), 3000);
-    }).catch(err => {
-      console.error('Erro ao copiar: ', err);
-      setToastMessage('Erro ao copiar');
-      setTimeout(() => setToastMessage(''), 3000);
-    });
+    navigator.clipboard.writeText(text).then(() => showToast(`Lista de ${label} copiada!`));
   };
 
   const copyPaymentReport = () => {
     if (!filterMonth) {
-      setToastMessage('Selecione um mês!');
-      setTimeout(() => setToastMessage(''), 3000);
+      showToast('Selecione um mês!');
       return;
     }
 
     const [year, month] = filterMonth.split('-');
-    
-    // Lista de sócios ativos
-    const activePlayers = players.sort((a, b) => a.name.localeCompare(b.name));
+    const activePlayers = [...players].sort((a, b) => a.name.localeCompare(b.name));
 
     let text = `📋 LISTA DE APURAÇÃO DE PAGAMENTO:\n`;
-    text += `Mensalidade do mes de: ${formatMonth(filterMonth)}\n`;
+    text += `Mensalidade do mês de: ${formatMonth(filterMonth)}\n`;
     text += `Data do Vencimento: 05/${month}/${year}\n\n`;
-    
+
     activePlayers.forEach((player, index) => {
       const payment = payments.find(p => p.playerId === player.id && p.month === filterMonth);
       const isPaid = getCalculatedStatus(payment, player.id, filterMonth) === PaymentStatus.PAID;
-      
       text += `${(index + 1).toString().padStart(2, ' ')}. [${isPaid ? '✅' : '   '}] ${player.name}\n`;
     });
 
@@ -255,23 +362,17 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
     text += `*Banco:* NUBANK\n\n`;
     text += `--- \nAtualizado pelo App Guerreiros`;
 
-    navigator.clipboard.writeText(text).then(() => {
-      setToastMessage('Lista de pagamentos copiada!');
-      setTimeout(() => setToastMessage(''), 3000);
-    }).catch(err => {
-      console.error('Erro ao copiar: ', err);
-      setToastMessage('Erro ao copiar');
-      setTimeout(() => setToastMessage(''), 3000);
-    });
+    navigator.clipboard.writeText(text).then(() => showToast('Lista de pagamentos copiada!'));
   };
 
   const generateWhatsAppReport = () => {
     if (!filterMonth) return;
 
     const sortedPlayers = [...players].sort((a, b) => a.name.localeCompare(b.name));
-    
     const [year, month] = filterMonth.split('-');
-    const monthName = new Date(parseInt(year), parseInt(month) - 1).toLocaleDateString('pt-BR', { month: 'long' }).toUpperCase();
+    const monthName = new Date(parseInt(year), parseInt(month) - 1)
+      .toLocaleDateString('pt-BR', { month: 'long' })
+      .toUpperCase();
     const feeAmount = (systemMetadata.monthlyFee || 0).toFixed(2).replace('.', ',');
     const pixKey = systemMetadata.pixKey || 'elizabeth.santos.pe@gmail.com';
 
@@ -287,43 +388,24 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
     sortedPlayers.forEach((player, index) => {
       const payment = payments.find(p => p.playerId === player.id && p.month === filterMonth);
       const status = getCalculatedStatus(payment, player.id, filterMonth);
-      
-      let icon = '';
-      if (status === PaymentStatus.PAID) icon = '✅';
-
+      const icon = status === PaymentStatus.PAID ? ' ✅' : '';
       reportText += `${index + 1}.\t${player.name}${icon}\n`;
     });
 
-    reportText += `*MANDAR COMPROVANTE DO PAGAMENTO NO MEU PRIVADO, POR GENTILEZA*💥`;
+    reportText += `\n*MANDAR COMPROVANTE DO PAGAMENTO NO MEU PRIVADO, POR GENTILEZA*💥`;
 
-    navigator.clipboard.writeText(reportText).then(() => {
-      setToastMessage('Relatório copiado!');
-      setTimeout(() => setToastMessage(''), 5000);
-    }).catch(err => {
-      console.error('Erro ao copiar relatório: ', err);
-      setToastMessage('Erro ao copiar');
-      setTimeout(() => setToastMessage(''), 5000);
-    });
+    navigator.clipboard.writeText(reportText).then(() => showToast('Relatório copiado!', 4000));
   };
-
-  useEffect(() => {
-    if (!isEditingFee) {
-      setTempFee(systemMetadata.monthlyFee || 0);
-    }
-  }, [systemMetadata.monthlyFee, isEditingFee]);
 
   const uniqueMonths = useMemo(() => {
-    const currentMonth = new Date().toISOString().slice(0, 7);
-    const months = new Set([currentMonth, ...payments.map(p => p.month), ...expenses.map(e => e.month)]);
+    const currentMonth = getCurrentMonthKey();
+    const months = new Set([
+      currentMonth,
+      ...payments.map(p => p.month).filter(Boolean),
+      ...expenses.map(e => e.month).filter(Boolean)
+    ]);
     return Array.from(months).sort((a, b) => b.localeCompare(a));
   }, [payments, expenses]);
-
-  const formatMonth = (m: string) => {
-    if (!m) return '';
-    const [year, month] = m.split('-');
-    const monthName = new Date(parseInt(year), parseInt(month) - 1).toLocaleDateString('pt-BR', { month: 'long' });
-    return `${monthName.charAt(0).toUpperCase() + monthName.slice(1)}/${year}`;
-  };
 
   const uniquePlayers = useMemo(() => {
     const playersInPayments = new Set(payments.map(p => p.playerId));
@@ -333,98 +415,82 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
     return Array.from(new Set(names)).sort();
   }, [payments, allPlayers]);
 
-  const getCalculatedStatus = (payment: Payment | undefined, playerId: string, monthStr: string) => {
-    const player = allPlayers.find(p => p.id === playerId);
-    if (player?.isExempt) return PaymentStatus.PAID;
-    
-    if (payment && payment.status === PaymentStatus.PAID) {
-      return PaymentStatus.PAID;
-    }
-    
-    if (!monthStr) return payment ? payment.status : PaymentStatus.PENDING;
-
-    const today = new Date();
-    const [year, month] = monthStr.split('-');
-    const fifthDay = new Date(parseInt(year), parseInt(month) - 1, 5);
-    fifthDay.setHours(23, 59, 59, 999);
-
-    if (today > fifthDay) {
-      return PaymentStatus.OVERDUE;
-    }
-
-    return PaymentStatus.PENDING;
-  };
-
   const filteredPayments = useMemo(() => {
-    return payments.filter(p => {
-      const matchMonth = !filterMonth || p.month === filterMonth;
-      const matchDate = !filterDate || p.paymentDate === filterDate;
-      const matchPlayer = !filterPlayer || (p.playerName || '').toLowerCase().includes(filterPlayer.toLowerCase());
-      const calculatedStatus = getCalculatedStatus(p, p.playerId, p.month);
-      const matchStatus = !filterStatus || calculatedStatus === filterStatus;
-      return matchMonth && matchDate && matchPlayer && matchStatus;
-    }).sort((a, b) => {
-      const dateA = a.paymentDate || a.dueDate || '';
-      const dateB = b.paymentDate || b.dueDate || '';
-      if (typeof dateB === 'string' && typeof dateA === 'string') {
-        return dateB.localeCompare(dateA);
-      }
-      return (Number(dateB) || 0) - (Number(dateA) || 0);
-    });
-  }, [payments, filterMonth, filterDate, filterPlayer, filterStatus]);
+    return payments
+      .filter(p => {
+        const matchMonth = !filterMonth || p.month === filterMonth;
+        const matchDate = !filterDate || p.paymentDate === filterDate;
+        const matchPlayer =
+          !filterPlayer || (p.playerName || '').toLowerCase().includes(filterPlayer.toLowerCase());
+        const calculatedStatus = getCalculatedStatus(p, p.playerId, p.month);
+        const matchStatus = !filterStatus || calculatedStatus === filterStatus;
+        return matchMonth && matchDate && matchPlayer && matchStatus;
+      })
+      .sort((a, b) => {
+        const dateA = a.paymentDate || a.dueDate || '';
+        const dateB = b.paymentDate || b.dueDate || '';
+        return String(dateB).localeCompare(String(dateA));
+      });
+  }, [payments, filterMonth, filterDate, filterPlayer, filterStatus, allPlayers]);
 
   const filteredExpenses = useMemo(() => {
-    return expenses.filter(e => {
-      const matchMonth = !filterMonth || e.month === filterMonth;
-      const matchDate = !filterDate || e.date === filterDate;
-      return matchMonth && matchDate;
-    }).sort((a,b) => b.date.localeCompare(a.date));
+    return expenses
+      .filter(e => {
+        const matchMonth = !filterMonth || e.month === filterMonth;
+        const matchDate = !filterDate || e.date === filterDate;
+        return matchMonth && matchDate;
+      })
+      .sort((a, b) => b.date.localeCompare(a.date));
   }, [expenses, filterMonth, filterDate]);
 
   const globalSummary = useMemo(() => {
-    const allPaidReceipts = payments.filter(p => getCalculatedStatus(p, p.playerId, p.month) === PaymentStatus.PAID);
+    const allPaidReceipts = payments.filter(
+      p => getCalculatedStatus(p, p.playerId, p.month) === PaymentStatus.PAID
+    );
     const totalPaidGlobal = allPaidReceipts.reduce((acc, p) => acc + p.amount, 0);
     const totalExpensesGlobal = expenses.reduce((acc, e) => acc + e.amount, 0);
-    const globalBalance = totalPaidGlobal - totalExpensesGlobal;
     return {
       totalPaid: totalPaidGlobal,
       totalExpenses: totalExpensesGlobal,
-      balance: globalBalance
+      balance: totalPaidGlobal - totalExpensesGlobal
     };
   }, [payments, expenses, allPlayers]);
 
   const summary = useMemo(() => {
-    const receipts = filteredPayments.reduce((acc, p) => {
-      const calculatedStatus = getCalculatedStatus(p, p.playerId, p.month);
-      if (calculatedStatus === PaymentStatus.PAID) acc.paid += p.amount;
-      else if (calculatedStatus === PaymentStatus.PENDING) acc.pending += p.amount;
-      else if (calculatedStatus === PaymentStatus.OVERDUE) acc.overdue += p.amount;
-      return acc;
-    }, { paid: 0, pending: 0, overdue: 0 });
+    const receipts = filteredPayments.reduce(
+      (acc, p) => {
+        const calculatedStatus = getCalculatedStatus(p, p.playerId, p.month);
+        if (calculatedStatus === PaymentStatus.PAID) acc.paid += p.amount;
+        else if (calculatedStatus === PaymentStatus.PENDING) acc.pending += p.amount;
+        else if (calculatedStatus === PaymentStatus.OVERDUE) acc.overdue += p.amount;
+        return acc;
+      },
+      { paid: 0, pending: 0, overdue: 0 }
+    );
 
     const totalExpenses = filteredExpenses.reduce((acc, e) => acc + e.amount, 0);
-    
-    // Orçamento Mensal = Total de sócios ativos * valor da mensalidade (se um mês estiver selecionado)
-    const activePlayersCount = players.length;
-    const monthlyBudget = filterMonth ? (activePlayersCount * (systemMetadata.monthlyFee || 0)) : 0;
+    const nonExemptActiveCount = players.filter(p => !p.isExempt).length;
+    const monthlyBudget = filterMonth ? nonExemptActiveCount * (systemMetadata.monthlyFee || 0) : 0;
 
-    return { 
-      ...receipts, 
-      expenses: totalExpenses, 
+    return {
+      ...receipts,
+      expenses: totalExpenses,
       balance: receipts.paid - totalExpenses,
       budget: monthlyBudget
     };
-  }, [filteredPayments, filteredExpenses, players.length, systemMetadata.monthlyFee, filterMonth]);
+  }, [filteredPayments, filteredExpenses, players, systemMetadata.monthlyFee, filterMonth]);
 
   const combinedTransactions = useMemo(() => {
-    const paidReceipts = filteredPayments.filter(p => getCalculatedStatus(p, p.playerId, p.month) === PaymentStatus.PAID).map(p => ({
-      id: p.id,
-      date: p.paymentDate || p.dueDate,
-      description: `Mensalidade: ${p.playerName} (${formatMonth(p.month)})`,
-      amount: p.amount,
-      type: 'INCOME' as const,
-      category: 'Mensalidade'
-    }));
+    const paidReceipts = filteredPayments
+      .filter(p => getCalculatedStatus(p, p.playerId, p.month) === PaymentStatus.PAID)
+      .map(p => ({
+        id: p.id,
+        date: p.paymentDate || p.dueDate,
+        description: `Mensalidade: ${p.playerName} (${formatMonth(p.month)})`,
+        amount: p.amount,
+        type: 'INCOME' as const,
+        category: 'Mensalidade'
+      }));
 
     const expenseItems = filteredExpenses.map(e => ({
       id: e.id,
@@ -435,33 +501,23 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
       category: e.category
     }));
 
-    // Sort oldest to newest to calculate running balance correctly
     const sorted = [...paidReceipts, ...expenseItems].sort((a, b) => a.date.localeCompare(b.date));
-    
     let currentBalance = 0;
-    const withBalance = sorted.map(t => {
-      if (t.type === 'INCOME') {
-        currentBalance += t.amount;
-      } else {
-        currentBalance -= t.amount;
-      }
+    return sorted.map(t => {
+      currentBalance += t.type === 'INCOME' ? t.amount : -t.amount;
       return { ...t, balance: currentBalance };
     });
-
-    // Return oldest to newest for display (ascending order)
-    return withBalance;
   }, [filteredPayments, filteredExpenses, filterMonth]);
 
   const generateStatementReport = () => {
     if (combinedTransactions.length === 0) {
-      setToastMessage('Nenhum lançamento no extrato!');
-      setTimeout(() => setToastMessage(''), 3000);
+      showToast('Nenhum lançamento no extrato!');
       return;
     }
 
     const monthLabel = filterMonth ? formatMonth(filterMonth) : 'Geral';
     const todayStr = new Date().toLocaleDateString('pt-BR');
-    
+
     let reportText = `======================================\n`;
     reportText += `       EXTRATO DE CONTA CORRENTE       \n`;
     reportText += `          GUERREIROS VC - CLUBE       \n`;
@@ -469,13 +525,10 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
     reportText += `Data Emissão: ${todayStr}\n`;
     reportText += `Período: ${monthLabel}\n`;
     reportText += `--------------------------------------\n`;
-    reportText += `RESUMO DO PERÍODO:\n`;
     reportText += `Receitas:      R$ ${summary.paid.toFixed(2).padStart(10)}\n`;
     reportText += `Despesas:      R$ ${summary.expenses.toFixed(2).padStart(10)}\n`;
     reportText += `Saldo Período: R$ ${summary.balance.toFixed(2).padStart(10)}\n`;
     reportText += `--------------------------------------\n\n`;
-    reportText += `DATA       DESCRIÇÃO                VALOR          SALDO\n`;
-    reportText += `---------- ----------------------- ------------ ------------------\n`;
 
     combinedTransactions.forEach(t => {
       const date = new Date(t.date + 'T00:00:00').toLocaleDateString('pt-BR');
@@ -487,89 +540,82 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
 
     reportText += `\n--------------------------------------\n`;
     reportText += `SALDO ATUAL:   R$ ${summary.balance.toFixed(2).padStart(10)}\n`;
-    reportText += `======================================\n`;
-    reportText += `           FIM DO EXTRATO             \n`;
     reportText += `======================================`;
 
-    navigator.clipboard.writeText(reportText).then(() => {
-      setToastMessage('Extrato bancário copiado!');
-      setTimeout(() => setToastMessage(''), 3000);
-    }).catch(err => {
-      console.error('Erro ao copiar extrato: ', err);
-      setToastMessage('Erro ao copiar extrato');
-      setTimeout(() => setToastMessage(''), 3000);
-    });
+    navigator.clipboard.writeText(reportText).then(() => showToast('Extrato bancário copiado!'));
   };
 
+  // Migração única por sessão em writeBatch para padronizar meses (ex: "Novembro/2026" -> "2026-11")
   useEffect(() => {
-    const migrateData = async () => {
-      const monthMap: Record<string, string> = {
-        'janeiro': '01', 'fevereiro': '02', 'março': '03', 'marco': '03',
-        'abril': '04', 'maio': '05', 'junho': '06', 'julho': '07',
-        'agosto': '08', 'setembro': '09', 'outubro': '10', 'novembro': '11', 'dezembro': '12'
-      };
+    if (userRole !== 'ADMIN' || migrationExecutedRef.current) return;
+    if (payments.length === 0 && expenses.length === 0) return;
 
-      const getNewMonth = (oldMonth: string) => {
-        if (!oldMonth || oldMonth.match(/^\d{4}-\d{2}$/)) return null;
-        const parts = oldMonth.toLowerCase().split('/');
-        if (parts.length === 2) {
-          const m = monthMap[parts[0].trim()];
-          const y = parts[1].trim();
-          if (m && y.length === 4) return `${y}-${m}`;
-        }
-        return null;
-      };
+    migrationExecutedRef.current = true;
+    const monthMap: Record<string, string> = {
+      janeiro: '01', fevereiro: '02', março: '03', marco: '03',
+      abril: '04', maio: '05', junho: '06', julho: '07',
+      agosto: '08', setembro: '09', outubro: '10', novembro: '11', dezembro: '12'
+    };
 
-      let hasMigrations = false;
-
-      for (const p of payments) {
-        const newMonth = getNewMonth(p.month);
-        if (newMonth) {
-          try {
-            await updateDoc(doc(db, 'payments', p.id), { month: newMonth });
-            hasMigrations = true;
-          } catch (e) { console.error(e); }
-        }
+    const parseLegacyMonth = (oldMonth: string) => {
+      if (!oldMonth || /^\d{4}-\d{2}$/.test(oldMonth)) return null;
+      const parts = oldMonth.toLowerCase().split('/');
+      if (parts.length === 2) {
+        const m = monthMap[parts[0].trim()];
+        const y = parts[1].trim();
+        if (m && y.length === 4) return `${y}-${m}`;
       }
+      return null;
+    };
 
-      for (const e of expenses) {
-        const newMonth = getNewMonth(e.month);
-        if (newMonth) {
-          try {
-            await updateDoc(doc(db, 'expenses', e.id), { month: newMonth });
-            hasMigrations = true;
-          } catch (err) { console.error(err); }
+    const runBatchMigration = async () => {
+      const batch = writeBatch(db);
+      let count = 0;
+
+      payments.forEach(p => {
+        const newM = parseLegacyMonth(p.month);
+        if (newM) {
+          batch.update(doc(db, 'payments', p.id), { month: newM });
+          count++;
         }
-      }
-      
-      if (hasMigrations) {
-        console.log("Migração de meses concluída com sucesso.");
+      });
+
+      expenses.forEach(e => {
+        const newM = parseLegacyMonth(e.month);
+        if (newM) {
+          batch.update(doc(db, 'expenses', e.id), { month: newM });
+          count++;
+        }
+      });
+
+      if (count > 0) {
+        await batch.commit().catch(() => {});
       }
     };
 
-    if (userRole === 'ADMIN') {
-      migrateData();
-    }
+    runBatchMigration();
   }, [payments, expenses, userRole]);
 
   const handleUpdateFee = () => {
     updateMonthlyFee(tempFee);
     setIsEditingFee(false);
+    showToast('Valor da mensalidade atualizado!');
   };
 
   const getStatusIcon = (status: PaymentStatus) => {
     switch (status) {
-      case PaymentStatus.PAID: return <CheckCircle2 className="w-4 h-4 text-emerald-500" />;
-      case PaymentStatus.PENDING: return <Clock className="w-4 h-4 text-amber-500" />;
-      case PaymentStatus.OVERDUE: return <XCircle className="w-4 h-4 text-rose-500" />;
+      case PaymentStatus.PAID: return <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />;
+      case PaymentStatus.PENDING: return <Clock className="w-3.5 h-3.5 text-amber-400" />;
+      case PaymentStatus.OVERDUE: return <XCircle className="w-3.5 h-3.5 text-rose-400" />;
     }
   };
 
+  // Paleta oficial Dark Glassmorphism de alto contraste
   const getStatusColor = (status: PaymentStatus) => {
     switch (status) {
-      case PaymentStatus.PAID: return 'bg-emerald-50 text-emerald-700 border-emerald-100';
-      case PaymentStatus.PENDING: return 'bg-amber-50 text-amber-700 border-amber-100';
-      case PaymentStatus.OVERDUE: return 'bg-rose-50 text-rose-700 border-rose-100';
+      case PaymentStatus.PAID: return 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30';
+      case PaymentStatus.PENDING: return 'bg-amber-500/15 text-amber-400 border-amber-500/30';
+      case PaymentStatus.OVERDUE: return 'bg-rose-500/15 text-rose-400 border-rose-500/30';
     }
   };
 
@@ -591,61 +637,60 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
       {(pullDist > 0 || isRefreshing) && (
         <div className="flex items-center justify-center py-3 text-xs font-black uppercase text-amber-400 bg-zinc-900 border-b border-zinc-800 transition-all rounded-2xl">
           <RefreshCw className={`w-4 h-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
-          {isRefreshing ? 'Sincronizando com Firestore...' : pullDist > 60 ? 'Solte para atualizar!' : 'Puxe para baixo para atualizar...'}
+          {isRefreshing ? 'Sincronizando financeiro...' : pullDist > 60 ? 'Solte para atualizar!' : 'Puxe para baixo para atualizar...'}
         </div>
       )}
+
+      {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
         <div>
           <div className="flex items-center gap-3">
             <h2 className="text-4xl font-black text-white uppercase tracking-tighter flex items-center">
               Financeiro
               <HelpTooltip 
-                title="Gestão Financeira" 
-                content="Acompanhe o pagamento das mensalidades e as despesas do grupo. Administradores podem registrar pagamentos, adicionar despesas e gerar relatórios para o WhatsApp."
+                title="Gestão Financeira Inteligente" 
+                content="Gere as mensalidades do mês em 1 clique, dê baixa imediata via PIX direto na lista e envie lembretes individuais no WhatsApp."
               />
             </h2>
             <button
               onClick={handleRefresh}
               disabled={isRefreshing}
               className="flex items-center gap-2 px-3 py-1.5 bg-brand-primary/10 border border-brand-primary/30 rounded-xl text-brand-primary text-xs font-black uppercase tracking-widest hover:bg-brand-primary hover:text-black transition-all shadow-lg active:scale-95 disabled:opacity-50"
-              title="Forçar verificação de integridade e atualizar dados do Firestore"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
               {isRefreshing ? 'Atualizando...' : 'Atualizar'}
             </button>
           </div>
-          <p className="text-sm font-bold text-white/40 uppercase tracking-widest mt-2">Gestão de mensalidades e despesas</p>
+          <p className="text-sm font-bold text-white/40 uppercase tracking-widest mt-2">
+            Controle de Caixa, Mensalidades PIX 1-Click e Despesas
+          </p>
         </div>
+
         <div className="flex flex-col sm:flex-row gap-4 w-full md:w-auto">
           {userRole === 'ADMIN' && (
-            <div className="bg-black/40 px-6 py-4 rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-2xl flex items-center gap-6 backdrop-blur-xl group hover:border-brand-primary/40 transition-all">
-              <div className="p-3 bg-brand-primary/10 rounded-2xl border border-brand-primary/40 group-hover:bg-brand-primary/20 transition-colors">
+            <div className="bg-black/40 px-6 py-4 rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-2xl flex items-center gap-5 backdrop-blur-xl">
+              <div className="p-3 bg-brand-primary/10 rounded-2xl border border-brand-primary/40">
                 <DollarSign className="w-5 h-5 text-brand-primary" />
               </div>
               <div className="space-y-1">
-                <p className="text-[9px] font-black text-brand-primary uppercase tracking-[0.3em]">Mensalidade Sócio</p>
+                <p className="text-[9px] font-black text-brand-primary uppercase tracking-[0.2em]">Mensalidade Sócio</p>
                 {isEditingFee ? (
-                  <div className="flex items-center gap-3">
-                    <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[10px] font-black text-brand-primary">R$</span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={tempFee}
-                        onChange={e => setTempFee(parseFloat(e.target.value))}
-                        className="w-28 bg-black/60 border border-brand-primary/30 rounded-xl pl-8 pr-3 py-2 font-black text-sm text-white outline-none focus:border-brand-primary transition-all shadow-inner"
-                        autoFocus
-                      />
-                    </div>
-                    <div className="flex gap-2">
-                      <button onClick={handleUpdateFee} className="p-2 bg-brand-primary text-brand-secondary rounded-xl hover:scale-110 transition-transform shadow-lg shadow-brand-primary/20"><CheckCircle2 className="w-4 h-4" /></button>
-                      <button onClick={() => { setIsEditingFee(false); setTempFee(systemMetadata.monthlyFee || 0); }} className="p-2 bg-rose-500/10 text-rose-500 rounded-xl hover:scale-110 transition-transform border border-rose-500/20"><X className="w-4 h-4" /></button>
-                    </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={tempFee}
+                      onChange={e => setTempFee(parseFloat(e.target.value) || 0)}
+                      className="w-24 bg-black/60 border border-brand-primary/30 rounded-xl px-3 py-1.5 font-black text-sm text-white outline-none"
+                      autoFocus
+                    />
+                    <button onClick={handleUpdateFee} className="p-2 bg-brand-primary text-black rounded-xl"><CheckCircle2 className="w-4 h-4" /></button>
+                    <button onClick={() => setIsEditingFee(false)} className="p-2 bg-rose-500/10 text-rose-500 rounded-xl"><X className="w-4 h-4" /></button>
                   </div>
                 ) : (
-                  <div className="flex items-center gap-4">
-                    <p className="text-2xl font-black text-white font-mono tracking-tighter">R$ {(systemMetadata.monthlyFee || 0).toFixed(2)}</p>
-                    <button onClick={() => setIsEditingFee(true)} className="p-2 text-brand-primary/40 hover:text-brand-primary hover:bg-brand-primary/10 rounded-xl transition-all border border-transparent hover:border-brand-primary/40"><Edit2 className="w-4 h-4" /></button>
+                  <div className="flex items-center gap-3">
+                    <p className="text-xl font-black text-white font-mono">R$ {(systemMetadata.monthlyFee || 0).toFixed(2)}</p>
+                    <button onClick={() => setIsEditingFee(true)} className="p-1.5 text-brand-primary/60 hover:text-brand-primary rounded-lg"><Edit2 className="w-3.5 h-3.5" /></button>
                   </div>
                 )}
               </div>
@@ -653,51 +698,49 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
           )}
 
           {userRole === 'ADMIN' && (
-            <div className="bg-black/40 px-6 py-4 rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-2xl flex items-center gap-6 backdrop-blur-xl group hover:border-brand-primary/40 transition-all">
-              <div className="p-3 bg-brand-primary/10 rounded-2xl border border-brand-primary/40 group-hover:bg-brand-primary/20 transition-colors">
+            <div className="bg-black/40 px-6 py-4 rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-2xl flex items-center gap-5 backdrop-blur-xl">
+              <div className="p-3 bg-brand-primary/10 rounded-2xl border border-brand-primary/40">
                 <CreditCard className="w-5 h-5 text-brand-primary" />
               </div>
               <div className="space-y-1">
-                <p className="text-[9px] font-black text-brand-primary uppercase tracking-[0.3em]">Chave Pix Configurada</p>
+                <p className="text-[9px] font-black text-brand-primary uppercase tracking-[0.2em]">Chave Pix Oficial</p>
                 {isEditingPix ? (
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2">
                     <input
                       type="text"
                       value={tempPixKey}
                       onChange={e => setTempPixKey(e.target.value)}
-                      className="w-44 bg-black/60 border border-brand-primary/30 rounded-xl px-3 py-2 font-black text-xs text-white outline-none focus:border-brand-primary transition-all shadow-inner"
-                      placeholder="E-mail, Tel ou CPF"
+                      className="w-40 bg-black/60 border border-brand-primary/30 rounded-xl px-3 py-1.5 font-black text-xs text-white outline-none"
                       autoFocus
                     />
-                    <div className="flex gap-2">
-                      <button onClick={handleUpdatePixKey} className="p-2 bg-brand-primary text-brand-secondary rounded-xl hover:scale-110 transition-transform shadow-lg shadow-brand-primary/20"><CheckCircle2 className="w-4 h-4" /></button>
-                      <button onClick={() => { setIsEditingPix(false); setTempPixKey(systemMetadata.pixKey || 'elizabeth.santos.pe@gmail.com'); }} className="p-2 bg-rose-500/10 text-rose-500 rounded-xl hover:scale-110 transition-transform border border-rose-500/20"><X className="w-4 h-4" /></button>
-                    </div>
+                    <button onClick={handleUpdatePixKey} className="p-2 bg-brand-primary text-black rounded-xl"><CheckCircle2 className="w-4 h-4" /></button>
+                    <button onClick={() => setIsEditingPix(false)} className="p-2 bg-rose-500/10 text-rose-500 rounded-xl"><X className="w-4 h-4" /></button>
                   </div>
                 ) : (
-                  <div className="flex items-center gap-4">
-                    <p className="text-sm font-black text-white font-mono tracking-tighter truncate max-w-[180px]">{systemMetadata.pixKey || 'elizabeth.santos.pe@gmail.com'}</p>
-                    <button onClick={() => setIsEditingPix(true)} className="p-2 text-brand-primary/40 hover:text-brand-primary hover:bg-brand-primary/10 rounded-xl transition-all border border-transparent hover:border-brand-primary/40"><Edit2 className="w-4 h-4" /></button>
+                  <div className="flex items-center gap-3">
+                    <p className="text-xs font-black text-white font-mono truncate max-w-[160px]">{systemMetadata.pixKey || 'elizabeth.santos.pe@gmail.com'}</p>
+                    <button onClick={() => setIsEditingPix(true)} className="p-1.5 text-brand-primary/60 hover:text-brand-primary rounded-lg"><Edit2 className="w-3.5 h-3.5" /></button>
                   </div>
                 )}
               </div>
             </div>
           )}
+
           {userRole === 'ADMIN' && (
             <button 
               onClick={() => { 
-                if (activeTab === 'RECEIPTS') {
-                  setEditingPayment(null); 
-                  setIsPaymentFormOpen(true); 
-                } else {
+                if (activeTab === 'EXPENSES') {
                   setEditingExpense(null);
                   setIsExpenseFormOpen(true);
+                } else {
+                  setEditingPayment(null); 
+                  setIsPaymentFormOpen(true); 
                 }
               }} 
-              className="bg-brand-primary text-brand-secondary px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-brand-primary/90 shadow-xl shadow-brand-primary/10 transition-all"
+              className="bg-brand-primary text-brand-secondary px-6 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-brand-primary/90 shadow-xl transition-all"
             >
               <Plus className="w-5 h-5" />
-              {activeTab === 'RECEIPTS' ? 'Novo Lançamento' : 'Nova Despesa'}
+              {activeTab === 'EXPENSES' ? 'Nova Despesa' : 'Novo Lançamento'}
             </button>
           )}
         </div>
@@ -706,30 +749,30 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
       {/* Tabs */}
       <div className="flex flex-wrap gap-2 p-1.5 bg-white/5 backdrop-blur-md rounded-[1.5rem] w-fit border border-brand-primary/40">
         <button
-          onClick={() => setActiveTab('RECEIPTS')}
-          className={`px-4 py-2 sm:px-8 sm:py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${
-            activeTab === 'RECEIPTS' 
-              ? 'bg-brand-primary text-brand-secondary shadow-xl shadow-brand-primary/20' 
+          onClick={() => setActiveTab('COMPLIANCE')}
+          className={`px-4 py-2.5 sm:px-6 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${
+            activeTab === 'COMPLIANCE' 
+              ? 'bg-brand-primary text-brand-secondary shadow-xl' 
               : 'text-white/40 hover:text-white hover:bg-white/5'
           }`}
         >
-          Mensalidades
+          Painel do Mês (1-Click PIX)
         </button>
         <button
-          onClick={() => setActiveTab('COMPLIANCE')}
-          className={`px-4 py-2 sm:px-8 sm:py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${
-            activeTab === 'COMPLIANCE' 
-              ? 'bg-brand-primary text-brand-secondary shadow-xl shadow-brand-primary/20' 
+          onClick={() => setActiveTab('RECEIPTS')}
+          className={`px-4 py-2.5 sm:px-6 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${
+            activeTab === 'RECEIPTS' 
+              ? 'bg-brand-primary text-brand-secondary shadow-xl' 
               : 'text-white/40 hover:text-white hover:bg-white/5'
           }`}
         >
-          Gestão de Mensalidades
+          Histórico de Recebimentos
         </button>
         <button
           onClick={() => setActiveTab('EXPENSES')}
-          className={`px-4 py-2 sm:px-8 sm:py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${
+          className={`px-4 py-2.5 sm:px-6 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${
             activeTab === 'EXPENSES' 
-              ? 'bg-brand-primary text-brand-secondary shadow-xl shadow-brand-primary/20' 
+              ? 'bg-brand-primary text-brand-secondary shadow-xl' 
               : 'text-white/40 hover:text-white hover:bg-white/5'
           }`}
         >
@@ -737,48 +780,50 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
         </button>
         <button
           onClick={() => setActiveTab('STATEMENT')}
-          className={`px-4 py-2 sm:px-8 sm:py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${
+          className={`px-4 py-2.5 sm:px-6 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${
             activeTab === 'STATEMENT' 
-              ? 'bg-brand-primary text-brand-secondary shadow-xl shadow-brand-primary/20' 
+              ? 'bg-brand-primary text-brand-secondary shadow-xl' 
               : 'text-white/40 hover:text-white hover:bg-white/5'
           }`}
         >
-          Extrato
+          Extrato Conta Corrente
         </button>
       </div>
 
       {/* Financial Summary Dashboard */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-        <div className="bg-black backdrop-blur-xl p-4 sm:p-6 rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-sm">
-          <p className="text-[9px] sm:text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">Saldo Atual (Geral)</p>
+        <div className="bg-black backdrop-blur-xl p-5 rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary">
+          <p className="text-[9px] sm:text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">Saldo em Caixa (Acumulado)</p>
           <p className={`text-xl sm:text-2xl font-black font-mono ${globalSummary.balance >= 0 ? 'text-brand-primary' : 'text-rose-500'}`}>
             R$ {globalSummary.balance.toFixed(2)}
           </p>
         </div>
 
-        <div className="bg-black backdrop-blur-xl p-4 sm:p-6 rounded-[2rem] border border-white/5 border-l-[6px] border-l-emerald-500 shadow-sm">
-          <p className="text-[9px] sm:text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">Total Pago (Filtro)</p>
-          <p className="text-xl sm:text-2xl font-black font-mono text-emerald-500">
+        <div className="bg-black backdrop-blur-xl p-5 rounded-[2rem] border border-white/5 border-l-[6px] border-l-emerald-500">
+          <p className="text-[9px] sm:text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">Recebido ({filterMonth ? formatMonth(filterMonth) : 'Filtro'})</p>
+          <p className="text-xl sm:text-2xl font-black font-mono text-emerald-400">
             R$ {summary.paid.toFixed(2)}
           </p>
         </div>
 
-        <div className="bg-black backdrop-blur-xl p-4 sm:p-6 rounded-[2rem] border border-white/5 border-l-[6px] border-l-rose-500 shadow-sm">
-          <p className="text-[9px] sm:text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">Total Despesas (Filtro)</p>
-          <p className="text-xl sm:text-2xl font-black font-mono text-rose-500">
+        <div className="bg-black backdrop-blur-xl p-5 rounded-[2rem] border border-white/5 border-l-[6px] border-l-rose-500">
+          <p className="text-[9px] sm:text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">Despesas ({filterMonth ? formatMonth(filterMonth) : 'Filtro'})</p>
+          <p className="text-xl sm:text-2xl font-black font-mono text-rose-400">
             R$ {summary.expenses.toFixed(2)}
           </p>
         </div>
 
-        {filterMonth && (
-          <div className="bg-white/5 backdrop-blur-xl p-4 sm:p-6 rounded-[2rem] border border-brand-primary/40 shadow-sm col-span-2 lg:col-span-1">
-            <p className="text-[9px] sm:text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">Orçamento ({formatMonth(filterMonth)})</p>
-            <div className="flex justify-between items-end">
-              <p className="text-lg sm:text-xl font-black text-brand-primary font-mono">R$ {summary.budget.toFixed(2)}</p>
-              <p className="text-[9px] font-bold text-white/40 mb-1">Pend: R$ {(summary.budget - summary.paid).toFixed(2)}</p>
-            </div>
+        <div className="bg-white/5 backdrop-blur-xl p-5 rounded-[2rem] border border-brand-primary/40 col-span-2 lg:col-span-1">
+          <p className="text-[9px] sm:text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">
+            Previsão Mensal ({filterMonth ? formatMonth(filterMonth) : 'Geral'})
+          </p>
+          <div className="flex justify-between items-end">
+            <p className="text-lg sm:text-xl font-black text-brand-primary font-mono">R$ {summary.budget.toFixed(2)}</p>
+            <p className="text-[10px] font-black text-amber-400">
+              Falta: R$ {Math.max(0, summary.budget - summary.paid).toFixed(2)}
+            </p>
           </div>
-        )}
+        </div>
       </div>
 
       {/* Área Pagar PIX */}
@@ -787,18 +832,18 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
           <img 
             src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(systemMetadata.pixKey || 'elizabeth.santos.pe@gmail.com')}`} 
             alt="Pix QR Code" 
-            className="w-32 h-32 md:w-36 md:h-36 object-contain"
+            className="w-28 h-28 md:w-32 md:h-32 object-contain"
             referrerPolicy="no-referrer"
           />
         </div>
         <div className="flex-1 space-y-3 text-center md:text-left w-full">
           <div className="space-y-1">
-            <h3 className="text-lg font-black text-brand-primary uppercase tracking-tight flex items-center justify-center md:justify-start gap-2">
+            <h3 className="text-base font-black text-brand-primary uppercase tracking-tight flex items-center justify-center md:justify-start gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-brand-primary animate-pulse" />
-              Chave Pix (Formato WhatsApp)
+              Dados Oficiais para PIX
             </h3>
             <p className="text-xs font-semibold text-white/60">
-              Copie a chave Pix da tesouraria para envio direto no WhatsApp com o nome do favorecido em evidência.
+              Copie a chave PIX ou envie o relatório atualizado diretamente para o grupo do WhatsApp.
             </p>
           </div>
           
@@ -811,14 +856,12 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                 const pixKeyVal = systemMetadata.pixKey || 'elizabeth.santos.pe@gmail.com';
                 const whatsappPix = `*Chave Pix:*\n${pixKeyVal}\n\n*Favorecido:* Elizabeth de Souza Santos\n*Banco:* NUBANK`;
                 navigator.clipboard.writeText(whatsappPix);
-                setToastMessage("Chave Pix copiada para o WhatsApp! 📋");
-                setTimeout(() => setToastMessage(""), 3500);
+                showToast('Chave Pix copiada para o WhatsApp! 📋');
               }}
-              className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-brand-primary text-brand-secondary rounded-xl font-black text-[10px] uppercase tracking-widest hover:scale-105 active:scale-95 transition-all shadow-md shadow-brand-primary/10"
-              title="Copiar chave Pix no formato do WhatsApp"
+              className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-brand-primary text-brand-secondary rounded-xl font-black text-[10px] uppercase tracking-widest hover:scale-105 transition-all"
             >
               <Copy className="w-4 h-4" />
-              Copiar Chave p/ WhatsApp
+              Copiar Chave PIX
             </button>
           </div>
           
@@ -830,69 +873,47 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
       </div>
 
       {/* Filters */}
-      <div className="bg-black backdrop-blur-xl p-4 sm:p-6 rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-sm grid grid-cols-2 md:flex md:flex-wrap gap-3 sm:gap-4 items-end">
+      <div className="bg-black backdrop-blur-xl p-4 sm:p-6 rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary grid grid-cols-2 md:flex md:flex-wrap gap-3 sm:gap-4 items-end">
         <div className="min-w-0 md:min-w-[200px] space-y-2">
           <label className="text-[10px] font-black text-brand-primary uppercase tracking-widest ml-1 flex items-center gap-2">
-            <Filter className="w-3 h-3" /> Mês
+            <Filter className="w-3 h-3" /> Mês de Referência
           </label>
           <select
             value={filterMonth}
             onChange={e => setFilterMonth(e.target.value)}
-            className="w-full px-3 py-2 sm:px-4 sm:py-3 bg-white/5 border border-brand-primary/40 rounded-xl font-bold text-white text-xs sm:text-sm outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all appearance-none backdrop-blur-sm"
+            className="w-full px-4 py-3 bg-white/5 border border-brand-primary/40 rounded-xl font-bold text-white text-xs sm:text-sm outline-none"
           >
-            <option value="" className="bg-slate-900">Todos</option>
+            <option value="" className="bg-slate-900">Todos os Meses</option>
             {uniqueMonths.map(m => (
               <option key={m} value={m} className="bg-slate-900">{formatMonth(m)}</option>
             ))}
           </select>
         </div>
 
-        <div className="min-w-0 md:min-w-[200px] space-y-2">
-          <label className="text-[10px] font-black text-brand-primary uppercase tracking-widest ml-1 flex items-center gap-2">
-            <Clock className="w-3 h-3" /> Data
-          </label>
-          <div className="relative">
-            <input
-              type="date"
-              value={filterDate}
-              onChange={e => setFilterDate(e.target.value)}
-              className="w-full px-3 py-2 sm:px-4 sm:py-3 bg-white/5 border border-brand-primary/40 rounded-xl font-bold text-white text-xs sm:text-sm outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all appearance-none backdrop-blur-sm"
-            />
-            {filterDate && (
-              <button 
-                onClick={() => setFilterDate('')}
-                className="absolute right-3 sm:right-4 top-1/2 -translate-y-1/2 text-white/40 hover:text-rose-500 transition-colors"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            )}
-          </div>
-        </div>
-
         {activeTab === 'RECEIPTS' && (
           <>
-            <div className="min-w-0 md:min-w-[200px] space-y-2">
+            <div className="min-w-0 md:min-w-[180px] space-y-2">
               <label className="text-[10px] font-black text-brand-primary uppercase tracking-widest ml-1 flex items-center gap-2">
                 <Filter className="w-3 h-3" /> Sócio
               </label>
               <select
                 value={filterPlayer}
                 onChange={e => setFilterPlayer(e.target.value)}
-                className="w-full px-3 py-2 sm:px-4 sm:py-3 bg-white/5 border border-brand-primary/40 rounded-xl font-bold text-white text-xs sm:text-sm outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all appearance-none backdrop-blur-sm"
+                className="w-full px-4 py-3 bg-white/5 border border-brand-primary/40 rounded-xl font-bold text-white text-xs sm:text-sm outline-none"
               >
                 <option value="" className="bg-slate-900">Todos</option>
                 {uniquePlayers.map(p => <option key={p} value={p} className="bg-slate-900">{p}</option>)}
               </select>
             </div>
 
-            <div className="min-w-0 md:min-w-[200px] space-y-2">
+            <div className="min-w-0 md:min-w-[160px] space-y-2">
               <label className="text-[10px] font-black text-brand-primary uppercase tracking-widest ml-1 flex items-center gap-2">
                 <Filter className="w-3 h-3" /> Status
               </label>
               <select
                 value={filterStatus}
                 onChange={e => setFilterStatus(e.target.value as PaymentStatus | '')}
-                className="w-full px-3 py-2 sm:px-4 sm:py-3 bg-white/5 border border-brand-primary/40 rounded-xl font-bold text-white text-xs sm:text-sm outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all appearance-none backdrop-blur-sm"
+                className="w-full px-4 py-3 bg-white/5 border border-brand-primary/40 rounded-xl font-bold text-white text-xs sm:text-sm outline-none"
               >
                 <option value="" className="bg-slate-900">Todos</option>
                 <option value={PaymentStatus.PAID} className="bg-slate-900">Pago</option>
@@ -900,437 +921,213 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                 <option value={PaymentStatus.OVERDUE} className="bg-slate-900">Atrasado</option>
               </select>
             </div>
-            <button
-              onClick={copyPaymentReport}
-              className="flex items-center justify-center gap-2 px-6 py-3 bg-brand-primary text-brand-secondary rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-brand-primary/90 transition-all shadow-lg shadow-brand-primary/20 h-[38px] sm:h-[46px]"
-              title="Copiar lista de pagamentos"
-            >
-              <Copy className="w-4 h-4" /> Copiar Lista
-            </button>
           </>
         )}
 
-        {activeTab === 'STATEMENT' && (
-          <button
-            onClick={generateStatementReport}
-            className="col-span-2 md:col-span-1 flex items-center justify-center gap-2 px-6 py-3 bg-brand-primary text-brand-secondary rounded-xl font-black text-[10px] uppercase tracking-widest transition-all shadow-lg shadow-brand-primary/20 h-[38px] sm:h-[46px]"
-          >
-            <Copy className="w-4 h-4" /> Exportar Extrato
-          </button>
-        )}
+        <div className="flex flex-wrap gap-2 col-span-2 md:col-span-1">
+          {userRole === 'ADMIN' && filterMonth && (
+            <button
+              onClick={handleGenerateMonthlyBatch}
+              disabled={isGeneratingBatch}
+              className="flex items-center justify-center gap-2 px-5 py-3 bg-emerald-500 text-black rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-emerald-400 transition-all shadow-lg disabled:opacity-50"
+              title="Cria automaticamente os lançamentos pendentes do mês para todos os sócios ativos"
+            >
+              <Zap className="w-4 h-4" />
+              {isGeneratingBatch ? 'Gerando...' : 'Gerar Mês (1-Click)'}
+            </button>
+          )}
 
-        {(filterMonth || filterPlayer || filterStatus || filterDate) && (
           <button
-            onClick={() => { setFilterMonth(''); setFilterPlayer(''); setFilterStatus(''); setFilterDate(''); }}
-            className="col-span-2 md:col-span-1 p-2 sm:p-3 bg-white/5 text-white/40 rounded-xl hover:bg-white/10 transition-all border border-brand-primary/40 flex justify-center items-center h-[38px] sm:h-[46px]"
-            title="Limpar Filtros"
+            onClick={copyPaymentReport}
+            className="flex items-center justify-center gap-2 px-5 py-3 bg-brand-primary text-brand-secondary rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-brand-primary/90 transition-all"
           >
-            <X className="w-4 h-4 sm:w-5 sm:h-5" />
+            <Copy className="w-4 h-4" /> Copiar Lista WhatsApp
           </button>
-        )}
+
+          {(filterMonth || filterPlayer || filterStatus || filterDate) && (
+            <button
+              onClick={() => { setFilterMonth(''); setFilterPlayer(''); setFilterStatus(''); setFilterDate(''); }}
+              className="p-3 bg-white/5 text-white/40 rounded-xl hover:bg-white/10 transition-all border border-white/10"
+              title="Limpar Filtros"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
       </div>
 
-      {activeTab === 'RECEIPTS' ? (
-        <>
-          {/* Desktop Table View - Receipts */}
-          <div className="hidden md:block bg-black backdrop-blur-xl rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-sm overflow-hidden">
-            <table className="w-full text-left">
-              <thead className="bg-black/40 border-b border-brand-primary/40">
-                <tr>
-                  <th className="px-8 py-5 text-[10px] font-black text-brand-primary uppercase tracking-widest">Sócio</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">Mês/Ref</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">Valor</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">Forma</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">Status</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">Vencimento</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-brand-primary uppercase tracking-widest text-right">Ações</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {filteredPayments.map(payment => {
-                  const status = getCalculatedStatus(payment, payment.playerId, payment.month);
-                  return (
-                  <tr key={payment.id} className="hover:bg-white/5 transition-colors group">
-                    <td className="px-8 py-5">
-                      <p className={`font-black ${status === PaymentStatus.OVERDUE ? 'text-rose-500' : 'text-white'}`}>
-                        {payment.playerName || allPlayers.find(ap => ap.id === payment.playerId)?.name || 'Sócio'}
-                      </p>
-                    </td>
-                    <td className="px-8 py-5 text-center text-[10px] font-bold text-white/40 uppercase">{payment.month}</td>
-                    <td className="px-8 py-5 text-center font-mono text-sm font-black text-white">R$ {payment.amount.toFixed(2)}</td>
-                    <td className="px-8 py-5 text-center">
-                      {payment.method ? (
-                        <span className="text-[10px] font-bold text-white/60 uppercase tracking-widest bg-white/5 px-2 py-1 rounded-lg border border-brand-primary/40">
-                          {payment.method}
-                        </span>
-                      ) : (
-                        <span className="text-[10px] text-white/20 italic">-</span>
-                      )}
-                    </td>
-                    <td className="px-8 py-5 text-center">
-                      <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border ${getStatusColor(status)}`}>
-                        {getStatusIcon(status)}
-                        {translateStatus(status)}
-                      </span>
-                    </td>
-                    <td className="px-8 py-5 text-center text-[10px] font-bold text-white/40 uppercase">
-                      <div>{new Date(payment.dueDate + 'T00:00:00').toLocaleDateString('pt-BR')}</div>
-                      {payment.status === PaymentStatus.PAID && payment.paymentDate && (
-                        <div className="text-[8px] text-emerald-500 mt-1">Pago em: {new Date(payment.paymentDate + 'T00:00:00').toLocaleDateString('pt-BR')}</div>
-                      )}
-                    </td>
-                    <td className="px-8 py-5 text-right">
-                      {userRole === 'ADMIN' ? (
-                        <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button onClick={() => { setEditingPayment(payment); setIsPaymentFormOpen(true); }} className="p-2.5 text-white/40 hover:text-brand-primary hover:bg-white/10 rounded-xl transition-all"><Edit2 className="w-4 h-4" /></button>
-                          <button onClick={() => deletePayment(payment.id)} className="p-2.5 text-white/40 hover:text-rose-500 hover:bg-rose-500/10 rounded-xl transition-all"><Trash2 className="w-4 h-4" /></button>
-                        </div>
-                      ) : (
-                        <span className="text-[10px] text-white/20 font-bold uppercase tracking-widest">Somente Leitura</span>
-                      )}
-                    </td>
-                  </tr>
-                );})}
-              </tbody>
-            </table>
-            {filteredPayments.length === 0 && (
-              <div className="p-20 text-center">
-                <CreditCard className="w-12 h-12 text-white/10 mx-auto mb-4" />
-                <p className="text-sm font-bold text-white/20 uppercase tracking-widest">Nenhum lançamento encontrado</p>
+      {/* ABA: GESTÃO DE MENSALIDADES (PAINEL DO MÊS COM BAIXA PIX 1-CLICK) */}
+      {activeTab === 'COMPLIANCE' && (
+        <div className="bg-black backdrop-blur-xl rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-sm overflow-hidden">
+          <div className="p-4 sm:p-8 border-b border-white/5 bg-white/5">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+              <div>
+                <h3 className="text-xl font-black text-white uppercase tracking-tight">
+                  Adimplência dos Sócios • {filterMonth ? formatMonth(filterMonth) : 'Mês Atual'}
+                </h3>
+                <p className="text-[10px] sm:text-xs font-bold text-white/40 uppercase tracking-widest mt-1">
+                  Confirme o PIX em 1 clique ou envie lembrete individual no WhatsApp
+                </p>
               </div>
-            )}
-          </div>
 
-          {/* Mobile Card View - Receipts */}
-          <div className="md:hidden space-y-3">
-            {filteredPayments.map(payment => {
-              const status = getCalculatedStatus(payment, payment.playerId, payment.month);
-              return (
-              <div key={payment.id} className="bg-black backdrop-blur-xl p-4 rounded-3xl border border-brand-primary/40 shadow-sm space-y-3">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h4 className={`text-lg font-black ${status === PaymentStatus.OVERDUE ? 'text-rose-500' : 'text-white'}`}>
-                      {payment.playerName}
-                    </h4>
-                    <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest mt-0.5">Ref: {payment.month}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xl font-black text-white font-mono">R$ {payment.amount.toFixed(2)}</p>
-                  </div>
+              <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
+                <div className="relative flex-1 sm:w-56">
+                  <Filter className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
+                  <input
+                    type="text"
+                    placeholder="Buscar sócio..."
+                    value={filterPlayer}
+                    onChange={e => setFilterPlayer(e.target.value)}
+                    className="w-full bg-white/5 border border-brand-primary/40 rounded-xl pl-10 pr-4 py-2.5 text-xs font-bold text-white placeholder:text-white/20 outline-none"
+                  />
                 </div>
-                
-                <div className="flex flex-wrap gap-2">
-                  <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[9px] font-black uppercase tracking-widest border ${getStatusColor(status)}`}>
-                    {getStatusIcon(status)}
-                    {translateStatus(status)}
-                  </span>
-                  <span className="bg-white/5 text-white/60 px-2.5 py-1 rounded-xl text-[9px] font-black uppercase tracking-widest border border-brand-primary/40">
-                    Vence: {new Date(payment.dueDate + 'T00:00:00').toLocaleDateString('pt-BR')}
-                  </span>
-                  {payment.method && (
-                    <span className="bg-brand-primary/10 text-brand-primary px-2.5 py-1 rounded-xl text-[9px] font-black uppercase tracking-widest border border-brand-primary/40">
-                      {payment.method}
-                    </span>
-                  )}
-                  {status === PaymentStatus.PAID && payment.paymentDate && (
-                    <span className="bg-emerald-500/10 text-emerald-500 px-2.5 py-1 rounded-xl text-[9px] font-black uppercase tracking-widest border border-emerald-500/20">
-                      Pago: {new Date(payment.paymentDate + 'T00:00:00').toLocaleDateString('pt-BR')}
-                    </span>
-                  )}
-                </div>
-
-                {userRole === 'ADMIN' && (
-                  <div className="flex gap-2 pt-2 border-t border-white/5">
-                    <button 
-                      onClick={() => { setEditingPayment(payment); setIsPaymentFormOpen(true); }} 
-                      className="flex-1 flex items-center justify-center gap-2 py-2 bg-white/5 text-white/60 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-brand-primary/10 hover:text-brand-primary transition-all"
-                    >
-                      <Edit2 className="w-3 h-3" /> Editar
-                    </button>
-                    <button 
-                      onClick={() => deletePayment(payment.id)} 
-                      className="flex-1 flex items-center justify-center gap-2 py-2 bg-rose-500/10 text-rose-500 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-500/20 transition-all"
-                    >
-                      <Trash2 className="w-3 h-3" /> Excluir
-                    </button>
-                  </div>
-                )}
-              </div>
-            )})}
-          </div>
-        </>
-      ) : activeTab === 'EXPENSES' ? (
-        <>
-          {/* Desktop Table View - Expenses */}
-          <div className="hidden md:block bg-black backdrop-blur-xl rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-sm overflow-hidden">
-            <table className="w-full text-left">
-              <thead className="bg-black/40 border-b border-brand-primary/40">
-                <tr>
-                  <th className="px-8 py-5 text-[10px] font-black text-brand-primary uppercase tracking-widest">Descrição</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">Categoria</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">Mês/Ref</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">Valor</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">Data</th>
-                  <th className="px-8 py-5 text-[10px] font-black text-brand-primary uppercase tracking-widest text-right">Ações</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {filteredExpenses.map(expense => (
-                  <tr key={expense.id} className="hover:bg-white/5 transition-colors group">
-                    <td className="px-8 py-5">
-                      <p className="font-black text-white">{expense.description}</p>
-                    </td>
-                    <td className="px-8 py-5 text-center">
-                      <span className="text-[10px] font-bold text-white/60 uppercase tracking-widest bg-white/5 px-3 py-1 rounded-lg border border-brand-primary/40">
-                        {expense.category}
-                      </span>
-                    </td>
-                    <td className="px-8 py-5 text-center text-[10px] font-bold text-white/40 uppercase">{expense.month}</td>
-                    <td className="px-8 py-5 text-center font-mono text-sm font-black text-rose-500">R$ {expense.amount.toFixed(2)}</td>
-                    <td className="px-8 py-5 text-center text-[10px] font-bold text-white/40 uppercase">
-                      {new Date(expense.date + 'T00:00:00').toLocaleDateString('pt-BR')}
-                    </td>
-                    <td className="px-8 py-5 text-right">
-                      {userRole === 'ADMIN' ? (
-                        <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button onClick={() => { setEditingExpense(expense); setIsExpenseFormOpen(true); }} className="p-2.5 text-white/40 hover:text-brand-primary hover:bg-white/10 rounded-xl transition-all"><Edit2 className="w-4 h-4" /></button>
-                          <button onClick={() => deleteExpense(expense.id)} className="p-2.5 text-white/40 hover:text-rose-500 hover:bg-rose-500/10 rounded-xl transition-all"><Trash2 className="w-4 h-4" /></button>
-                        </div>
-                      ) : (
-                        <span className="text-[10px] text-white/20 font-bold uppercase tracking-widest">Somente Leitura</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {filteredExpenses.length === 0 && (
-              <div className="p-20 text-center">
-                <DollarSign className="w-12 h-12 text-white/10 mx-auto mb-4" />
-                <p className="text-sm font-bold text-white/20 uppercase tracking-widest">Nenhuma despesa encontrada</p>
-              </div>
-            )}
-          </div>
-
-          {/* Mobile Card View - Expenses */}
-          <div className="md:hidden space-y-3">
-            {filteredExpenses.map(expense => (
-              <div key={expense.id} className="bg-black backdrop-blur-xl p-4 rounded-3xl border border-brand-primary/40 shadow-sm space-y-3">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h4 className="text-lg font-black text-white">{expense.description}</h4>
-                    <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest mt-0.5">{expense.category} • {expense.month}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xl font-black text-rose-500 font-mono">R$ {expense.amount.toFixed(2)}</p>
-                  </div>
-                </div>
-                
-                <div className="flex flex-wrap gap-2">
-                  <span className="bg-white/5 text-white/60 px-2.5 py-1 rounded-xl text-[9px] font-black uppercase tracking-widest border border-brand-primary/40">
-                    Data: {new Date(expense.date + 'T00:00:00').toLocaleDateString('pt-BR')}
-                  </span>
-                </div>
-
-                {userRole === 'ADMIN' && (
-                  <div className="flex gap-2 pt-2 border-t border-white/5">
-                    <button 
-                      onClick={() => { setEditingExpense(expense); setIsExpenseFormOpen(true); }} 
-                      className="flex-1 flex items-center justify-center gap-2 py-2 bg-white/5 text-white/60 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-brand-primary/10 hover:text-brand-primary transition-all"
-                    >
-                      <Edit2 className="w-3 h-3" /> Editar
-                    </button>
-                    <button 
-                      onClick={() => deleteExpense(expense.id)} 
-                      className="flex-1 flex items-center justify-center gap-2 py-2 bg-rose-500/10 text-rose-500 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-500/20 transition-all"
-                    >
-                      <Trash2 className="w-3 h-3" /> Excluir
-                    </button>
-                  </div>
-                )}
-              </div>
-            ))}
-            {filteredExpenses.length === 0 && (
-              <div className="p-12 text-center bg-brand-secondary/30 backdrop-blur-xl rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary">
-                <DollarSign className="w-10 h-10 text-white/10 mx-auto mb-3" />
-                <p className="text-xs font-bold text-white/20 uppercase tracking-widest">Nenhuma despesa encontrada</p>
-              </div>
-            )}
-          </div>
-        </>
-      ) : activeTab === 'COMPLIANCE' ? (
-        <>
-          {/* Compliance View */}
-          <div className="bg-black backdrop-blur-xl rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-sm overflow-hidden">
-            <div className="p-4 sm:p-8 border-b border-white/5 bg-white/5">
-              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <div>
-                  <h3 className="text-xl font-black text-white uppercase tracking-tight">Relatório de Adimplência</h3>
-                  <p className="text-[10px] sm:text-xs font-bold text-white/40 uppercase tracking-widest mt-1">Status de todos os sócios para {filterMonth ? formatMonth(filterMonth) : 'todos os meses'}</p>
-                </div>
-                <div className="flex flex-col sm:flex-row gap-4 w-full md:w-auto">
-                  <div className="flex gap-2 w-full sm:w-auto">
-                    <div className="relative flex-1 sm:w-64">
-                      <Filter className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
-                      <input
-                        type="text"
-                        placeholder="Buscar sócio..."
-                        value={filterPlayer}
-                        onChange={e => setFilterPlayer(e.target.value)}
-                        className="w-full bg-white/5 border border-brand-primary/40 rounded-2xl pl-11 pr-4 py-3 text-sm font-bold text-white placeholder:text-white/20 outline-none focus:ring-2 focus:ring-brand-primary/20 transition-all backdrop-blur-sm"
-                      />
-                    </div>
-                      <div className="flex gap-2 w-full sm:w-auto">
-                        <button
-                          onClick={generateWhatsAppReport}
-                          className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-3 bg-[#25D366]/10 text-[#25D366] hover:bg-[#25D366]/20 border border-[#25D366]/20 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all whitespace-nowrap"
-                          title="Copiar relatório completo para WhatsApp"
-                        >
-                          <MessageSquare className="w-4 h-4" />
-                          <span className="hidden sm:inline">Relatório</span>
-                        </button>
-                        <button
-                          onClick={() => copyList('PAID', 'Pagos')}
-                          className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-3 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 border border-emerald-500/20 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all whitespace-nowrap"
-                          title="Copiar lista de pagos"
-                        >
-                          <CheckCircle2 className="w-4 h-4" />
-                          <span className="hidden sm:inline">Pagos</span>
-                        </button>
-                        <button
-                          onClick={() => copyList('UNPAID', 'Pendentes')}
-                          className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-3 bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 border border-rose-500/20 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all whitespace-nowrap"
-                          title="Copiar lista de pendentes"
-                        >
-                          <X className="w-4 h-4" />
-                          <span className="hidden sm:inline">Pendentes</span>
-                        </button>
-                      </div>
-                  </div>
-                  {filterMonth && (
-                    <div className="grid grid-cols-2 sm:flex gap-2 sm:gap-4">
-                      <div className="text-center p-2 sm:px-4 sm:py-2 bg-emerald-500/10 rounded-xl border border-emerald-500/20 min-w-[80px]">
-                        <p className="text-[9px] sm:text-[10px] font-black text-emerald-500 uppercase tracking-widest">Pagos</p>
-                        <p className="text-base sm:text-lg font-black text-emerald-500">
-                          {players.filter(player => {
-                            const p = payments.find(p => p.playerId === player.id && p.month === filterMonth);
-                            return getCalculatedStatus(p, player.id, filterMonth) === PaymentStatus.PAID;
-                          }).length}
-                        </p>
-                      </div>
-                      <div className="text-center p-2 sm:px-4 sm:py-2 bg-amber-500/10 rounded-xl border border-amber-500/20 min-w-[80px]">
-                        <p className="text-[9px] sm:text-[10px] font-black text-amber-500 uppercase tracking-widest">Pendentes</p>
-                        <p className="text-base sm:text-lg font-black text-amber-500">
-                          {players.filter(player => {
-                            const p = payments.find(p => p.playerId === player.id && p.month === filterMonth);
-                            return getCalculatedStatus(p, player.id, filterMonth) === PaymentStatus.PENDING;
-                          }).length}
-                        </p>
-                      </div>
-                      <div className="text-center p-2 sm:px-4 sm:py-2 bg-rose-500/10 rounded-xl border border-rose-500/20 min-w-[80px]">
-                        <p className="text-[9px] sm:text-[10px] font-black text-rose-500 uppercase tracking-widest">Atrasados</p>
-                        <p className="text-base sm:text-lg font-black text-rose-500">
-                          {players.filter(player => {
-                            const p = payments.find(p => p.playerId === player.id && p.month === filterMonth);
-                            return getCalculatedStatus(p, player.id, filterMonth) === PaymentStatus.OVERDUE;
-                          }).length}
-                        </p>
-                      </div>
-                      <div className="text-center p-2 sm:px-4 sm:py-2 bg-white/5 rounded-xl border border-brand-primary/40 min-w-[100px]">
-                        <p className="text-[9px] sm:text-[10px] font-black text-brand-primary uppercase tracking-widest">Total Pago</p>
-                        <p className="text-base sm:text-lg font-black text-brand-primary font-mono">
-                          R$ {payments.filter(p => p.month === filterMonth && p.status === PaymentStatus.PAID).reduce((acc, p) => acc + p.amount, 0).toFixed(0)}
-                        </p>
-                      </div>
-                    </div>
-                  )}
+                <div className="flex gap-2">
+                  <button
+                    onClick={generateWhatsAppReport}
+                    className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2.5 bg-[#25D366]/15 text-[#25D366] hover:bg-[#25D366]/25 border border-[#25D366]/30 rounded-xl font-black text-[10px] uppercase tracking-widest"
+                  >
+                    <MessageSquare className="w-3.5 h-3.5" /> Relatório
+                  </button>
+                  <button
+                    onClick={() => copyList('PAID', 'Pagos')}
+                    className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3.5 py-2.5 bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 rounded-xl font-black text-[10px] uppercase tracking-widest"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Pagos
+                  </button>
+                  <button
+                    onClick={() => copyList('UNPAID', 'Pendentes')}
+                    className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3.5 py-2.5 bg-rose-500/15 text-rose-400 border border-rose-500/30 rounded-xl font-black text-[10px] uppercase tracking-widest"
+                  >
+                    <X className="w-3.5 h-3.5" /> Pendentes
+                  </button>
                 </div>
               </div>
             </div>
+          </div>
 
-            <div className="hidden md:block overflow-x-auto">
-              <table className="w-full text-left">
-                <thead className="bg-black/40 border-b border-brand-primary/40">
-                  <tr>
-                    <th className="px-8 py-5 text-[10px] font-black text-brand-primary uppercase tracking-widest">Sócio</th>
-                    <th className="px-8 py-5 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">Status ({formatMonth(filterMonth)})</th>
-                    <th className="px-8 py-5 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">Valor</th>
-                    <th className="px-8 py-5 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">Data Pagto</th>
-                    <th className="px-8 py-5 text-[10px] font-black text-brand-primary uppercase tracking-widest text-right">Ações</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {players
-                    .filter(player => !filterPlayer || player.name.toLowerCase().includes(filterPlayer.toLowerCase()))
-                    .sort((a, b) => a.name.localeCompare(b.name))
-                    .map(player => {
-                      const payment = payments.find(p => p.playerId === player.id && p.month === filterMonth);
-                      const status = getCalculatedStatus(payment, player.id, filterMonth);
-                      
-                      return (
-                        <tr key={player.id} className="hover:bg-white/5 transition-colors group">
-                          <td className="px-8 py-5">
+          {/* Tabela Desktop */}
+          <div className="hidden md:block overflow-x-auto">
+            <table className="w-full text-left">
+              <thead className="bg-black/40 border-b border-brand-primary/40">
+                <tr>
+                  <th className="px-6 py-4 text-[10px] font-black text-brand-primary uppercase tracking-widest">Sócio</th>
+                  <th className="px-6 py-4 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">Status</th>
+                  <th className="px-6 py-4 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">Valor</th>
+                  <th className="px-6 py-4 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">Data Pagto</th>
+                  <th className="px-6 py-4 text-[10px] font-black text-brand-primary uppercase tracking-widest text-right">Ações Rápidas</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {players
+                  .filter(player => !filterPlayer || player.name.toLowerCase().includes(filterPlayer.toLowerCase()))
+                  .sort((a, b) => a.name.localeCompare(b.name))
+                  .map(player => {
+                    const targetM = filterMonth || getCurrentMonthKey();
+                    const payment = payments.find(p => p.playerId === player.id && p.month === targetM);
+                    const status = getCalculatedStatus(payment, player.id, targetM);
+                    const isPaid = status === PaymentStatus.PAID;
+                    const feeVal = payment?.amount || systemMetadata.monthlyFee || 0;
+                    const waLink = !isPaid ? getWhatsAppReminderUrl(player, feeVal) : null;
+
+                    return (
+                      <tr key={player.id} className="hover:bg-white/5 transition-colors">
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-2">
                             <p className="font-bold text-white text-sm">{capitalizeName(player.name)}</p>
-                            <p className="text-[10px] text-white/40 font-bold uppercase tracking-widest">{player.gender === 'MALE' ? 'Sócio' : 'Sócia'}</p>
-                          </td>
-                          <td className="px-8 py-5 text-center">
-                            <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border ${getStatusColor(status)}`}>
-                              {getStatusIcon(status)}
-                              {translateStatus(status)}
-                            </span>
-                          </td>
-                          <td className="px-8 py-5 text-center font-mono text-sm font-black text-white">
-                            {payment ? `R$ ${payment.amount.toFixed(2)}` : '-'}
-                          </td>
-                          <td className="px-8 py-5 text-center text-[10px] font-bold text-white/40 uppercase">
-                            {payment?.paymentDate ? new Date(payment.paymentDate + 'T00:00:00').toLocaleDateString('pt-BR') : '-'}
-                          </td>
-                          <td className="px-8 py-5 text-right">
-                            {userRole === 'ADMIN' && (
+                            {player.isExempt && (
+                              <span className="px-2 py-0.5 rounded bg-brand-primary/20 text-brand-primary text-[8px] font-black uppercase">
+                                Isento
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-center">
+                          <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border ${getStatusColor(status)}`}>
+                            {getStatusIcon(status)}
+                            {translateStatus(status)}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-center font-mono text-sm font-black text-white">
+                          {player.isExempt ? 'Isento' : `R$ ${feeVal.toFixed(2)}`}
+                        </td>
+                        <td className="px-6 py-4 text-center text-[10px] font-bold text-white/50 uppercase">
+                          {payment?.paymentDate ? new Date(payment.paymentDate + 'T00:00:00').toLocaleDateString('pt-BR') : '-'}
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          {userRole === 'ADMIN' && (
+                            <div className="flex items-center justify-end gap-2">
+                              {!isPaid && !player.isExempt && (
+                                <button
+                                  onClick={() => handleQuickMarkPaid(player, payment)}
+                                  disabled={processingPlayerId === player.id}
+                                  className="px-3.5 py-2 bg-emerald-500 text-black hover:bg-emerald-400 rounded-xl font-black text-[9px] uppercase tracking-widest transition-all flex items-center gap-1.5 shadow-md disabled:opacity-50"
+                                >
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                  {processingPlayerId === player.id ? 'Salvando...' : 'Confirmar PIX'}
+                                </button>
+                              )}
+
+                              {waLink && (
+                                <a
+                                  href={waLink}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="p-2 bg-[#25D366]/15 text-[#25D366] hover:bg-[#25D366] hover:text-black rounded-xl transition-all border border-[#25D366]/30"
+                                  title="Enviar lembrete com chave PIX no WhatsApp"
+                                >
+                                  <MessageSquare className="w-3.5 h-3.5" />
+                                </a>
+                              )}
+
                               <button 
                                 onClick={() => {
                                   if (payment) {
                                     setEditingPayment(payment);
-                                    setIsPaymentFormOpen(true);
                                   } else {
                                     setEditingPayment({
                                       id: '',
                                       playerId: player.id,
                                       playerName: player.name,
                                       amount: systemMetadata.monthlyFee || 0,
-                                      month: filterMonth || getCurrentMonthKey(),
+                                      month: targetM,
                                       dueDate: getFirestoreDateKey(),
                                       status: PaymentStatus.PENDING
                                     });
-                                    setIsPaymentFormOpen(true);
                                   }
+                                  setIsPaymentFormOpen(true);
                                 }}
-                                className="p-2.5 text-brand-primary hover:bg-white/10 rounded-xl transition-all font-black text-[10px] uppercase tracking-widest"
+                                className="px-3 py-2 bg-white/5 hover:bg-white/10 text-white/70 rounded-xl transition-all font-black text-[9px] uppercase tracking-widest"
                               >
-                                {payment ? 'Editar' : 'Lançar'}
+                                {payment ? 'Editar' : 'Manual'}
                               </button>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                </tbody>
-              </table>
-            </div>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
 
-            {/* Mobile Card View - Compliance */}
-            <div className="md:hidden divide-y divide-white/5">
-              {players
-                .filter(player => !filterPlayer || player.name.toLowerCase().includes(filterPlayer.toLowerCase()))
-                .sort((a, b) => a.name.localeCompare(b.name))
-                .map(player => {
-                  const payment = payments.find(p => p.playerId === player.id && p.month === filterMonth);
-                  const status = getCalculatedStatus(payment, player.id, filterMonth);
-                  
-                  return (
-                    <div key={player.id} className="p-4 flex items-center justify-between gap-4">
-                      <div className="flex-1 min-w-0">
-                        <p className="font-bold text-white text-sm truncate">{capitalizeName(player.name)}</p>
+          {/* Mobile View - Compliance */}
+          <div className="md:hidden divide-y divide-white/5">
+            {players
+              .filter(player => !filterPlayer || player.name.toLowerCase().includes(filterPlayer.toLowerCase()))
+              .sort((a, b) => a.name.localeCompare(b.name))
+              .map(player => {
+                const targetM = filterMonth || getCurrentMonthKey();
+                const payment = payments.find(p => p.playerId === player.id && p.month === targetM);
+                const status = getCalculatedStatus(payment, player.id, targetM);
+                const isPaid = status === PaymentStatus.PAID;
+                const feeVal = payment?.amount || systemMetadata.monthlyFee || 0;
+                const waLink = !isPaid ? getWhatsAppReminderUrl(player, feeVal) : null;
+
+                return (
+                  <div key={player.id} className="p-4 flex flex-col gap-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="font-bold text-white text-sm">{capitalizeName(player.name)}</p>
                         <div className="flex items-center gap-2 mt-1">
                           <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[8px] font-black uppercase tracking-widest border ${getStatusColor(status)}`}>
                             {getStatusIcon(status)}
@@ -1338,208 +1135,248 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                           </span>
                           {payment?.paymentDate && (
                             <span className="text-[9px] font-bold text-white/40 uppercase">
-                              {new Date(payment.paymentDate + 'T00:00:00').toLocaleDateString('pt-BR')}
+                              Pago {new Date(payment.paymentDate + 'T00:00:00').toLocaleDateString('pt-BR')}
                             </span>
                           )}
                         </div>
                       </div>
-                      
-                      <div className="text-right flex flex-col items-end gap-1">
-                        <span className="font-mono text-sm font-black text-white">
-                          {payment ? `R$ ${payment.amount.toFixed(2)}` : '-'}
-                        </span>
-                        {userRole === 'ADMIN' && (
-                          <button 
-                            onClick={() => {
-                              if (payment) {
-                                setEditingPayment(payment);
-                                setIsPaymentFormOpen(true);
-                              } else {
-                                setEditingPayment({
-                                  id: '',
-                                  playerId: player.id,
-                                  playerName: player.name,
-                                  amount: systemMetadata.monthlyFee || 0,
-                                  month: filterMonth || getCurrentMonthKey(),
-                                  dueDate: getFirestoreDateKey(),
-                                  status: PaymentStatus.PENDING
-                                });
-                                setIsPaymentFormOpen(true);
-                              }
-                            }}
-                            className="text-brand-primary hover:bg-white/10 px-2 py-1 rounded-lg transition-all font-black text-[9px] uppercase tracking-widest"
+                      <span className="font-mono text-sm font-black text-white">
+                        {player.isExempt ? 'Isento' : `R$ ${feeVal.toFixed(2)}`}
+                      </span>
+                    </div>
+
+                    {userRole === 'ADMIN' && (
+                      <div className="flex items-center gap-2 pt-1">
+                        {!isPaid && !player.isExempt && (
+                          <button
+                            onClick={() => handleQuickMarkPaid(player, payment)}
+                            disabled={processingPlayerId === player.id}
+                            className="flex-1 py-2 bg-emerald-500 text-black rounded-xl font-black text-[9px] uppercase tracking-widest flex items-center justify-center gap-1.5"
                           >
-                            {payment ? 'Editar' : 'Lançar'}
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            {processingPlayerId === player.id ? 'Salvando...' : 'Confirmar PIX'}
                           </button>
                         )}
+                        {waLink && (
+                          <a
+                            href={waLink}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-3 py-2 bg-[#25D366]/15 text-[#25D366] rounded-xl font-black text-[9px] uppercase tracking-widest flex items-center gap-1 border border-[#25D366]/30"
+                          >
+                            <MessageSquare className="w-3.5 h-3.5" /> Cobrar
+                          </a>
+                        )}
+                        <button
+                          onClick={() => {
+                            if (payment) {
+                              setEditingPayment(payment);
+                            } else {
+                              setEditingPayment({
+                                id: '',
+                                playerId: player.id,
+                                playerName: player.name,
+                                amount: systemMetadata.monthlyFee || 0,
+                                month: targetM,
+                                dueDate: getFirestoreDateKey(),
+                                status: PaymentStatus.PENDING
+                              });
+                            }
+                            setIsPaymentFormOpen(true);
+                          }}
+                          className="px-3 py-2 bg-white/5 text-white/60 rounded-xl font-black text-[9px] uppercase tracking-widest"
+                        >
+                          Editar
+                        </button>
                       </div>
-                    </div>
-                  );
-                })}
-            </div>
-          </div>
-        </>
-      ) : (
-        <div className="space-y-6">
-          {/* Bank Statement Header Summary */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-black/40 backdrop-blur-xl p-6 rounded-[2rem] border border-white/5 border-l-[6px] border-l-emerald-500 shadow-sm">
-              <p className="text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">TOTAL CRÉDITOS (+)</p>
-              <p className="text-2xl font-black text-emerald-500 font-mono">R$ {summary.paid.toFixed(2)}</p>
-            </div>
-            <div className="bg-black/40 backdrop-blur-xl p-6 rounded-[2rem] border border-white/5 border-l-[6px] border-l-rose-500 shadow-sm">
-              <p className="text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">TOTAL DÉBITOS (-)</p>
-              <p className="text-2xl font-black text-rose-500 font-mono">R$ {summary.expenses.toFixed(2)}</p>
-            </div>
-            <div className="bg-black/40 backdrop-blur-xl p-6 rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-sm">
-              <p className="text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">SALDO DO PERÍODO</p>
-              <p className={`text-2xl font-black font-mono ${summary.balance >= 0 ? 'text-brand-primary' : 'text-rose-500'}`}>
-                R$ {summary.balance.toFixed(2)}
-              </p>
-            </div>
-          </div>
-
-          <div className="bg-black backdrop-blur-xl rounded-[2rem] border border-white/5 shadow-2xl overflow-hidden">
-            <div className="p-8 border-b border-white/5 bg-white/5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-              <div>
-                <h3 className="text-xl font-black text-white uppercase tracking-tight flex items-center gap-3">
-                  <CreditCard className="w-6 h-6 text-brand-primary" />
-                  Extrato Bancário
-                </h3>
-                <p className="text-xs font-bold text-white/40 uppercase tracking-widest mt-1">Guerreiros VC • Clube de Vôlei</p>
-              </div>
-              <div className="text-right">
-                <p className="text-[10px] font-black text-brand-primary uppercase tracking-widest">Período Selecionado</p>
-                <p className="text-sm font-black text-white uppercase">{filterMonth ? formatMonth(filterMonth) : 'Extrato Completo'}</p>
-              </div>
-            </div>
-            
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead className="bg-white/5 border-b border-white/10">
-                  <tr>
-                    <th className="px-8 py-4 text-[10px] font-black text-white/60 uppercase tracking-widest">Data</th>
-                    <th className="px-8 py-4 text-[10px] font-black text-white/60 uppercase tracking-widest">Lançamento / Histórico</th>
-                    <th className="px-8 py-4 text-[10px] font-black text-white/60 uppercase tracking-widest text-center">Tipo</th>
-                    <th className="px-8 py-4 text-[10px] font-black text-white/60 uppercase tracking-widest text-right">Valor (R$)</th>
-                    <th className="px-8 py-4 text-[10px] font-black text-white/60 uppercase tracking-widest text-right">Saldo (R$)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {combinedTransactions.map(t => (
-                    <tr key={t.id} className="hover:bg-brand-primary/5 transition-colors group border-l-4 border-l-transparent hover:border-l-brand-primary">
-                      <td className="px-8 py-5 text-[11px] font-bold text-white/40 uppercase whitespace-nowrap font-mono">
-                        {new Date(t.date + 'T00:00:00').toLocaleDateString('pt-BR')}
-                      </td>
-                      <td className="px-8 py-5">
-                        <div className="flex flex-col">
-                          <p className="text-xs font-black text-white uppercase tracking-tight group-hover:text-brand-primary transition-colors">{t.description}</p>
-                          <p className="text-[9px] font-bold text-white/20 uppercase tracking-widest">{t.category}</p>
-                        </div>
-                      </td>
-                      <td className="px-8 py-5 text-center">
-                        <span className={`inline-flex px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest border ${
-                          t.type === 'INCOME' 
-                            ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' 
-                            : 'bg-rose-500/10 text-rose-500 border-rose-500/20'
-                        }`}>
-                          {t.type === 'INCOME' ? 'C' : 'D'}
-                        </span>
-                      </td>
-                      <td className={`px-8 py-5 text-right font-mono text-sm font-black whitespace-nowrap ${
-                        t.type === 'INCOME' ? 'text-emerald-500' : 'text-rose-500'
-                      }`}>
-                        {t.type === 'INCOME' ? '+' : '-'} R$ {t.amount.toFixed(2)}
-                      </td>
-                      <td className={`px-8 py-5 text-right font-mono text-sm font-black whitespace-nowrap ${
-                        t.balance >= 0 ? 'text-white' : 'text-rose-500'
-                      }`}>
-                        <span className="text-[8px] text-white/20 mr-1.5 uppercase font-sans">Saldo</span>
-                        R$ {t.balance.toFixed(2)}
-                      </td>
-                    </tr>
-                  ))}
-                  {combinedTransactions.length === 0 && (
-                    <tr>
-                      <td colSpan={5} className="px-8 py-20 text-center">
-                        <div className="bg-white/5 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 border border-white/10">
-                          <History className="w-8 h-8 text-white/10" />
-                        </div>
-                        <p className="text-xs font-black text-white/20 uppercase tracking-widest">Sem movimentações para este período</p>
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-                {combinedTransactions.length > 0 && (
-                  <tfoot className="bg-white/5">
-                    <tr>
-                      <td colSpan={4} className="px-8 py-6 text-right">
-                        <p className="text-[10px] font-black text-white/40 uppercase tracking-widest">Saldo Final em {new Date().toLocaleDateString('pt-BR')}</p>
-                      </td>
-                      <td className="px-8 py-6 text-right">
-                        <div className="bg-brand-primary/10 border border-brand-primary/40 px-4 py-2 rounded-xl inline-block">
-                          <p className={`font-mono text-lg font-black ${summary.balance >= 0 ? 'text-brand-primary' : 'text-rose-500'}`}>
-                            R$ {summary.balance.toFixed(2)}
-                          </p>
-                        </div>
-                      </td>
-                    </tr>
-                  </tfoot>
-                )}
-              </table>
-            </div>
-            
-            <div className="p-8 bg-black/40 border-t border-white/5">
-              <div className="flex flex-col sm:flex-row justify-between items-center gap-6">
-                <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-full bg-brand-primary/10 border border-brand-primary/20 flex items-center justify-center">
-                    <DollarSign className="w-5 h-5 text-brand-primary" />
+                    )}
                   </div>
-                  <div>
-                    <p className="text-[10px] font-black text-white/60 uppercase tracking-widest">Documento gerado pelo sistema</p>
-                    <p className="text-[9px] font-bold text-white/20 uppercase">Acompanhamento Financeiro Guerreiros VC</p>
-                  </div>
-                </div>
-                <button
-                  onClick={generateStatementReport}
-                  className="w-full sm:w-auto flex items-center justify-center gap-3 px-8 py-4 bg-brand-primary text-brand-secondary rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-xl shadow-brand-primary/20 hover:scale-105 active:scale-95"
-                >
-                  <Copy className="w-5 h-5" /> Copiar Extrato Texto
-                </button>
-              </div>
-            </div>
+                );
+              })}
           </div>
         </div>
       )}
 
-      {/* Rodapé com Botão de Sincronização Forçada */}
-      <div className="mt-12 p-6 sm:p-8 bg-zinc-900/90 border-2 border-brand-primary/20 rounded-[2.5rem] flex flex-col sm:flex-row items-center justify-between gap-6 shadow-2xl">
-        <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-2xl bg-brand-primary/10 border border-brand-primary/20 flex items-center justify-center text-brand-primary flex-shrink-0">
-            <RefreshCw className={`w-6 h-6 ${isForcingSync ? 'animate-spin' : ''}`} />
-          </div>
-          <div>
-            <h4 className="text-sm font-black text-white uppercase tracking-wider">Sincronização Forçada</h4>
-            <p className="text-[10px] text-white/40 font-bold uppercase tracking-widest mt-0.5">
-              Limpa o cache da sub-árvore de pagamentos e força busca integral dos dados globais do servidor
-            </p>
+      {/* ABA: HISTÓRICO DE RECEBIMENTOS */}
+      {activeTab === 'RECEIPTS' && (
+        <div className="bg-black backdrop-blur-xl rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead className="bg-black/40 border-b border-brand-primary/40">
+                <tr>
+                  <th className="px-6 py-4 text-[10px] font-black text-brand-primary uppercase tracking-widest">Sócio</th>
+                  <th className="px-6 py-4 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">Mês/Ref</th>
+                  <th className="px-6 py-4 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">Valor</th>
+                  <th className="px-6 py-4 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">Status</th>
+                  <th className="px-6 py-4 text-[10px] font-black text-brand-primary uppercase tracking-widest text-right">Ações</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {filteredPayments.map(payment => {
+                  const status = getCalculatedStatus(payment, payment.playerId, payment.month);
+                  const playerObj = allPlayers.find(ap => ap.id === payment.playerId);
+                  return (
+                    <tr key={payment.id} className="hover:bg-white/5 transition-colors">
+                      <td className="px-6 py-4 font-black text-white">
+                        {payment.playerName || playerObj?.name || 'Sócio'}
+                      </td>
+                      <td className="px-6 py-4 text-center text-[10px] font-bold text-white/50 uppercase">
+                        {formatMonth(payment.month)}
+                      </td>
+                      <td className="px-6 py-4 text-center font-mono text-sm font-black text-white">
+                        R$ {payment.amount.toFixed(2)}
+                      </td>
+                      <td className="px-6 py-4 text-center">
+                        <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border ${getStatusColor(status)}`}>
+                          {getStatusIcon(status)}
+                          {translateStatus(status)}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        {userRole === 'ADMIN' && (
+                          <div className="flex justify-end gap-2">
+                            {status !== PaymentStatus.PAID && playerObj && (
+                              <button
+                                onClick={() => handleQuickMarkPaid(playerObj, payment)}
+                                className="px-3 py-1.5 bg-emerald-500 text-black rounded-xl font-black text-[9px] uppercase tracking-widest"
+                              >
+                                Confirmar PIX
+                              </button>
+                            )}
+                            <button onClick={() => { setEditingPayment(payment); setIsPaymentFormOpen(true); }} className="p-2 text-white/50 hover:text-brand-primary rounded-xl"><Edit2 className="w-4 h-4" /></button>
+                            <button onClick={() => deletePayment(payment.id)} className="p-2 text-white/50 hover:text-rose-500 rounded-xl"><Trash2 className="w-4 h-4" /></button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {filteredPayments.length === 0 && (
+              <div className="p-16 text-center">
+                <CreditCard className="w-10 h-10 text-white/10 mx-auto mb-3" />
+                <p className="text-xs font-bold text-white/30 uppercase tracking-widest">Nenhum lançamento encontrado</p>
+              </div>
+            )}
           </div>
         </div>
+      )}
 
-        <button
-          onClick={handleForceSyncFinancials}
-          disabled={isForcingSync}
-          className="w-full sm:w-auto px-8 py-4 bg-brand-primary text-black hover:bg-brand-primary/90 font-black text-xs uppercase tracking-widest rounded-2xl transition-all shadow-xl shadow-brand-primary/20 flex items-center justify-center gap-3 disabled:opacity-50 active:scale-95 cursor-pointer"
-        >
-          <RefreshCw className={`w-4 h-4 ${isForcingSync ? 'animate-spin' : ''}`} />
-          {isForcingSync ? 'Sincronizando...' : 'Sincronização Forçada'}
-        </button>
-      </div>
+      {/* ABA: DESPESAS DO CLUBE */}
+      {activeTab === 'EXPENSES' && (
+        <div className="bg-black backdrop-blur-xl rounded-[2rem] border border-white/5 border-l-[6px] border-l-brand-primary shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead className="bg-black/40 border-b border-brand-primary/40">
+                <tr>
+                  <th className="px-6 py-4 text-[10px] font-black text-brand-primary uppercase tracking-widest">Descrição</th>
+                  <th className="px-6 py-4 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">Categoria</th>
+                  <th className="px-6 py-4 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">Valor</th>
+                  <th className="px-6 py-4 text-[10px] font-black text-brand-primary uppercase tracking-widest text-center">Data</th>
+                  <th className="px-6 py-4 text-[10px] font-black text-brand-primary uppercase tracking-widest text-right">Ações</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {filteredExpenses.map(expense => (
+                  <tr key={expense.id} className="hover:bg-white/5 transition-colors">
+                    <td className="px-6 py-4 font-black text-white">{expense.description}</td>
+                    <td className="px-6 py-4 text-center">
+                      <span className="text-[10px] font-bold text-white/60 uppercase bg-white/5 px-3 py-1 rounded-lg border border-white/10">
+                        {expense.category}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-center font-mono text-sm font-black text-rose-400">
+                      R$ {expense.amount.toFixed(2)}
+                    </td>
+                    <td className="px-6 py-4 text-center text-[10px] font-bold text-white/40 uppercase">
+                      {new Date(expense.date + 'T00:00:00').toLocaleDateString('pt-BR')}
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      {userRole === 'ADMIN' && (
+                        <div className="flex justify-end gap-2">
+                          <button onClick={() => { setEditingExpense(expense); setIsExpenseFormOpen(true); }} className="p-2 text-white/40 hover:text-brand-primary"><Edit2 className="w-4 h-4" /></button>
+                          <button onClick={() => deleteExpense(expense.id)} className="p-2 text-white/40 hover:text-rose-500"><Trash2 className="w-4 h-4" /></button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {filteredExpenses.length === 0 && (
+              <div className="p-16 text-center">
+                <DollarSign className="w-10 h-10 text-white/10 mx-auto mb-3" />
+                <p className="text-xs font-bold text-white/30 uppercase tracking-widest">Nenhuma despesa registrada no período</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ABA: EXTRATO CONTA CORRENTE */}
+      {activeTab === 'STATEMENT' && (
+        <div className="bg-black backdrop-blur-xl rounded-[2rem] border border-white/5 shadow-2xl overflow-hidden">
+          <div className="p-6 sm:p-8 border-b border-white/5 bg-white/5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div>
+              <h3 className="text-xl font-black text-white uppercase tracking-tight flex items-center gap-3">
+                <CreditCard className="w-6 h-6 text-brand-primary" />
+                Extrato de Conta Corrente
+              </h3>
+              <p className="text-xs font-bold text-white/40 uppercase tracking-widest mt-1">
+                Período: {filterMonth ? formatMonth(filterMonth) : 'Completo'}
+              </p>
+            </div>
+            <button
+              onClick={generateStatementReport}
+              className="flex items-center gap-2 px-6 py-3 bg-brand-primary text-black rounded-xl font-black text-[10px] uppercase tracking-widest"
+            >
+              <Copy className="w-4 h-4" /> Copiar Extrato Texto
+            </button>
+          </div>
+          
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead className="bg-white/5 border-b border-white/10">
+                <tr>
+                  <th className="px-6 py-4 text-[10px] font-black text-white/60 uppercase tracking-widest">Data</th>
+                  <th className="px-6 py-4 text-[10px] font-black text-white/60 uppercase tracking-widest">Histórico</th>
+                  <th className="px-6 py-4 text-[10px] font-black text-white/60 uppercase tracking-widest text-right">Valor</th>
+                  <th className="px-6 py-4 text-[10px] font-black text-white/60 uppercase tracking-widest text-right">Saldo</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {combinedTransactions.map(t => (
+                  <tr key={t.id} className="hover:bg-white/5">
+                    <td className="px-6 py-4 text-[11px] font-mono text-white/50">
+                      {new Date(t.date + 'T00:00:00').toLocaleDateString('pt-BR')}
+                    </td>
+                    <td className="px-6 py-4 text-xs font-black text-white uppercase">{t.description}</td>
+                    <td className={`px-6 py-4 text-right font-mono text-sm font-black ${t.type === 'INCOME' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {t.type === 'INCOME' ? '+' : '-'} R$ {t.amount.toFixed(2)}
+                    </td>
+                    <td className="px-6 py-4 text-right font-mono text-sm font-black text-white">
+                      R$ {t.balance.toFixed(2)}
+                    </td>
+                  </tr>
+                ))}
+                {combinedTransactions.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="px-6 py-16 text-center text-xs font-black text-white/20 uppercase tracking-widest">
+                      Sem movimentações no período
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Toast Message */}
       {toastMessage && (
-        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-emerald-500 text-white px-6 py-3 rounded-2xl font-black text-sm uppercase tracking-widest shadow-xl flex items-center gap-2 z-50 animate-in fade-in slide-in-from-bottom-4">
-          <CheckCircle2 className="w-5 h-5" />
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-emerald-500 text-black px-6 py-3 rounded-2xl font-black text-xs uppercase tracking-widest shadow-2xl flex items-center gap-2 z-50">
+          <CheckCircle2 className="w-4 h-4" />
           {toastMessage}
         </div>
       )}

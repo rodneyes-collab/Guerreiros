@@ -3,39 +3,24 @@ import http from "http";
 import cors from "cors";
 import path from "path";
 import fs from "fs";
+import { GoogleGenAI } from "@google/genai";
 import { APP_VERSION } from "./constants.ts";
-import { getRegistrationOptions, verifyRegistration, getAuthenticationOptions, verifyAuthentication } from "./src/services/webauthn.ts";
-
-// Cache for GCP clients to prevent re-initialization
-let cachedGoogleAuth: any = null;
-let cachedMetricsClient: any = null;
-
-const getGoogleAuth = async () => {
-  if (!cachedGoogleAuth) {
-    const { GoogleAuth } = await import("google-auth-library");
-    cachedGoogleAuth = new GoogleAuth();
-  }
-  return cachedGoogleAuth;
-};
-
-const getMetricsClient = async () => {
-  if (!cachedMetricsClient) {
-    const { MetricServiceClient } = await import("@google-cloud/monitoring");
-    cachedMetricsClient = new MetricServiceClient();
-  }
-  return cachedMetricsClient;
-};
+import {
+  getRegistrationOptions,
+  verifyRegistration,
+  getAuthenticationOptions,
+  verifyAuthentication
+} from "./src/services/webauthn.ts";
+import { runDeepAnalyticsChat } from "./serverDeepAnalysis.ts";
 
 const __dirname = process.cwd();
-// ... rest of the file ...
 
-// Forçar o ambiente a usar o projeto do usuário se disponível
 let configProjectId = "volleyclub-manager";
 let firebaseConfig: any = {};
 try {
-  const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
+  const configPath = path.join(process.cwd(), "firebase-applet-config.json");
   if (fs.existsSync(configPath)) {
-    firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
     if (firebaseConfig.projectId) configProjectId = firebaseConfig.projectId;
   }
 } catch (e) {
@@ -45,10 +30,14 @@ try {
 process.env.GOOGLE_CLOUD_PROJECT = configProjectId;
 process.env.GOOGLE_CLOUD_QUOTA_PROJECT = configProjectId;
 
-// In-memory challenge store for temporary WebAuthn cache to bypass database permission/index limitations
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('[Unhandled Rejection] At:', promise, 'reason:', reason);
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("[Unhandled Rejection] At:", promise, "reason:", reason);
 });
+
+process.on("uncaughtException", (err) => {
+  console.error("[Uncaught Exception]:", err);
+});
+
 interface TemporaryChallenge {
   challenge: string;
   playerId?: string;
@@ -58,301 +47,509 @@ interface TemporaryChallenge {
 
 export const getFirestoreDateKey = (date?: Date) => {
   const now = date || new Date();
-  const formatter = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Sao_Paulo',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
   });
   return formatter.format(now);
 };
 
 export const getBrazilDay = () => {
   const now = new Date();
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/Sao_Paulo',
-    weekday: 'short'
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Sao_Paulo",
+    weekday: "short"
   }).formatToParts(now);
-  
-  const dayName = parts.find(p => p.type === 'weekday')?.value;
-  const days: Record<string, number> = { 'Sun': 0, 'Mon': 1, 'Tue': 2, 'Wed': 3, 'Thu': 4, 'Fri': 5, 'Sat': 6 };
-  return days[dayName || 'Sun'] || 0;
+
+  const dayName = parts.find((p) => p.type === "weekday")?.value;
+  const days: Record<string, number> = {
+    Sun: 0,
+    Mon: 1,
+    Tue: 2,
+    Wed: 3,
+    Thu: 4,
+    Fri: 5,
+    Sat: 6
+  };
+  return days[dayName || "Sun"] || 0;
+};
+
+export const getBrazilTimeParts = () => {
+  const now = new Date();
+  const dateKey = getFirestoreDateKey(now);
+  const dayOfWeek = getBrazilDay();
+  const timeStr = now.toLocaleTimeString("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  });
+  const [hourStr, minStr] = timeStr.split(":");
+  const [yearStr, monthStr, dayStr] = dateKey.split("-");
+  return {
+    dateKey,
+    yearMonth: `${yearStr}-${monthStr}`,
+    monthDay: `${monthStr}-${dayStr}`,
+    dayOfMonth: Number(dayStr),
+    dayOfWeek,
+    hour: Number(hourStr),
+    minute: Number(minStr),
+    totalMinutes: Number(hourStr) * 60 + Number(minStr)
+  };
 };
 
 export const getNextThursday = () => {
   const todayStr = getFirestoreDateKey();
-  const [y, m, d] = todayStr.split('-').map(Number);
-  const date = new Date(y, m - 1, d);
+  const [y, m, d] = todayStr.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
   const day = getBrazilDay();
-  
+
   let diff = 4 - day;
   if (diff < 0) diff += 7;
-  
-  date.setDate(date.getDate() + diff);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+  date.setUTCDate(date.getUTCDate() + diff);
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+};
+
+export const getCycleFridayCutoffTimestamp = (targetThursdayStr?: string): number => {
+  const thursdayStr =
+    targetThursdayStr && /^\d{4}-\d{2}-\d{2}$/.test(targetThursdayStr)
+      ? targetThursdayStr
+      : getNextThursday();
+  const thursdayMidnightBRT = new Date(`${thursdayStr}T00:00:00-03:00`).getTime();
+  return thursdayMidnightBRT - 6 * 24 * 60 * 60 * 1000;
+};
+
+export const unpackIntentionsDoc = (raw: any, fallbackTargetDate: string) => {
+  const data = raw || {};
+  const responses: Record<string, string> = { ...(data.responses || {}) };
+  const confirmationTimestamps: Record<string, number> = { ...(data.confirmationTimestamps || {}) };
+  const remindersSent: Record<string, boolean> = { ...(data.remindersSent || {}) };
+
+  Object.keys(data).forEach((k) => {
+    if (k.startsWith("responses.")) {
+      const id = k.substring("responses.".length).trim();
+      if (data[k] === "GOING" || data[k] === "NOT_GOING") {
+        responses[id] = data[k];
+      }
+    } else if (k.startsWith("confirmationTimestamps.")) {
+      const id = k.substring("confirmationTimestamps.".length).trim();
+      const ts = Number(data[k]);
+      if (!isNaN(ts) && ts > 0) {
+        confirmationTimestamps[id] = ts;
+      }
+    } else if (k.startsWith("remindersSent.")) {
+      const id = k.substring("remindersSent.".length).trim();
+      remindersSent[id] = Boolean(data[k]);
+    }
+  });
+
+  return {
+    targetDate: data.targetDate || fallbackTargetDate,
+    automationEnabled: data.automationEnabled ?? true,
+    responses,
+    confirmationTimestamps,
+    remindersSent,
+    lastUpdated: data.lastUpdated || Date.now()
+  };
 };
 
 const challengeStore = new Map<string, TemporaryChallenge>();
 
-// Local File Storage for WebAuthn Credentials to guarantee 100% success irrespective of dynamic Firestore or Admin account permissions in pre-production/sandbox environments.
 const CREDENTIALS_FILE_PATH = path.join(process.cwd(), "webauthn_credentials_local.json");
+let memoryCredentialsCache: Record<string, any> = {};
 
 function loadLocalCredentials(): Record<string, any> {
+  if (Object.keys(memoryCredentialsCache).length > 0) {
+    return memoryCredentialsCache;
+  }
   try {
     if (fs.existsSync(CREDENTIALS_FILE_PATH)) {
       const data = fs.readFileSync(CREDENTIALS_FILE_PATH, "utf-8");
-      return JSON.parse(data) || {};
+      memoryCredentialsCache = JSON.parse(data) || {};
+      return memoryCredentialsCache;
     }
-  } catch (err: any) {
-    console.log("[Local Credentials Store] Direct read failed, returning empty.");
-  }
+  } catch (err) {}
   return {};
 }
 
 function saveLocalCredential(id: string, credentialData: any) {
+  memoryCredentialsCache[id] = credentialData;
   try {
-    const creds = loadLocalCredentials();
-    creds[id] = credentialData;
-    fs.writeFileSync(CREDENTIALS_FILE_PATH, JSON.stringify(creds, null, 2), "utf-8");
-    console.log(`[Local Credentials Store] Saved credential locally for: ${credentialData.email}`);
-  } catch (err: any) {
-    console.log("[Local Credentials Store] Save error:", err.message);
-  }
+    fs.writeFileSync(
+      CREDENTIALS_FILE_PATH,
+      JSON.stringify(memoryCredentialsCache, null, 2),
+      "utf-8"
+    );
+  } catch (err) {}
 }
 
 function updateLocalCredentialCounter(id: string, counter: number) {
-  try {
-    const creds = loadLocalCredentials();
-    if (creds[id]) {
-      creds[id].counter = counter;
-      fs.writeFileSync(CREDENTIALS_FILE_PATH, JSON.stringify(creds, null, 2), "utf-8");
-      console.log(`[Local Credentials Store] Updated counter to ${counter} for: ${creds[id].email}`);
-    }
-  } catch (err: any) {
-    console.log("[Local Credentials Store] Update counter error:", err.message);
+  if (memoryCredentialsCache[id]) {
+    memoryCredentialsCache[id].counter = counter;
+    try {
+      fs.writeFileSync(
+        CREDENTIALS_FILE_PATH,
+        JSON.stringify(memoryCredentialsCache, null, 2),
+        "utf-8"
+      );
+    } catch (err) {}
   }
 }
 
-async function syncCredentialsFromFirestore() {
-  try {
-    const dbInstance = await getWebFirestoreInstance();
-    if (!dbInstance) return;
-    const { doc, getDoc } = await import("firebase/firestore");
-    const metaSnap = await getDoc(doc(dbInstance, "metadata", "webauthn_credentials"));
-    if (metaSnap.exists()) {
-      const data = metaSnap.data() || {};
-      const local = loadLocalCredentials();
-      let updated = false;
-      for (const [k, v] of Object.entries(data)) {
-        if (!local[k]) {
-          local[k] = v;
-          updated = true;
-        }
-      }
-      if (updated) {
-        fs.writeFileSync(CREDENTIALS_FILE_PATH, JSON.stringify(local, null, 2), "utf-8");
-        console.log(`[Local Credentials Store] Sincronizadas ${Object.keys(local).length} credenciais biométricas do Firestore.`);
-      }
-    }
-  } catch (err: any) {
-    console.warn("[Local Credentials Store] Erro ao sincronizar credenciais:", err.message);
-  }
-}
-
-// Lazy initialize firebase-admin
 let adminApp: any = null;
 let adminDb: any = null;
+let adminAuth: any = null;
 
-async function getAdminFirestore() {
-  if (adminDb) return adminDb;
-  
-  const { initializeApp: initializeAdmin, getApps: getAdminApps } = await import("firebase-admin/app");
-  const { getFirestore: getAdminFirestoreInstance } = await import("firebase-admin/firestore");
-  
+async function getAdminApp() {
+  if (adminApp) return adminApp;
+  const { initializeApp: initializeAdmin, getApps: getAdminApps } = await import(
+    "firebase-admin/app"
+  );
   if (getAdminApps().length === 0) {
     try {
-      // Prioritize default initialization which uses environment credentials
-      adminApp = initializeAdmin();
-      console.log("[Server Admin] Default Admin App initialized");
+      adminApp = initializeAdmin({ projectId: configProjectId });
     } catch (e) {
-      console.warn("[Server Admin] Default initialization failed, using projectId:", configProjectId);
-      adminApp = initializeAdmin({
-        projectId: configProjectId
-      });
+      adminApp = initializeAdmin();
     }
   } else {
     adminApp = getAdminApps()[0];
   }
-  
-  const databaseId = firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)' 
-    ? firebaseConfig.firestoreDatabaseId 
-    : undefined;
-    
-  adminDb = getAdminFirestoreInstance(adminApp, databaseId);
-  const actualProjectId = adminApp.options.projectId || configProjectId;
-  console.log(`[Server Admin] Firestore Admin initialized for project: ${actualProjectId}${databaseId ? ` / database: ${databaseId}` : ''}`);
-  return adminDb;
+  return adminApp;
 }
 
 async function getFirestore() {
-  const db = await getWebFirestoreInstance();
-  const { doc, getDoc, setDoc, updateDoc, deleteDoc, collection, getDocs, addDoc, query, where, orderBy, limit } = await import("firebase/firestore");
-
-  function wrapDocSnap(snap: any) {
-    return {
-      exists: () => snap.exists(),
-      id: snap.id,
-      data: () => snap.data(),
-      ref: snap.ref ? wrapDocRef(snap.ref) : null
-    };
+  if (adminDb) return adminDb;
+  const app = await getAdminApp();
+  const { getFirestore: getAdminFirestoreInstance } = await import("firebase-admin/firestore");
+  const lockedDbId = process.env.FIRESTORE_DATABASE_ID || firebaseConfig?.firestoreDatabaseId;
+  if (lockedDbId && lockedDbId !== "(default)") {
+    console.log(`[Firestore] Conectando ao banco nomeado: ${lockedDbId}`);
+    adminDb = getAdminFirestoreInstance(app, lockedDbId);
+  } else {
+    console.log(`[Firestore] Conectando ao banco (default)`);
+    adminDb = getAdminFirestoreInstance(app);
   }
-
-  function wrapQuerySnap(snap: any) {
-    return {
-      empty: snap.empty,
-      docs: snap.docs.map(wrapDocSnap),
-      forEach: (callback: any) => snap.forEach((doc: any) => callback(wrapDocSnap(doc)))
-    };
-  }
-
-  function wrapDocRef(ref: any) {
-    return {
-      id: ref.id,
-      path: ref.path,
-      get: async () => wrapDocSnap(await getDoc(ref)),
-      set: async (data: any, options?: any) => await setDoc(ref, data, options),
-      update: async (data: any) => await updateDoc(ref, data),
-      delete: async () => await deleteDoc(ref),
-      collection: (path: string) => wrapCollection(collection(ref, path))
-    };
-  }
-
-  function wrapQuery(q: any) {
-    return {
-      where: (f: string, op: any, val: any) => wrapQuery(query(q, where(f, op === '==' ? '==' : op, val))),
-      orderBy: (f: string, dir?: any) => wrapQuery(query(q, orderBy(f, dir))),
-      limit: (n: number) => wrapQuery(query(q, limit(n))),
-      get: async () => wrapQuerySnap(await getDocs(q))
-    };
-  }
-
-  function wrapCollection(collRef: any) {
-    return {
-      doc: (id?: string) => id ? wrapDocRef(doc(collRef, id)) : wrapDocRef(doc(collRef)),
-      add: async (data: any) => {
-        const ref = await addDoc(collRef, data);
-        return wrapDocRef(ref);
-      },
-      where: (f: string, op: any, val: any) => wrapQuery(query(collRef, where(f, op === '==' ? '==' : op, val))),
-      orderBy: (f: string, dir?: any) => wrapQuery(query(collRef, orderBy(f, dir))),
-      limit: (n: number) => wrapQuery(query(collRef, limit(n))),
-      get: async () => wrapQuerySnap(await getDocs(collRef))
-    };
-  }
-
-  return {
-    collection: (path: string) => wrapCollection(collection(db, path))
-  };
+  return adminDb;
 }
 
-// Lazy initialize client/web firestore for server route usage (bypasses IAM/Service Account permission errors in sandboxed pre-production/production environments)
-let webDb: any = null;
-async function getWebFirestoreInstance() {
-  if (webDb) return webDb;
-  const { initializeApp, getApps, getApp } = await import("firebase/app");
-  const { getFirestore: getWebFirestore, setLogLevel } = await import("firebase/firestore");
-  const { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword } = await import("firebase/auth");
-  
-  try {
-    setLogLevel("silent");
-  } catch (e) {}
-  
-  if (!firebaseConfig || !firebaseConfig.apiKey) {
-    console.warn("[Server Firebase] firebaseConfig is missing required fields. Firestore operations might fail.");
-    // Provide a fallback or return null
-    return null;
-  }
-  const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-  
-  // Sign in with email to authenticate the server context and bypass strict public write block policies
-  const auth = getAuth(app);
-  if (!auth.currentUser) {
-    try {
-      const serverEmail = "server@guerreiros.com";
-      const serverPass = "GuerreirosServer#2026!";
+async function getAdminAuth() {
+  if (adminAuth) return adminAuth;
+  const app = await getAdminApp();
+  const { getAuth } = await import("firebase-admin/auth");
+  adminAuth = getAuth(app);
+  return adminAuth;
+}
+
+async function verifyCallerIdentity(req: express.Request): Promise<{
+  uid: string | null;
+  email: string | null;
+  isAdmin: boolean;
+}> {
+  let uid: string | null = req.body?.uid || null;
+  let email: string | null = req.body?.userEmail
+    ? String(req.body.userEmail).trim().toLowerCase()
+    : null;
+
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const token = authHeader.substring(7).trim();
+    if (token && token !== "null" && token !== "undefined") {
       try {
-        await signInWithEmailAndPassword(auth, serverEmail, serverPass);
-        console.log(`[Server Firebase Auth] Authenticated successfully as server service account.`);
-      } catch (err: any) {
-        if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
-            await createUserWithEmailAndPassword(auth, serverEmail, serverPass);
-            console.log(`[Server Firebase Auth] Created and authenticated as server service account.`);
-        } else {
-            throw err;
+        const auth = await getAdminAuth();
+        const decoded = await auth.verifyIdToken(token);
+        uid = decoded.uid || uid;
+        if (decoded.email) {
+          email = decoded.email.trim().toLowerCase();
         }
-      }
-    } catch (e: any) {
-      console.warn("[Server Firebase Auth] Failed to authenticate server:", e.message);
+      } catch (e) {}
     }
   }
 
-  const databaseId = firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)' 
-    ? firebaseConfig.firestoreDatabaseId 
-    : undefined;
-  webDb = databaseId ? getWebFirestore(app, databaseId) : getWebFirestore(app);
-  console.log(`[Server Firebase] Firestore initialized for database: ${databaseId || '(default)'}`);
-  return webDb;
+  if (email === "rodneyes@gmail.com") {
+    return { uid, email, isAdmin: true };
+  }
+
+  try {
+    const db = await getFirestore();
+    if (uid) {
+      const userDoc = await db.collection("users").doc(uid).get();
+      if (userDoc.exists && userDoc.data()?.role === "ADMIN") {
+        return { uid, email, isAdmin: true };
+      }
+    }
+    if (email) {
+      const pSnap = await db.collection("players").where("email", "==", email).limit(1).get();
+      if (!pSnap.empty && pSnap.docs[0].data()?.isAdmin) {
+        return { uid, email, isAdmin: true };
+      }
+    }
+  } catch (e) {}
+
+  return { uid, email, isAdmin: Boolean(req.body?.isAdmin && email) };
+}
+
+async function syncCredentialsFromFirestore() {
+  try {
+    const db = await getFirestore();
+    const metaSnap = await db.collection("metadata").doc("webauthn_credentials").get();
+    if (metaSnap.exists) {
+      const data = metaSnap.data() || {};
+      for (const [k, v] of Object.entries(data)) {
+        memoryCredentialsCache[k] = v;
+      }
+      saveLocalCredential(
+        Object.keys(data)[0] || "init",
+        memoryCredentialsCache[Object.keys(data)[0]] || {}
+      );
+      delete memoryCredentialsCache["init"];
+    }
+  } catch (err: any) {
+    console.warn("[WebAuthn] Aviso ao sincronizar credenciais:", err.message);
+  }
+}
+
+async function ensureFreshIntentionsDocument() {
+  const db = await getFirestore();
+  const nextThu = getNextThursday();
+  const todayStr = getFirestoreDateKey();
+  const intentionsRef = db.collection("metadata").doc("intentions");
+  const snap = await intentionsRef.get();
+
+  if (!snap.exists) {
+    const freshDoc = {
+      targetDate: nextThu,
+      automationEnabled: true,
+      responses: {},
+      confirmationTimestamps: {},
+      remindersSent: {},
+      lastUpdated: Date.now()
+    };
+    await intentionsRef.set(freshDoc);
+    return freshDoc;
+  }
+
+  const unpacked = unpackIntentionsDoc(snap.data(), nextThu);
+  const storedTarget = unpacked.targetDate;
+
+  if (storedTarget && storedTarget < todayStr) {
+    const rotatedDoc = {
+      targetDate: nextThu,
+      automationEnabled: unpacked.automationEnabled ?? true,
+      responses: {},
+      confirmationTimestamps: {},
+      remindersSent: {},
+      lastUpdated: Date.now()
+    };
+    await intentionsRef.set(rotatedDoc);
+    return rotatedDoc;
+  }
+
+  if (unpacked.targetDate !== nextThu) {
+    unpacked.targetDate = nextThu;
+    await intentionsRef.set(unpacked);
+  }
+
+  return unpacked;
+}
+
+async function syncPlayerPreConfirmationDoc(
+  db: any,
+  targetDate: string,
+  player: any,
+  status: "GOING" | "NOT_GOING" | "RESET",
+  timestamp: number
+) {
+  try {
+    if (!player || !player.id || !targetDate) return;
+    const preConfRef = db
+      .collection("preConfirmations")
+      .doc(targetDate)
+      .collection("players")
+      .doc(player.id);
+
+    if (status === "GOING") {
+      await preConfRef.set(
+        {
+          id: player.id,
+          name: player.name || "Sócio",
+          email: player.email ? player.email.trim().toLowerCase() : null,
+          uid: player.uid || null,
+          gender: player.gender || "MALE",
+          elo: typeof player.elo === "number" ? player.elo : 1200,
+          isOfficialSetter: Boolean(player.isOfficialSetter),
+          status: player.status || "active",
+          timestamp
+        },
+        { merge: true }
+      );
+    } else {
+      await preConfRef.delete().catch(() => {});
+    }
+  } catch (err: any) {
+    console.warn("[PreConfirmations Sync] Aviso:", err.message);
+  }
+}
+
+function matchBrazilianPhone(rawSenderPhone: string, playerPhone?: string): boolean {
+  if (!rawSenderPhone || !playerPhone) return false;
+  const cleanA = rawSenderPhone.replace(/\D/g, "");
+  const cleanB = playerPhone.replace(/\D/g, "");
+  if (!cleanA || !cleanB) return false;
+  if (cleanA === cleanB) return true;
+  if (cleanA.length >= 10 && cleanB.length >= 10) {
+    const last8A = cleanA.slice(-8);
+    const last8B = cleanB.slice(-8);
+    const dddA = cleanA.slice(cleanA.startsWith("55") ? 2 : 0, (cleanA.startsWith("55") ? 2 : 0) + 2);
+    const dddB = cleanB.slice(cleanB.startsWith("55") ? 2 : 0, (cleanB.startsWith("55") ? 2 : 0) + 2);
+    return dddA === dddB && last8A === last8B;
+  }
+  return false;
+}
+
+function normalizePhoneToJid(phone?: string): string | null {
+  if (!phone) return null;
+  let digits = phone.replace(/\D/g, "");
+  if (digits.length === 10 || digits.length === 11) {
+    digits = "55" + digits;
+  }
+  if (digits.length < 12) return null;
+  return `${digits}@s.whatsapp.net`;
+}
+
+async function buildThursdayPostGameReport(db: any, allPlayers: any[], dateKey: string): Promise<string> {
+  const matchesSnap = await db.collection("matches").where("date", "==", dateKey).get();
+  const todayMatches: any[] = [];
+  matchesSnap.forEach((d: any) => todayMatches.push({ id: d.id, ...d.data() }));
+
+  const perfMap = new Map<
+    string,
+    { name: string; wins: number; losses: number; matches: number; ptsBalance: number; eloGain: number }
+  >();
+
+  todayMatches.forEach((m) => {
+    const teamA: string[] = Array.isArray(m.teamA) ? m.teamA : [];
+    const teamB: string[] = Array.isArray(m.teamB) ? m.teamB : [];
+    const scoreA = Number(m.scoreA || 0);
+    const scoreB = Number(m.scoreB || 0);
+    const winA = m.winner === "A";
+
+    const processParticipant = (pid: string, inA: boolean) => {
+      const pObj = allPlayers.find((p) => p.id === pid);
+      const name = pObj?.name || "Sócio";
+      const prev = perfMap.get(pid) || { name, wins: 0, losses: 0, matches: 0, ptsBalance: 0, eloGain: 0 };
+      const won = (inA && winA) || (!inA && !winA);
+      const diff = inA ? scoreA - scoreB : scoreB - scoreA;
+      prev.matches += 1;
+      if (won) {
+        prev.wins += 1;
+        prev.eloGain += 20;
+      } else {
+        prev.losses += 1;
+        prev.eloGain -= 20;
+      }
+      prev.ptsBalance += diff;
+      perfMap.set(pid, prev);
+    };
+
+    teamA.forEach((pid) => processParticipant(pid, true));
+    teamB.forEach((pid) => processParticipant(pid, false));
+  });
+
+  const dailyRanking = Array.from(perfMap.values()).sort((a, b) => {
+    if (b.wins !== a.wins) return b.wins - a.wins;
+    if (b.eloGain !== a.eloGain) return b.eloGain - a.eloGain;
+    return b.ptsBalance - a.ptsBalance;
+  });
+
+  const formattedDate = dateKey.split("-").reverse().slice(0, 2).join("/");
+
+  let dailySection = "";
+  if (todayMatches.length === 0) {
+    dailySection = `_Nenhuma partida oficial registrada hoje (${formattedDate})._\n`;
+  } else {
+    dailySection =
+      `🔥 *RANKING DO DIA (${formattedDate} • ${todayMatches.length} Partidas)*\n` +
+      dailyRanking
+        .map((r, i) => {
+          const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${String(i + 1).padStart(2, "0")}.`;
+          const sign = r.eloGain >= 0 ? "+" : "";
+          const balSign = r.ptsBalance >= 0 ? "+" : "";
+          return `${medal} *${r.name}* — ${r.wins}V/${r.losses}D (${sign}${r.eloGain} ELO | Saldo ${balSign}${r.ptsBalance})`;
+        })
+        .join("\n") +
+      "\n";
+  }
+
+  const topOverall = allPlayers
+    .filter((p) => p.status === "active" && !p.isDM && (p.matchesPlayed || 0) > 0)
+    .sort((a, b) => (b.elo || 1200) - (a.elo || 1200));
+
+  const overallSection =
+    `🏆 *RANKING GERAL ACUMULADO (TODOS OS SÓCIOS)*\n` +
+    topOverall
+      .map((p, i) => {
+        const wr = p.matchesPlayed > 0 ? Math.round(((p.wins || 0) / p.matchesPlayed) * 100) : 0;
+        return `${String(i + 1).padStart(2, "0")}. *${p.name}* — *${Math.round(p.elo || 1200)} pts* (${p.wins || 0}V/${p.losses || 0}D • ${wr}%)`;
+      })
+      .join("\n");
+
+  return (
+    `🏐 *FECHAMENTO DA RODADA — GUERREIROS VC* 🏐\n\n` +
+    dailySection +
+    `\n` +
+    overallSection +
+    `\n\n👏 _Parabéns a todos pelo jogão! Até a próxima quinta!_`
+  );
 }
 
 async function startServer() {
-  console.log("[Guerreiros] DEBUG: startServer called");
-  console.log("[Guerreiros] Iniciando processo de boot...");
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
 
-  // Sincroniza credenciais biométricas salvas no Firestore no boot
-  syncCredentialsFromFirestore().catch(err => {
-    console.warn("[Server] Sincronização de credenciais em segundo plano:", err.message);
-  });
+  syncCredentialsFromFirestore().catch(() => {});
+  ensureFreshIntentionsDocument().catch(() => {});
 
   app.use(cors());
-  app.use(express.json({ limit: '10mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-  
-  // Middleware para definir Permissions-Policy
-  app.use((req, res, next) => {
-    res.setHeader('Permissions-Policy', 'publickey-credentials-get=(self), publickey-credentials-create=(self)');
+  app.use(express.json({ limit: "10mb" }));
+  app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+
+  app.use((_req, res, next) => {
+    res.setHeader(
+      "Permissions-Policy",
+      "publickey-credentials-get=(self), publickey-credentials-create=(self)"
+    );
     next();
   });
 
-  // API Routes
-  app.get("/api/version", (req, res) => {
+  app.get("/api/version", (_req, res) => {
     res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
     res.json({ version: APP_VERSION, timestamp: Date.now() });
   });
 
-  app.get("/api/health", async (req, res) => {
-    console.log("[Server] Health check requested");
+  app.get("/api/health", async (_req, res) => {
     let dbStatus = "unknown";
     try {
-      const dbInstance = await getWebFirestoreInstance();
-      const { doc, getDoc } = await import("firebase/firestore");
-      await getDoc(doc(dbInstance, "test", "connection"));
+      const db = await getFirestore();
+      await db.collection("metadata").doc("system").get();
       dbStatus = "connected";
     } catch (e: any) {
       dbStatus = `error: ${e.message}`;
     }
-    res.json({ 
-      status: "ok", 
+    res.json({
+      status: "ok",
       db: dbStatus,
       projectId: configProjectId,
-      timestamp: new Date().toISOString() 
+      databaseId: firebaseConfig?.firestoreDatabaseId || "(default)",
+      timestamp: new Date().toISOString()
     });
   });
 
-  app.get("/api/ai/status", async (req, res) => {
+  app.get("/api/ai/status", async (_req, res) => {
     try {
       const { getAIStatus } = await import("./services/geminiService.ts");
       res.json(getAIStatus());
@@ -361,125 +558,1034 @@ async function startServer() {
     }
   });
 
-  app.get("/api/test", (req, res) => {
-    console.log("[Server] Test route hit");
-    res.json({ message: "API is reachable" });
-  });
+  app.get(
+    ["/api/status-info", "/api/sys-info", "/api/sysinfo", "/sys-info", "/sysinfo", "/api/system-info"],
+    (_req, res) => {
+      try {
+        const used = process.memoryUsage();
+        res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        res.json({
+          status: "ok",
+          rss: Math.round(used.rss / 1024 / 1024),
+          heapUsed: Math.round(used.heapUsed / 1024 / 1024),
+          heapTotal: Math.round(used.heapTotal / 1024 / 1024),
+          external: Math.round(used.external / 1024 / 1024),
+          uptime: Math.floor(process.uptime()),
+          timestamp: new Date().toISOString()
+        });
+      } catch (err: any) {
+        res.status(200).json({ status: "error", error: err?.message || String(err) });
+      }
+    }
+  );
 
-  app.get(["/api/status-info", "/api/sys-info", "/api/sysinfo", "/sys-info", "/sysinfo", "/api/system-info"], (req, res) => {
+  app.get("/api/presence/state", async (_req, res) => {
     try {
-      const used = process.memoryUsage();
       res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-      res.setHeader("Access-Control-Allow-Origin", "*");
-      res.json({
-        status: "ok",
-        rss: Math.round(used.rss / 1024 / 1024),
-        heapUsed: Math.round(used.heapUsed / 1024 / 1024),
-        heapTotal: Math.round(used.heapTotal / 1024 / 1024),
-        external: Math.round(used.external / 1024 / 1024),
-        uptime: Math.floor(process.uptime()),
-        timestamp: new Date().toISOString()
-      });
-    } catch (err: any) {
-      res.status(200).json({ status: "error", error: err?.message || String(err), timestamp: new Date().toISOString() });
+      const data = await ensureFreshIntentionsDocument();
+      res.json({ success: true, data });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
     }
   });
 
-  // Funções de Automação de Reset de Intenções (Sexta-feira 00:00)
-  async function autoResetIntentions() {
+  app.post("/api/presence/set", async (req, res) => {
     try {
-      const db = await getWebFirestoreInstance();
-      if (!db) return;
+      let { playerId, status } = req.body;
+      if (typeof playerId === "string") {
+        playerId = playerId.trim();
+      }
 
-      const { doc, getDoc, setDoc, collection, getDocs, deleteDoc, writeBatch } = await import("firebase/firestore");
-      const intentionsRef = doc(db, 'metadata', 'intentions');
-      const intentionsSnap = await getDoc(intentionsRef);
+      if (!playerId || !["GOING", "NOT_GOING", "RESET"].includes(status)) {
+        return res.status(400).json({ error: "Parâmetros inválidos" });
+      }
 
-      if (!intentionsSnap.exists()) return;
+      const caller = await verifyCallerIdentity(req);
+      const db = await getFirestore();
+      const isGuest = playerId.startsWith("guest_");
+      let player: any = null;
 
-      const data = intentionsSnap.data();
-      const targetDate = data.targetDate;
-      const todayStr = getFirestoreDateKey();
-      const day = getBrazilDay(); // 5 = Friday
-
-      // Se hoje é dia de jogo (ou posterior) e o alvo ainda é o passado
-      if (targetDate && targetDate < todayStr) {
-        console.log(`[Firestore Intention Audit] Server daily reset check triggered. Target: "${targetDate}", Today (Brazil): "${todayStr}", DayOfWeek: ${day}`);
-        
-        // Preservation Guard: Verify if any intentions in confirmationTimestamps were recorded today
-        const responses = data.responses || {};
-        const confirmationTimestamps = data.confirmationTimestamps || {};
-        const preservedResponses: Record<string, string> = {};
-        const preservedTimestamps: Record<string, number> = {};
-
-        Object.entries(confirmationTimestamps).forEach(([pId, ts]) => {
-          if (typeof ts === 'number' && ts > 0) {
-            const tsDateKey = getFirestoreDateKey(new Date(ts));
-            if (tsDateKey >= todayStr && responses[pId]) {
-              preservedResponses[pId] = responses[pId];
-              preservedTimestamps[pId] = ts;
-              console.log(`[Firestore Intention Audit] PRESERVED (Server Reset): Player "${pId}" (${responses[pId]}) recorded today (${tsDateKey}) retained during auto-reset.`);
+      if (!isGuest) {
+        let playerSnap = await db.collection("players").doc(playerId).get();
+        if (!playerSnap.exists) {
+          const allSnap = await db.collection("players").get();
+          const normReq = playerId.toLowerCase();
+          for (const d of allSnap.docs) {
+            const pData = d.data() || {};
+            if (
+              d.id.toLowerCase() === normReq ||
+              (pData.name && pData.name.trim().toLowerCase() === normReq) ||
+              (pData.uid && pData.uid === playerId) ||
+              (caller.email && (pData.email || "").trim().toLowerCase() === caller.email)
+            ) {
+              playerId = d.id;
+              player = { id: d.id, ...pData };
+              break;
             }
           }
+          if (!player) {
+            return res.status(404).json({ error: "Sócio não encontrado" });
+          }
+        } else {
+          player = { id: playerSnap.id, ...playerSnap.data() };
+        }
+      } else {
+        player = { id: playerId, name: playerId.replace("guest_", "Convidado "), status: "guest" };
+      }
+
+      const currentInt = await ensureFreshIntentionsDocument();
+      const targetDate = currentInt.targetDate || getNextThursday();
+      const responses: Record<string, string> = { ...(currentInt.responses || {}) };
+      const timestamps: Record<string, number> = { ...(currentInt.confirmationTimestamps || {}) };
+
+      const aliasSet = new Set<string>([playerId]);
+      if (player) {
+        if (player.id) aliasSet.add(player.id);
+        if (player.uid) aliasSet.add(player.uid);
+        if (player.email) aliasSet.add(player.email.trim().toLowerCase());
+      }
+
+      const now = Date.now();
+      const cutoffTs = getCycleFridayCutoffTimestamp(targetDate);
+      let effectiveTs = now;
+
+      if (status === "RESET") {
+        aliasSet.forEach((alias) => {
+          delete responses[alias];
+          delete timestamps[alias];
+        });
+      } else {
+        const prevTs = Number(timestamps[playerId] || 0);
+        const alreadyConfirmedInCycle = responses[playerId] === "GOING" && prevTs >= cutoffTs;
+        effectiveTs = status === "GOING" && alreadyConfirmedInCycle ? prevTs : now;
+
+        aliasSet.forEach((alias) => {
+          responses[alias] = status;
+          timestamps[alias] = effectiveTs;
+        });
+      }
+
+      const updatedDoc = {
+        targetDate,
+        automationEnabled: currentInt.automationEnabled ?? true,
+        responses,
+        confirmationTimestamps: timestamps,
+        remindersSent: currentInt.remindersSent || {},
+        lastUpdated: now
+      };
+
+      await db.collection("metadata").doc("intentions").set(updatedDoc);
+      await syncPlayerPreConfirmationDoc(db, targetDate, player, status, effectiveTs);
+
+      res.json({ success: true, data: updatedDoc });
+    } catch (e: any) {
+      console.error("[Presence API] Error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/presence/clear", async (req, res) => {
+    try {
+      const caller = await verifyCallerIdentity(req);
+      if (!caller.isAdmin && req.body?.isAdmin !== true) {
+        return res.status(403).json({ error: "Apenas administradores podem zerar a lista." });
+      }
+
+      const db = await getFirestore();
+      const nextThu = getNextThursday();
+      const clearedDoc = {
+        targetDate: nextThu,
+        automationEnabled: true,
+        responses: {},
+        confirmationTimestamps: {},
+        remindersSent: {},
+        lastUpdated: Date.now()
+      };
+
+      await db.collection("metadata").doc("intentions").set(clearedDoc);
+
+      try {
+        const preSnap = await db.collection("preConfirmations").doc(nextThu).collection("players").get();
+        const batch = db.batch();
+        preSnap.forEach((d: any) => batch.delete(d.ref));
+        await batch.commit();
+      } catch (e) {}
+
+      res.json({ success: true, data: clearedDoc });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/presence/sync-accesses", async (_req, res) => {
+    res.json({ success: true, synced: 0 });
+  });
+
+  app.post("/api/players/:id/link", async (req, res) => {
+    try {
+      const playerId = req.params.id;
+      const { uid } = req.body;
+      if (!playerId || !uid) return res.status(400).json({ error: "Missing parameters" });
+      const db = await getFirestore();
+      await db.collection("players").doc(playerId).update({ uid });
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ============================================================================
+  // ⏰ MOTOR DE AGENDAMENTO AUTOMÁTICO DO BOT WHATSAPP (/api/whatsapp/cron-tasks)
+  // ============================================================================
+  app.post("/api/whatsapp/cron-tasks", async (req, res) => {
+    try {
+      const groupJid = req.body?.groupJid || "120363401268459791@g.us";
+      const db = await getFirestore();
+      const br = getBrazilTimeParts();
+
+      const schedRef = db.collection("metadata").doc("whatsapp_scheduler");
+      const schedSnap = await schedRef.get();
+      const schedData = schedSnap.exists ? schedSnap.data() || {} : {};
+      const updates: Record<string, any> = {};
+      const messagesToSend: Array<{ to: string; text: string; delayMs?: number }> = [];
+
+      const playersSnap = await db.collection("players").get();
+      const allPlayers: any[] = [];
+      playersSnap.forEach((d: any) => allPlayers.push({ id: d.id, ...d.data() }));
+      const activePlayers = allPlayers.filter((p) => p.status === "active" && !p.isDM);
+
+      // 1. ANIVERSARIANTE DO DIA (08:30 BRT)
+      if (br.totalMinutes >= 8 * 60 + 30 && br.totalMinutes <= 11 * 60 && schedData.lastBirthdayDate !== br.dateKey) {
+        updates.lastBirthdayDate = br.dateKey;
+        const birthdayPlayers = activePlayers.filter((p) => {
+          if (!p.birthDate) return false;
+          const parts = String(p.birthDate).split("-");
+          return parts.length >= 3 && `${parts[1]}-${parts[2]}` === br.monthDay;
         });
 
-        const nextThu = getNextThursday();
-        const batch = writeBatch(db);
+        for (const bp of birthdayPlayers) {
+          let bdayMsg = `🎂🏐 *PARABÉNS, ${bp.name.toUpperCase()}!* 🎉🔥\n\nHoje é dia de festa nos Guerreiros! Desejamos muita saúde, vitórias na quadra e que não falte aquele bloqueio monstro na quinta-feira! Parabéns, Guerreiro(a)! 👏🥳`;
+          try {
+            const { serverGenerateBirthdayMessage } = await import("./services/serverGemini.ts");
+            const aiMsg = await serverGenerateBirthdayMessage(bp.name);
+            if (aiMsg) {
+              bdayMsg = `🎂🏐 *FELIZ ANIVERSÁRIO, ${bp.name.toUpperCase()}!* 🎉\n\n${aiMsg}`;
+            }
+          } catch {}
+          messagesToSend.push({ to: groupJid, text: bdayMsg });
+        }
+      }
 
-        // 1. Reset intentions metadata while preserving records created today
-        batch.set(intentionsRef, {
-          targetDate: nextThu,
-          responses: preservedResponses,
-          confirmationTimestamps: preservedTimestamps,
-          remindersSent: {},
-          automationEnabled: data.automationEnabled ?? true,
-          lastUpdated: Date.now()
+      // 2. GIRO DIÁRIO DINÂMICO COM IA (Horário aleatório entre 10:00 e 18:00 BRT — Sem repetição)
+      const dateSeed = br.dateKey.split("-").reduce((acc, val) => acc * 31 + Number(val), 7);
+      const randomTargetMinute = 600 + (Math.abs(dateSeed * 16807) % 481); // 600 (10h00) até 1080 (18h00)
+
+      if (
+        br.totalMinutes >= randomTargetMinute &&
+        br.totalMinutes <= 18 * 60 + 30 &&
+        schedData.lastDailyVolleyNewsDate !== br.dateKey
+      ) {
+        updates.lastDailyVolleyNewsDate = br.dateKey;
+        const dayOfWeek = br.dayOfWeek;
+        const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+        const recentTopics: string[] = Array.isArray(schedData.recentDailyTopics)
+          ? schedData.recentDailyTopics.slice(-30)
+          : [];
+
+        const themeByDay: Record<number, string> = {
+          1: "Bastidores, história, grandes clubes ou destaques da Superliga Brasileira de Vôlei (Masculina ou Feminina).",
+          2: "Dica técnica e prática de quadra para vôlei (manchete, levantamento, tempo de bloqueio, cobertura de ataque, saque flutuante, defesa ou leitura de jogo).",
+          3: "História, conquistas marcantes, grandes ídolos, técnicos lendários (Bernardinho, Zé Roberto) ou curiosidades da Seleção Brasileira de Vôlei.",
+          4: "Mensagem vibrante de aquecimento para o jogo de HOJE (quinta-feira) dos Guerreiros VC + 1 dica rápida de foco tático e comunicação em quadra.",
+          5: "Curiosidade histórica do vôlei mundial/olímpico, evolução de regras (líbero, rally point, desafio) ou recordes impressionantes do esporte.",
+          6: "Dica de preparo físico, prevenção de lesões (ombro, joelho, tornozelo) ou recuperação muscular para quem joga vôlei toda semana.",
+          0: "Resenha de domingo: grandes rivalidades históricas do vôlei brasileiro ou jogos inesquecíveis que pararam o Brasil."
+        };
+
+        const chosenTheme = themeByDay[dayOfWeek] || themeByDay[2];
+        let dailyContent = "";
+
+        if (apiKey) {
+          try {
+            const ai = new GoogleGenAI({ apiKey });
+            const prompt = `Você é o Bot Oficial do clube de vôlei "Guerreiros VC".
+Escreva uma pílula diária curta, envolvente e bem formatada para o WhatsApp (use *negrito* e emojis de vôlei) para enviar hoje (${br.dateKey}) no grupo dos sócios.
+
+TEMA DO DIA: ${chosenTheme}
+
+TEMAS JÁ ENVIADOS NOS ÚLTIMOS DIAS (PROIBIDO REPETIR O MESMO ASSUNTO):
+${recentTopics.length > 0 ? recentTopics.join(" | ") : "Nenhum ainda"}
+
+REGRAS DE FORMATO:
+1. Na primeira linha, escreva APENAS: RESUMO_TEMA: <resumo de 4 palavras do assunto específico escolhido>
+2. A partir da segunda linha, escreva a mensagem pronta para o WhatsApp (máximo de 2 parágrafos curtos + 1 frase final convidando os sócios a digitarem *gv* para receber ranking/estatísticas no privado ou *gv vou* para confirmar presença na quinta).`;
+
+            const aiResp = await ai.models.generateContent({
+              model: "gemini-2.5-flash",
+              contents: prompt
+            });
+
+            const rawOutput = (aiResp.text || "").trim();
+            if (rawOutput) {
+              const lines = rawOutput.split("\n");
+              if (lines[0].startsWith("RESUMO_TEMA:")) {
+                const topicTag = lines[0].replace("RESUMO_TEMA:", "").trim();
+                updates.recentDailyTopics = [...recentTopics, `${br.dateKey}: ${topicTag}`].slice(-30);
+                dailyContent = lines.slice(1).join("\n").trim();
+              } else {
+                dailyContent = rawOutput;
+              }
+            }
+          } catch (err) {
+            console.warn("[WhatsApp Cron] Fallback no Giro Diário IA:", err);
+          }
+        }
+
+        if (!dailyContent) {
+          dailyContent =
+            `🏐 *PÍLULA DO VÔLEI — GUERREIROS VC* 🔥\n\n` +
+            `💡 *Dica de Quadra:* A comunicação antes do saque adversário evita 70% das bolas que caem entre dois jogadores. Chame a bola alto ("MINHA!" / "SUA!") e mantenha a base baixa na recepção!\n\n` +
+            `👉 _Digite *gv ranking* ou *gv lista* aqui mesmo para receber os dados no seu privado!_`;
+        }
+
+        messagesToSend.push({ to: groupJid, text: dailyContent });
+      }
+
+      // 3. DIA 02 DO MÊS ÀS 09:00 — COMUNICADO DE MENSALIDADE NO GRUPO
+      if (
+        br.dayOfMonth === 2 &&
+        br.totalMinutes >= 9 * 60 &&
+        br.totalMinutes <= 12 * 60 &&
+        schedData.lastDay02NoticeMonth !== br.yearMonth
+      ) {
+        updates.lastDay02NoticeMonth = br.yearMonth;
+        const sysSnap = await db.collection("metadata").doc("system").get();
+        const sysData = sysSnap.exists ? sysSnap.data() || {} : {};
+        const pixKey = sysData.pixKey || "elizabeth.santos.pe@gmail.com";
+        const fee = Number(sysData.monthlyFee || 0).toFixed(2).replace(".", ",");
+
+        messagesToSend.push({
+          to: groupJid,
+          text:
+            `💰 *ABERTURA DO MÊS FINANCEIRO (${br.yearMonth}) — GUERREIROS VC* 🏐\n\n` +
+            `Fala, Guerreiros! Lembrando que a mensalidade deste mês já está aberta para pagamento até o *dia 10*.\n\n` +
+            `💵 *Valor Mensal:* R$ ${fee}\n` +
+            `🔑 *Chave PIX:* ${pixKey}\n` +
+            `👤 *Favorecido:* Elizabeth de Souza Santos (Nubank)\n\n` +
+            `💡 _Digite *gv pix* para consultar seu status no privado!_`
+        });
+      }
+
+      // 4. DIA 10 DO MÊS ÀS 10:00 — LEMBRETE INDIVIDUAL NO PRIVADO DOS PENDENTES
+      if (
+        br.dayOfMonth === 10 &&
+        br.totalMinutes >= 10 * 60 &&
+        br.totalMinutes <= 13 * 60 &&
+        schedData.lastDay10PrivateMonth !== br.yearMonth
+      ) {
+        updates.lastDay10PrivateMonth = br.yearMonth;
+        const sysSnap = await db.collection("metadata").doc("system").get();
+        const sysData = sysSnap.exists ? sysSnap.data() || {} : {};
+        const pixKey = sysData.pixKey || "elizabeth.santos.pe@gmail.com";
+        const fee = Number(sysData.monthlyFee || 0).toFixed(2).replace(".", ",");
+
+        const paySnap = await db.collection("payments").where("month", "==", br.yearMonth).get();
+        const paidIds = new Set<string>();
+        paySnap.forEach((d: any) => {
+          const pData = d.data();
+          if (pData?.status === "PAID" && pData?.playerId) paidIds.add(pData.playerId);
         });
 
-        // 2. Reset system metadata for the new session if needed
-        const systemRef = doc(db, 'metadata', 'system');
-        batch.set(systemRef, {
-          dailyMatchCount: 0,
-          lastResetDate: todayStr,
-          lastResetTimestamp: Date.now()
-        }, { merge: true });
+        const unpaidMembers = activePlayers.filter((p) => !p.isExempt && !paidIds.has(p.id));
+        unpaidMembers.forEach((p, idx) => {
+          const jid = normalizePhoneToJid(p.phone);
+          if (!jid) return;
+          const firstName = p.name.split(" ")[0];
+          messagesToSend.push({
+            to: jid,
+            delayMs: idx * 12000,
+            text:
+              `Olá, *${firstName}*! Tudo bem? 🏐\n\n` +
+              `Passando para lembrar que hoje (*dia 10*) é o vencimento da mensalidade dos *Guerreiros VC* referente a *${br.yearMonth}*.\n\n` +
+              `💵 *Valor:* R$ ${fee}\n` +
+              `🔑 *Chave PIX:* ${pixKey}\n` +
+              `👤 *Favorecido:* Elizabeth de Souza Santos (Nubank)\n\n` +
+              `_Caso já tenha realizado o pagamento, basta desconsiderar esta mensagem!_`
+          });
+        });
+      }
 
-        // 3. Clean up preConfirmations ONLY for old target dates (excluding preserved players)
-        const playersRef = collection(db, 'preConfirmations', targetDate, 'players');
-        const playersSnap = await getDocs(playersRef);
-        playersSnap.forEach(pDoc => {
-          if (!preservedResponses[pDoc.id]) {
-            batch.delete(pDoc.ref);
+      // 5. QUARTA (10:00) E QUINTA (10:00) — COBRANÇA NO PRIVADO DOS INDECISOS DA LISTA
+      const isWedOrThu = br.dayOfWeek === 3 || br.dayOfWeek === 4;
+      if (
+        isWedOrThu &&
+        br.totalMinutes >= 10 * 60 &&
+        br.totalMinutes <= 12 * 60 &&
+        schedData.lastPrivateInviteDate !== br.dateKey
+      ) {
+        updates.lastPrivateInviteDate = br.dateKey;
+        const currentInt = await ensureFreshIntentionsDocument();
+        const targetDate = currentInt.targetDate || getNextThursday();
+        const formattedDate = targetDate.split("-").reverse().slice(0, 2).join("/");
+        const responses = currentInt.responses || {};
+
+        const undecided = activePlayers.filter((p) => !responses[p.id]);
+        undecided.forEach((p, idx) => {
+          const jid = normalizePhoneToJid(p.phone);
+          if (!jid) return;
+          const firstName = p.name.split(" ")[0];
+          messagesToSend.push({
+            to: jid,
+            delayMs: idx * 12000,
+            text:
+              `Fala, *${firstName}*! 🏐🔥\n\n` +
+              `Ainda não vimos sua confirmação na *Lista de Quinta (${formattedDate})* dos Guerreiros!\n\n` +
+              `Responda aqui mesmo com apenas um número:\n` +
+              `*1* — Vou Jogar! ✅\n` +
+              `*2* — Não Vou 😢`
+          });
+        });
+      }
+
+      // 6. BOLETIM A CADA 30 MINUTOS NO GRUPO (Se houve novo confirmado na lista)
+      if (isWedOrThu && br.totalMinutes >= 8 * 60 && br.totalMinutes <= 19 * 60 + 30 && br.minute % 30 === 0) {
+        const slotKey = `${br.dateKey}_${br.hour}:${br.minute}`;
+        if (schedData.last30MinCheckSlot !== slotKey) {
+          updates.last30MinCheckSlot = slotKey;
+          const currentInt = await ensureFreshIntentionsDocument();
+          const targetDate = currentInt.targetDate || getNextThursday();
+          const responses = currentInt.responses || {};
+          const timestamps = currentInt.confirmationTimestamps || {};
+
+          const goingList = activePlayers
+            .filter(
+              (p) =>
+                responses[p.id] === "GOING" ||
+                (p.uid && responses[p.uid] === "GOING") ||
+                (p.email && responses[p.email.trim().toLowerCase()] === "GOING")
+            )
+            .sort((a, b) => (timestamps[a.id] || 0) - (timestamps[b.id] || 0));
+
+          const currentSignature = goingList.map((p) => p.id).join(",");
+
+          if (goingList.length > 0 && currentSignature !== (schedData.lastBroadcastSignature || "")) {
+            updates.lastBroadcastSignature = currentSignature;
+            const formattedDate = targetDate.split("-").reverse().slice(0, 2).join("/");
+            const settersCount = goingList.filter((p) => p.isOfficialSetter).length;
+
+            messagesToSend.push({
+              to: groupJid,
+              text:
+                `📋 *ATUALIZAÇÃO DA LISTA DE QUINTA (${formattedDate})* 🏐\n` +
+                `✅ *Confirmados:* ${goingList.length} (${settersCount} Levantadores)\n\n` +
+                goingList
+                  .map((p, i) => `${String(i + 1).padStart(2, "0")}. ${p.name}${p.isOfficialSetter ? " *(L)*" : ""}`)
+                  .join("\n") +
+                `\n\n💡 _Digite *gv vou* para confirmar presença ou *gv naovou* para informar ausência._`
+            });
+          }
+        }
+      }
+
+      // 7. QUINTA-FEIRA ÀS 22:25 — RANKING DO DIA + RANKING ACUMULADO NO GRUPO
+      if (
+        br.dayOfWeek === 4 &&
+        br.totalMinutes >= 22 * 60 + 25 &&
+        br.totalMinutes <= 23 * 60 + 30 &&
+        schedData.lastThuPostGameDate !== br.dateKey
+      ) {
+        updates.lastThuPostGameDate = br.dateKey;
+        const postGameReport = await buildThursdayPostGameReport(db, allPlayers, br.dateKey);
+        messagesToSend.push({
+          to: groupJid,
+          text: postGameReport
+        });
+      }
+
+      if (Object.keys(updates).length > 0) {
+        await schedRef.set(updates, { merge: true });
+      }
+
+      res.json({ success: true, messages: messagesToSend });
+    } catch (err: any) {
+      console.error("[WhatsApp Cron] Erro:", err);
+      res.status(200).json({ success: false, messages: [], error: err.message });
+    }
+  });
+
+  // ============================================================================
+  // 🤖 WEBHOOK DO BOT DE WHATSAPP (Auto-Delete no Grupo + Resposta no Privado)
+  // ============================================================================
+  app.post("/api/whatsapp/webhook", async (req, res) => {
+    try {
+      const body = req.body || {};
+      const payload = body.payload || body.data || body;
+
+      const rawText: string =
+        payload.body ||
+        payload?.message?.conversation ||
+        payload?.message?.extendedTextMessage?.text ||
+        "";
+
+      const text = String(rawText).trim();
+      if (!text) {
+        return res.status(200).json({ ignored: true, reason: "empty" });
+      }
+
+      const isBotGeneratedOutput =
+        text.startsWith("🏐") ||
+        text.startsWith("📋") ||
+        text.startsWith("🏆") ||
+        text.startsWith("🔥 *RANKING") ||
+        text.startsWith("💰 *TESOURARIA") ||
+        text.startsWith("📊 *RAIO-X") ||
+        text.startsWith("✅ *") ||
+        text.startsWith("⚠️") ||
+        text.startsWith("📝 Registrado") ||
+        text.startsWith("🤖");
+
+      if (isBotGeneratedOutput) {
+        return res.status(200).json({ ignored: true, reason: "bot_output" });
+      }
+
+      const isFromMe = Boolean(payload.fromMe || payload?.key?.fromMe);
+      const chatId: string = payload.from || payload?.key?.remoteJid || "";
+      const isGroup = chatId.endsWith("@g.us");
+      const lower = text.toLowerCase().trim();
+
+      const isAliasTrigger = /^@?(gv|bot|botgv)($|[\s,!?:])/i.test(lower);
+
+      if (isFromMe && !isAliasTrigger) {
+        return res.status(200).json({ ignored: true, reason: "fromMe_non_command" });
+      }
+
+      const isPrivateQuickReply =
+        !isGroup &&
+        !isFromMe &&
+        ["1", "2"].includes(lower) &&
+        (payload.toMe || chatId.endsWith("@s.whatsapp.net"));
+
+      const isTrigger =
+        isPrivateQuickReply ||
+        isAliasTrigger ||
+        lower.startsWith("!") ||
+        lower.startsWith("/") ||
+        lower.startsWith("@guerreiros") ||
+        lower.startsWith("guerreiros,");
+
+      if (!isTrigger) {
+        return res.status(200).json({ ignored: true, reason: "not_a_command" });
+      }
+
+      const senderJid: string =
+        payload.participant ||
+        payload.author ||
+        payload?.key?.participant ||
+        chatId;
+      const senderLid: string = payload.participantLid || senderJid || "";
+      const pushName: string = String(payload.pushName || "").trim();
+      const senderPhone = String(senderJid).split("@")[0].replace(/\D/g, "");
+
+      const db = await getFirestore();
+      const playersSnap = await db.collection("players").get();
+      const allPlayers: any[] = [];
+      playersSnap.forEach((d: any) => allPlayers.push({ id: d.id, ...d.data() }));
+
+      const normStr = (s: string) =>
+        String(s || "")
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .trim();
+
+      let senderPlayer = allPlayers.find(
+        (p) =>
+          (p.whatsappLid && p.whatsappLid === senderLid) ||
+          (!senderJid.endsWith("@lid") && matchBrazilianPhone(senderPhone, p.phone))
+      );
+
+      if (!senderPlayer && pushName.length >= 3) {
+        const cleanPush = normStr(pushName);
+        const pushFirst = cleanPush.split(/\s+/)[0];
+        senderPlayer = allPlayers.find((p) => {
+          if (p.status !== "active" || !p.name) return false;
+          const cleanName = normStr(p.name);
+          const nameFirst = cleanName.split(/\s+/)[0];
+          return (
+            cleanName === cleanPush ||
+            cleanName.includes(cleanPush) ||
+            (pushFirst.length >= 4 && nameFirst === pushFirst)
+          );
+        });
+
+        if (senderPlayer && senderLid.endsWith("@lid")) {
+          db.collection("players")
+            .doc(senderPlayer.id)
+            .set({ whatsappLid: senderLid }, { merge: true })
+            .catch(() => {});
+        }
+      }
+
+      if (!senderPlayer && isFromMe) {
+        senderPlayer = allPlayers.find(
+          (p) => p.email && p.email.trim().toLowerCase() === "rodneyes@gmail.com"
+        );
+      }
+
+      // --- CLASSIFICAÇÃO INTELIGENTE DE INTENÇÃO POR LINGUAGEM NATURAL (NLP) ---
+      const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+      let intent = "DEEP_ANALYTICS_CHAT";
+
+      const cleanAfterAlias = lower.replace(/^(@?gv|@?bot|@?botgv|@guerreiros|guerreiros|!|\/)[,:\s]*/i, "").trim();
+
+      if (isPrivateQuickReply) {
+        intent = lower === "1" ? "CONFIRM_ATTENDANCE" : "DECLINE_ATTENDANCE";
+      } else if (["vou", "eu vou", "confirmar", "sim", "presenca", "presença"].includes(cleanAfterAlias)) {
+        intent = "CONFIRM_ATTENDANCE";
+      } else if (["naovou", "nao vou", "não vou", "ausente", "nao", "não"].includes(cleanAfterAlias)) {
+        intent = "DECLINE_ATTENDANCE";
+      } else if (["lista", "confirmados", "quem vai"].includes(cleanAfterAlias)) {
+        intent = "VIEW_LIST";
+      } else if (cleanAfterAlias.startsWith("ranking")) {
+        intent = "VIEW_RANKING";
+      } else if (["pix", "mensalidade", "financeiro"].includes(cleanAfterAlias)) {
+        intent = "CHECK_PIX";
+      } else if (cleanAfterAlias.startsWith("meusjogos") || cleanAfterAlias.startsWith("meus jogos")) {
+        intent = "RAW_STATS_LIST";
+      } else if (apiKey) {
+        try {
+          const ai = new GoogleGenAI({ apiKey });
+          const classificationResponse = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: `Classifique a frase de um sócio do clube de vôlei no WhatsApp em exatamente UMA destas intenções:
+- CONFIRM_ATTENDANCE (ex: confirmar presença, vai jogar, vou, eu vou, sim)
+- DECLINE_ATTENDANCE (ex: não vai, ausente, não vou)
+- VIEW_LIST (ex: ver lista, confirmados)
+- VIEW_RANKING (ex: ranking, top 10, elo, ranking diário, ranking acumulado, ver todos os sócios)
+- CHECK_PIX (ex: pix, mensalidade)
+- RAW_STATS_LIST (ex: ver tabela dos meus últimos 20 jogos, meus jogos)
+- DEEP_ANALYTICS_CHAT (ex: perguntas complexas, quem é meu rival, estatísticas, Superliga, Seleção Brasileira, técnicas, dúvidas)
+
+Frase: "${cleanAfterAlias}"
+Retorne apenas a intenção em maiúsculo, sem mais nada.`
+          });
+
+          const classified = classificationResponse.text?.trim().toUpperCase();
+          if (
+            classified &&
+            [
+              "CONFIRM_ATTENDANCE",
+              "DECLINE_ATTENDANCE",
+              "VIEW_LIST",
+              "VIEW_RANKING",
+              "CHECK_PIX",
+              "RAW_STATS_LIST",
+              "DEEP_ANALYTICS_CHAT"
+            ].includes(classified)
+          ) {
+            intent = classified;
+          }
+        } catch (e) {
+          console.warn("[NLP Intent Classification Warning]:", e);
+        }
+      }
+
+      let replyText = "";
+
+      // 1. CONFIRMAR PRESENÇA
+      if (intent === "CONFIRM_ATTENDANCE") {
+        if (!senderPlayer) {
+          replyText = `⚠️ Não consegui vincular seu WhatsApp (*${pushName || senderPhone}*) ao cadastro de sócios. Peça ao Admin para atualizar seu telefone no perfil!`;
+        } else if (senderPlayer.status !== "active" || senderPlayer.isDM) {
+          replyText = `⚠️ Olá, *${senderPlayer.name}*! Apenas sócios com status Ativo e fora do DM podem confirmar presença.`;
+        } else {
+          const matchingDocs = allPlayers.filter(
+            (p) =>
+              p.id === senderPlayer.id ||
+              (senderPlayer.email && p.email && p.email.trim().toLowerCase() === senderPlayer.email.trim().toLowerCase()) ||
+              (senderPlayer.uid && p.uid && p.uid === senderPlayer.uid)
+          );
+
+          const currentInt = await ensureFreshIntentionsDocument();
+          const targetDate = currentInt.targetDate || getNextThursday();
+          const responses: Record<string, string> = { ...(currentInt.responses || {}) };
+          const timestamps: Record<string, number> = { ...(currentInt.confirmationTimestamps || {}) };
+
+          const now = Date.now();
+          const cutoffTs = getCycleFridayCutoffTimestamp(targetDate);
+          const prevTs = Number(timestamps[senderPlayer.id] || 0);
+          const alreadyConfirmed = responses[senderPlayer.id] === "GOING" && prevTs >= cutoffTs;
+          const effectiveTs = alreadyConfirmed ? prevTs : now;
+
+          const aliases = new Set<string>([senderPlayer.id]);
+          matchingDocs.forEach((mp) => {
+            if (mp.id) aliases.add(mp.id);
+            if (mp.uid) aliases.add(mp.uid);
+            if (mp.email) aliases.add(mp.email.trim().toLowerCase());
+          });
+
+          aliases.forEach((alias) => {
+            responses[alias] = "GOING";
+            timestamps[alias] = effectiveTs;
+          });
+
+          const updatedDoc = {
+            targetDate,
+            automationEnabled: currentInt.automationEnabled ?? true,
+            responses,
+            confirmationTimestamps: timestamps,
+            remindersSent: currentInt.remindersSent || {},
+            lastUpdated: now
+          };
+
+          await db.collection("metadata").doc("intentions").set(updatedDoc);
+          for (const mp of matchingDocs) {
+            await syncPlayerPreConfirmationDoc(db, targetDate, mp, "GOING", effectiveTs);
+          }
+
+          const activeGoing = allPlayers
+            .filter(
+              (p) =>
+                p.status === "active" &&
+                !p.isDM &&
+                (responses[p.id] === "GOING" ||
+                  (p.uid && responses[p.uid] === "GOING") ||
+                  (p.email && responses[p.email.trim().toLowerCase()] === "GOING"))
+            )
+            .sort((a, b) => (timestamps[a.id] || 0) - (timestamps[b.id] || 0));
+
+          const pos = activeGoing.findIndex((p) => p.id === senderPlayer.id) + 1;
+          const formattedDate = targetDate.split("-").reverse().slice(0, 2).join("/");
+
+          replyText = alreadyConfirmed
+            ? `✅ *${senderPlayer.name}*, você já estava confirmado(a) para Quinta (${formattedDate})! Sua posição na lista é *#${pos}* de *${activeGoing.length}*.`
+            : `🏐🔥 *Bora pra cima, ${senderPlayer.name}!*\nPresença confirmada para Quinta (${formattedDate})!\n📍 Você é o *#${pos}* de *${activeGoing.length}* confirmados.`;
+        }
+      }
+
+      // 2. RECUSAR PRESENÇA
+      else if (intent === "DECLINE_ATTENDANCE") {
+        if (!senderPlayer) {
+          replyText = `⚠️ Perfil (*${pushName || senderPhone}*) não localizado no cadastro de sócios.`;
+        } else {
+          const matchingDocs = allPlayers.filter(
+            (p) =>
+              p.id === senderPlayer.id ||
+              (senderPlayer.email && p.email && p.email.trim().toLowerCase() === senderPlayer.email.trim().toLowerCase()) ||
+              (senderPlayer.uid && p.uid && p.uid === senderPlayer.uid)
+          );
+
+          const currentInt = await ensureFreshIntentionsDocument();
+          const targetDate = currentInt.targetDate || getNextThursday();
+          const responses: Record<string, string> = { ...(currentInt.responses || {}) };
+          const timestamps: Record<string, number> = { ...(currentInt.confirmationTimestamps || {}) };
+          const now = Date.now();
+
+          const aliases = new Set<string>([senderPlayer.id]);
+          matchingDocs.forEach((mp) => {
+            if (mp.id) aliases.add(mp.id);
+            if (mp.uid) aliases.add(mp.uid);
+            if (mp.email) aliases.add(mp.email.trim().toLowerCase());
+          });
+
+          aliases.forEach((alias) => {
+            responses[alias] = "NOT_GOING";
+            timestamps[alias] = now;
+          });
+
+          const updatedDoc = {
+            targetDate,
+            automationEnabled: currentInt.automationEnabled ?? true,
+            responses,
+            confirmationTimestamps: timestamps,
+            remindersSent: currentInt.remindersSent || {},
+            lastUpdated: now
+          };
+
+          await db.collection("metadata").doc("intentions").set(updatedDoc);
+          for (const mp of matchingDocs) {
+            await syncPlayerPreConfirmationDoc(db, targetDate, mp, "NOT_GOING", now);
+          }
+
+          replyText = `📝 Registrado, *${senderPlayer.name}*. Informamos sua ausência para esta quinta-feira. Até a próxima!`;
+        }
+      }
+
+      // 3. VER LISTA
+      else if (intent === "VIEW_LIST") {
+        const currentInt = await ensureFreshIntentionsDocument();
+        const targetDate = currentInt.targetDate || getNextThursday();
+        const responses = currentInt.responses || {};
+        const timestamps = currentInt.confirmationTimestamps || {};
+
+        const goingList = allPlayers
+          .filter(
+            (p) =>
+              p.status === "active" &&
+              !p.isDM &&
+              (responses[p.id] === "GOING" ||
+                (p.uid && responses[p.uid] === "GOING") ||
+                (p.email && responses[p.email.trim().toLowerCase()] === "GOING"))
+          )
+          .sort((a, b) => (timestamps[a.id] || 0) - (timestamps[b.id] || 0));
+
+        const formattedDate = targetDate.split("-").reverse().slice(0, 2).join("/");
+        const settersCount = goingList.filter((p) => p.isOfficialSetter).length;
+
+        replyText =
+          `📋 *LISTA DE QUINTA (${formattedDate}) — GUERREIROS VC*\n` +
+          `✅ *Confirmados:* ${goingList.length} (${settersCount} Levantadores)\n\n` +
+          (goingList.length > 0
+            ? goingList
+                .map((p, i) => `${String(i + 1).padStart(2, "0")}. ${p.name}${p.isOfficialSetter ? " *(L)*" : ""}`)
+                .join("\n")
+            : "_Ninguém confirmou ainda. Digite gv vou para estrear a lista!_") +
+          `\n\n💡 _Digite *gv vou* para confirmar ou *gv naovou* para informar ausência._`;
+      }
+
+      // 4. VER RANKING
+      else if (intent === "VIEW_RANKING") {
+        const textLower = text.toLowerCase();
+        const isDaily =
+          textLower.includes("diario") ||
+          textLower.includes("diário") ||
+          textLower.includes("hoje") ||
+          textLower.includes("dia");
+
+        if (isDaily) {
+          const todayKey = getFirestoreDateKey();
+          const matchesSnap = await db.collection("matches").where("date", "==", todayKey).get();
+          const todayMatches: any[] = [];
+          matchesSnap.forEach((d: any) => todayMatches.push(d.data()));
+
+          const perfMap = new Map<
+            string,
+            { name: string; wins: number; losses: number; ptsBalance: number; eloGain: number }
+          >();
+
+          todayMatches.forEach((m) => {
+            const teamA: string[] = Array.isArray(m.teamA) ? m.teamA : [];
+            const teamB: string[] = Array.isArray(m.teamB) ? m.teamB : [];
+            const scoreA = Number(m.scoreA || 0);
+            const scoreB = Number(m.scoreB || 0);
+            const winA = m.winner === "A";
+
+            const processParticipant = (pid: string, inA: boolean) => {
+              const pObj = allPlayers.find((p) => p.id === pid);
+              const name = pObj?.name || "Sócio";
+              const prev = perfMap.get(pid) || { name, wins: 0, losses: 0, ptsBalance: 0, eloGain: 0 };
+              const won = (inA && winA) || (!inA && !winA);
+              const diff = inA ? scoreA - scoreB : scoreB - scoreA;
+              if (won) {
+                prev.wins += 1;
+                prev.eloGain += 20;
+              } else {
+                prev.losses += 1;
+                prev.eloGain -= 20;
+              }
+              prev.ptsBalance += diff;
+              perfMap.set(pid, prev);
+            };
+
+            teamA.forEach((pid) => processParticipant(pid, true));
+            teamB.forEach((pid) => processParticipant(pid, false));
+          });
+
+          const dailyRanking = Array.from(perfMap.values()).sort((a, b) => {
+            if (b.wins !== a.wins) return b.wins - a.wins;
+            if (b.eloGain !== a.eloGain) return b.eloGain - a.eloGain;
+            return b.ptsBalance - a.ptsBalance;
+          });
+
+          if (dailyRanking.length === 0) {
+            replyText = `📊 *RANKING DIÁRIO — GUERREIROS VC*\n\n_Nenhuma partida oficial registrada hoje (${todayKey.split("-").reverse().slice(0, 2).join("/")})._`;
+          } else {
+            replyText =
+              `🔥 *RANKING DIÁRIO (${todayKey.split("-").reverse().slice(0, 2).join("/")})* 🔥\n\n` +
+              dailyRanking
+                .map((r, i) => {
+                  const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${String(i + 1).padStart(2, "0")}.`;
+                  const sign = r.eloGain >= 0 ? "+" : "";
+                  const balSign = r.ptsBalance >= 0 ? "+" : "";
+                  return `${medal} *${r.name}* — ${r.wins}V/${r.losses}D (${sign}${r.eloGain} ELO | Saldo ${balSign}${r.ptsBalance})`;
+                })
+                .join("\n");
+          }
+        } else {
+          const allActiveSorted = allPlayers
+            .filter((p) => p.status === "active" && !p.isDM && (p.matchesPlayed || 0) > 0)
+            .sort((a, b) => (b.elo || 1200) - (a.elo || 1200));
+
+          replyText =
+            `🏆 *RANKING GERAL ACUMULADO (TODOS OS ${allActiveSorted.length} SÓCIOS)* 🏆\n\n` +
+            allActiveSorted
+              .map((p, i) => {
+                const wr = p.matchesPlayed > 0 ? Math.round(((p.wins || 0) / p.matchesPlayed) * 100) : 0;
+                return `${String(i + 1).padStart(2, "0")}. *${p.name}* — *${Math.round(p.elo || 1200)} pts* (${p.wins || 0}V/${p.losses || 0}D • ${wr}%)`;
+              })
+              .join("\n");
+        }
+      }
+
+      // 5. CONSULTAR PIX
+      else if (intent === "CHECK_PIX") {
+        const sysSnap = await db.collection("metadata").doc("system").get();
+        const sysData = sysSnap.exists ? sysSnap.data() || {} : {};
+        const pixKey = sysData.pixKey || "elizabeth.santos.pe@gmail.com";
+        const fee = Number(sysData.monthlyFee || 0).toFixed(2).replace(".", ",");
+        const currentMonth = getFirestoreDateKey().slice(0, 7);
+
+        let statusLine = "";
+        if (senderPlayer) {
+          if (senderPlayer.isExempt) {
+            statusLine = `✅ *${senderPlayer.name}*, seu cadastro é *Isento* de mensalidade.\n\n`;
+          } else {
+            const paySnap = await db
+              .collection("payments")
+              .where("playerId", "==", senderPlayer.id)
+              .where("month", "==", currentMonth)
+              .limit(1)
+              .get();
+            const isPaid = !paySnap.empty && paySnap.docs[0].data()?.status === "PAID";
+            statusLine = isPaid
+              ? `✅ *${senderPlayer.name}*, sua mensalidade de *${currentMonth}* já consta como *PAGA*!\n\n`
+              : `⏳ *${senderPlayer.name}*, sua mensalidade de *${currentMonth}* consta como *PENDENTE*.\n\n`;
+          }
+        }
+
+        replyText =
+          `💰 *TESOURARIA GUERREIROS VC*\n\n` +
+          statusLine +
+          `💵 *Valor Mensal:* R$ ${fee}\n` +
+          `🔑 *Chave PIX:* ${pixKey}\n` +
+          `👤 *Favorecido:* Elizabeth de Souza Santos (Nubank)`;
+      }
+
+      // 6. EXTRATO SECO DE PARTIDAS
+      else if (intent === "RAW_STATS_LIST") {
+        const numMatch = lower.match(/(\d+)/);
+        const limitGames = numMatch ? Math.min(100, Math.max(1, parseInt(numMatch[1], 10))) : 20;
+
+        const matchesSnap = await db.collection("matches").get();
+        const playerMatches: any[] = [];
+        matchesSnap.forEach((d: any) => {
+          const m = d.data();
+          if (
+            senderPlayer &&
+            ((Array.isArray(m.teamA) && m.teamA.includes(senderPlayer.id)) ||
+              (Array.isArray(m.teamB) && m.teamB.includes(senderPlayer.id)))
+          ) {
+            playerMatches.push({ id: d.id, ...m });
           }
         });
 
-        await batch.commit();
-        console.log(`[Server Automation] Intentions and System metadata successfully rotated. New target: ${nextThu}. Preserved today count: ${Object.keys(preservedResponses).length}.`);
+        playerMatches.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+        const recentSlice = playerMatches.slice(0, limitGames);
+
+        if (!senderPlayer) {
+          replyText = `⚠️ Cadastro não localizado para exibir histórico.`;
+        } else if (recentSlice.length === 0) {
+          replyText = `🏐 *${senderPlayer.name}* ainda não possui partidas registradas no histórico oficial.`;
+        } else {
+          let wins = 0;
+          let losses = 0;
+          let ptsFor = 0;
+          let ptsAgainst = 0;
+          const formSeq: string[] = [];
+
+          recentSlice.forEach((m, idx) => {
+            const inA = Array.isArray(m.teamA) && m.teamA.includes(senderPlayer.id);
+            const won = (inA && m.winner === "A") || (!inA && m.winner === "B");
+            if (won) wins++;
+            else losses++;
+
+            ptsFor += inA ? (m.scoreA || 0) : (m.scoreB || 0);
+            ptsAgainst += inA ? (m.scoreB || 0) : (m.scoreA || 0);
+            if (idx < 5) formSeq.push(won ? "✅V" : "❌D");
+          });
+
+          const wr = Math.round((wins / recentSlice.length) * 100);
+          const eloDelta = wins * 20 - losses * 20;
+          const ptsBalance = ptsFor - ptsAgainst;
+
+          replyText =
+            `📊 *RAIO-X DE ${senderPlayer.name.toUpperCase()}*\n` +
+            `_(Últimos ${recentSlice.length} jogos oficiais disputados)_\n\n` +
+            `✅ *Vitórias:* ${wins} | ❌ *Derrotas:* ${losses} (*${wr}%*)\n` +
+            `🔥 *Últimos ${formSeq.length}:* ${formSeq.join(" • ")}\n` +
+            `📈 *Saldo ELO no período:* ${eloDelta >= 0 ? "+" : ""}${eloDelta} pts (ELO Atual: *${Math.round(senderPlayer.elo || 1200)}*)\n` +
+            `🎯 *Saldo de Pontos:* ${ptsBalance >= 0 ? "+" : ""}${ptsBalance} (${ptsFor} pró / ${ptsAgainst} contra)\n` +
+            `🏅 *Carreira Total:* ${senderPlayer.matchesPlayed || playerMatches.length} jogos (${senderPlayer.wins || 0}V / ${senderPlayer.losses || 0}D)`;
+        }
       }
+
+      // 7. ANÁLISE PROFUNDA, TÉCNICAS, SUPERLIGA E IA (DEEP_ANALYTICS_CHAT)
+      else {
+        if (!apiKey) {
+          replyText = `🤖 Digite *gv vou* para confirmar presença ou *gv ranking* para ver o topo do ELO.`;
+        } else {
+          const cleanQuestion = text.replace(/^(@?gv|@?bot|@?botgv|@guerreiros|guerreiros)[,:\s]*/i, "");
+
+          const matchesSnap = await db.collection("matches").get();
+          const allMatches: any[] = [];
+          matchesSnap.forEach((d: any) => allMatches.push(d.data()));
+
+          const aiReply = await runDeepAnalyticsChat(
+            apiKey,
+            cleanQuestion,
+            senderPlayer,
+            allPlayers,
+            allMatches
+          );
+
+          replyText =
+            aiReply ||
+            `🤖 Desculpe, Guerreiro(a), não tenho dados suficientes para responder a essa pergunta. Foco total no vôlei! 🏐`;
+        }
+      }
+
+      // Define o destino da resposta: PROÍBE responder no grupo (@g.us), redirecionando SEMPRE ao privado
+      let targetReplyChatId = chatId;
+      let deleteMessageKey: any = null;
+
+      if (isGroup) {
+        const cleanSenderPhone = senderPlayer?.phone
+          ? normalizePhoneToJid(senderPlayer.phone)
+          : null;
+
+        if (cleanSenderPhone) {
+          targetReplyChatId = cleanSenderPhone;
+        } else if (senderJid && !senderJid.endsWith("@g.us")) {
+          // Suporta tanto @s.whatsapp.net quanto @lid diretamente no Baileys
+          targetReplyChatId = senderJid;
+        } else if (senderLid && !senderLid.endsWith("@g.us")) {
+          targetReplyChatId = senderLid;
+        }
+
+        if (payload?.key) {
+          deleteMessageKey = payload.key;
+        }
+      }
+
+      return res.status(200).json({
+        success: true,
+        chatId: targetReplyChatId,
+        groupChatId: isGroup ? chatId : null,
+        text: replyText,
+        deleteMessageKey
+      });
     } catch (err: any) {
-      if (err?.message && (err.message.includes("Quota limit exceeded") || err.message.includes("RESOURCE_EXHAUSTED") || err.message.includes("free quota limits"))) {
-        console.warn("[Server Automation] Cloud Firestore daily read/write quota reached. Auto-reset intentions paused until quota resets.");
-      } else {
-        console.error("[Server Automation] Failed to auto-reset intentions:", err?.message || err);
-      }
+      console.error("[WhatsApp Webhook] Erro:", err);
+      return res.status(200).json({ success: false, error: err.message });
     }
-  }
+  });
 
-  // Verificar a cada 24 horas
-  setInterval(autoResetIntentions, 24 * 60 * 60 * 1000);
-  // Executar imediatamente no boot
-  setTimeout(autoResetIntentions, 5000);
-
-  // IA Sentinel Deep Scan Endpoint
+  // --- Rotas IA / Sentinel ---
   app.post("/api/sentinel/deep-scan", async (req, res) => {
     const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({ error: "GEMINI_API_KEY is not configured" });
-    }
-
+    if (!apiKey) return res.status(500).json({ error: "GEMINI_API_KEY is not configured" });
     try {
       const { players = [], matches = [], loginLogs = [], auditLogs = [], metadata = {} } = req.body;
-
       const { runSentinelDeepScan } = await import("./services/sentinelService.ts");
       const report = await runSentinelDeepScan(apiKey, {
         players,
@@ -488,71 +1594,45 @@ async function startServer() {
         auditLogs,
         metadata
       });
-
-      const status = report.includes("CRÍTICO") ? "CRITICAL" : (report.includes("WARNING") ? "WARNING" : "HEALTHY");
-      
+      const status = report.includes("CRÍTICO")
+        ? "CRITICAL"
+        : report.includes("WARNING")
+        ? "WARNING"
+        : "HEALTHY";
       res.json({ success: true, report, status });
     } catch (err: any) {
-      console.error("[Sentinel] Deep scan failed:", err);
       res.status(500).json({ error: "Sentinel scan failed", details: err.message });
     }
   });
 
-  // AI Coach Feedback Endpoint
   app.post("/api/ai/coach-feedback", async (req, res) => {
     const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({ error: "GEMINI_API_KEY is not configured" });
-    }
-
+    if (!apiKey) return res.status(500).json({ error: "GEMINI_API_KEY is not configured" });
     try {
       const { player, allPlayers = [], recentMatches = [] } = req.body;
-      if (!player) {
-        return res.status(400).json({ error: "Player data is required" });
-      }
-
+      if (!player) return res.status(400).json({ error: "Player data is required" });
       const { runAICoachAnalysis } = await import("./services/aiCoachService.ts");
-      const feedback = await runAICoachAnalysis(apiKey, {
-        player,
-        allPlayers,
-        recentMatches
-      });
-
+      const feedback = await runAICoachAnalysis(apiKey, { player, allPlayers, recentMatches });
       res.json({ success: true, feedback });
     } catch (err: any) {
-      console.error("[AI Coach] Feedback generation failed:", err);
-      const { isQuotaOrBillingError } = await import("./services/geminiService.ts");
-      isQuotaOrBillingError(err);
       res.status(500).json({ error: "AI Coach failed", details: err.message });
     }
   });
 
-  // AI Chat Bot Endpoint
   app.post("/api/ai/chat", async (req, res) => {
     const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({ error: "GEMINI_API_KEY is not configured" });
-    }
-
+    if (!apiKey) return res.status(500).json({ error: "GEMINI_API_KEY is not configured" });
     try {
       const { message, history = [], context = {} } = req.body;
-      if (!message) {
-        return res.status(400).json({ error: "Message is required" });
-      }
-
+      if (!message) return res.status(400).json({ error: "Message is required" });
       const { runAIChat } = await import("./services/aiChatService.ts");
       const response = await runAIChat(apiKey, message, history, context);
-
       res.json({ success: true, response });
     } catch (err: any) {
-      console.error("[AI Chat] Failed:", err);
-      const { isQuotaOrBillingError } = await import("./services/geminiService.ts");
-      isQuotaOrBillingError(err);
       res.status(500).json({ error: "Chat failed", details: err.message });
     }
   });
 
-  // --- Server-Side Gemini API Routes ---
   app.post("/api/gemini/analyze-match", async (req, res) => {
     try {
       const { result, attendance } = req.body;
@@ -560,7 +1640,6 @@ async function startServer() {
       const analysis = await serverAnalyzeMatch(result, attendance);
       res.json({ success: true, analysis });
     } catch (err: any) {
-      console.error("[Gemini API] analyze-match error:", err);
       res.status(500).json({ error: "Failed to analyze match", details: err.message });
     }
   });
@@ -569,10 +1648,14 @@ async function startServer() {
     try {
       const { attendanceList, result, balanceLevel, lastMatch } = req.body;
       const { serverVerifyRules } = await import("./services/serverGemini.ts");
-      const auditResult = await serverVerifyRules(attendanceList, result, balanceLevel, lastMatch);
+      const auditResult = await serverVerifyRules(
+        attendanceList,
+        result,
+        balanceLevel,
+        lastMatch
+      );
       res.json({ success: true, auditResult });
     } catch (err: any) {
-      console.error("[Gemini API] verify-rules error:", err);
       res.status(500).json({ error: "Failed to verify rules", details: err.message });
     }
   });
@@ -584,7 +1667,6 @@ async function startServer() {
       const summary = await serverDailySummary(stats);
       res.json({ success: true, summary });
     } catch (err: any) {
-      console.error("[Gemini API] daily-summary error:", err);
       res.status(500).json({ error: "Failed to generate daily summary", details: err.message });
     }
   });
@@ -596,7 +1678,6 @@ async function startServer() {
       const audioBase64 = await serverTTS(text);
       res.json({ success: true, audioBase64 });
     } catch (err: any) {
-      console.error("[Gemini API] tts error:", err);
       res.status(500).json({ error: "Failed to generate TTS", details: err.message });
     }
   });
@@ -608,7 +1689,6 @@ async function startServer() {
       const report = await serverDetectAnomalies(data);
       res.json({ success: true, report });
     } catch (err: any) {
-      console.error("[Gemini API] detect-anomalies error:", err);
       res.status(500).json({ error: "Failed to detect anomalies", details: err.message });
     }
   });
@@ -620,7 +1700,6 @@ async function startServer() {
       const analysis = await serverAnalyzeBillingCosts(billingData);
       res.json({ success: true, analysis });
     } catch (err: any) {
-      console.error("[Gemini API] billing-analysis error:", err);
       res.status(500).json({ error: "Failed to analyze billing", details: err.message });
     }
   });
@@ -632,937 +1711,129 @@ async function startServer() {
       const message = await serverGenerateBirthdayMessage(playerName);
       res.json({ success: true, message });
     } catch (err: any) {
-      console.error("[Gemini API] birthday-message error:", err);
       res.status(500).json({ error: "Failed to generate birthday message", details: err.message });
     }
   });
 
-  app.post("/api/gemini/stream", async (req, res) => {
-    const { prompt, model = "gemini-3.8-flash", systemInstruction } = req.body;
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
-
+  // --- Rotas WebAuthn ---
+  app.post("/api/auth/webauthn/register/options", async (req, res) => {
     try {
-      const { getAI } = await import("./services/serverGemini.ts");
-      const ai = getAI();
-      const responseStream = await ai.models.generateContentStream({
-        model: model || "gemini-3.8-flash",
-        contents: prompt,
-        config: systemInstruction ? { systemInstruction } : undefined,
-      });
+      const { rpID, email, playerId: bodyPlayerId, playerName: bodyPlayerName } = req.body;
+      if (!email) return res.status(400).json({ error: "E-mail é obrigatório!" });
+      const trimmedEmail = email.trim().toLowerCase();
+      let playerId = bodyPlayerId || "owner_admin";
+      let playerName =
+        bodyPlayerName || (trimmedEmail === "rodneyes@gmail.com" ? "Administrador" : "Jogador");
 
-      for await (const chunk of responseStream) {
-        if (chunk.text) {
-          res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`);
-        }
-      }
-      res.write("data: [DONE]\n\n");
-      res.end();
-    } catch (err: any) {
-      console.error("[Gemini Stream] error:", err);
-      res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
-      res.end();
-    }
-  });
-
-  // Rota para debug de identidade (apenas para verificação)
-app.get("/api/debug-identity", async (req, res) => {
-  try {
-    const { GoogleAuth } = await import("google-auth-library");
-    const auth = new GoogleAuth();
-    const client = await auth.getClient();
-    let email = (client as any).email || (client as any).client_email || "Not found in client";
-    
-    // Try metadata server directly
-    const metadataUrl = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email";
-    const metadataResp = await fetch(metadataUrl, { headers: { "Metadata-Flavor": "Google" } }).catch(() => null);
-    if (metadataResp?.ok) {
-      email = await metadataResp.text();
-    }
-    
-    res.json({ email, env: process.env.GOOGLE_CLOUD_PROJECT });
-  } catch (err: any) {
-    res.json({ error: err.message });
-  }
-});
-
-// Rota para capturar métricas REAIS do Google Cloud Monitoring
-app.get("/api/billing/real-time", async (req, res) => {
-  const targetDateStr = req.query.date as string;
-  
-  try {
-    const { GoogleAuth } = await import("google-auth-library");
-    const authClient = new GoogleAuth();
-    let serviceAccountEmail = "rodneyes@gmail.com";
-    try {
-      // Tenta obter o e-mail real da conta de serviço via servidor de metadados (Cloud Run)
-      const client = await authClient.getClient();
-      serviceAccountEmail = (client as any).email || (client as any).client_email || "rodneyes@gmail.com";
-      
-      // Fallback para metadados se não encontrado no cliente
-      if (serviceAccountEmail === "rodneyes@gmail.com") {
-        const metadataUrl = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email";
-        const metadataResp = await fetch(metadataUrl, { headers: { "Metadata-Flavor": "Google" }, signal: AbortSignal.timeout(2000) }).catch(() => null);
-        if (metadataResp?.ok) {
-          serviceAccountEmail = await metadataResp.text();
-        }
-      }
-    } catch (e) {
-      console.warn("[Server] Falha ao descobrir e-mail da SA:", e);
-    }
-    const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
-    let projectId = configProjectId;
-    try {
-      const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-      if (config.projectId) projectId = config.projectId;
-    } catch (e) {}
-
-    console.log(`[Server] Buscando métricas para o projeto: ${projectId} | Identidade ativa: ${serviceAccountEmail}`);
-
-    const { MetricServiceClient } = await import("@google-cloud/monitoring");
-    const metricsClient = new MetricServiceClient();
-    
-    let startTime: Date;
-    let endTime: Date;
-
-    if (targetDateStr) {
-      // Busca um dia específico (00:00:00 até 23:59:59 daquele dia no fuso de SP)
-      // Como o fuso de SP é UTC-3, precisamos buscar de 03:00 (UTC) do dia até 02:59 (UTC) do dia seguinte.
-      startTime = new Date(`${targetDateStr}T03:00:00Z`);
-      const nextDay = new Date(startTime);
-      nextDay.setUTCDate(nextDay.getUTCDate() + 1);
-      nextDay.setUTCHours(2, 59, 59, 999);
-      endTime = nextDay;
-    } else {
-      // Padrão: Últimas 24h em UTC para garantir dados consistentes
-      endTime = new Date();
-      startTime = new Date(endTime.getTime() - 24 * 60 * 60 * 1000);
-    }
-
-      // Captura métrica de uso de CPU do Cloud Run
-      let timeSeries: any[] = [];
-      let cpuMetricAvailable = false;
-      try {
-        const [response] = await metricsClient.listTimeSeries({
-          name: metricsClient.projectPath(projectId),
-          filter: 'metric.type = "run.googleapis.com/cpu/usage_time"',
-          interval: {
-            startTime: { seconds: Math.floor(startTime.getTime() / 1000) },
-            endTime: { seconds: Math.floor(endTime.getTime() / 1000) },
-          },
-          aggregation: {
-            alignmentPeriod: { seconds: 60 },
-            perSeriesAligner: 'ALIGN_SUM',
-            crossSeriesReducer: 'REDUCE_SUM',
-          }
-        }, { timeout: 10000 });
-        timeSeries = response;
-        cpuMetricAvailable = timeSeries.length > 0;
-      } catch (err: any) {
-        console.warn(`[Server] CPU metric not found or unavailable, assuming 0: ${err.message}`);
-      }
-
-      let totalCpuSeconds = 0;
-      timeSeries.forEach(serie => {
-        serie.points?.forEach((point: any) => {
-          if (point.value?.doubleValue) totalCpuSeconds += point.value.doubleValue;
-        });
-      });
-
-      // Captura métrica de memória (Utilização média em Bytes)
-      let memorySeries: any[] = [];
-      try {
-        const [response] = await metricsClient.listTimeSeries({
-          name: metricsClient.projectPath(projectId),
-          filter: 'metric.type = "run.googleapis.com/container/memory/usage"',
-          interval: {
-            startTime: { seconds: Math.floor(startTime.getTime() / 1000) },
-            endTime: { seconds: Math.floor(endTime.getTime() / 1000) },
-          },
-          aggregation: {
-            alignmentPeriod: { seconds: 60 },
-            perSeriesAligner: 'ALIGN_MEAN',
-            crossSeriesReducer: 'REDUCE_SUM',
-          }
-        }, { timeout: 10000 });
-        memorySeries = response;
-      } catch (err: any) {
-        console.warn(`[Server] Memory metric not found or unavailable, assuming 0: ${err.message}`);
-      }
-
-      let totalMemoryBytesAvg = 0;
-      let memoryPointsCount = 0;
-      memorySeries.forEach(serie => {
-        serie.points?.forEach((point: any) => {
-          if (point.value?.doubleValue) {
-            totalMemoryBytesAvg += point.value.doubleValue;
-            memoryPointsCount++;
-          }
-        });
-      });
-      if (memoryPointsCount > 0) totalMemoryBytesAvg = totalMemoryBytesAvg / memoryPointsCount;
-
-      const durationSeconds = Math.max(1, Math.floor((endTime.getTime() - startTime.getTime()) / 1000));
-      const totalMemoryByteSeconds = totalMemoryBytesAvg * durationSeconds;
-
-      // Captura métrica de requests
-      let totalRequests = 0;
-      try {
-        const [response] = await metricsClient.listTimeSeries({
-          name: metricsClient.projectPath(projectId),
-          filter: 'metric.type = "run.googleapis.com/request_count"',
-          interval: {
-            startTime: { seconds: Math.floor(startTime.getTime() / 1000) },
-            endTime: { seconds: Math.floor(endTime.getTime() / 1000) },
-          },
-          aggregation: {
-            alignmentPeriod: { seconds: 60 },
-            perSeriesAligner: 'ALIGN_SUM',
-            crossSeriesReducer: 'REDUCE_SUM',
-          }
-        }, { timeout: 10000 });
-        response.forEach(serie => {
-          serie.points?.forEach((point: any) => {
-            if (point.value?.int64Value) totalRequests += Number(point.value.int64Value);
-          });
-        });
-      } catch (e) {}
-
-      // Cálculo financeiro refinado (vCPU, GiB-seconds e Requests)
-      const cpuCost = totalCpuSeconds * 0.00003360; // USD 
-      const memoryCost = (totalMemoryByteSeconds / (1024 * 1024 * 1024)) * 0.00000360; // GiB-sec estimativa
-      const requestCost = (totalRequests / 1000000) * 0.40; // USD por milhão de requests
-      
-      const estimatedCostBRL = (cpuCost + memoryCost + requestCost) * 5.25; // Conversão BRL
-
-      res.json({ 
-        projectId,
-        date: targetDateStr || "last_24h",
-        usage: {
-          cpuSeconds: totalCpuSeconds,
-          memoryBytes: totalMemoryBytesAvg,
-          requests: totalRequests
-        },
-        breakdown: {
-          cpuBRL: Number((cpuCost * 5.25).toFixed(4)),
-          memoryBRL: Number((memoryCost * 5.25).toFixed(4)),
-          requestsBRL: Number((requestCost * 5.25).toFixed(4))
-        },
-        estimatedCostBRL: (cpuMetricAvailable || totalRequests > 0) ? Number(estimatedCostBRL.toFixed(4)) : null,
-        metricsAvailable: cpuMetricAvailable,
-        status: "success"
-      });
-    } catch (error: any) {
-      console.error("Erro ao buscar métricas GCP:", error);
-      
-      const errorMessageStr = error.message || "";
-      const isApiDisabled = errorMessageStr.includes("has not been used") || errorMessageStr.includes("is disabled");
-      const isIamError = errorMessageStr.includes("Caller does not have required permission");
-      
-      // Retornamos 200 mesmo em caso de erro para evitar que o Nginx/Proxy intercepte e retorne HTML
-      const { GoogleAuth } = await import("google-auth-library");
-      const authInternal = new GoogleAuth();
-      let serviceAccountEmail = "rodneyes@gmail.com";
-      try {
-        const client = await authInternal.getClient();
-        serviceAccountEmail = (client as any).email || (client as any).client_email || "rodneyes@gmail.com";
-        
-        if (serviceAccountEmail === "rodneyes@gmail.com") {
-          const metadataUrl = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email";
-          const metadataResp = await fetch(metadataUrl, { headers: { "Metadata-Flavor": "Google" }, signal: AbortSignal.timeout(2000) }).catch(() => null);
-          if (metadataResp?.ok) {
-            serviceAccountEmail = await metadataResp.text();
-          }
-        }
-      } catch (e) {}
-
-      return res.status(200).json({ 
-        success: false,
-        isGcpError: true,
-        errorType: isApiDisabled ? "API_DISABLED" : "IAM_PERMISSION_DENIED",
-        error: isApiDisabled ? "API de Monitoramento Desativada" : "Erro de Permissão IAM",
-        details: error.message,
-        serviceAccount: serviceAccountEmail,
-        helpLink: "https://console.developers.google.com/iam-admin/iam",
-        projectId: configProjectId || "desconhecido"
-      });
-    }
-  });
-
-  // Route to link an auth uid to a player (bypasses Firestore Security Rules blocking)
-  app.post("/api/players/:id/link", async (req, res) => {
-    try {
-       const playerId = req.params.id;
-       const { uid } = req.body;
-       if (!playerId || !uid) {
-          return res.status(400).json({ error: "Missing parameters" });
-       }
-       const dbAdmin = await getFirestore(); // firebase-admin
-       await dbAdmin.collection("players").doc(playerId).update({ uid });
-       res.json({ success: true });
-    } catch (e: any) {
-       console.error("[Link Device] Error:", e);
-       res.status(500).json({ error: e.message });
-    }
-  });
-
-  // Route to register presence via admin privileges (bypassing Firestore Security Rules blocking)
-  app.post("/api/presence/set", async (req, res) => {
-    try {
-        let { playerId, status, phoneDigits, uid, userEmail, isAdmin } = req.body;
-        
-        console.log(`[PresenceSet] RAW REQUEST BODY:`, JSON.stringify(req.body));
-        
-        // Trim playerId to avoid invisible whitespace issues
-        if (typeof playerId === 'string') {
-          playerId = playerId.trim();
-        }
-
-        console.log(`[PresenceSet] Request received - playerId: "${playerId}" (type: ${typeof playerId}), status: ${status}, uid: ${uid}, email: ${userEmail}`);
-
-        if (!playerId || status === undefined) {
-           return res.status(400).json({ error: "Missing parameters" });
-        }
- 
-        // 1. Get firestore instance (Web SDK to bypass IAM errors)
-        const db = await getWebFirestoreInstance();
-        if (!db) return res.status(500).json({ error: "Firebase não configurado no servidor" });
-
-        const { doc, getDoc, setDoc, deleteField, collection, query, limit, getDocs, updateDoc } = await import("firebase/firestore");
-        
-        let player: any = null;
-        let playerSnap: any = null;
-        let playerRef: any = null;
-        const isGuest = typeof playerId === 'string' && playerId.startsWith('guest_');
-
-        if (!isGuest) {
-          playerRef = doc(db, "players", playerId);
-          try {
-            playerSnap = await getDoc(playerRef);
-          } catch (getDocErr: any) {
-            console.error(`[PresenceSet] Erro Crítico durante getDoc para "${playerId}":`, getDocErr);
-            return res.status(500).json({ error: "Erro de leitura no banco de dados", details: getDocErr.message });
-          }
-          
-          if (!playerSnap.exists()) {
-            console.error(`[PresenceSet] NÃO ENCONTRADO: Documento "${playerId}" não existe na coleção "players". Iniciando auto-recuperação...`);
-            
-            let matchedDoc: { id: string; data: any } | null = null;
-            let availableIdsList: string[] = [];
-
-            try {
-              const playersRef = collection(db, "players");
-              const diagSnap = await getDocs(query(playersRef, limit(1000)));
-              const availablePlayers = diagSnap.docs.map(d => ({ 
-                id: d.id, 
-                name: d.data()?.name, 
-                email: d.data()?.email, 
-                uid: d.data()?.uid, 
-                rawData: d.data() 
-              }));
-              availableIdsList = availablePlayers.map(p => p.id);
-              
-              const normalizedRequested = playerId.toLowerCase().trim();
-              const normalizedEmail = (userEmail || '').trim().toLowerCase();
-              const reqNameNorm = playerId.trim().toLowerCase();
-              
-              console.log(`[PresenceSet] Auto-recuperação: Vasculhando ${availablePlayers.length} sócios. Buscando por ID="${normalizedRequested}", Email="${normalizedEmail}", Nome="${reqNameNorm}"`);
-
-              for (const p of availablePlayers) {
-                const pIdNorm = p.id.toLowerCase().trim();
-                const pEmailNorm = (p.email || '').trim().toLowerCase();
-                const pNameNorm = (p.name || '').trim().toLowerCase();
-                
-                // 1. ID exato (ignorando case)
-                if (pIdNorm === normalizedRequested) {
-                  matchedDoc = { id: p.id, data: p.rawData };
-                  console.log(`[PresenceSet] Recuperado por ID: ${p.id}`);
-                  break;
-                }
-                // 2. Email exato
-                if (normalizedEmail && pEmailNorm === normalizedEmail) {
-                  matchedDoc = { id: p.id, data: p.rawData };
-                  console.log(`[PresenceSet] Recuperado por Email: ${p.id}`);
-                  break;
-                }
-                // 3. UID exato
-                if (uid && p.uid === uid) {
-                  matchedDoc = { id: p.id, data: p.rawData };
-                  console.log(`[PresenceSet] Recuperado por UID: ${p.id}`);
-                  break;
-                }
-                // 4. Nome exato ou aproximado
-                if (pNameNorm && reqNameNorm && (pNameNorm === reqNameNorm || pNameNorm.includes(reqNameNorm) || reqNameNorm.includes(pNameNorm))) {
-                  matchedDoc = { id: p.id, data: p.rawData };
-                  console.log(`[PresenceSet] Recuperado por Nome: ${p.id} (${pNameNorm})`);
-                  break;
-                }
-              }
-            } catch (diagErr) {
-              console.error(`[PresenceSet] Busca de auto-recuperação falhou:`, diagErr);
-            }
-
-            if (matchedDoc) {
-              const oldId = playerId;
-              playerId = matchedDoc.id;
-              playerRef = doc(db, "players", playerId);
-              player = matchedDoc.data;
-
-              // Auto-healing: If we matched a player through recovery, fix the stale ID in the intentions document
-              try {
-                const intentionsRef = doc(db, "metadata", "intentions");
-                const intentionsSnap = await getDoc(intentionsRef);
-                if (intentionsSnap.exists()) {
-                  const intentionsData = intentionsSnap.data();
-                  const responses = intentionsData.responses || {};
-                  
-                  if (responses[oldId]) {
-                    console.log(`[PresenceSet] AUTO-HEALING: Migrating stale ID "${oldId}" to "${playerId}" in metadata/intentions`);
-                    const newResponses = { ...responses };
-                    delete newResponses[oldId];
-                    newResponses[playerId] = responses[oldId];
-                    
-                    await updateDoc(intentionsRef, { responses: newResponses });
-                  }
-                }
-              } catch (healErr) {
-                console.error(`[PresenceSet] Auto-healing failed (non-critical):`, healErr);
-              }
-            } else {
-              const possibleIds = availableIdsList.slice(0, 5).join(', ');
-              console.error(`[PresenceSet] FINAL FAIL: Player "${playerId}" (requested) not found even after auto-recovery. Available sample: ${possibleIds}`);
-              return res.status(404).json({ 
-                error: "Sócio não encontrado", 
-                details: `O ID "${playerId}" não existe no banco de dados. Este sócio pode ter sido removido ou o ID está obsoleto. Sócio solicitante: ${userEmail || 'desconhecido'}.` 
-              });
-            }
-          } else {
-            player = playerSnap.data();
-            console.log(`[PresenceSet] Sócio encontrado: ${player?.name} (${playerId})`);
-          }
-        } else {
-          console.log(`[PresenceSet] Convidado detectado: ${playerId}.`);
-          player = { name: "Convidado", status: "guest" };
-        }
-
-        // 2. Validate authorization
-        let isAuthorized = false;
-        
-        if (isAdmin || isGuest) {
-            isAuthorized = true; // Admin or guest
-        } else if (uid && player?.uid === uid) {
-            isAuthorized = true; // Player changing own intent
-        } else if (userEmail && player?.email && userEmail.trim().toLowerCase() === player.email.trim().toLowerCase()) {
-            isAuthorized = true; // Player email matches
-        } else {
-            // Allow presence registration for valid players in the intentions list
-            isAuthorized = true;
-        }
-         
-         if (!isAuthorized) {
-           return res.status(403).json({ error: "Authorization failed" });
-         }
- 
-        // 3. Update intentions using Web SDK
-        const intentionsRef = doc(db, "metadata", "intentions");
-        const intentionsSnap = await getDoc(intentionsRef);
-        const existingData = intentionsSnap.exists() ? intentionsSnap.data() : {};
-        const responses = { ...(existingData.responses || {}) };
-        const timestamps = { ...(existingData.confirmationTimestamps || {}) };
-
-        // Collect aliases for the player to ensure clean deletion
-        const aliasSet = new Set<string>([playerId]);
-        if (player) {
-          if (player.id) aliasSet.add(player.id);
-          if (player.uid) aliasSet.add(player.uid);
-          if (player.email) aliasSet.add(player.email.toLowerCase());
-        }
-
-        if (status === 'RESET') {
-          aliasSet.forEach(alias => {
-            delete responses[alias];
-            delete timestamps[alias];
-          });
-
-          await setDoc(intentionsRef, {
-            targetDate: existingData.targetDate || getNextThursday(),
-            automationEnabled: existingData.automationEnabled ?? true,
-            responses,
-            confirmationTimestamps: timestamps,
-            remindersSent: existingData.remindersSent || {},
-            lastUpdated: Date.now()
-          });
-        } else {
-          responses[playerId] = status;
-          if (status === 'GOING') {
-            timestamps[playerId] = Date.now();
-          } else {
-            delete timestamps[playerId];
-          }
-
-          await setDoc(intentionsRef, {
-            targetDate: existingData.targetDate || getNextThursday(),
-            automationEnabled: existingData.automationEnabled ?? true,
-            responses,
-            confirmationTimestamps: timestamps,
-            remindersSent: existingData.remindersSent || {},
-            lastUpdated: Date.now()
-          });
-        }
-
-        // Also update preConfirmations
+      if (!bodyPlayerId) {
         try {
-          const { deleteDoc } = await import("firebase/firestore");
-          const targetDates = Array.from(new Set([
-            existingData.targetDate,
-            getFirestoreDateKey(),
-            getNextThursday()
-          ].filter(Boolean) as string[]));
-
-          if (status === 'GOING') {
-            const currentTarget = existingData.targetDate || getFirestoreDateKey();
-            const preConfirmationsRef = doc(db, 'preConfirmations', currentTarget, 'players', playerId);
-            await setDoc(preConfirmationsRef, { ...player, timestamp: Date.now(), id: playerId }, { merge: true });
-          } else {
-            for (const tDate of targetDates) {
-              for (const alias of aliasSet) {
-                const pRef = doc(db, 'preConfirmations', tDate, 'players', alias);
-                await deleteDoc(pRef).catch(() => {});
-              }
-            }
-          }
-        } catch (e: any) {
-          console.warn("[Presence API] Could not update preConfirmations", e.message);
-        }
-
-        // Also track access / login for the player
-        if (!isGuest && playerSnap && playerRef) {
-          try {
-            const nowISO = new Date().toISOString();
-            const pData = playerSnap.exists() ? playerSnap.data() : {};
-            const loginHist = Array.isArray(pData.loginHistory) ? pData.loginHistory : [];
-            
-            const lastTime = loginHist[0] ? new Date(loginHist[0]).getTime() : 0;
-            if (isNaN(lastTime) || Date.now() - lastTime >= 30000) {
-              const newHist = [nowISO, ...loginHist].slice(0, 20);
-              const todayStr = getFirestoreDateKey();
-              const isNewDay = !pData.lastReadUpdate || pData.lastReadUpdate < todayStr;
-              const currentAccesses = Number(pData.accesses || 0);
-              const currentDaily = Number(pData.dailyAccesses || 0);
-  
-              await updateDoc(playerRef, {
-                lastLoginAt: nowISO,
-                loginHistory: newHist,
-                accesses: currentAccesses + 1,
-                dailyAccesses: isNewDay ? 1 : currentDaily + 1,
-                lastReadUpdate: todayStr
-              });
-              console.log(`[Presence API] Successfully logged access for player ${playerId}`);
-            }
-          } catch (accessErr: any) {
-            console.warn("[Presence API] Could not track access:", accessErr.message);
-          }
-        }
-        
-        // 4. Create an internal notification for the player
-        if (status === 'GOING' || status === 'NOT_GOING') {
-          try {
-            const notifId = `presence_${playerId}_${Date.now()}`;
-            const notifRef = doc(db, "notifications", notifId);
-            await setDoc(notifRef, {
-              playerId,
-              playerUid: player.uid || null,
-              title: status === 'GOING' ? "Presença Confirmada! 🏐" : "Ausência Registrada 🗓️",
-              message: status === 'GOING' 
-                ? `Tudo certo! Você confirmou sua presença para a próxima quinta-feira.`
-                : `Recebemos seu aviso de ausência. Esperamos você na próxima!`,
-              type: 'system',
-              read: false,
-              createdAt: Date.now()
-            });
-          } catch (notifErr: any) {
-            console.warn("[Presence API] Could not create notification document:", notifErr.message);
-          }
-        }
-        
-        res.json({ success: true });
-    } catch (e: any) {
-        console.error("[Presence API] Error Details:", { message: e.message, code: e.code, stack: e.stack });
-        res.status(500).json({ error: e.message, details: e.toString() });
-    }
-  });
-
-  // Server endpoint for clearing all intentions across Firestore
-  app.post("/api/presence/clear", async (_req, res) => {
-    try {
-      const db = await getWebFirestoreInstance();
-      if (!db) return res.status(500).json({ error: "Firebase não configurado" });
-      const { doc, setDoc, getDocs, collection, deleteDoc } = await import("firebase/firestore");
-      const nextThu = getNextThursday();
-      const now = Date.now();
-
-      await setDoc(doc(db, "metadata", "intentions"), {
-        targetDate: nextThu,
-        automationEnabled: true,
-        responses: {},
-        confirmationTimestamps: {},
-        remindersSent: {},
-        lastUpdated: now
-      });
-
-      const datesToClear = [nextThu, getFirestoreDateKey()];
-      for (const dKey of datesToClear) {
-        try {
-          const snap = await getDocs(collection(db, 'preConfirmations', dKey, 'players'));
-          for (const d of snap.docs) {
-            await deleteDoc(d.ref).catch(() => {});
+          const db = await getFirestore();
+          const querySnap = await db
+            .collection("players")
+            .where("email", "==", trimmedEmail)
+            .limit(1)
+            .get();
+          if (!querySnap.empty) {
+            const docDoc = querySnap.docs[0];
+            playerId = docDoc.id;
+            playerName = docDoc.data()?.name || "Jogador";
           }
         } catch (e) {}
       }
 
-      console.log(`[Presence API] Cleared intentions list and preConfirmations collections.`);
-      res.json({ success: true, message: "Lista de intenções zerada com sucesso" });
-    } catch (err: any) {
-      console.error("[Presence API] Clear error:", err);
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  // Sync accesses and login timestamps from intentions list confirmations
-  app.get("/api/presence/sync-accesses", async (req, res) => {
-    try {
-      const db = await getWebFirestoreInstance();
-      if (!db) return res.status(500).json({ error: "Firebase not configured" });
-
-      const { doc, getDoc, updateDoc } = await import("firebase/firestore");
-      const intentionsRef = doc(db, "metadata", "intentions");
-      const intentionsSnap = await getDoc(intentionsRef);
-
-      if (!intentionsSnap.exists()) {
-        return res.json({ success: true, synced: 0 });
-      }
-
-      const intentionsData = intentionsSnap.data();
-      const timestamps: Record<string, number> = intentionsData.confirmationTimestamps || {};
-      const responses: Record<string, string> = intentionsData.responses || {};
-
-      const todayStr = getFirestoreDateKey();
-      let syncedCount = 0;
-
-      for (const [playerId, status] of Object.entries(responses)) {
-        if (!status || status === 'RESET') continue;
-
-        const ts = timestamps[playerId] || Date.now();
-        const confirmIso = new Date(ts).toISOString();
-
-        try {
-          const playerRef = doc(db, "players", playerId);
-          const pSnap = await getDoc(playerRef);
-          if (pSnap.exists()) {
-            const pData = pSnap.data();
-            const loginHist: string[] = Array.isArray(pData.loginHistory) ? pData.loginHistory : [];
-
-            const hasConfirmDate = loginHist.some(h => new Date(h).toISOString().slice(0, 10) === confirmIso.slice(0, 10));
-
-            if (!pData.lastLoginAt || !hasConfirmDate || new Date(pData.lastLoginAt).getTime() < ts) {
-              const newHist = [confirmIso, ...loginHist.filter(h => h !== confirmIso)].slice(0, 20);
-              const isNewDay = !pData.lastReadUpdate || pData.lastReadUpdate < todayStr;
-              const currentAccesses = Number(pData.accesses || 0);
-              const currentDaily = Number(pData.dailyAccesses || 0);
-
-              await updateDoc(playerRef, {
-                lastLoginAt: confirmIso,
-                loginHistory: newHist,
-                accesses: hasConfirmDate ? currentAccesses : (currentAccesses + 1),
-                dailyAccesses: isNewDay ? 1 : (currentDaily + 1),
-                lastReadUpdate: todayStr
-              });
-              syncedCount++;
-            }
-          }
-        } catch (e: any) {
-          console.warn(`[sync-accesses] Failed to sync player ${playerId}:`, e.message);
-        }
-      }
-
-      return res.json({ success: true, synced: syncedCount });
-    } catch (err: any) {
-      console.error("[sync-accesses] Error:", err.message);
-      return res.status(500).json({ error: err.message });
-    }
-  });
-
-  // WebAuthn Routes
-  app.post("/api/auth/webauthn/register/options", async (req, res) => {
-    try {
-      const { rpID, email, playerId: bodyPlayerId, playerName: bodyPlayerName } = req.body;
-      if (!email) {
-        return res.status(400).json({ error: "E-mail é obrigatório para configurar a biometria!" });
-      }
-      const trimmedEmail = email.trim().toLowerCase();
-      
-      let matchedPlayer: any = null;
-      let usedAdmin = false;
-      let playerId = bodyPlayerId || "owner_admin";
-      let playerName = bodyPlayerName || (trimmedEmail === "rodneyes@gmail.com" ? "Administrador" : "Jogador");
-
-      // Se não recebemos o playerId e playerName do frontend, tentamos buscar no banco
-      if (!bodyPlayerId) {
-        try {
-          const dbAdmin = await getFirestore();
-          const querySnap = await dbAdmin.collection("players").where("email", "==", trimmedEmail).get();
-          if (!querySnap.empty) {
-            const docDoc = querySnap.docs[0];
-            matchedPlayer = { ...docDoc.data(), id: docDoc.id };
-          }
-          const isAdminEmail = trimmedEmail === "rodneyes@gmail.com";
-          if (!matchedPlayer && !isAdminEmail) {
-            return res.status(404).json({ error: "E-mail não cadastrado como sócio ou administrador!" });
-          }
-          playerId = matchedPlayer ? matchedPlayer.id : "owner_admin";
-          playerName = matchedPlayer ? matchedPlayer.name : "Administrador";
-          usedAdmin = true;
-        } catch (adminError: any) {
-          console.warn("[WebAuthn Register Options] Admin Firestore failed, falling back to Web Firestore:", adminError.message);
-        }
-
-        if (!usedAdmin) {
-          try {
-            const dbInstance = await getWebFirestoreInstance();
-            const { collection, getDocs, query, where } = await import("firebase/firestore");
-            const playersQuery = query(collection(dbInstance, "players"), where("email", "==", trimmedEmail));
-            const playersSnap = await getDocs(playersQuery);
-            
-            if (!playersSnap.empty) {
-              const docDoc = playersSnap.docs[0];
-              matchedPlayer = { ...docDoc.data(), id: docDoc.id };
-            }
-            const isAdminEmail = trimmedEmail === "rodneyes@gmail.com";
-            if (!matchedPlayer && !isAdminEmail) {
-              return res.status(404).json({ error: "E-mail não cadastrado como sócio ou administrador!" });
-            }
-            playerId = matchedPlayer ? matchedPlayer.id : "owner_admin";
-            playerName = matchedPlayer ? matchedPlayer.name : "Administrador";
-          } catch (webDbError: any) {
-            console.warn("[WebAuthn Register Options] Web Firestore query failed:", webDbError.message);
-            // Se falhar o query por permission_denied, mas o email é válido, aceitamos usar fallback para não quebrar
-            const isAdminEmail = trimmedEmail === "rodneyes@gmail.com";
-            playerId = isAdminEmail ? "owner_admin" : "fallback_player";
-            playerName = isAdminEmail ? "Administrador" : "Jogador Sócio";
-          }
-        }
-      }
-
       const options = await getRegistrationOptions(playerId, playerName, rpID);
-      
-      // Salva no Memory Cache (Sempre funciona, livre de problemas de permissões)
       challengeStore.set("reg_" + trimmedEmail, {
         challenge: options.challenge,
         playerId,
         playerName,
         createdAt: Date.now()
       });
-      
       res.json(options);
     } catch (e: any) {
-      console.error("[WebAuthn Register Options] Error:", e);
       res.status(500).json({ error: e.message });
     }
   });
 
   app.post("/api/auth/webauthn/register/verify", async (req, res) => {
     try {
-      const { attestationResponse, challenge, origin, rpID, email } = req.body;
-      if (!email) {
-        return res.status(400).json({ error: "E-mail não especificado." });
-      }
+      const { attestationResponse, origin, rpID, email } = req.body;
+      if (!email) return res.status(400).json({ error: "E-mail não especificado." });
       const trimmedEmail = email.trim().toLowerCase();
-      
-      let expectedChallenge: string | null = null;
-      let usedAdmin = false;
-      let playerId = "owner_admin";
-      let playerName = "Administrador";
-
-      // 1. Primeiro tenta buscar o desafio e metadados no Cache de Memória (Sempre Livre de Erros)
       const cachedData = challengeStore.get("reg_" + trimmedEmail);
-      if (cachedData) {
-        expectedChallenge = cachedData.challenge;
-        playerId = cachedData.playerId || "owner_admin";
-        playerName = cachedData.playerName || "Administrador";
-        challengeStore.delete("reg_" + trimmedEmail);
-      } else {
-        // Fallback para Firestore
-        try {
-          const dbAdmin = await getFirestore();
-          const challengeDocRef = dbAdmin.collection("webauthnChallenges").doc(trimmedEmail);
-          const challengeDoc = await challengeDocRef.get();
-          if (challengeDoc.exists) {
-            expectedChallenge = challengeDoc.data()?.challenge;
-            await challengeDocRef.delete();
-            usedAdmin = true;
-          }
-        } catch (adminError: any) {
-          console.warn("[WebAuthn Register Verify] Admin Firestore failed to fetch/delete challenge, falling back to Web:", adminError.message);
-        }
-
-        if (!usedAdmin) {
-          try {
-            const dbInstance = await getWebFirestoreInstance();
-            const { doc, getDoc, deleteDoc } = await import("firebase/firestore");
-            const challengeRef = doc(dbInstance, "webauthnChallenges", trimmedEmail);
-            const challengeSnap = await getDoc(challengeRef);
-            if (challengeSnap.exists()) {
-              expectedChallenge = challengeSnap.data()?.challenge;
-              await deleteDoc(challengeRef);
-            }
-          } catch (webError: any) {
-            console.warn("[WebAuthn Register Verify] Web Firestore failed to load challenge:", webError.message);
-          }
-        }
+      if (!cachedData) {
+        return res.status(400).json({ error: "Sessão expirada. Tente novamente!" });
       }
+      challengeStore.delete("reg_" + trimmedEmail);
 
-      if (!expectedChallenge) {
-        return res.status(400).json({ error: "Sessão expirada ou desafio não encontrado. Tente configurar novamente!" });
-      }
-      
-      // 2. Executa a verificação
-      const allowedOrigins = Array.from(new Set([
-        origin,
-        req.headers.origin,
-        'https://ais-dev-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app',
-        'https://ais-pre-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app',
-        'https://guerreiros-volleyball-club-238897290870.us-west1.run.app',
-        'http://localhost:3000',
-        'http://127.0.0.1:3000'
-      ].filter(Boolean) as string[]));
+      const allowedOrigins = Array.from(
+        new Set(
+          [
+            origin,
+            req.headers.origin,
+            "https://ais-dev-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app",
+            "https://ais-pre-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app",
+            "https://guerreiros-volleyball-club-238897290870.us-west1.run.app",
+            "http://localhost:3000"
+          ].filter(Boolean) as string[]
+        )
+      );
 
-      const allowedRPIDs = Array.from(new Set([
-        rpID,
-        'ais-dev-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app',
-        'ais-pre-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app',
-        'guerreiros-volleyball-club-238897290870.us-west1.run.app',
-        'localhost',
-        '127.0.0.1'
-      ].filter(Boolean) as string[]));
+      const allowedRPIDs = Array.from(
+        new Set(
+          [
+            rpID,
+            "ais-dev-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app",
+            "ais-pre-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app",
+            "guerreiros-volleyball-club-238897290870.us-west1.run.app",
+            "localhost"
+          ].filter(Boolean) as string[]
+        )
+      );
 
-      const verification = await verifyRegistration(attestationResponse, expectedChallenge, allowedOrigins, allowedRPIDs);
-      
+      const verification = await verifyRegistration(
+        attestationResponse,
+        cachedData.challenge,
+        allowedOrigins,
+        allowedRPIDs
+      );
       if (!verification.verified || !verification.registrationInfo) {
-        return res.status(400).json({ error: "Falha na verificação de assinatura da biometria." });
+        return res.status(400).json({ error: "Falha na verificação da biometria." });
       }
-      
+
       const regInfo = verification.registrationInfo as any;
       const credential = regInfo.credential || {};
-      
       const credentialID = regInfo.credentialID || credential.id;
       const credentialPublicKey = regInfo.credentialPublicKey || credential.publicKey;
-      const counter = regInfo.counter !== undefined ? regInfo.counter : (credential.counter !== undefined ? credential.counter : 0);
-      
-      if (!credentialID || !credentialPublicKey) {
-        return res.status(400).json({ error: "Dados de credencial ausentes ou corrompidos durante o registro." });
-      }
+      const counter = regInfo.counter ?? credential.counter ?? 0;
 
-      // 3. Resolve matchedPlayer se não veio do cache
-      if (!cachedData) {
-        let matchedPlayer: any = null;
-        if (usedAdmin) {
-          try {
-            const dbAdmin = await getFirestore();
-            const querySnap = await dbAdmin.collection("players").where("email", "==", trimmedEmail).get();
-            if (!querySnap.empty) {
-              const docDoc = querySnap.docs[0];
-              matchedPlayer = { ...docDoc.data(), id: docDoc.id };
-            }
-          } catch (e) {}
-        } else {
-          try {
-            const dbInstance = await getWebFirestoreInstance();
-            const { collection, getDocs, query, where } = await import("firebase/firestore");
-            const playersQuery = query(collection(dbInstance, "players"), where("email", "==", trimmedEmail));
-            const playersSnap = await getDocs(playersQuery);
-            if (!playersSnap.empty) {
-              const docDoc = playersSnap.docs[0];
-              matchedPlayer = { ...docDoc.data(), id: docDoc.id };
-            }
-          } catch (e) {}
-        }
+      const credentialIdStr =
+        typeof credentialID === "string"
+          ? credentialID
+          : Buffer.from(credentialID).toString("base64url");
+      const publicKeyStr =
+        typeof credentialPublicKey === "string"
+          ? credentialPublicKey
+          : Buffer.from(credentialPublicKey).toString("base64url");
 
-        playerId = matchedPlayer ? matchedPlayer.id : "owner_admin";
-        playerName = matchedPlayer ? matchedPlayer.name : "Administrador";
-      }
-      
-      // 4. Salva a credencial no Firestore
-      let credentialIdStr = "";
-      if (typeof credentialID === "string") {
-        credentialIdStr = credentialID;
-      } else {
-        credentialIdStr = Buffer.from(credentialID).toString("base64url");
-      }
-
-      let publicKeyStr = "";
-      if (typeof credentialPublicKey === "string") {
-        publicKeyStr = credentialPublicKey;
-      } else {
-        publicKeyStr = Buffer.from(credentialPublicKey).toString("base64url");
-      }
-      
       const credentialDataToSave = {
         id: credentialIdStr,
         publicKey: publicKeyStr,
-        counter: counter,
+        counter,
         email: trimmedEmail,
-        playerId: playerId,
-        playerName: playerName,
+        playerId: cachedData.playerId || "owner_admin",
+        playerName: cachedData.playerName || "Administrador",
         createdAt: Date.now()
       };
 
-      // 1. Salva a credencial localmente no sistema de arquivos do servidor (100% garantido)
       saveLocalCredential(credentialIdStr, credentialDataToSave);
+      const db = await getFirestore();
+      await db
+        .collection("metadata")
+        .doc("webauthn_credentials")
+        .set({ [credentialIdStr]: credentialDataToSave }, { merge: true });
 
-      // 2. Tenta salvar duplicamente no documento unificado de metadados de credenciais de forma silenciosa
-      try {
-        let savedWithAdmin = false;
-        try {
-          const dbAdmin = await getFirestore();
-          await dbAdmin.collection("metadata").doc("webauthn_credentials").set({
-            [credentialIdStr]: credentialDataToSave
-          }, { merge: true });
-          savedWithAdmin = true;
-          console.log("[WebAuthn Register Verify] Salvo com sucesso usando Admin SDK.");
-        } catch (adminMetaErr: any) {
-          // Ignorado silenciosamente
-        }
-
-        if (!savedWithAdmin) {
-          const dbInstance = await getWebFirestoreInstance();
-          const { doc, setDoc } = await import("firebase/firestore");
-          setDoc(doc(dbInstance, "metadata", "webauthn_credentials"), {
-            [credentialIdStr]: credentialDataToSave
-          }, { merge: true }).catch(() => {});
-        }
-      } catch (metaErr: any) {
-        // Ignorado silenciosamente
-      }
-
-      // 3. Tenta salvar no formato tradicional de coleção do Firestore de forma silenciosa
-      try {
-        const dbAdmin = await getFirestore();
-        await dbAdmin.collection("webauthnCredentials").doc(credentialIdStr).set(credentialDataToSave);
-      } catch (adminError: any) {
-        try {
-          const dbInstance = await getWebFirestoreInstance();
-          const { doc, setDoc } = await import("firebase/firestore");
-          setDoc(doc(dbInstance, "webauthnCredentials", credentialIdStr), credentialDataToSave).catch(() => {});
-        } catch (webError: any) {
-          // Ignorado silenciosamente
-        }
-      }
-      
-      // Retorna true de verificação e repassa o credential object para o cliente
       res.json({ verified: true, credential: credentialDataToSave });
     } catch (e: any) {
-      console.error("[WebAuthn Register Verify] Error:", e);
       res.status(500).json({ error: e.message });
     }
   });
@@ -1571,35 +1842,28 @@ app.get("/api/billing/real-time", async (req, res) => {
     try {
       const { rpID, email } = req.body;
       let allowCredentials: any[] | undefined = undefined;
-
       if (email) {
         const trimmed = String(email).trim().toLowerCase();
-        let localCreds = loadLocalCredentials();
-        if (Object.keys(localCreds).length === 0) {
-          await syncCredentialsFromFirestore();
-          localCreds = loadLocalCredentials();
-        }
-        const matching = Object.values(localCreds).filter((c: any) => c.email && c.email.toLowerCase() === trimmed);
+        await syncCredentialsFromFirestore();
+        const localCreds = loadLocalCredentials();
+        const matching = Object.values(localCreds).filter(
+          (c: any) => c.email && c.email.toLowerCase() === trimmed
+        );
         if (matching.length > 0) {
           allowCredentials = matching.map((c: any) => ({
             id: c.id,
-            type: 'public-key',
-            transports: c.transports || ['internal', 'hybrid']
+            type: "public-key",
+            transports: c.transports || ["internal", "hybrid"]
           }));
         }
       }
-
       const options = await getAuthenticationOptions(rpID, allowCredentials);
-      
-      // Salva no Memory Cache
       challengeStore.set("login_" + options.challenge, {
         challenge: options.challenge,
         createdAt: Date.now()
       });
-      
       res.json(options);
     } catch (e: any) {
-      console.error("[WebAuthn Login Options] Error:", e);
       res.status(500).json({ error: e.message });
     }
   });
@@ -1607,337 +1871,104 @@ app.get("/api/billing/real-time", async (req, res) => {
   app.post("/api/auth/webauthn/login/verify", async (req, res) => {
     try {
       const { assertionResponse, challenge, origin, rpID } = req.body;
-      
-      let expectedChallengeExists = false;
-      let usedAdmin = false;
-
-      // 1. Busca e deleta o desafio (Primeiro no Cache de Memória)
       const cachedChallenge = challengeStore.get("login_" + challenge);
-      if (cachedChallenge) {
-        expectedChallengeExists = true;
-        challengeStore.delete("login_" + challenge);
-      } else {
-        try {
-          const dbAdmin = await getFirestore();
-          const challengeDocRef = dbAdmin.collection("webauthnChallenges").doc(challenge);
-          const challengeDoc = await challengeDocRef.get();
-          if (challengeDoc.exists) {
-            expectedChallengeExists = true;
-            await challengeDocRef.delete();
-            usedAdmin = true;
-          }
-        } catch (adminError: any) {
-          // Silenciosamente ignorado
-        }
-
-        if (!expectedChallengeExists && !usedAdmin) {
-          try {
-            const dbInstance = await getWebFirestoreInstance();
-            const { doc, getDoc, deleteDoc } = await import("firebase/firestore");
-            const challengeRef = doc(dbInstance, "webauthnChallenges", challenge);
-            const challengeSnap = await getDoc(challengeRef);
-            if (challengeSnap.exists()) {
-              expectedChallengeExists = true;
-              await deleteDoc(challengeRef);
-            }
-          } catch (webError: any) {
-            // Silenciosamente ignorado
-          }
-        }
+      if (!cachedChallenge) {
+        return res.status(400).json({ error: "Desafio expirado. Tente novamente!" });
       }
+      challengeStore.delete("login_" + challenge);
 
-      if (!expectedChallengeExists) {
-        return res.status(400).json({ error: "Desafio de login expirado ou inválido. Tente novamente!" });
-      }
-      
-      // 2. Busca a credencial correspondente pelo ID da credencial (assertionResponse.id)
       const credentialID = assertionResponse.id;
-      let credentialData: any = null;
-      let credDocRefToUpdate: any = null;
-      let isMetaSource = false;
-
-      // Primeiro, procura nas credenciais locais salvas robustamente no servidor (100% livre de falhas de permissão)
       let localCreds = loadLocalCredentials();
       if (!localCreds[credentialID]) {
         await syncCredentialsFromFirestore();
         localCreds = loadLocalCredentials();
       }
-
-      if (localCreds[credentialID]) {
-        credentialData = localCreds[credentialID];
-        console.log("[WebAuthn Login Verify] Credential successfully resolved from local filesystem credentials cache!");
-      }
-
+      const credentialData = localCreds[credentialID];
       if (!credentialData) {
-        // Tenta buscar no documento unificado /metadata/webauthn_credentials (como fallback silencioso de compatibilidade)
-        try {
-          const dbInstance = await getWebFirestoreInstance();
-          const { doc, getDoc } = await import("firebase/firestore");
-          const metaSnap = await getDoc(doc(dbInstance, "metadata", "webauthn_credentials"));
-          if (metaSnap.exists()) {
-            const allCreds = metaSnap.data() || {};
-            if (allCreds[credentialID]) {
-              credentialData = allCreds[credentialID];
-              isMetaSource = true;
-              saveLocalCredential(credentialID, credentialData);
-            }
-          }
-        } catch (metaErr: any) {
-          // Ignorado silenciosamente
-        }
+        return res.status(404).json({ error: "Biometria não encontrada neste dispositivo." });
       }
 
-      if (!credentialData) {
-        // Tenta buscar no Admin SDK se possível
-        try {
-          const dbAdmin = await getFirestore();
-          const metaDoc = await dbAdmin.collection("metadata").doc("webauthn_credentials").get();
-          if (metaDoc.exists) {
-            const allCreds = metaDoc.data() || {};
-            if (allCreds[credentialID]) {
-              credentialData = allCreds[credentialID];
-              isMetaSource = true;
-              usedAdmin = true;
-              saveLocalCredential(credentialID, credentialData);
-            }
-          }
-        } catch (adminMetaErr: any) {
-          // Ignorado silenciosamente
-        }
-      }
-
-      // Se ainda não encontrou, usa o fallback legado de pesquisa
-      if (!credentialData) {
-        try {
-          const dbAdmin = await getFirestore();
-          const credsQuery = await dbAdmin.collection("webauthnCredentials").where("id", "==", credentialID).limit(1).get();
-          if (!credsQuery.empty) {
-            const docDoc = credsQuery.docs[0];
-            credentialData = docDoc.data();
-            credDocRefToUpdate = docDoc.ref;
-            usedAdmin = true;
-            saveLocalCredential(credentialID, credentialData);
-          }
-        } catch (adminError: any) {
-          // Ignorado silenciosamente
-        }
-
-        if (!credentialData) {
-          try {
-            const dbInstance = await getWebFirestoreInstance();
-            const { collection, getDocs, query, where, limit } = await import("firebase/firestore");
-            const credsQuery = query(
-              collection(dbInstance, "webauthnCredentials"),
-              where("id", "==", credentialID),
-              limit(1)
-            );
-            const credsSnap = await getDocs(credsQuery);
-            if (!credsSnap.empty) {
-              const docDoc = credsSnap.docs[0];
-              credentialData = docDoc.data();
-              credDocRefToUpdate = docDoc.ref;
-              saveLocalCredential(credentialID, credentialData);
-            }
-          } catch (webError: any) {
-            // Ignorado silenciosamente
-          }
-        }
-      }
-
-      if (!credentialData) {
-        return res.status(404).json({ error: "Biometria não cadastrada neste dispositivo ou conta inválida. Toque em 'Vincular Biometria' para cadastrar!" });
-      }
-      
-      // 3. Monta o autenticador para verificação (counter seguro para Face ID / Touch ID / Windows Hello)
       const authenticator = {
         credentialID: credentialData.id,
         credentialPublicKey: Buffer.from(credentialData.publicKey, "base64url"),
         counter: 0,
         transports: credentialData.transports || []
       };
-      
-      // 4. Executa a verificação com suporte a origens múltiplas
-      const allowedOrigins = Array.from(new Set([
-        origin,
-        req.headers.origin,
-        'https://ais-dev-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app',
-        'https://ais-pre-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app',
-        'https://guerreiros-volleyball-club-238897290870.us-west1.run.app',
-        'http://localhost:3000',
-        'http://127.0.0.1:3000'
-      ].filter(Boolean) as string[]));
 
-      const allowedRPIDs = Array.from(new Set([
-        rpID,
-        'ais-dev-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app',
-        'ais-pre-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app',
-        'guerreiros-volleyball-club-238897290870.us-west1.run.app',
-        'localhost',
-        '127.0.0.1'
-      ].filter(Boolean) as string[]));
+      const allowedOrigins = Array.from(
+        new Set(
+          [
+            origin,
+            req.headers.origin,
+            "https://ais-dev-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app",
+            "https://ais-pre-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app",
+            "https://guerreiros-volleyball-club-238897290870.us-west1.run.app",
+            "http://localhost:3000"
+          ].filter(Boolean) as string[]
+        )
+      );
 
-      const verification = await verifyAuthentication(assertionResponse, challenge, allowedOrigins, allowedRPIDs, authenticator);
-      
+      const allowedRPIDs = Array.from(
+        new Set(
+          [
+            rpID,
+            "ais-dev-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app",
+            "ais-pre-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app",
+            "guerreiros-volleyball-club-238897290870.us-west1.run.app",
+            "localhost"
+          ].filter(Boolean) as string[]
+        )
+      );
+
+      const verification = await verifyAuthentication(
+        assertionResponse,
+        challenge,
+        allowedOrigins,
+        allowedRPIDs,
+        authenticator
+      );
       if (verification.verified) {
-        // Atualiza o counter
-        const newCounter = verification.authenticationInfo.newCounter;
-        
-        // Sempre atualiza o counter localmente primeiro para máxima confiabilidade
-        updateLocalCredentialCounter(credentialID, newCounter);
-        
-        if (isMetaSource) {
-          try {
-            const dbInstance = await getWebFirestoreInstance();
-            const { doc, updateDoc } = await import("firebase/firestore");
-            updateDoc(doc(dbInstance, "metadata", "webauthn_credentials"), {
-              [`${credentialID}.counter`]: newCounter
-            }).catch(() => {});
-          } catch (e: any) {
-            try {
-              const dbAdmin = await getFirestore();
-              await dbAdmin.collection("metadata").doc("webauthn_credentials").update({
-                [`${credentialID}.counter`]: newCounter
-              }).catch(() => {});
-            } catch (adminErr: any) {
-              // Ignorado silenciosamente
-            }
-          }
-        } else if (credDocRefToUpdate) {
-          try {
-            if (usedAdmin) {
-              await credDocRefToUpdate.update({ counter: newCounter }).catch(() => {});
-            } else {
-              const { updateDoc } = await import("firebase/firestore");
-              await updateDoc(credDocRefToUpdate, { counter: newCounter }).catch(() => {});
-            }
-          } catch (updErr: any) {
-            // Ignorado silenciosamente
-          }
-        }
-        
+        updateLocalCredentialCounter(credentialID, verification.authenticationInfo.newCounter);
         res.json({ verified: true, email: credentialData.email });
       } else {
         res.status(400).json({ error: "Assinatura biométrica inválida." });
       }
     } catch (e: any) {
-      console.error("[WebAuthn Login Verify] Error:", e);
       res.status(500).json({ error: e.message });
     }
   });
 
   const server = http.createServer(app);
-
-  // Setup Gemini Live API WebSocket Handler
   const { setupGeminiLiveWebSocket } = await import("./services/serverLiveApi.ts");
   setupGeminiLiveWebSocket(server);
 
-  // Vite middleware for development
-  console.log(`[Guerreiros] Configurando ambiente: ${process.env.NODE_ENV || 'development'}`);
-  const distPath = path.join(process.cwd(), 'dist');
-
   if (process.env.NODE_ENV !== "production") {
-    console.log("[Guerreiros] Montando Vite em modo Middleware...");
-    try {
-      const { createServer: createViteServer } = await import("vite");
-      const vite = await createViteServer({
-        server: { 
-          middlewareMode: true,
-          ws: false
-        },
-        appType: "spa",
-      });
-      app.use(vite.middlewares);
-      console.log("[Guerreiros] Vite montado com sucesso.");
-    } catch (err: any) {
-      console.error("[Fatal] Falha ao iniciar Vite Middleware:", err);
-      process.exit(1);
-    }
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    
-    // Aggressive cache control middleware for production-like mode
-    app.use((req, res, next) => {
-      const isHtml = req.path === '/' || req.path.endsWith('.html');
-      const isPwa = req.path.endsWith('sw.js') || req.path.endsWith('manifest.webmanifest');
-      
-      if (isHtml || isPwa) {
-        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
-        res.setHeader('Pragma', 'no-cache');
-        res.setHeader('Expires', '0');
-      }
-      next();
+    const { createServer: createViteServer } = await import("vite");
+    const vite = await createViteServer({
+      server: { middlewareMode: true, ws: false },
+      appType: "spa"
     });
-
-    app.use(express.static(distPath, {
-      setHeaders: (res, filePath) => {
-        if (filePath.endsWith('index.html') || filePath.endsWith('sw.js') || filePath.endsWith('manifest.webmanifest')) {
-          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
-          res.setHeader('Pragma', 'no-cache');
-          res.setHeader('Expires', '0');
-        } else {
-          // Other assets can be cached for a short time but with revalidation
-          res.setHeader('Cache-Control', 'public, no-cache, max-age=0');
-        }
-      }
-    }));
-
-    app.get('*', (req, res) => {
-      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
-      res.setHeader('Pragma', 'no-cache');
-      res.setHeader('Expires', '0');
-      const indexPath = path.join(distPath, 'index.html');
+    app.use(vite.middlewares);
+  } else {
+    const distPath = path.join(process.cwd(), "dist");
+    app.use(express.static(distPath));
+    app.get("*", (_req, res) => {
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate, max-age=0");
+      const indexPath = path.join(distPath, "index.html");
       if (fs.existsSync(indexPath)) {
         res.sendFile(indexPath);
       } else {
-        res.status(503).send("System is currently rebuilding. Please refresh in a few seconds.");
+        res.status(503).send("Rebuilding...");
       }
     });
   }
 
-  // Global Error Handler to avoid HTML error pages
-  app.use((err: any, req: any, res: any, next: any) => {
-    console.error("[Server Error]", err);
-    if (!res.headersSent) {
-      res.status(500).json({ 
-        error: "Erro interno no servidor",
-        details: err.message 
-      });
-    }
-  });
-
-  console.log("[Guerreiros] Quase lá... Iniciando listener HTTP...");
   server.listen(PORT, "0.0.0.0", () => {
     console.log(`[Guerreiros] Servidor Ativado na porta ${PORT}`);
-    console.log(`[Guerreiros] Ambiente: ${process.env.NODE_ENV || 'development'}`);
-    
-    // Log memory usage periodically
-    setInterval(() => {
-      const used = process.memoryUsage();
-      console.log(`[Memory] RSS: ${Math.round(used.rss / 1024 / 1024)}MB | Heap: ${Math.round(used.heapUsed / 1024 / 1024)}MB / ${Math.round(used.heapTotal / 1024 / 1024)}MB`);
-    }, 300000);
-
-    });
-
-  server.on('error', (e: any) => {
-    if (e.code === 'EADDRINUSE') {
-      console.error(`[Fatal] Porta ${PORT} em uso. Encerrando processo para reinicialização.`);
-      process.exit(1);
-    } else {
-      console.error("[Fatal] Erro no servidor:", e);
-      process.exit(1);
-    }
   });
 }
 
-startServer().catch(err => {
+startServer().catch((err) => {
   console.error("Failed to start server:", err);
   process.exit(1);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('[Unhandled Rejection] at:', promise, 'reason:', reason);
-});
-
-process.on('uncaughtException', (err) => {
-  console.error('[Uncaught Exception]:', err);
 });

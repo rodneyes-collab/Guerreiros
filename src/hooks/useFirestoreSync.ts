@@ -1,19 +1,13 @@
 import { useEffect, useCallback, useRef } from 'react';
-import { 
-  db, 
-  collection, 
+import {
+  db,
+  collection,
   getDoc,
   getDocFromServer,
   getDocs,
   getDocsFromServer,
   onSnapshot,
-  query,
-  where,
   doc,
-  setDoc, 
-  updateDoc,
-  writeBatch,
-  increment,
   OperationType,
   handleFirestoreError,
   auth,
@@ -22,9 +16,17 @@ import {
   trackUsage
 } from '../../firebase';
 import { useStore } from '../../store';
-import { safeLocalStorage, cleanObject } from '../../utils/helpers';
-import { Player, Payment, Match, GenerationResult, UsageStats, Tournament, Expense, Gender, SyncFrequencyMode } from '../../types';
-import { INITIAL_PLAYERS } from '../../constants';
+import { safeLocalStorage } from '../../utils/helpers';
+import {
+  Player,
+  Payment,
+  Match,
+  GenerationResult,
+  UsageStats,
+  Tournament,
+  Expense,
+  Gender
+} from '../../types';
 import { isValidWeeklyConfirmationTimestamp } from '../utils/intentionsCleanup';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { syncWorkerService } from '../services/syncWorkerService';
@@ -48,16 +50,15 @@ const parsePlayersSnapshot = (snapshot: any) => {
   const list: Player[] = [];
   const seenEmails = new Set<string>();
   const seenUids = new Set<string>();
-  const idToCanonical = {} as Record<string, string>;
-  const emailToCanonicalId = {} as Record<string, string>;
-  const uidToCanonicalId = {} as Record<string, string>;
+  const idToCanonical: Record<string, string> = {};
+  const emailToCanonicalId: Record<string, string> = {};
+  const uidToCanonicalId: Record<string, string> = {};
 
   snapshot.forEach((docSnap: any) => {
     try {
       const data = docSnap.data();
       const id = docSnap.id;
-      
-      // 1. Basic Sanitization & Default Values
+
       const player: Player = {
         id,
         name: (data.name || 'Jogador Sem Nome').trim(),
@@ -81,7 +82,6 @@ const parsePlayersSnapshot = (snapshot: any) => {
         ...data
       };
 
-      // 2. Deduplication Logic (Email or UID)
       const email = player.email;
       const uid = player.uid;
 
@@ -106,11 +106,11 @@ const parsePlayersSnapshot = (snapshot: any) => {
         idToCanonical[uid] = id;
         idToCanonical[uid.toLowerCase()] = id;
       }
-      
+
       idToCanonical[id] = id;
       list.push(player);
-    } catch (itemErr) {
-      console.error(`Firestore Sync: Error parsing player document ${docSnap.id}:`, itemErr);
+    } catch (err) {
+      console.error(`Firestore Sync: Error parsing player ${docSnap.id}:`, err);
     }
   });
 
@@ -125,26 +125,29 @@ const parseAttendanceSnapshot = (snapshot: any, allPlayers?: Player[]) => {
 
   snapshot.forEach((docSnap: any) => {
     const data = docSnap.data() as Player;
-    const docId = (docSnap.id || '').trim();
-    const dataId = (data.id || '').trim();
-    const id = dataId || docId;
-    
+    const id = (data.id || docSnap.id || '').trim();
     if (!id) {
       isInconsistent = true;
       return;
     }
 
-    const masterPlayer = allPlayers?.find(p => 
-      p.id === id || 
-      (p.uid && p.uid.toLowerCase() === id.toLowerCase()) || 
-      (p.email && p.email.toLowerCase() === id.toLowerCase())
+    const masterPlayer = allPlayers?.find(
+      p =>
+        p.id === id ||
+        (p.uid && p.uid.toLowerCase() === id.toLowerCase()) ||
+        (p.email && p.email.toLowerCase() === id.toLowerCase())
     );
 
     const status = masterPlayer?.status || data.status || 'active';
     const isDM = Boolean(masterPlayer?.isDM || data.isDM || status === 'dm');
 
-    // Filter out DM, inactive, waiting, or non-active status
-    if (status === 'dm' || status === 'inactive' || status === 'waiting' || isDM || (status !== 'active' && status !== 'guest')) {
+    if (
+      status === 'dm' ||
+      status === 'inactive' ||
+      status === 'waiting' ||
+      isDM ||
+      (status !== 'active' && status !== 'guest')
+    ) {
       return;
     }
 
@@ -153,7 +156,7 @@ const parseAttendanceSnapshot = (snapshot: any, allPlayers?: Player[]) => {
       isInconsistent = true;
       return;
     }
-    
+
     seenIds.add(lowerId);
     list.push({ ...data, ...masterPlayer, id, status, isDM });
   });
@@ -165,7 +168,6 @@ const parseAttendanceSnapshot = (snapshot: any, allPlayers?: Player[]) => {
 export const useFirestoreSync = () => {
   const user = useStore(state => state.user);
   const userRole = useStore(state => state.userRole);
-  const viewMode = useStore(state => state.viewMode);
   const players = useStore(state => state.players);
   const currentPlayer = useStore(state => state.currentPlayer);
   const setPlayers = useStore(state => state.setPlayers);
@@ -180,7 +182,6 @@ export const useFirestoreSync = () => {
   const setRivalry = useStore(state => state.setRivalry);
   const isInitialLoading = useStore(state => state.isInitialLoading);
   const setIsInitialLoading = useStore(state => state.setIsInitialLoading);
-  const setDbStatus = useStore(state => state.setDbStatus);
   const setUsageStats = useStore(state => state.setUsageStats);
   const setPreConfirmations = useStore(state => state.setPreConfirmations);
   const setPendingRequests = useStore(state => state.setPendingRequests);
@@ -199,8 +200,8 @@ export const useFirestoreSync = () => {
   const attendanceDebounceRef = useRef<any>(null);
   const playersDebounceRef = useRef<any>(null);
   const matchesDebounceRef = useRef<any>(null);
-
   const lastSyncTimestampRef = useRef<number>(0);
+
   const throttleSyncTimestamp = useCallback(() => {
     const now = Date.now();
     if (now - lastSyncTimestampRef.current > 5000) {
@@ -209,51 +210,22 @@ export const useFirestoreSync = () => {
     }
   }, [setLastSyncTimestamp]);
 
-  const triggerDbStatus = useCallback((status: 'reading' | 'writing') => {
-    setDbStatus(status);
-    const timer = setTimeout(() => setDbStatus('idle'), 2000);
-    return () => clearTimeout(timer);
-  }, [setDbStatus]);
-
-  // --- Revalidação Silenciosa do Estado da Lista de Presença ---
-  const revalidateAttendanceSilently = useCallback(async (reason: string = 'heartbeat') => {
+  const revalidateAttendanceSilently = useCallback(async () => {
     try {
       const dateKey = getFirestoreDateKey();
-      console.info(`[HeartbeatSync] Revalidação silenciosa executada (${reason}) em ${dateKey}...`);
-      
       const attendanceSnap = await getDocs(collection(db, 'attendance', dateKey, 'players'));
-      const { sorted, isInconsistent } = parseAttendanceSnapshot(attendanceSnap);
-      
+      const { sorted } = parseAttendanceSnapshot(attendanceSnap);
       setAttendance(sorted);
       setSyncError(null);
-
-      if (isInconsistent) {
-        console.info('[HeartbeatSync] Inconsistências sanadas com sucesso no estado de presença.');
-      }
-    } catch (err) {
-      console.warn('[HeartbeatSync] Falha tratada na revalidação silenciosa:', err);
-    }
+    } catch (err) {}
   }, [setAttendance, setSyncError]);
 
-  // Usage Tracking
   useEffect(() => {
     if (!user) return;
-
-    // Track initial load (approx 15 reads for metadata and initial snapshots)
-    const trackInitialUsage = async () => {
-      try {
-        
-        await trackUsage(15, 0);
-      } catch (e) {
-        console.warn('Usage tracking failed:', e);
-      }
-    };
-
-    trackInitialUsage();
+    trackUsage(15, 0).catch(() => {});
   }, [user, currentPlayer?.id]);
 
-  // --- Unified Batch Fetch Function (For Periodic/Interval and Manual Modes) ---
-  const executeBatchFetch = useCallback(async (isManual: boolean = false) => {
+  const executeBatchFetch = useCallback(async () => {
     if (isFetchingRef.current) return;
     isFetchingRef.current = true;
     setIsBackgroundSyncing(true);
@@ -261,10 +233,9 @@ export const useFirestoreSync = () => {
 
     try {
       const dateKey = getFirestoreDateKey();
+      const targetThursdayKey = getNextThursday();
       useStore.setState({ dateKey });
-      console.info(`[FirestoreSync] Executing batch fetch (Mode: ${syncMode}, Manual: ${isManual}, Date: ${dateKey})`);
 
-      // 1. Fetch Metadata Docs in Parallel
       const [
         metaSnap,
         playersSnap,
@@ -279,7 +250,7 @@ export const useFirestoreSync = () => {
         getDocs(collection(db, 'metadata')),
         getDocs(collection(db, 'players')),
         getDocs(collection(db, 'attendance', dateKey, 'players')),
-        getDocs(collection(db, 'preConfirmations', dateKey, 'players')),
+        getDocs(collection(db, 'preConfirmations', targetThursdayKey, 'players')),
         getDoc(doc(db, 'metadata', 'currentMatch')),
         getDoc(doc(db, 'metadata', 'nextMatchPreview')),
         getDoc(doc(db, 'metadata', 'activeTournament')),
@@ -287,17 +258,15 @@ export const useFirestoreSync = () => {
         getDocs(collection(db, 'matches'))
       ]);
 
-      // Process Metadata
-      metaSnap.forEach((docSnap) => {
+      metaSnap.forEach(docSnap => {
         if (docSnap.id === 'synergy') setSynergy(docSnap.data() || {});
         if (docSnap.id === 'negative_synergy') setNegativeSynergy(docSnap.data() || {});
         if (docSnap.id === 'rivalry') setRivalry(docSnap.data() || {});
         if (docSnap.id === 'system') {
-          const data = docSnap.data() || {};
           setSystemMetadata({
             monthlyFee: 50,
             lastResetDate: new Date().toISOString().split('T')[0],
-            ...data
+            ...(docSnap.data() || {})
           });
         }
         if (docSnap.id === 'usage') {
@@ -305,18 +274,15 @@ export const useFirestoreSync = () => {
         }
       });
 
-      // Process Players
       const { sortedList, idToCanonical } = parsePlayersSnapshot(playersSnap);
       setPlayers(sortedList);
       setIdToCanonicalId(idToCanonical);
 
-      // Process Attendance with Master Players Filter
       const { sorted: sortedAttendance } = parseAttendanceSnapshot(attendanceSnap, sortedList);
       setAttendance(sortedAttendance);
 
-      // Process Pre-Confirmations (strictly this week / within 7 days)
       const preConfList: Player[] = [];
-      preConfSnap.forEach((d) => {
+      preConfSnap.forEach(d => {
         const data = d.data();
         if (isValidWeeklyConfirmationTimestamp(Number(data.timestamp || 0))) {
           preConfList.push({ ...data, id: d.id } as Player);
@@ -324,130 +290,89 @@ export const useFirestoreSync = () => {
       });
       setPreConfirmations(preConfList);
 
-      // Process Current Match
-      if (currentMatchSnap.exists()) {
-        setGenerationResult(currentMatchSnap.data() as GenerationResult);
-      } else {
-        setGenerationResult(null);
-      }
+      setGenerationResult(currentMatchSnap.exists() ? (currentMatchSnap.data() as GenerationResult) : null);
+      setNextMatchPreview(nextMatchPreviewSnap.exists() ? (nextMatchPreviewSnap.data() as GenerationResult) : null);
+      setActiveTournament(activeTournSnap.exists() ? (activeTournSnap.data() as Tournament) : null);
 
-      // Process Next Match Preview
-      if (nextMatchPreviewSnap.exists()) {
-        setNextMatchPreview(nextMatchPreviewSnap.data() as GenerationResult);
-      } else {
-        setNextMatchPreview(null);
-      }
-
-      // Process Active Tournament
-      if (activeTournSnap.exists()) {
-        setActiveTournament(activeTournSnap.data() as Tournament);
-      } else {
-        setActiveTournament(null);
-      }
-
-      // Process Tournaments
       const tournList: Tournament[] = [];
-      tournamentsSnap.forEach((d) => tournList.push({ ...d.data(), id: d.id } as Tournament));
+      tournamentsSnap.forEach(d => tournList.push({ ...d.data(), id: d.id } as Tournament));
       setTournaments(tournList.sort((a, b) => b.date.localeCompare(a.date)));
 
-      // Process Matches
       const matchesList: Match[] = [];
-      matchesSnap.forEach((d) => {
+      matchesSnap.forEach(d => {
         const data = d.data();
-        const ts = safeTimestamp(data.timestamp);
-        matchesList.push({ ...data, timestamp: ts, id: d.id } as Match);
+        matchesList.push({ ...data, timestamp: safeTimestamp(data.timestamp), id: d.id } as Match);
       });
       setMatches(matchesList.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0)));
 
-      // Admin-only collections or public financial collections
-      // Admin-only collections or public financial collections
-      const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
-      const currentUser = auth.currentUser;
-      const effectiveEmail = currentUser?.email?.trim().toLowerCase();
-      const isOwner = effectiveEmail === 'rodneyes@gmail.com';
-      const isAdminSession = userRole === 'ADMIN' || isOwner || currentUser?.uid === 'YwBU0W89ktMLB7XY8noA5TuWg9G3';
-
-      console.log('[MOBILE FIRESTORE SYNC DEBUG] Checking ADMIN role and device status before batch payments query:', {
-        isMobileDevice,
-        userAgent: navigator.userAgent,
-        viewport: `${window.innerWidth}x${window.innerHeight}`,
-        currentUserEmail: currentUser?.email,
-        currentUserUid: currentUser?.uid,
-        userRole,
-        isOwner,
-        isAdminSession,
-        isAdminValidated: isAdminSession,
-        action: 'Fetching full payments collection'
-      });
-
-      // Fetch financial data with robust fallback and cache check
-      let paymentsSnap;
-      let expensesSnap;
       try {
-        paymentsSnap = await getDocs(collection(db, 'payments'));
-        expensesSnap = await getDocs(collection(db, 'expenses'));
-      } catch (err) {
-        console.warn('[MOBILE PAYMENTS DEBUG] Fetch failed:', err);
-        paymentsSnap = await getDocs(collection(db, 'payments'));
-        expensesSnap = await getDocs(collection(db, 'expenses'));
-      }
+        const [paymentsSnap, expensesSnap] = await Promise.all([
+          getDocs(collection(db, 'payments')),
+          getDocs(collection(db, 'expenses'))
+        ]);
+        const paymentsList: Payment[] = [];
+        paymentsSnap.forEach(d => paymentsList.push({ ...d.data(), id: d.id } as Payment));
+        setPayments(paymentsList);
 
-      const paymentsList: Payment[] = [];
-      paymentsSnap.forEach((d) => paymentsList.push({ ...d.data(), id: d.id } as Payment));
-      console.log('[MOBILE PAYMENTS DEBUG] Payments loaded in batch fetch:', {
-        count: paymentsList.length,
-        fromCache: paymentsSnap.metadata.fromCache,
-        isAdminSession
-      });
-      setPayments(paymentsList);
+        const expensesList: Expense[] = [];
+        expensesSnap.forEach(d => expensesList.push({ ...d.data(), id: d.id } as Expense));
+        setExpenses(expensesList);
+      } catch (e) {}
 
-      const expensesList: Expense[] = [];
-      expensesSnap.forEach((d) => expensesList.push({ ...d.data(), id: d.id } as any));
-      setExpenses(expensesList);
-
-      // ADMIN-only fetch
       if (userRole === 'ADMIN' && auth.currentUser) {
         const pendingSnap = await getDocs(collection(db, 'pendingRequests'));
         const pendingList: any[] = [];
-        pendingSnap.forEach((d) => pendingList.push({ id: d.id, ...d.data() }));
+        pendingSnap.forEach(d => pendingList.push({ id: d.id, ...d.data() }));
         setPendingRequests(pendingList);
       }
 
       setLastSyncTimestamp(Date.now());
       setIsInitialLoading(false);
-    } catch (err: any) {
-      console.error('[FirestoreSync] Batch fetch error:', err);
-      setSyncError('Falha ao sincronizar dados. Tentando reconectar...');
+    } catch (err) {
+      setSyncError('Falha ao sincronizar dados.');
     } finally {
       isFetchingRef.current = false;
-      setTimeout(() => {
-        setIsBackgroundSyncing(false);
-      }, 500);
+      setTimeout(() => setIsBackgroundSyncing(false), 500);
     }
-  }, [syncMode, userRole, setSynergy, setNegativeSynergy, setRivalry, setSystemMetadata, setUsageStats, setPlayers, setIdToCanonicalId, setAttendance, setPreConfirmations, setGenerationResult, setActiveTournament, setTournaments, setMatches, setPendingRequests, setPayments, setLastSyncTimestamp, setIsInitialLoading, setIsBackgroundSyncing, setSyncError]);
+  }, [
+    userRole,
+    setSynergy,
+    setNegativeSynergy,
+    setRivalry,
+    setSystemMetadata,
+    setUsageStats,
+    setPlayers,
+    setIdToCanonicalId,
+    setAttendance,
+    setPreConfirmations,
+    setGenerationResult,
+    setNextMatchPreview,
+    setActiveTournament,
+    setTournaments,
+    setMatches,
+    setPendingRequests,
+    setPayments,
+    setExpenses,
+    setLastSyncTimestamp,
+    setIsInitialLoading,
+    setIsBackgroundSyncing,
+    setSyncError
+  ]);
 
-  // Initial Data Loading on project change / mount
   useEffect(() => {
     const storedProjectId = safeLocalStorage.getItem('spikegen_project_id');
     if (storedProjectId && storedProjectId !== firebaseConfig.projectId) {
-      console.warn('Firestore Sync: Project ID changed, clearing local storage');
       localStorage.clear();
-      safeLocalStorage.setItem('spikegen_project_id', firebaseConfig.projectId);
-    } else if (!storedProjectId) {
-      safeLocalStorage.setItem('spikegen_project_id', firebaseConfig.projectId);
     }
+    safeLocalStorage.setItem('spikegen_project_id', firebaseConfig.projectId);
   }, []);
 
-  // --- Main Synchronization Engine ---
   useEffect(() => {
     const dateKey = getFirestoreDateKey();
     useStore.setState({ dateKey });
     let financialTimer: NodeJS.Timeout | undefined;
 
-    // MODE 1: REAL-TIME (Active WebSocket onSnapshot listeners)
     if (syncMode === 'realtime') {
-      console.info('Firestore Sync: Starting REAL-TIME listeners for date:', dateKey, 'User:', user?.email, 'Role:', userRole, 'Trigger:', syncTrigger);
-      
       let unsubscribePlayers: (() => void) | undefined;
       let unsubscribeAttendance: (() => void) | undefined;
       let unsubscribePending: (() => void) | undefined;
@@ -471,431 +396,162 @@ export const useFirestoreSync = () => {
       setSyncError(null);
 
       try {
-        // Metadata / Intentions Sync (needed for targetDate)
         let currentTargetDate = getNextThursday();
-        console.info(`[Sync Diagnóstico] [useFirestoreSync] Inicializando escuta de metadata/intentions e preConfirmations (alvo inicial: ${currentTargetDate})...`);
-        
-        unsubscribeIntentions = onSnapshot(doc(db, 'metadata', 'intentions'), (snapshot) => {
-          console.info('[Sync Diagnóstico] [useFirestoreSync] Snapshot de metadata/intentions recebido.');
+
+        const setupPreConfirmations = (target: string) => {
+          if (unsubscribePreConfirmations) unsubscribePreConfirmations();
+          unsubscribePreConfirmations = onSnapshot(
+            collection(db, 'preConfirmations', target, 'players'),
+            snapshot => {
+              const list: Player[] = [];
+              snapshot.forEach(docSnap => {
+                const data = docSnap.data();
+                if (isValidWeeklyConfirmationTimestamp(Number(data.timestamp || 0))) {
+                  list.push({ ...data, id: docSnap.id } as Player);
+                }
+              });
+              setPreConfirmations(list);
+              throttleSyncTimestamp();
+            }
+          );
+        };
+
+        setupPreConfirmations(currentTargetDate);
+
+        unsubscribeIntentions = onSnapshot(doc(db, 'metadata', 'intentions'), snapshot => {
           if (snapshot.exists()) {
             const data = snapshot.data();
-            const responseCount = Object.keys(data.responses || {}).length;
-            setCollectionSyncMeta('intentions', {
-              displayName: 'Lista de Intenções (Próxima Sessão)',
-              lastSyncTimestamp: Date.now(),
-              itemCount: responseCount,
-              source: snapshot.metadata.fromCache ? 'cache' : 'server',
-              hasPendingWrites: snapshot.metadata.hasPendingWrites,
-              status: 'synced',
-              error: null
-            });
             const newTarget = data.targetDate || getNextThursday();
-            console.info(`[Sync Diagnóstico] [useFirestoreSync] metadata/intentions targetDate atual: ${newTarget}`);
             if (newTarget !== currentTargetDate) {
-              console.info(`[Sync Diagnóstico] [useFirestoreSync] targetDate alterado de ${currentTargetDate} para ${newTarget}. Reinscrevendo preConfirmations.`);
               currentTargetDate = newTarget;
               setupPreConfirmations(newTarget);
             }
           }
-        }, (err) => {
-          setCollectionSyncMeta('intentions', {
-            displayName: 'Lista de Intenções (Próxima Sessão)',
-            lastSyncTimestamp: Date.now(),
-            status: 'error',
-            error: err?.message || String(err)
-          });
         });
 
-        const setupPreConfirmations = (target: string) => {
-          console.info(`[Sync Diagnóstico] [useFirestoreSync] Configurando escuta em tempo real para preConfirmations/${target}/players...`);
-          if (unsubscribePreConfirmations) unsubscribePreConfirmations();
-          unsubscribePreConfirmations = onSnapshot(collection(db, 'preConfirmations', target, 'players'), (snapshot) => {
-            const list: Player[] = [];
-            snapshot.forEach((docSnap) => {
-              const data = docSnap.data();
-              if (isValidWeeklyConfirmationTimestamp(Number(data.timestamp || 0))) {
-                list.push({ ...data, id: docSnap.id } as Player);
-              }
-            });
-            setCollectionSyncMeta('preConfirmations', {
-              displayName: `Pré-Confirmações (${target})`,
-              lastSyncTimestamp: Date.now(),
-              itemCount: list.length,
-              source: snapshot.metadata.fromCache ? 'cache' : 'server',
-              hasPendingWrites: snapshot.metadata.hasPendingWrites,
-              status: 'synced',
-              error: null
-            });
-            console.info(`[Sync Diagnóstico] [useFirestoreSync] Snapshot de preConfirmations/${target}/players recebido. Total de atletas válidos nesta semana: ${list.length}`);
-            setPreConfirmations(list);
-            throttleSyncTimestamp();
-          }, (err) => {
-            console.error(`[Sync Diagnóstico] [useFirestoreSync] Erro na escuta de preConfirmations (${target}):`, err);
-            setCollectionSyncMeta('preConfirmations', {
-              displayName: `Pré-Confirmações (${target})`,
-              lastSyncTimestamp: Date.now(),
-              status: 'error',
-              error: err?.message || String(err)
-            });
-          });
-        };
+        unsubscribePlayers = onSnapshot(
+          collection(db, 'players'),
+          snapshot => {
+            if (playersDebounceRef.current) clearTimeout(playersDebounceRef.current);
+            playersDebounceRef.current = setTimeout(async () => {
+              try {
+                const docs = snapshot.docs.map(d => ({ id: d.id, data: d.data() }));
+                const { sortedList, idToCanonical } = await syncWorkerService.parsePlayers(docs);
+                setPlayers(sortedList);
+                setIdToCanonicalId(idToCanonical);
+                throttleSyncTimestamp();
+                setIsInitialLoading(false);
+              } catch (e) {}
+            }, 250);
+          },
+          err => handleFirestoreError(err, OperationType.LIST, 'players')
+        );
 
-        // Initial setup for preConfirmations
-        setupPreConfirmations(currentTargetDate);
-
-        // Players Sync
-        unsubscribePlayers = onSnapshot(collection(db, 'players'), (snapshot) => {
-          setCollectionSyncMeta('players', {
-            displayName: 'Sócios Cadastrados',
-            lastSyncTimestamp: Date.now(),
-            itemCount: snapshot.docs.length,
-            source: snapshot.metadata.fromCache ? 'cache' : 'server',
-            hasPendingWrites: snapshot.metadata.hasPendingWrites,
-            status: 'synced',
-            error: null
-          });
-          if (playersDebounceRef.current) clearTimeout(playersDebounceRef.current);
-          playersDebounceRef.current = setTimeout(async () => {
-            try {
-              const docs = snapshot.docs.map(doc => ({ id: doc.id, data: doc.data() }));
-              console.log('[SYNC DEBUG] Players snapshot received:', {
-                count: docs.length,
-                fromCache: snapshot.metadata.fromCache,
-                hasPendingWrites: snapshot.metadata.hasPendingWrites
-              });
-              const { sortedList, idToCanonical } = await syncWorkerService.parsePlayers(docs);
-              setPlayers(sortedList);
-              setIdToCanonicalId(idToCanonical);
-              throttleSyncTimestamp();
-              setIsInitialLoading(false);
-            } catch (syncErr) {
-              console.error('Firestore Sync: Critical error in player list processing:', syncErr);
-            }
-          }, 250);
-        }, (err) => {
-          console.error('Firestore Sync Error (Players):', err);
-          setCollectionSyncMeta('players', {
-            displayName: 'Sócios Cadastrados',
-            lastSyncTimestamp: Date.now(),
-            status: 'error',
-            error: err?.message || String(err)
-          });
-          handleFirestoreError(err, OperationType.LIST, 'players');
+        unsubscribeSystem = onSnapshot(doc(db, 'metadata', 'system'), snapshot => {
+          if (snapshot.exists()) setSystemMetadata(snapshot.data());
         });
 
-        // System Metadata Sync
-        unsubscribeSystem = onSnapshot(doc(db, 'metadata', 'system'), (snapshot) => {
-          if (snapshot.exists()) {
-            setSystemMetadata(snapshot.data());
-            throttleSyncTimestamp();
-          }
-        }, (err) => {
-          console.error('Firestore Sync Error (System Metadata):', err);
+        unsubscribeCurrentMatch = onSnapshot(doc(db, 'metadata', 'currentMatch'), snapshot => {
+          setGenerationResult(snapshot.exists() ? (snapshot.data() as GenerationResult) : null);
         });
 
-        unsubscribeCurrentMatch = onSnapshot(doc(db, 'metadata', 'currentMatch'), (snapshot) => {
-          if (snapshot.exists()) {
-            setGenerationResult(snapshot.data() as GenerationResult);
-          } else {
-            setGenerationResult(null);
-          }
-          throttleSyncTimestamp();
-        }, (err) => {
-          console.error('Firestore Sync Error (Current Match):', err);
+        unsubscribeNextMatchPreview = onSnapshot(doc(db, 'metadata', 'nextMatchPreview'), snapshot => {
+          setNextMatchPreview(snapshot.exists() ? (snapshot.data() as GenerationResult) : null);
         });
 
-        unsubscribeNextMatchPreview = onSnapshot(doc(db, 'metadata', 'nextMatchPreview'), (snapshot) => {
-          if (snapshot.exists()) {
-            setNextMatchPreview(snapshot.data() as GenerationResult);
-          } else {
-            setNextMatchPreview(null);
-          }
-          throttleSyncTimestamp();
-        }, (err) => {
-          console.error('Firestore Sync Error (Next Match Preview):', err);
-        });
-
-        unsubscribeUsage = onSnapshot(doc(db, 'metadata', 'usage'), (snapshot) => {
-          if (snapshot.exists()) {
-            setUsageStats(snapshot.data() as UsageStats);
-          }
-        }, (err) => {
-          console.error('Firestore Sync Error (Usage):', err);
+        unsubscribeUsage = onSnapshot(doc(db, 'metadata', 'usage'), snapshot => {
+          if (snapshot.exists()) setUsageStats(snapshot.data() as UsageStats);
         });
 
         const monthKey = dateKey.slice(0, 7);
-        unsubscribeMonthlyUsage = onSnapshot(doc(db, 'metadata', `usage_${monthKey}`), (snapshot) => {
-          if (snapshot.exists()) {
-            useStore.getState().setMonthlyUsageStats(snapshot.data() as UsageStats);
-          }
-        }, (err) => {
-          console.error('Firestore Sync Error (Monthly Usage):', err);
+        unsubscribeMonthlyUsage = onSnapshot(doc(db, 'metadata', `usage_${monthKey}`), snapshot => {
+          if (snapshot.exists()) useStore.getState().setMonthlyUsageStats(snapshot.data() as UsageStats);
         });
 
-        // Attendance Sync com Detector de Inconsistências
-        unsubscribeAttendance = onSnapshot(collection(db, 'attendance', dateKey, 'players'), (snapshot) => {
-          setCollectionSyncMeta('attendance', {
-            displayName: `Lista de Presença (${dateKey})`,
-            lastSyncTimestamp: Date.now(),
-            itemCount: snapshot.docs.length,
-            source: snapshot.metadata.fromCache ? 'cache' : 'server',
-            hasPendingWrites: snapshot.metadata.hasPendingWrites,
-            status: 'synced',
-            error: null
-          });
+        unsubscribeAttendance = onSnapshot(collection(db, 'attendance', dateKey, 'players'), snapshot => {
           if (attendanceDebounceRef.current) clearTimeout(attendanceDebounceRef.current);
           attendanceDebounceRef.current = setTimeout(async () => {
             try {
-              const docs = snapshot.docs.map(doc => ({ id: doc.id, data: doc.data() }));
+              const docs = snapshot.docs.map(d => ({ id: d.id, data: d.data() }));
               const { sorted, isInconsistent } = await syncWorkerService.parseAttendance(docs);
-
               const activeMasterPlayers = useStore.getState().players;
               const activeSorted = sorted.filter(p => {
                 const master = activeMasterPlayers.find(m => m.id === p.id || (m.uid && m.uid === p.uid));
                 const status = master?.status || p.status || 'active';
                 const isDM = Boolean(master?.isDM || p.isDM || status === 'dm');
-                return (status === 'active' || status === 'guest') && !isDM && status !== 'dm' && status !== 'inactive' && status !== 'waiting';
+                return (status === 'active' || status === 'guest') && !isDM;
               });
-
               setAttendance(activeSorted);
-              setSyncError(null);
-              throttleSyncTimestamp();
-
-              if (isInconsistent) {
-                console.warn(`[AttendanceSync] Inconsistência detectada no snapshot! Forçando revalidação silenciosa.`);
-                revalidateAttendanceSilently('snapshot_inconsistency');
-              }
-            } catch (attErr) {
-              console.error('Firestore Sync: Critical error in attendance parsing:', attErr);
-            }
+              if (isInconsistent) revalidateAttendanceSilently();
+            } catch (e) {}
           }, 250);
-        }, (err) => {
-          console.warn(`[AttendanceSync] Listener de presença com erro (${dateKey}). Acionando revalidação silenciosa:`, err);
-          setCollectionSyncMeta('attendance', {
-            displayName: `Lista de Presença (${dateKey})`,
-            lastSyncTimestamp: Date.now(),
-            status: 'error',
-            error: err?.message || String(err)
-          });
-          revalidateAttendanceSilently('listener_error');
         });
 
-        // Matches Sync (Fetch all history for full ranking support)
-        const matchesQuery = collection(db, 'matches');
-        unsubscribeMatches = onSnapshot(matchesQuery, (snapshot) => {
-          setCollectionSyncMeta('matches', {
-            displayName: 'Histórico de Partidas',
-            lastSyncTimestamp: Date.now(),
-            itemCount: snapshot.docs.length,
-            source: snapshot.metadata.fromCache ? 'cache' : 'server',
-            hasPendingWrites: snapshot.metadata.hasPendingWrites,
-            status: 'synced',
-            error: null
-          });
+        unsubscribeMatches = onSnapshot(collection(db, 'matches'), snapshot => {
           if (matchesDebounceRef.current) clearTimeout(matchesDebounceRef.current);
           matchesDebounceRef.current = setTimeout(async () => {
             try {
-              const docs = snapshot.docs.map(doc => {
-                const data = doc.data();
-                const ts = safeTimestamp(data.timestamp);
-                return {
-                  id: doc.id,
-                  data: {
-                    ...data,
-                    timestamp: ts
-                  }
-                };
-              });
+              const docs = snapshot.docs.map(d => ({
+                id: d.id,
+                data: { ...d.data(), timestamp: safeTimestamp(d.data().timestamp) }
+              }));
               const { sorted } = await syncWorkerService.parseMatches(docs);
               setMatches(sorted);
-              throttleSyncTimestamp();
-              // Only stop loading when players AND matches are here
-              if (players.length > 0) {
-                setIsInitialLoading(false);
-              }
-            } catch (matchErr) {
-              console.error('Firestore Sync: Critical error in matches parsing:', matchErr);
-            }
+              if (players.length > 0) setIsInitialLoading(false);
+            } catch (e) {}
           }, 300);
-        }, (err) => {
-          console.error('Firestore Sync Error (Matches):', err);
-          setCollectionSyncMeta('matches', {
-            displayName: 'Histórico de Partidas',
-            lastSyncTimestamp: Date.now(),
-            status: 'error',
-            error: err?.message || String(err)
-          });
         });
 
-        // Synergy Sync
-        unsubscribeSynergy = onSnapshot(doc(db, 'metadata', 'synergy'), (snapshot) => {
-          if (snapshot.exists()) setSynergy(snapshot.data());
-        }, (err) => {
-          console.error('Firestore Sync Error (Synergy):', err);
+        unsubscribeSynergy = onSnapshot(doc(db, 'metadata', 'synergy'), s => {
+          if (s.exists()) setSynergy(s.data());
+        });
+        unsubscribeNegativeSynergy = onSnapshot(doc(db, 'metadata', 'negative_synergy'), s => {
+          if (s.exists()) setNegativeSynergy(s.data());
+        });
+        unsubscribeRivalry = onSnapshot(doc(db, 'metadata', 'rivalry'), s => {
+          if (s.exists()) setRivalry(s.data());
         });
 
-        unsubscribeNegativeSynergy = onSnapshot(doc(db, 'metadata', 'negative_synergy'), (snapshot) => {
-          if (snapshot.exists()) setNegativeSynergy(snapshot.data());
-        }, (err) => {
-          console.error('Firestore Sync Error (NegativeSynergy):', err);
-        });
-
-        unsubscribeRivalry = onSnapshot(doc(db, 'metadata', 'rivalry'), (snapshot) => {
-          if (snapshot.exists()) setRivalry(snapshot.data());
-        }, (err) => {
-          console.error('Firestore Sync Error (Rivalry):', err);
-        });
-
-        // Tournaments Sync
-        unsubscribeTournaments = onSnapshot(collection(db, 'tournaments'), (snapshot) => {
+        unsubscribeTournaments = onSnapshot(collection(db, 'tournaments'), snapshot => {
           const list: Tournament[] = [];
-          snapshot.forEach((doc) => list.push({ ...doc.data(), id: doc.id } as Tournament));
+          snapshot.forEach(d => list.push({ ...d.data(), id: d.id } as Tournament));
           setTournaments(list.sort((a, b) => b.date.localeCompare(a.date)));
-          throttleSyncTimestamp();
-        }, (err) => {
-          console.error('Firestore Sync Error (Tournaments):', err);
         });
 
-        unsubscribeActiveTournament = onSnapshot(doc(db, 'metadata', 'activeTournament'), (snapshot) => {
-          if (snapshot.exists()) {
-            setActiveTournament(snapshot.data() as Tournament);
-          } else {
-            setActiveTournament(null);
-          }
-          throttleSyncTimestamp();
-        }, (err) => {
-          console.error('Firestore Sync Error (Active Tournament):', err);
+        unsubscribeActiveTournament = onSnapshot(doc(db, 'metadata', 'activeTournament'), s => {
+          setActiveTournament(s.exists() ? (s.data() as Tournament) : null);
         });
 
-        // Public Financial Listeners (staggered slightly to avoid startup contention)
-        financialTimer = setTimeout(async () => {
-          const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
-          const currentUser = auth.currentUser;
-          const effectiveEmail = currentUser?.email?.trim().toLowerCase();
-          const isOwner = effectiveEmail === 'rodneyes@gmail.com';
-          const isAdminSession = userRole === 'ADMIN' || isOwner || currentUser?.uid === 'YwBU0W89ktMLB7XY8noA5TuWg9G3';
-
-          console.log('[MOBILE FIRESTORE SYNC DEBUG] Realtime financial listener - Validating ADMIN role on mobile device before fetching payments:', {
-            isMobileDevice,
-            userAgent: navigator.userAgent,
-            viewport: `${window.innerWidth}x${window.innerHeight}`,
-            currentUserEmail: currentUser?.email,
-            currentUserUid: currentUser?.uid,
-            userRole,
-            isAdminSession,
-            isAdminValidated: isAdminSession,
-            isOwner
-          });
-
-          if (isMobileDevice || isAdminSession) {
-            try {
-              const initialServerPayments = await getDocs(collection(db, 'payments'));
-              const list: Payment[] = [];
-              initialServerPayments.forEach((d) => list.push({ ...d.data(), id: d.id } as Payment));
-              console.log('[MOBILE FIRESTORE SYNC DEBUG] Initial fresh payments fetch completed for admin/mobile:', {
-                count: list.length,
-                isAdminSession,
-                isMobileDevice
-              });
-              setPayments(list);
-            } catch (err) {
-              console.warn('[MOBILE FIRESTORE SYNC DEBUG] Initial payments fetch error:', err);
-            }
-          }
-
-          unsubscribePayments = onSnapshot(collection(db, 'payments'), async (snapshot) => {
+        financialTimer = setTimeout(() => {
+          unsubscribePayments = onSnapshot(collection(db, 'payments'), snapshot => {
             const list: Payment[] = [];
-            snapshot.forEach((doc) => list.push({ ...doc.data(), id: doc.id } as Payment));
-            setCollectionSyncMeta('payments', {
-              displayName: 'Mensalidades / Pagamentos',
-              lastSyncTimestamp: Date.now(),
-              itemCount: list.length,
-              source: snapshot.metadata.fromCache ? 'cache' : 'server',
-              hasPendingWrites: snapshot.metadata.hasPendingWrites,
-              status: 'synced',
-              error: null
-            });
-            console.log('[MOBILE FIRESTORE SYNC DEBUG] Payments snapshot received:', {
-              count: list.length,
-              fromCache: snapshot.metadata.fromCache,
-              hasPendingWrites: snapshot.metadata.hasPendingWrites,
-              isAdminSession,
-              isMobileDevice
-            });
-
-            if (snapshot.metadata.fromCache && (isMobileDevice || isAdminSession)) {
-              console.warn('[MOBILE PAYMENTS REALTIME DEBUG] Snapshot served from cache for admin/mobile!');
-              try {
-                const freshSnap = await getDocs(collection(db, 'payments'));
-                const freshList: Payment[] = [];
-                freshSnap.forEach((doc) => freshList.push({ ...doc.data(), id: doc.id } as Payment));
-                console.log('[MOBILE PAYMENTS REALTIME DEBUG] Fresh fetch completed:', freshList.length);
-                setPayments(freshList);
-                return;
-              } catch (e) {
-                console.error('[MOBILE PAYMENTS REALTIME DEBUG] Failed to refresh fetch:', e);
-              }
-            }
-
+            snapshot.forEach(d => list.push({ ...d.data(), id: d.id } as Payment));
             setPayments(list);
-          }, (err) => {
-            console.error('Firestore Sync Error (Payments):', err);
-            setCollectionSyncMeta('payments', {
-              displayName: 'Mensalidades / Pagamentos',
-              lastSyncTimestamp: Date.now(),
-              status: 'error',
-              error: err?.message || String(err)
-            });
           });
 
-          unsubscribeExpenses = onSnapshot(collection(db, 'expenses'), (snapshot) => {
+          unsubscribeExpenses = onSnapshot(collection(db, 'expenses'), snapshot => {
             const list: Expense[] = [];
-            snapshot.forEach((doc) => list.push({ ...doc.data(), id: doc.id } as any));
-            setCollectionSyncMeta('expenses', {
-              displayName: 'Despesas do Clube',
-              lastSyncTimestamp: Date.now(),
-              itemCount: list.length,
-              source: snapshot.metadata.fromCache ? 'cache' : 'server',
-              hasPendingWrites: snapshot.metadata.hasPendingWrites,
-              status: 'synced',
-              error: null
-            });
+            snapshot.forEach(d => list.push({ ...d.data(), id: d.id } as Expense));
             useStore.setState({ expenses: list });
-          }, (err) => {
-            console.error('Firestore Sync Error (Expenses):', err);
-            setCollectionSyncMeta('expenses', {
-              displayName: 'Despesas do Clube',
-              lastSyncTimestamp: Date.now(),
-              status: 'error',
-              error: err?.message || String(err)
-            });
           });
 
-          // Admin-only Listeners
           if (userRole === 'ADMIN' && auth.currentUser) {
-            unsubscribePending = onSnapshot(collection(db, 'pendingRequests'), (snapshot) => {
+            unsubscribePending = onSnapshot(collection(db, 'pendingRequests'), snapshot => {
               const list: any[] = [];
-              snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
+              snapshot.forEach(d => list.push({ id: d.id, ...d.data() }));
               setPendingRequests(list);
-            }, (err) => {
-              console.error('Firestore Sync Error (Pending Requests):', err);
             });
           }
         }, 800);
+      } catch (e) {}
 
-      } catch (e) {
-        console.error('Firestore Sync: Fatal error setting up listeners:', e);
-      }
-
-      // Reset syncing state after a longer delay to allow mobile thread to breath
       const syncTimer = setTimeout(() => {
         setIsBackgroundSyncing(false);
         setIsInitialLoading(false);
-      }, 2500);
+      }, 2000);
 
-      // Heartbeat listener for real-time mode
       const heartbeatInterval = setInterval(() => {
-        revalidateAttendanceSilently('realtime_heartbeat');
+        revalidateAttendanceSilently();
       }, 45000);
 
       return () => {
@@ -905,7 +561,6 @@ export const useFirestoreSync = () => {
         if (attendanceDebounceRef.current) clearTimeout(attendanceDebounceRef.current);
         if (playersDebounceRef.current) clearTimeout(playersDebounceRef.current);
         if (matchesDebounceRef.current) clearTimeout(matchesDebounceRef.current);
-        console.info('Firestore Sync: Cleaning up real-time listeners');
         if (unsubscribePlayers) unsubscribePlayers();
         if (unsubscribeAttendance) unsubscribeAttendance();
         if (unsubscribePending) unsubscribePending();
@@ -925,13 +580,9 @@ export const useFirestoreSync = () => {
         if (unsubscribePayments) unsubscribePayments();
         if (unsubscribeExpenses) unsubscribeExpenses();
       };
-    } 
+    }
 
-    // MODE 2: FIXED INTERVALS & MANUAL MODE (Battery Saver)
-    console.info(`Firestore Sync: Operating in PERIODIC / INTERVAL mode (${syncMode})`);
-    
-    // Initial fetch on mode mount / trigger
-    executeBatchFetch(false);
+    executeBatchFetch();
 
     let intervalMs: number | null = null;
     if (syncMode === 'interval_15s') intervalMs = 15000;
@@ -939,18 +590,10 @@ export const useFirestoreSync = () => {
     else if (syncMode === 'interval_60s') intervalMs = 60000;
     else if (syncMode === 'interval_300s') intervalMs = 300000;
 
-    let intervalId: any = null;
-    if (intervalMs) {
-      intervalId = setInterval(() => {
-        executeBatchFetch(false);
-      }, intervalMs);
-    }
+    const intervalId = intervalMs ? setInterval(() => executeBatchFetch(), intervalMs) : null;
 
     const handleFocus = () => {
-      if (document.visibilityState === 'visible') {
-        console.info('[FirestoreSync] Window focused/visible, refreshing data...');
-        executeBatchFetch(false);
-      }
+      if (document.visibilityState === 'visible') executeBatchFetch();
     };
 
     window.addEventListener('visibilitychange', handleFocus);
@@ -961,43 +604,57 @@ export const useFirestoreSync = () => {
       window.removeEventListener('visibilitychange', handleFocus);
       window.removeEventListener('focus', handleFocus);
     };
-  }, [syncMode, syncTrigger, user, userRole, executeBatchFetch, revalidateAttendanceSilently, setPlayers, setAttendance, setPendingRequests, setMatches, setSystemMetadata, setGenerationResult, setUsageStats, setPreConfirmations, setSynergy, setNegativeSynergy, setRivalry, setTournaments, setActiveTournament, setIsBackgroundSyncing, setIsInitialLoading, setPayments, setLastSyncTimestamp, setSyncError, setIdToCanonicalId]);
+  }, [
+    syncMode,
+    syncTrigger,
+    user,
+    userRole,
+    executeBatchFetch,
+    revalidateAttendanceSilently,
+    setPlayers,
+    setAttendance,
+    setPendingRequests,
+    setMatches,
+    setSystemMetadata,
+    setGenerationResult,
+    setNextMatchPreview,
+    setUsageStats,
+    setPreConfirmations,
+    setSynergy,
+    setNegativeSynergy,
+    setRivalry,
+    setTournaments,
+    setActiveTournament,
+    setIsBackgroundSyncing,
+    setIsInitialLoading,
+    setPayments,
+    setLastSyncTimestamp,
+    setSyncError,
+    setIdToCanonicalId,
+    setCollectionSyncMeta,
+    throttleSyncTimestamp,
+    players.length
+  ]);
 
-  const commitBatchWithLog = useCallback(async (batch: any, label: string, size: number) => {
-    const startTime = performance.now();
-    console.info(`[Guerreiros Intelligence] 🚀 Preparando envio de lote "${label}" | Contagem de operações: ${size} | Timestamp: ${new Date().toISOString()}`);
-    
-    // Pacing / throttling to prevent 'Rate exceeded' (RESOURCE_EXHAUSTED) on rapid successive writes
+  const commitBatchWithLog = useCallback(async (batch: any, _label: string, size: number) => {
     if (size > 30) {
-      console.info(`[Guerreiros Intelligence] ⏳ Aplicando pacing otimizado (30ms) para lote de ${size} operações para evitar 'Rate exceeded'...`);
       await new Promise(resolve => setTimeout(resolve, 30));
     }
-
-    try {
-      await batch.commit();
-      const duration = (performance.now() - startTime).toFixed(2);
-      console.info(`[Guerreiros Intelligence] ✅ Lote "${label}" processado com sucesso em ${duration}ms. (Total de operações commitadas: ${size})`);
-    } catch (error: any) {
-      console.error(`[Guerreiros Intelligence] ❌ Erro ao processar lote "${label}" (${size} operações):`, error);
-      if (error?.code === 'resource-exhausted' || error?.message?.includes('Rate exceeded') || error?.message?.includes('Quota exceeded')) {
-        console.warn(`[Guerreiros Intelligence] ⚠️ Detectado limite de taxa (Rate Exceeded). Recomenda-se lotes menores e frequentes.`);
-      }
-      throw error;
-    }
+    await batch.commit();
   }, []);
 
   const hardSync = useCallback(async () => {
     setIsBackgroundSyncing(true);
     try {
-      console.info('[HardSync] Executing hard sync (getDocsFromServer / getDocFromServer) bypassing local cache...');
       const dateKey = getFirestoreDateKey();
+      const targetThursdayKey = getNextThursday();
 
-      const [intentionsSnap, attendanceSnap, playersSnap, matchesSnap, preConfSnap] = await Promise.all([
+      const [, attendanceSnap, playersSnap, matchesSnap, preConfSnap] = await Promise.all([
         getDocFromServer(doc(db, 'metadata', 'intentions')),
         getDocsFromServer(collection(db, 'attendance', dateKey, 'players')),
         getDocsFromServer(collection(db, 'players')),
         getDocsFromServer(collection(db, 'matches')),
-        getDocsFromServer(collection(db, 'preConfirmations', dateKey, 'players'))
+        getDocsFromServer(collection(db, 'preConfirmations', targetThursdayKey, 'players'))
       ]);
 
       const { sortedList, idToCanonical } = parsePlayersSnapshot(playersSnap);
@@ -1020,16 +677,23 @@ export const useFirestoreSync = () => {
       });
       setPreConfirmations(preConfList);
 
+      useStore.setState(s => ({ syncTrigger: (s.syncTrigger || 0) + 1 }));
       setLastSyncTimestamp(Date.now());
-      console.info('[HardSync] Hard sync concluído com sucesso. Estado global sobreescrito com dados reais do servidor.');
       return true;
     } catch (err) {
-      console.error('[HardSync] Erro durante hard sync:', err);
       return false;
     } finally {
       setIsBackgroundSyncing(false);
     }
-  }, [setPlayers, setIdToCanonicalId, setAttendance, setMatches, setPreConfirmations, setLastSyncTimestamp, setIsBackgroundSyncing]);
+  }, [
+    setPlayers,
+    setIdToCanonicalId,
+    setAttendance,
+    setMatches,
+    setPreConfirmations,
+    setLastSyncTimestamp,
+    setIsBackgroundSyncing
+  ]);
 
   useEffect(() => {
     useStore.setState({ hardSync });

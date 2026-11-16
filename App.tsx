@@ -1,39 +1,8 @@
-
-import React, { useState, useMemo, useEffect, Suspense } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { playSound } from './src/utils/audio';
-import { 
-  Users, 
-  Trophy, 
-  Calendar, 
-  History, 
-  LayoutDashboard, 
-  ClipboardCheck, 
-  Swords, 
-  ShieldAlert, 
-  Settings, 
-  CreditCard,
-  LogOut,
-  UserCheck,
-  LogIn,
-  Database,
-  Zap,
-  CheckCircle2,
-  Edit2,
-  BarChart3,
-  ListTodo,
-  Medal,
-  DollarSign,
-  WifiOff,
-  Bluetooth,
-  Cpu,
-  RefreshCw,
-  Tv
-} from 'lucide-react';
-
 import ViewManager from './src/components/ViewManager';
 
-import { getBrazilDay, getFirestoreDateKey, db, doc, updateDoc, setDoc, clearIndexedDbPersistence, onSnapshot } from './firebase';
+import { getBrazilDay, getFirestoreDateKey, db, doc, clearIndexedDbPersistence, onSnapshot } from './firebase';
 import { useStore } from './store';
 import { useAuth } from './src/hooks/useAuth';
 import { useFirestoreSync } from './src/hooks/useFirestoreSync';
@@ -48,16 +17,11 @@ import { useServiceWorkerUpdate } from './src/hooks/useServiceWorkerUpdate';
 import { useIntentions } from './src/hooks/useIntentions';
 import { useNavItems } from './src/hooks/useNavItems';
 import { clearOldStorage } from './services/geminiService';
-import { calculateEffectiveElo } from './utils/teamLogic';
-import { cleanObject } from './utils/helpers';
 import { useBirthdays } from './src/hooks/useBirthdays';
 import { useWelcomeCelebration } from './src/hooks/useWelcomeCelebration';
 import { useAdminAutomations } from './src/hooks/useAdminAutomations';
 import { useDatabaseMaintenance } from './src/hooks/useDatabaseMaintenance';
 import { useAutoVersionCheck } from './src/hooks/useAutoVersionCheck';
-
-// Module-level safeguard to prevent multi-mount infinite loops in StrictMode/remounts
-let versionUpdateChecked = false;
 
 const App: React.FC = () => {
   // --- Hooks ---
@@ -80,32 +44,19 @@ const App: React.FC = () => {
   const viewMode = useStore(state => state.viewMode);
   const setViewMode = useStore(state => state.setViewMode);
   const matches = useStore(state => state.matches);
-  const payments = useStore(state => state.payments);
   const preConfirmations = useStore(state => state.preConfirmations);
   const generationResult = useStore(state => state.generationResult);
   const activeTournament = useStore(state => state.activeTournament);
   const tournaments = useStore(state => state.tournaments);
   const idToCanonicalId = useStore(state => state.idToCanonicalId);
   const isVerifyingRules = useStore(state => state.isVerifyingRules);
-  const isScanningAnomalies = useStore(state => state.isScanningAnomalies);
-  const anomalyReport = useStore(state => state.anomalyReport);
   const isLoggingOut = useStore(state => state.isLoggingOut);
   const isSyncing = useStore(state => state.isSyncing);
-  const syncError = useStore(state => state.syncError);
   const dbStatus = useStore(state => state.dbStatus);
   const isNarrating = useStore(state => state.isNarrating);
   const theme = useStore(state => state.theme);
-  const toggleTheme = useStore(state => state.toggleTheme);
-  const notification = useStore(state => state.notification);
-  const hideNotification = useStore(state => state.hideNotification);
-  const confirmModal = useStore(state => state.confirmModal);
-  const hideConfirmModal = useStore(state => state.hideConfirmModal);
-  const swapSelection = useStore(state => state.swapSelection);
-  const setSwapSelection = useStore(state => state.setSwapSelection);
-  const elapsedTime = useStore(state => state.elapsedTime);
   const setElapsedTime = useStore(state => state.setElapsedTime);
   const systemMetadata = useStore(state => state.systemMetadata);
-  const setGenerationResult = useStore(state => state.setGenerationResult);
   const showNotification = useStore(state => state.showNotification);
   const setEditingPayment = useStore(state => state.setEditingPayment);
   const setIsPaymentFormOpen = useStore(state => state.setIsPaymentFormOpen);
@@ -116,7 +67,6 @@ const App: React.FC = () => {
   const setIsFormOpen = useStore(state => state.setIsFormOpen);
   const editingPlayer = useStore(state => state.editingPlayer);
   const setEditingPlayer = useStore(state => state.setEditingPlayer);
-  const forceSync = useStore(state => state.triggerSync);
   const isNarratingSummary = useStore(state => state.isNarratingSummary);
   const prevIsNearCourt = React.useRef(isNearCourt);
   
@@ -130,9 +80,6 @@ const App: React.FC = () => {
     requestName,
     setRequestName,
     isRequestSubmitted,
-    showSetterPromptModal,
-    setShowSetterPromptModal,
-    setterPromptData,
     createDataSnapshot,
     handleLogout,
     handleGoogleLogin,
@@ -158,7 +105,6 @@ const App: React.FC = () => {
     updateDepartureTime,
     updateArrivalTime,
     clearAttendance,
-    onToggleIntention,
     deletePlayer,
     clearAllPlayers,
     repairDatabase,
@@ -198,9 +144,8 @@ const App: React.FC = () => {
   
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [entryRoute, setEntryRoute] = useState<'CHOICE' | 'LOGIN' | 'PRESENCE_BIOMETRICS'>('LOGIN');
-  const { intentions, setIntent } = useIntentions(commitBatchWithLog);
+  const { intentions, setIntent } = useIntentions();
   const [skippedIntentionChoice, setSkippedIntentionChoice] = useState(false);
-  const [isSubmittingIntention, setIsSubmittingIntention] = useState(false);
   
   const { needRefresh, updateServiceWorker } = useServiceWorkerUpdate();
 
@@ -228,6 +173,7 @@ const App: React.FC = () => {
       setSkippedIntentionChoice(false);
     }
   }, [user]);
+
   useEffect(() => {
     const handleOnline = () => setIsOffline(false);
     const handleOffline = () => setIsOffline(true);
@@ -247,8 +193,6 @@ const App: React.FC = () => {
 
     const threshold = systemMetadata.bleProximityThreshold || -60;
     const rssiValue = currentBeaconRssi ?? -100;
-    
-    // O sinal é considerado aceitável se o scanner estiver ativo, estiver perto da quadra e com sinal forte o suficiente
     const isSignalAcceptable = isNearCourt && rssiValue >= threshold;
 
     let checkInTimer: NodeJS.Timeout | null = null;
@@ -256,7 +200,6 @@ const App: React.FC = () => {
     if (isSignalAcceptable) {
       const isAlreadyCheckedIn = attendance.some(p => p.email === currentPlayer.email);
       if (!isAlreadyCheckedIn) {
-        // Inicia o contador de 3 segundos de sinal estável e contínuo
         checkInTimer = setTimeout(() => {
           registerAttendance(currentPlayer, 'MANUAL').catch(() => {});
           showNotification(
@@ -277,15 +220,12 @@ const App: React.FC = () => {
   // --- Gerenciador de saída de quadra (Check-out) ---
   useEffect(() => {
     if (prevIsNearCourt.current === true && isNearCourt === false && currentPlayer) {
-      // Saiu da quadra! Dispara confirmação de checkout.
       showConfirmModal("Check-out", "Você saiu do raio de sinal da quadra. Confirmar saída?", () => {
         setAttendance(prev => prev.filter(p => p.uid !== currentPlayer.uid));
       });
     }
     prevIsNearCourt.current = isNearCourt;
   }, [isNearCourt, currentPlayer, showConfirmModal, setAttendance]);
-
-
 
   useEffect(() => {
     if (user && entryRoute === 'PRESENCE_BIOMETRICS') {
@@ -298,8 +238,6 @@ const App: React.FC = () => {
     }
   }, [user, entryRoute, players, registerAttendance, setViewMode]);
 
-
-
   const { todayBirthdays } = useBirthdays();
   const { showWelcome, setShowWelcome } = useWelcomeCelebration();
 
@@ -307,15 +245,13 @@ const App: React.FC = () => {
   useEffect(() => {
     clearOldStorage();
     
-    // Handle tab from URL
     const params = new URLSearchParams(window.location.search);
     const tab = params.get('tab');
     if (tab && ['presence', 'history', 'generation', 'members', 'dashboard', 'rules', 'payments', 'admin', 'tournament', 'attendance_report', 'intentions'].includes(tab)) {
       setViewMode(tab as any);
-      // Clear the param from URL without refreshing
       window.history.replaceState({}, '', window.location.pathname);
     }
-  }, []);
+  }, [setViewMode]);
 
   useEffect(() => {
     if (theme === 'dark') {
@@ -332,19 +268,10 @@ const App: React.FC = () => {
       timeout = setTimeout(() => {
         useStore.getState().setIsNarratingSummary(false);
         useStore.getState().setIsNarrating(false);
-      }, 60000); // 1 minute safety reset
+      }, 60000);
     }
     return () => clearTimeout(timeout);
   }, [isNarratingSummary, isNarrating]);
-
-  // Diagnostic Log
-  useEffect(() => {
-    console.log('--- DIAGNOSTIC LOG: INITIALIZING APP ---');
-    console.log('ViewManager status:', typeof ViewManager !== 'undefined' ? 'DEFINED' : 'UNDEFINED');
-    console.log('App version:', APP_VERSION);
-    console.log('Navigator online:', navigator.onLine);
-    console.log('--- END DIAGNOSTIC LOG ---');
-  }, []);
 
   // --- Local UI State ---
   const [isPublicMode, setIsPublicMode] = useState(() => {
@@ -359,7 +286,6 @@ const App: React.FC = () => {
   }, [user]);
 
   const [showRescueLoader, setShowRescueLoader] = useState(false);
-  const [selectedPlayerForHistory, setSelectedPlayerForHistory] = useState<any>(null);
 
   // --- Auto Check-in / Check-out for NFC/QR Scans ---
   useEffect(() => {
@@ -373,7 +299,6 @@ const App: React.FC = () => {
       if (!existingPlayer) {
         registerAttendance(currentPlayer, isNfcScan ? 'NFC' : 'QR').catch(() => {});
         showNotification(`Check-in realizado com sucesso: ${currentPlayer.name}!`, 'success');
-        
         try { playSound('success'); } catch (e) {}
       } else {
         const checkInTime = existingPlayer.timestamp || 0;
@@ -390,7 +315,6 @@ const App: React.FC = () => {
         }
       }
 
-      // Clear the params to avoid repeated check-ins on refresh
       const url = new URL(window.location.href);
       url.searchParams.delete('source');
       url.searchParams.delete('public');
@@ -403,7 +327,7 @@ const App: React.FC = () => {
     if (!isAuthReady || (user && isRoleLoading)) {
       const timer = setTimeout(() => {
         setShowRescueLoader(true);
-      }, 12000); // 12 seconds backup plan
+      }, 12000);
       return () => clearTimeout(timer);
     } else {
       setShowRescueLoader(false);
@@ -420,6 +344,7 @@ const App: React.FC = () => {
     sessionStorage.clear();
     window.location.href = '/';
   };
+
   const [isExpenseFormOpen, setIsExpenseFormOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<any>(null);
   const [paymentFormData, setPaymentFormData] = useState({
@@ -442,13 +367,11 @@ const App: React.FC = () => {
 
   const isGameDay = useMemo(() => {
     const day = getBrazilDay();
-    // Quinta-feira (4) é o dia oficial, mas se houver presença ou partida, também é dia de jogo
     return day === 4 || attendance.length > 0 || matches.length > 0;
   }, [attendance.length, matches.length]);
 
   const isIntentionPhase = useMemo(() => {
     const day = getBrazilDay();
-    // Quarta-feira (3) é o dia de intenção, a menos que já seja dia de jogo (presença aberta)
     return day === 3 && !isGameDay;
   }, [isGameDay]);
 
@@ -563,12 +486,11 @@ const App: React.FC = () => {
     }
   };
 
-  // --- Timer Logic ---
+  // --- Timer Logic (Otimizado para atualizar a cada 10s e evitar re-renders globais a cada 1s) ---
   useEffect(() => {
     let interval: NodeJS.Timeout;
 
     if (generationResult && systemMetadata.matchStartTime) {
-      // Update immediately
       const updateTimer = () => {
         const now = Date.now();
         const start = systemMetadata.matchStartTime || now;
@@ -577,7 +499,7 @@ const App: React.FC = () => {
       };
 
       updateTimer();
-      interval = setInterval(updateTimer, 1000);
+      interval = setInterval(updateTimer, 10000);
     } else {
       setElapsedTime(0);
     }
@@ -613,7 +535,7 @@ const App: React.FC = () => {
         paymentDate: ''
       });
     }
-  }, [editingPayment]);
+  }, [editingPayment, systemMetadata.monthlyFee]);
 
   useEffect(() => {
     if (editingExpense) {
@@ -658,17 +580,13 @@ const App: React.FC = () => {
     }
   }, [userRole, viewMode, navItems, isAuthReady, setViewMode]);
 
-  const isDarkView = true; // Always dark premium now
-
-  // --- Match Swaps Logic (Extracted to useMatchSwaps hook) ---
+  // --- Match Swaps Logic ---
   const {
     handleSwapClick,
-    performSwap,
     handleRemovePlayer,
     promoteToSetter
   } = useMatchSwaps();
 
-  // --- Render Logic ---
   if (!ViewManager) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center p-4 text-white">
@@ -764,7 +682,7 @@ const App: React.FC = () => {
       }}
       onToggleIntention={async (player) => {
         const canonicalId = idToCanonicalId[player.id] || player.id;
-        const current = intentions[canonicalId]?.intent;
+        const current = intentions.responses?.[canonicalId];
         await setIntent(player.id, current === 'GOING' ? 'NOT_GOING' : 'GOING');
       }}
       showNotification={showNotification}

@@ -1,4 +1,4 @@
-import { Player, Gender, GenerationResult, Team, ClubGenerationRules, AutoCorrectionAudit } from '../types';
+import { Player, Gender, GenerationResult, Team, ClubGenerationRules } from '../types';
 
 // Runtime-safe Gender object and helper functions to prevent ReferenceError
 export const SAFE_GENDER = {
@@ -22,7 +22,6 @@ export const getSafeGender = (p: any): Gender => {
   return isFemalePlayer(p) ? SAFE_GENDER.FEMALE : SAFE_GENDER.MALE;
 };
 
-// Expose on globalThis/window if in browser
 if (typeof window !== 'undefined') {
   (window as any).Gender = (window as any).Gender || SAFE_GENDER;
 }
@@ -32,9 +31,10 @@ if (typeof globalThis !== 'undefined') {
 
 /**
  * Soma das Habilidades Práticas (Ataque, Defesa, Levantamento, Saque)
- * Total na escala de 4 a 20 (ou 4 a 12 em testes)
+ * Se actingAsLine === true (ex: 3ª levantadora atuando na linha quando só há 12 presentes),
+ * pondera Ataque, Defesa e Saque para refletir sua real atuação na linha.
  */
-export const calculatePracticalSkillsSum = (p: Player): number => {
+export const calculatePracticalSkillsSum = (p: Player, actingAsLine: boolean = false): number => {
   if (!p) return 10;
   if (p.skills) {
     const s = p.skills;
@@ -42,6 +42,10 @@ export const calculatePracticalSkillsSum = (p: Player): number => {
     const def = typeof s.defense === 'number' ? s.defense : 2;
     const set = typeof s.setting === 'number' ? s.setting : 2;
     const ser = typeof s.serving === 'number' ? s.serving : 2;
+    if (actingAsLine && p.isOfficialSetter) {
+      // Quando levantadora excedente atua na linha, o levantamento tem peso reduzido na linha
+      return Number(((att * 1.35) + (def * 1.35) + (ser * 1.0) + (set * 0.3)).toFixed(2));
+    }
     return att + def + set + ser;
   }
   return 10;
@@ -52,43 +56,84 @@ export const calculatePracticalSkillsSum = (p: Player): number => {
  * 80% Habilidades Práticas + 20% Win Rate real.
  * ZERO ELO - O ELO NÃO É UTILIZADO NA PRÉ-VISUALIZAÇÃO NEM NA GERAÇÃO DE TIMES!
  */
-export const calculateCompositePerformanceRating = (p: Player): number => {
+export const calculateCompositePerformanceRating = (p: Player, actingAsLine: boolean = false): number => {
   if (!p) return 0;
-  const skillsSum = calculatePracticalSkillsSum(p);
+  const skillsSum = calculatePracticalSkillsSum(p, actingAsLine);
   const totalMatches = (p.wins || 0) + (p.losses || 0);
   const winRate = totalMatches > 0 ? ((p.wins || 0) / totalMatches) * 100 : 50;
-  
-  // Normalização das habilidades práticas (base 100)
-  // Escala máxima padrão: 20 (ou 12 se skills 1-3)
-  const maxPossible = (p.skills && p.skills.attacking <= 3 && p.skills.defense <= 3) ? 12 : 20;
+
+  const maxPossible = (p.skills && p.skills.attacking <= 3 && p.skills.defense <= 3 && (p.skills.setting || 0) <= 3) ? 12 : 20;
   const techScore = (skillsSum / maxPossible) * 100;
-  
-  // 80% Skills + 20% WinRate
+
   const ic = (techScore * 0.8) + (winRate * 0.2);
   return Number(ic.toFixed(1));
 };
 
 export const calculateEffectiveElo = (p: Player): number => {
-  // Mantido para compatibilidade, sem derivação de ELO
   return p?.elo || 1200;
 };
 
-export const calculateNegativeSynergyPenalty = (...args: any[]): number => 0;
-export const calculatePredictedMatches = (...args: any[]): number => 0;
+export const calculateNegativeSynergyPenalty = (..._args: any[]): number => 0;
+export const calculatePredictedMatches = (..._args: any[]): number => 0;
 
 export const calculateTeamTotalIC = (team: any): number => {
   if (!team) return 0;
-  const list = [team.setter, ...(team.players || [])].filter(Boolean);
-  const sum = list.reduce((acc, p) => acc + calculateCompositePerformanceRating(p), 0);
-  return Number(sum.toFixed(1));
+  const setterIC = team.setter ? calculateCompositePerformanceRating(team.setter, false) : 0;
+  const lineIC = (team.players || []).reduce(
+    (acc: number, p: Player) => acc + calculateCompositePerformanceRating(p, true),
+    0
+  );
+  return Number((setterIC + lineIC).toFixed(1));
 };
 
-export const calculateTeamPositions = (team: any, otherTeam?: any): Record<string, string> => {
+/**
+ * Calcula o desequilíbrio de DNA Tático (Ataque+Saque vs Defesa+Passe) entre as duas linhas
+ */
+const calculateTacticalDnaImbalance = (playersA: Player[], playersB: Player[]): number => {
+  const getOffense = (arr: Player[]) =>
+    arr.reduce((sum, p) => sum + (p?.skills?.attacking || 2) + (p?.skills?.serving || 2), 0);
+  const getDefense = (arr: Player[]) =>
+    arr.reduce((sum, p) => sum + (p?.skills?.defense || 2) + (p?.skills?.setting || 2), 0);
+
+  const offDiff = Math.abs(getOffense(playersA) - getOffense(playersB));
+  const defDiff = Math.abs(getDefense(playersA) - getDefense(playersB));
+  return Number((offDiff + defDiff).toFixed(1));
+};
+
+/**
+ * Calcula quantos atletas de linha estão repetindo exatamente o mesmo time da última partida
+ */
+const calculateSameSideRepeatPenalty = (
+  playersA: Player[],
+  playersB: Player[],
+  previousFormations: any[] = []
+): number => {
+  if (!previousFormations || previousFormations.length === 0) return 0;
+  const last = previousFormations[previousFormations.length - 1];
+  if (!last) return 0;
+
+  const prevA = new Set<string>([last.setterA, ...(last.playersA || [])].filter(Boolean));
+  const prevB = new Set<string>([last.setterB, ...(last.playersB || [])].filter(Boolean));
+
+  const idsA = playersA.map(p => p.id);
+  const idsB = playersB.map(p => p.id);
+
+  const overlapDirect =
+    idsA.filter(id => prevA.has(id)).length + idsB.filter(id => prevB.has(id)).length;
+  const overlapMirrored =
+    idsA.filter(id => prevB.has(id)).length + idsB.filter(id => prevA.has(id)).length;
+
+  const maxOverlap = Math.max(overlapDirect, overlapMirrored);
+  // Penaliza apenas se 8 ou mais dos 10 jogadores de linha caírem exatamente juntos como no jogo anterior
+  return maxOverlap >= 8 ? maxOverlap - 7 : 0;
+};
+
+export const calculateTeamPositions = (team: any, _otherTeam?: any): Record<string, string> => {
   const positions: Record<string, string> = {};
   if (team?.setter) {
     positions[team.setter.id] = 'LEVANTADOR';
   }
-  (team?.players || []).forEach((p, idx) => {
+  (team?.players || []).forEach((p: Player, idx: number) => {
     const defaultPositions = ['PONTEIRO 1', 'CENTRAL 1', 'OPOSTO', 'PONTEIRO 2', 'CENTRAL 2'];
     positions[p.id] = defaultPositions[idx] || 'LINHA';
   });
@@ -112,7 +157,6 @@ export const enrichPlayerImmutably = (p: Player, players: Player[] = [], attenda
     ...(master || {}),
     ...att,
     ...p,
-    // Preserva estritamente os campos diários da sessão a partir da presença (attendance / p)
     arrivalOrder: typeof p.arrivalOrder === 'number' && p.arrivalOrder > 0
       ? p.arrivalOrder
       : (typeof att.arrivalOrder === 'number' && att.arrivalOrder > 0 ? att.arrivalOrder : 999),
@@ -148,13 +192,6 @@ export const cloneGenerationResultImmutably = (res: GenerationResult, players: P
 
 /**
  * Fila Inteligente (Guerreiros Intelligence Protocol)
- * Prioridade:
- * 1. Não jogou a última partida (playedLastMatch === false)
- * 2. Trava de Partidas Consecutivas em Quadra (quem jogou a última, prioriza menor consecutivePlayed)
- * 3. Prioridade de Saída Antecipada (departureTime)
- * 4. Volume Diário de Jogos (dailyMatches menor primeiro)
- * 5. Tempo de Banco (consecutiveBenched maior primeiro para quem não jogou a última)
- * 6. Ordem de Chegada (arrivalOrder menor primeiro)
  */
 const sortPlayersByPriority = (list: Player[]): Player[] => {
   return [...list].sort((a, b) => {
@@ -163,7 +200,7 @@ const sortPlayersByPriority = (list: Player[]): Player[] => {
     const pB = b.playedLastMatch ? 1 : 0;
     if (pA !== pB) return pA - pB;
 
-    // 2. Se ambos jogaram a última partida: prioriza quem jogou menos partidas consecutivas
+    // 2. Trava Anti-Monopólio: quem jogou a última partida e tem menos jogos seguidos tem prioridade
     if (a.playedLastMatch && b.playedLastMatch) {
       const cA = a.consecutivePlayed || 0;
       const cB = b.consecutivePlayed || 0;
@@ -182,7 +219,7 @@ const sortPlayersByPriority = (list: Player[]): Player[] => {
     const dB = b.dailyMatches || 0;
     if (dA !== dB) return dA - dB;
 
-    // 5. Se ambos não jogaram a última partida: prioriza quem está há mais tempo consecutivo no banco
+    // 5. Tempo de Banco (consecutiveBenched maior primeiro)
     if (!a.playedLastMatch && !b.playedLastMatch) {
       const bA = a.consecutiveBenched || 0;
       const bB = b.consecutiveBenched || 0;
@@ -194,6 +231,14 @@ const sortPlayersByPriority = (list: Player[]): Player[] => {
   });
 };
 
+/**
+ * REGRA ESTATUTÁRIA DE RODÍZIO DE LEVANTADORES E LINHA:
+ * - Seleciona até 2 levantadores oficiais (1 para cada equipe).
+ * - Se houver >= 10 jogadores de linha presentes (ex: 13+ presentes no total), o 3º levantador oficial
+ *   permanece no banco (remainingPlayers) para entrar descansado como levantador titular no próximo jogo.
+ * - Somente se faltarem jogadores de linha para fechar os 12 (ex: apenas 12 presentes na quadra sendo 3 levantadores e 9 de linha),
+ *   o 3º levantador oficial completa a partida atuando na linha.
+ */
 export const getPriorityQueue = (
   list: Player[],
   count: number = 12,
@@ -224,10 +269,7 @@ export const getPriorityQueue = (
 
   const neededLine = Math.max(0, count - chosenSetters.length);
 
-  // Se faltam jogadores de linha para atingir neededLine (ex: < 10 na lista),
-  // aí sim os levantadores excedentes completam as vagas de linha.
-  // Havendo sócios de linha suficientes (>= neededLine), os levantadores excedentes
-  // aguardam no banco (remainingPlayers) para rodar como titulares na próxima partida.
+  // Só aloca levantador excedente na linha se não houver jogadores de linha suficientes para fechar os 12
   if (linePool.length < neededLine && remainingSetters.length > 0) {
     const missing = neededLine - linePool.length;
     const settersAsLine = remainingSetters.slice(0, missing);
@@ -244,22 +286,18 @@ export const getPriorityQueue = (
   return { topPlayers, remainingPlayers };
 };
 
-
 export const sortLinePlayersBySkills = (linePlayers: Player[]): Player[] => {
   return [...linePlayers].sort((a, b) => {
-    const diff = calculatePracticalSkillsSum(b) - calculatePracticalSkillsSum(a);
+    const diff = calculatePracticalSkillsSum(b, true) - calculatePracticalSkillsSum(a, true);
     if (diff !== 0) return diff;
-    const icDiff = calculateCompositePerformanceRating(b) - calculateCompositePerformanceRating(a);
+    const icDiff = calculateCompositePerformanceRating(b, true) - calculateCompositePerformanceRating(a, true);
     if (icDiff !== 0) return icDiff;
     return (a.id || '').localeCompare(b.id || '');
   });
 };
 
 /**
- * Validador Estatutário Soberano das Regras do Clube:
- * 1. Levantadores: 1 por equipe se houver >= 2 oficiais em quadra
- * 2. Paridade de Gênero: diferença de homens <= 1
- * 3. Soberania de Top 2 e Bottom 2 da LINHA (1 em cada equipe)
+ * Validador Estatutário Soberano das Regras do Clube
  */
 export const verifyClubGenerationRules = (result: GenerationResult): ClubGenerationRules => {
   if (!result || !result.teamA || !result.teamB) {
@@ -274,41 +312,49 @@ export const verifyClubGenerationRules = (result: GenerationResult): ClubGenerat
   const allA = [result.teamA.setter, ...(result.teamA.players || [])].filter(Boolean) as Player[];
   const allB = [result.teamB.setter, ...(result.teamB.players || [])].filter(Boolean) as Player[];
 
-  // 1. Regra de Levantadores
-  const settersA = allA.filter(p => p.isOfficialSetter).length;
-  const settersB = allB.filter(p => p.isOfficialSetter).length;
-  const totalSetters = settersA + settersB;
-  const setterFulfilled = totalSetters >= 2 ? (settersA === 1 && settersB === 1) : true;
+  // 1. Regra de Levantadores Titulares
+  const hasSetterA = Boolean(result.teamA.setter?.isOfficialSetter);
+  const hasSetterB = Boolean(result.teamB.setter?.isOfficialSetter);
+  const totalOfficialSetters = [...allA, ...allB].filter(p => p.isOfficialSetter).length;
+  const setterFulfilled = totalOfficialSetters >= 2 ? (hasSetterA && hasSetterB) : true;
 
   // 2. Regra de Gênero
   const menA = allA.filter(p => !isFemalePlayer(p)).length;
   const menB = allB.filter(p => !isFemalePlayer(p)).length;
   const genderFulfilled = Math.abs(menA - menB) <= 1;
 
-  // 3. Regra de Top 2 e Bottom 2 (Estritamente sobre os jogadores de LINHA)
+  // 3. Regra de Top 2/4 e Bottom 2/4 (Sobre os 10 jogadores de LINHA)
   const linePlayers = [
     ...(result.teamA.players || []),
     ...(result.teamB.players || [])
-  ].filter(p => p && !p.isOfficialSetter);
+  ].filter(Boolean);
 
   let topBottomFulfilled = true;
   if (linePlayers.length >= 4) {
     const sortedLine = sortLinePlayersBySkills(linePlayers);
-
-
     const top2Ids = new Set(sortedLine.slice(0, 2).map(p => p.id));
     const bottom2Ids = new Set(sortedLine.slice(-2).map(p => p.id));
     const top4Ids = new Set(sortedLine.slice(0, 4).map(p => p.id));
     const bottom4Ids = new Set(sortedLine.slice(-4).map(p => p.id));
-    const t2A = allA.filter(p => top2Ids.has(p.id)).length;
-    const t2B = allB.filter(p => top2Ids.has(p.id)).length;
-    const b2A = allA.filter(p => bottom2Ids.has(p.id)).length;
-    const b2B = allB.filter(p => bottom2Ids.has(p.id)).length;
-    const t4A = allA.filter(p => top4Ids.has(p.id)).length;
-    const t4B = allB.filter(p => top4Ids.has(p.id)).length;
-    const b4A = allA.filter(p => bottom4Ids.has(p.id)).length;
-    const b4B = allB.filter(p => bottom4Ids.has(p.id)).length;
-    topBottomFulfilled = (t2A === 1 && t2B === 1) && (b2A === 1 && b2B === 1) && (t4A === 2 && t4B === 2) && (b4A === 2 && b4B === 2);
+
+    const lineA = result.teamA.players || [];
+    const lineB = result.teamB.players || [];
+
+    const t2A = lineA.filter(p => top2Ids.has(p.id)).length;
+    const t2B = lineB.filter(p => top2Ids.has(p.id)).length;
+    const b2A = lineA.filter(p => bottom2Ids.has(p.id)).length;
+    const b2B = lineB.filter(p => bottom2Ids.has(p.id)).length;
+    const t4A = lineA.filter(p => top4Ids.has(p.id)).length;
+    const t4B = lineB.filter(p => top4Ids.has(p.id)).length;
+    const b4A = lineA.filter(p => bottom4Ids.has(p.id)).length;
+    const b4B = lineB.filter(p => bottom4Ids.has(p.id)).length;
+
+    topBottomFulfilled =
+      t2A === 1 &&
+      t2B === 1 &&
+      b2A === 1 &&
+      b2B === 1 &&
+      (linePlayers.length < 10 || (t4A === 2 && t4B === 2 && b4A === 2 && b4B === 2));
   }
 
   const allFulfilled = setterFulfilled && genderFulfilled && topBottomFulfilled;
@@ -317,8 +363,8 @@ export const verifyClubGenerationRules = (result: GenerationResult): ClubGenerat
     allFulfilled,
     setter: {
       fulfilled: setterFulfilled,
-      description: setterFulfilled ? '1 Levantador Oficial por Equipe' : 'Desbalanceamento de Levantadores',
-      badgeLabel: setterFulfilled ? '1A / 1B' : `${settersA}A / ${settersB}B`
+      description: setterFulfilled ? '1 Levantador Oficial Titular por Equipe' : 'Desbalanceamento de Levantadores',
+      badgeLabel: setterFulfilled ? '1A / 1B' : 'Alerta'
     },
     gender: {
       fulfilled: genderFulfilled,
@@ -333,9 +379,6 @@ export const verifyClubGenerationRules = (result: GenerationResult): ClubGenerat
   };
 };
 
-/**
- * Utilitário para gerar combinações k de um array
- */
 function getCombinations<T>(arr: T[], k: number): T[][] {
   if (k === 0) return [[]];
   if (arr.length < k) return [];
@@ -369,21 +412,19 @@ export interface BalancingOptimizationResult {
 }
 
 /**
- * Gera e avalia combinações de balanceamento (até 50 combinações)
- * Executado inteiramente no navegador/dispositivo em ~2ms
- * Balanceamento estritamente por ID / Habilidades Práticas / IC (SEM ELO!)
+ * Busca Exaustiva Determinística sobre as 252 formações possíveis dos 10 jogadores de linha (~2ms)
  */
 export const findBestBalancingCombination = (
   attendanceList: Player[],
   previousFormations: any[] = [],
-  forceNoTemporarySetters: boolean = false,
+  _forceNoTemporarySetters: boolean = false,
   allMatchHistory: any[] = [],
-  randomizeOthers: boolean = true
+  _randomizeOthers: boolean = false
 ): BalancingOptimizationResult => {
   // 1. Obter os 12 atletas da partida via Fila Inteligente
   const { topPlayers, remainingPlayers } = getPriorityQueue(attendanceList, 12, 2);
 
-  // 2. Separar levantadores oficiais
+  // 2. Separar os até 2 levantadores titulares; se houver 3º levantador (apenas quando total presente == 12), vai para matchLinePool
   const officialSetters = topPlayers.filter(p => p.isOfficialSetter);
   const linePlayers = topPlayers.filter(p => !p.isOfficialSetter);
 
@@ -394,12 +435,30 @@ export const findBestBalancingCombination = (
   if (officialSetters.length >= 2) {
     setterA = officialSetters[0];
     setterB = officialSetters[1];
-    matchLinePool = [...matchLinePool, ...officialSetters.slice(2)];
+    // Se a fila incluiu um 3º levantador por falta de jogadores de linha no banco, ele atua nos 10 de linha
+    if (officialSetters.length > 2) {
+      matchLinePool = [...matchLinePool, ...officialSetters.slice(2)];
+    }
   } else if (officialSetters.length === 1) {
     setterA = officialSetters[0];
+    // Promove o jogador de linha com melhor levantamento para equilibrar como levantador do Time B
+    const sortedBySetting = [...matchLinePool].sort(
+      (a, b) => (b.skills?.setting || 0) - (a.skills?.setting || 0)
+    );
+    if (sortedBySetting.length > 0 && !_forceNoTemporarySetters) {
+      setterB = sortedBySetting[0];
+      matchLinePool = matchLinePool.filter(p => p.id !== setterB!.id);
+    }
+  } else if (officialSetters.length === 0 && !_forceNoTemporarySetters && matchLinePool.length >= 12) {
+    const sortedBySetting = [...matchLinePool].sort(
+      (a, b) => (b.skills?.setting || 0) - (a.skills?.setting || 0)
+    );
+    setterA = sortedBySetting[0];
+    setterB = sortedBySetting[1];
+    matchLinePool = matchLinePool.filter(p => p.id !== setterA!.id && p.id !== setterB!.id);
   }
 
-  // 3. Ordenar os jogadores de linha por Habilidades Práticas + IC de forma determinística estável
+  // 3. Ordenar os 10 jogadores de linha por Habilidades Práticas + IC de Linha
   const sortedLine = sortLinePlayersBySkills(matchLinePool);
 
   const top2 = sortedLine.slice(0, 2);
@@ -412,8 +471,10 @@ export const findBestBalancingCombination = (
   const top4Ids = top4.map(p => p.id);
   const bottom4Ids = bottom4.map(p => p.id);
 
-  // 4. Avaliar todas as 252 combinações de 5 jogadores para o Time A
-  const allCombos = getCombinations(matchLinePool, 5);
+  // 4. Avaliar todas as combinações possíveis de metade da linha para o Time A
+  const targetTeamLineSize = Math.floor(matchLinePool.length / 2);
+  const allCombos = getCombinations(matchLinePool, targetTeamLineSize);
+
   const validFormations: Array<{
     playersA: Player[];
     playersB: Player[];
@@ -421,40 +482,35 @@ export const findBestBalancingCombination = (
     teamAIC: number;
     teamBIC: number;
     cascadeLevel: 'TOP4_BOTTOM4' | 'TOP2_BOTTOM4' | 'TOP2_BOTTOM2';
-    impactParityPenalty?: number;
-    isCounterbalanced?: number;
+    impactParityPenalty: number;
+    isCounterbalanced: number;
+    dnaImbalance: number;
+    repeatPenalty: number;
   }> = [];
 
-  const setterMenA = (setterA && !isFemalePlayer(setterA)) ? 1 : 0;
-  const setterMenB = (setterB && !isFemalePlayer(setterB)) ? 1 : 0;
+  const setterMenA = setterA && !isFemalePlayer(setterA) ? 1 : 0;
+  const setterMenB = setterB && !isFemalePlayer(setterB) ? 1 : 0;
 
   for (const comboA of allCombos) {
     const setAIds = new Set(comboA.map(p => p.id));
     const comboB = matchLinePool.filter(p => !setAIds.has(p.id));
 
-    // Paridade de gênero
+    // Regra 1: Paridade de gênero (diferença máxima de ±1 homem entre os times completos)
     const menA = setterMenA + comboA.filter(p => !isFemalePlayer(p)).length;
     const menB = setterMenB + comboB.filter(p => !isFemalePlayer(p)).length;
     if (Math.abs(menA - menB) > 1) continue;
 
-    // Regra Estatutária: Exatamente 1 levantador por equipe (quando houver levantadores oficiais)
-    // Se o time já tem setter titular oficial, não pode ter outro levantador oficial na linha
-    if (setterA?.isOfficialSetter && comboA.some(p => p.isOfficialSetter)) continue;
-    if (setterB?.isOfficialSetter && comboB.some(p => p.isOfficialSetter)) continue;
-
-    // Soberania de Top 2 e Bottom 2
+    // Regra 2: Soberania de Top 2 e Bottom 2 (1 em cada equipe)
     const t2A = comboA.filter(p => topTwoIds.includes(p.id)).length;
     const b2A = comboA.filter(p => bottomTwoIds.includes(p.id)).length;
     if (t2A !== 1 || b2A !== 1) continue;
 
-    // Paridade estrita Top 4 e Bottom 4 (2 em cada time)
+    // Regra 3: Paridade estrita Top 4 e Bottom 4 (2 em cada time quando há 10 jogadores de linha)
     const t4A = comboA.filter(p => top4Ids.includes(p.id)).length;
     const b4A = comboA.filter(p => bottom4Ids.includes(p.id)).length;
     if (matchLinePool.length >= 10) {
       if (t4A !== 2 || b4A !== 2) continue;
     }
-
-    // Nível de cascata (Top 4 / Bottom 4)
 
     let cascadeLevel: 'TOP4_BOTTOM4' | 'TOP2_BOTTOM4' | 'TOP2_BOTTOM2' = 'TOP2_BOTTOM2';
     if (t4A === 2 && b4A === 2) {
@@ -467,7 +523,6 @@ export const findBestBalancingCombination = (
     const tBIC = calculateTeamTotalIC({ setter: setterB, players: comboB });
     const deltaIC = Number(Math.abs(tAIC - tBIC).toFixed(1));
 
-    // Paridade uniforme de Impacto cadastral (impactLevel 3: Elite/Top, impactLevel 1: Base/Bottom)
     const elitesA = comboA.filter(p => p.impactLevel === 3).length + (setterA?.impactLevel === 3 ? 1 : 0);
     const elitesB = comboB.filter(p => p.impactLevel === 3).length + (setterB?.impactLevel === 3 ? 1 : 0);
     const eliteParityDiff = Math.abs(elitesA - elitesB);
@@ -476,9 +531,14 @@ export const findBestBalancingCombination = (
     const basesB = comboB.filter(p => p.impactLevel === 1).length + (setterB?.impactLevel === 1 ? 1 : 0);
     const baseParityDiff = Math.abs(basesA - basesB);
 
-    // Contrapeso inteligente: time com +1 elite recebe +1 base para balancear a balança técnica
-    const isCounterbalanced = (elitesA > elitesB && basesA >= basesB) || (elitesB > elitesA && basesB >= basesA) || (elitesA === elitesB && basesA === basesB);
+    const isCounterbalanced =
+      (elitesA > elitesB && basesA >= basesB) ||
+      (elitesB > elitesA && basesB >= basesA) ||
+      (elitesA === elitesB && basesA === basesB);
     const impactParityPenalty = Math.max(0, eliteParityDiff - 1) + Math.max(0, baseParityDiff - 1);
+
+    const dnaImbalance = calculateTacticalDnaImbalance(comboA, comboB);
+    const repeatPenalty = calculateSameSideRepeatPenalty(comboA, comboB, previousFormations);
 
     validFormations.push({
       playersA: comboA,
@@ -488,41 +548,66 @@ export const findBestBalancingCombination = (
       teamBIC: tBIC,
       cascadeLevel,
       impactParityPenalty,
-      isCounterbalanced: isCounterbalanced ? 1 : 0
+      isCounterbalanced: isCounterbalanced ? 1 : 0,
+      dnaImbalance,
+      repeatPenalty
     });
   }
 
-  // Ordenar combinações válidas prioritariamente por:
-  // 1. Paridade de Impacto (Elites e Bases com diferença <= 1)
-  // 2. Cascata (TOP4_BOTTOM4 primeiro)
-  // 3. Contrapeso inteligente (Balança cruzada)
-  // 4. Menor deltaIC
+  // Ordenação multicritério soberana:
+  // 1. Nível de Cascata (TOP4_BOTTOM4)
+  // 2. Paridade de Impacto (Elite/Base <= 1)
+  // 3. Contrapeso inteligente
+  // 4. Menor repetição idêntica à partida anterior
+  // 5. Menor diferença de IC (deltaIC)
+  // 6. Melhor equilíbrio de DNA Tático (Ataque vs Defesa)
   validFormations.sort((a, b) => {
-    if ((a as any).impactParityPenalty !== (b as any).impactParityPenalty) {
-      return (a as any).impactParityPenalty - (b as any).impactParityPenalty;
-    }
-    const rank = { 'TOP4_BOTTOM4': 3, 'TOP2_BOTTOM4': 2, 'TOP2_BOTTOM2': 1 };
+    const rank = { TOP4_BOTTOM4: 3, TOP2_BOTTOM4: 2, TOP2_BOTTOM2: 1 };
     if (rank[b.cascadeLevel] !== rank[a.cascadeLevel]) {
       return rank[b.cascadeLevel] - rank[a.cascadeLevel];
     }
-    if ((b as any).isCounterbalanced !== (a as any).isCounterbalanced) {
-      return (b as any).isCounterbalanced - (a as any).isCounterbalanced;
+    if (a.impactParityPenalty !== b.impactParityPenalty) {
+      return a.impactParityPenalty - b.impactParityPenalty;
     }
-    return a.deltaIC - b.deltaIC;
+    if (b.isCounterbalanced !== a.isCounterbalanced) {
+      return b.isCounterbalanced - a.isCounterbalanced;
+    }
+    if (a.repeatPenalty !== b.repeatPenalty) {
+      return a.repeatPenalty - b.repeatPenalty;
+    }
+    if (Math.abs(a.deltaIC - b.deltaIC) > 0.3) {
+      return a.deltaIC - b.deltaIC;
+    }
+    return a.dnaImbalance - b.dnaImbalance;
   });
 
-  // Se randomizeOthers for solicitado, adicionar leve variedade mantendo os menores deltaICs
-  let candidatePool = validFormations.slice(0, 50);
+  let candidatePool = validFormations.slice(0, 30);
   if (candidatePool.length === 0) {
-    // Fallback de segurança se nenhuma combinação respeitar todas as restrições
-    const half = Math.ceil(matchLinePool.length / 2);
+    // Fallback distribuindo intercalado ABAB por ordem de habilidade (nunca slice(0,5) vs slice(5)!)
+    const fallbackA: Player[] = [];
+    const fallbackB: Player[] = [];
+    sortedLine.forEach((p, idx) => {
+      if (idx % 4 === 0 || idx % 4 === 3) {
+        if (fallbackA.length < targetTeamLineSize) fallbackA.push(p);
+        else fallbackB.push(p);
+      } else {
+        if (fallbackB.length < matchLinePool.length - targetTeamLineSize) fallbackB.push(p);
+        else fallbackA.push(p);
+      }
+    });
+    const tAIC = calculateTeamTotalIC({ setter: setterA, players: fallbackA });
+    const tBIC = calculateTeamTotalIC({ setter: setterB, players: fallbackB });
     candidatePool = [{
-      playersA: matchLinePool.slice(0, half),
-      playersB: matchLinePool.slice(half),
-      deltaIC: 0,
-      teamAIC: 50,
-      teamBIC: 50,
-      cascadeLevel: 'TOP2_BOTTOM2'
+      playersA: fallbackA,
+      playersB: fallbackB,
+      deltaIC: Number(Math.abs(tAIC - tBIC).toFixed(1)),
+      teamAIC: tAIC,
+      teamBIC: tBIC,
+      cascadeLevel: 'TOP2_BOTTOM2',
+      impactParityPenalty: 0,
+      isCounterbalanced: 1,
+      dnaImbalance: 0,
+      repeatPenalty: 0
     }];
   }
 
@@ -582,18 +667,14 @@ export const findBestBalancingCombination = (
   };
 };
 
-/**
- * Função principal de geração de times
- * Determinística, balanceada por IC e Habilidades Práticas (SEM ELO)
- */
 export function generateTeams(
   attendanceList: Player[],
   previousFormations: any[] = [],
-  useTrueSkill: boolean = false,
+  _useTrueSkill: boolean = false,
   forceNoTemporarySetters: boolean = false,
   allMatchHistory: any[] = [],
-  balancingStrategy: string = 'BOTH',
-  balancingRatingMode: string = 'IC_ONLY'
+  _balancingStrategy: string = 'BOTH',
+  _balancingRatingMode: string = 'IC_ONLY'
 ): GenerationResult {
   const optResult = findBestBalancingCombination(
     attendanceList,
@@ -620,7 +701,7 @@ export const runAutoCorrectionAgent = (result: GenerationResult): GenerationResu
   const linePlayers = [
     ...(result.teamA.players || []),
     ...(result.teamB.players || [])
-  ].filter(p => p && !p.isOfficialSetter);
+  ].filter(Boolean);
   
   if (linePlayers.length < 4) return result;
 
@@ -634,25 +715,16 @@ export const runAutoCorrectionAgent = (result: GenerationResult): GenerationResu
   let playersA = [...(result.teamA.players || [])];
   let playersB = [...(result.teamB.players || [])];
 
-  const countTop4 = (arr) => arr.filter(p => top4Ids.has(p.id)).length;
-  const countBottom4 = (arr) => arr.filter(p => bottom4Ids.has(p.id)).length;
-  const countTop2 = (arr) => arr.filter(p => top2Ids.has(p.id)).length;
-  const countBottom2 = (arr) => arr.filter(p => bottom2Ids.has(p.id)).length;
+  const countTop4 = (arr: Player[]) => arr.filter(p => top4Ids.has(p.id)).length;
+  const countBottom4 = (arr: Player[]) => arr.filter(p => bottom4Ids.has(p.id)).length;
+  const countTop2 = (arr: Player[]) => arr.filter(p => top2Ids.has(p.id)).length;
+  const countBottom2 = (arr: Player[]) => arr.filter(p => bottom2Ids.has(p.id)).length;
 
   for (let iter = 0; iter < 5; iter++) {
-    const t4A = countTop4(playersA);
-    const t4B = countTop4(playersB);
-    const b4A = countBottom4(playersA);
-    const b4B = countBottom4(playersB);
-    const t2A = countTop2(playersA);
-    const t2B = countTop2(playersB);
-    const b2A = countBottom2(playersA);
-    const b2B = countBottom2(playersB);
-
-    const diffTop4 = Math.abs(t4A - t4B);
-    const diffBottom4 = Math.abs(b4A - b4B);
-    const diffTop2 = Math.abs(t2A - t2B);
-    const diffBottom2 = Math.abs(b2A - b2B);
+    const diffTop4 = Math.abs(countTop4(playersA) - countTop4(playersB));
+    const diffBottom4 = Math.abs(countBottom4(playersA) - countBottom4(playersB));
+    const diffTop2 = Math.abs(countTop2(playersA) - countTop2(playersB));
+    const diffBottom2 = Math.abs(countBottom2(playersA) - countBottom2(playersB));
 
     if (diffTop4 <= 1 && diffBottom4 <= 1 && diffTop2 <= 1 && diffBottom2 <= 1) {
       break;
@@ -671,19 +743,10 @@ export const runAutoCorrectionAgent = (result: GenerationResult): GenerationResu
         nextA[i] = pB;
         nextB[j] = pA;
 
-        const nextT4A = countTop4(nextA);
-        const nextT4B = countTop4(nextB);
-        const nextB4A = countBottom4(nextA);
-        const nextB4B = countBottom4(nextB);
-        const nextT2A = countTop2(nextA);
-        const nextT2B = countTop2(nextB);
-        const nextB2A = countBottom2(nextA);
-        const nextB2B = countBottom2(nextB);
-
-        const nextDiffTop4 = Math.abs(nextT4A - nextT4B);
-        const nextDiffBottom4 = Math.abs(nextB4A - nextB4B);
-        const nextDiffTop2 = Math.abs(nextT2A - nextT2B);
-        const nextDiffBottom2 = Math.abs(nextB2A - nextB2B);
+        const nextDiffTop4 = Math.abs(countTop4(nextA) - countTop4(nextB));
+        const nextDiffBottom4 = Math.abs(countBottom4(nextA) - countBottom4(nextB));
+        const nextDiffTop2 = Math.abs(countTop2(nextA) - countTop2(nextB));
+        const nextDiffBottom2 = Math.abs(countBottom2(nextA) - countBottom2(nextB));
 
         const currentMaxDiff = Math.max(diffTop4, diffBottom4, diffTop2, diffBottom2);
         const nextMaxDiff = Math.max(nextDiffTop4, nextDiffBottom4, nextDiffTop2, nextDiffBottom2);
@@ -724,23 +787,18 @@ export const runAutoCorrectionAgent = (result: GenerationResult): GenerationResu
     diffTop: toleranceValidation.diffTop,
     diffBottom: toleranceValidation.diffBottom
   };
-}
-export const runCriticalSynergySolverAgent = (result: GenerationResult, ...args: any[]): any => ({ ...result, updatedResult: result, resolvedPairsCount: 0 });
+};
 
-/**
- * Agente Soberano de Auto-Correção de Inconsistências Estatutárias:
- * Identifica e corrige autonomamente:
- * 1. Levantadores: garante que nenhuma equipe tenha 2 levantadores oficiais quando houver >= 2 em quadra.
- *    Se o Time A tiver 2 levantadores (1 titular + 1 de linha), substitui o levantador excedente
- *    por um jogador de linha da reserva (reserves/remainingPlayers/attendance) de mesmo gênero e IC compatível,
- *    ou redistribui com a equipe B para manter a paridade estatutária (1A / 1B).
- * 2. Paridade de Gênero: se |menA - menB| > 1, troca atletas de mesmo nível técnico entre A e B.
- * 3. Soberania Top/Bottom: equilibra Top 2/4 e Bottom 2/4 da linha.
- */
+export const runCriticalSynergySolverAgent = (result: GenerationResult, ..._args: any[]): any => ({
+  ...result,
+  updatedResult: result,
+  resolvedPairsCount: 0
+});
+
 export const autoFixAllInconsistencies = (
   res: any,
   attendance: Player[] = [],
-  allMatchHistory: any[] = []
+  _allMatchHistory: any[] = []
 ): GenerationResult => {
   if (!res || !res.teamA || !res.teamB) return res;
 
@@ -757,14 +815,13 @@ export const autoFixAllInconsistencies = (
     remainingPlayers: [...(res.remainingPlayers || [])]
   };
 
-  let rules = verifyClubGenerationRules(currentRes);
+  const rules = verifyClubGenerationRules(currentRes);
   if (rules.allFulfilled) return currentRes;
 
   let teamA = currentRes.teamA;
   let teamB = currentRes.teamB;
   let remainingPlayers = currentRes.remainingPlayers || [];
 
-  // Se remainingPlayers estiver vazio, tenta extrair da lista de presença oficial ativa
   if (remainingPlayers.length === 0 && attendance && attendance.length > 0) {
     const onCourtIds = new Set([
       teamA.setter?.id,
@@ -779,87 +836,36 @@ export const autoFixAllInconsistencies = (
     });
   }
 
-  // 1. Correção Soberana de Levantadores
-  const countSetters = (t: any) => [t.setter, ...(t.players || [])].filter(p => p && p.isOfficialSetter).length;
-  let settersA = countSetters(teamA);
-  let settersB = countSetters(teamB);
+  // 1. Se houver jogador de linha no banco (remainingPlayers) e um 3º levantador oficial caiu na linha,
+  // substitui o 3º levantador pelo jogador de linha do banco!
+  const replaceExtraSetterWithBenchLine = (team: Team) => {
+    if (!team.setter?.isOfficialSetter) return;
+    const extraSetterIdx = team.players.findIndex(p => p && p.isOfficialSetter);
+    if (extraSetterIdx === -1) return;
 
-  if (settersA > 1 || settersB > 1) {
-    // Caso 1: Time A tem 2 ou mais levantadores
-    if (settersA > 1) {
-      const extraSetterIdx = teamA.players.findIndex(p => p && p.isOfficialSetter);
-      if (extraSetterIdx !== -1) {
-        const extraSetter = teamA.players[extraSetterIdx];
-        const isFemale = isFemalePlayer(extraSetter);
+    const extraSetter = team.players[extraSetterIdx];
+    const isFemale = isFemalePlayer(extraSetter);
 
-        // Tentativa A: Substituir por um jogador de linha da reserva com mesmo gênero
-        const reserveCandidateIdx = remainingPlayers.findIndex(
-          p => p && !p.isOfficialSetter && isFemalePlayer(p) === isFemale
-        );
-
-        if (reserveCandidateIdx !== -1) {
-          const replacement = remainingPlayers[reserveCandidateIdx];
-          teamA.players[extraSetterIdx] = replacement;
-          remainingPlayers[reserveCandidateIdx] = extraSetter;
-        } else if (settersB === 0) {
-          // Time B não tem nenhum levantador oficial, passar para o Time B
-          const lineCandidateIdx = teamB.players.findIndex(p => isFemalePlayer(p) === isFemale);
-          if (lineCandidateIdx !== -1) {
-            const swapTarget = teamB.players[lineCandidateIdx];
-            teamA.players[extraSetterIdx] = swapTarget;
-            teamB.players[lineCandidateIdx] = extraSetter;
-          }
-        } else {
-          // Qualquer reserva de linha disponível
-          const anyReserveIdx = remainingPlayers.findIndex(p => p && !p.isOfficialSetter);
-          if (anyReserveIdx !== -1) {
-            const replacement = remainingPlayers[anyReserveIdx];
-            teamA.players[extraSetterIdx] = replacement;
-            remainingPlayers[anyReserveIdx] = extraSetter;
-          }
-        }
-      }
+    // Procura reserva de linha do mesmo gênero, ou qualquer reserva de linha
+    let benchIdx = remainingPlayers.findIndex(p => p && !p.isOfficialSetter && isFemalePlayer(p) === isFemale);
+    if (benchIdx === -1) {
+      benchIdx = remainingPlayers.findIndex(p => p && !p.isOfficialSetter);
     }
 
-    // Caso 2: Time B tem 2 ou mais levantadores
-    settersB = countSetters(teamB);
-    if (settersB > 1) {
-      const extraSetterIdx = teamB.players.findIndex(p => p && p.isOfficialSetter);
-      if (extraSetterIdx !== -1) {
-        const extraSetter = teamB.players[extraSetterIdx];
-        const isFemale = isFemalePlayer(extraSetter);
-
-        const reserveCandidateIdx = remainingPlayers.findIndex(
-          p => p && !p.isOfficialSetter && isFemalePlayer(p) === isFemale
-        );
-
-        if (reserveCandidateIdx !== -1) {
-          const replacement = remainingPlayers[reserveCandidateIdx];
-          teamB.players[extraSetterIdx] = replacement;
-          remainingPlayers[reserveCandidateIdx] = extraSetter;
-        } else if (settersA === 0) {
-          const lineCandidateIdx = teamA.players.findIndex(p => isFemalePlayer(p) === isFemale);
-          if (lineCandidateIdx !== -1) {
-            const swapTarget = teamA.players[lineCandidateIdx];
-            teamB.players[extraSetterIdx] = swapTarget;
-            teamA.players[lineCandidateIdx] = extraSetter;
-          }
-        } else {
-          const anyReserveIdx = remainingPlayers.findIndex(p => p && !p.isOfficialSetter);
-          if (anyReserveIdx !== -1) {
-            const replacement = remainingPlayers[anyReserveIdx];
-            teamB.players[extraSetterIdx] = replacement;
-            remainingPlayers[anyReserveIdx] = extraSetter;
-          }
-        }
-      }
+    if (benchIdx !== -1) {
+      const replacement = remainingPlayers[benchIdx];
+      team.players[extraSetterIdx] = replacement;
+      remainingPlayers[benchIdx] = extraSetter;
     }
-  }
+  };
+
+  replaceExtraSetterWithBenchLine(teamA);
+  replaceExtraSetterWithBenchLine(teamB);
 
   // 2. Correção de Gênero (|menA - menB| <= 1)
   const getMenCount = (team: any) => [team.setter, ...(team.players || [])].filter(p => p && !isFemalePlayer(p)).length;
-  let menA = getMenCount(teamA);
-  let menB = getMenCount(teamB);
+  const menA = getMenCount(teamA);
+  const menB = getMenCount(teamB);
 
   if (Math.abs(menA - menB) > 1) {
     const moreMenTeam = menA > menB ? 'A' : 'B';
@@ -877,7 +883,6 @@ export const autoFixAllInconsistencies = (
     }
   }
 
-  // 3. Atualizar IC total
   teamA.totalIC = calculateTeamTotalIC(teamA);
   teamB.totalIC = calculateTeamTotalIC(teamB);
 
@@ -888,14 +893,11 @@ export const autoFixAllInconsistencies = (
     remainingPlayers
   };
 
-  // 4. Executar auto-balanceamento de Top/Bottom na linha
-  currentRes = runAutoCorrectionAgent(currentRes);
-
-  return currentRes;
+  return runAutoCorrectionAgent(currentRes);
 };
 
-export const optimizeTeamSynergyIteratively = (res: any, ...args: any[]): any => res;
-export const generateTournamentTeams = (list: Player[], numTeams: number = 2, ...args: any[]): any => ({ teams: [], reserves: [] });
+export const optimizeTeamSynergyIteratively = (res: any, ..._args: any[]): any => res;
+export const generateTournamentTeams = (_list: Player[], _numTeams: number = 2, ..._args: any[]): any => ({ teams: [], reserves: [] });
 
 export interface TopBottomValidationResult {
   isValid: boolean;
@@ -911,30 +913,30 @@ export const validateTopBottomTolerance = (result: GenerationResult): TopBottomV
   const linePlayers = [
     ...(result.teamA.players || []),
     ...(result.teamB.players || [])
-  ].filter(p => p && !p.isOfficialSetter);
+  ].filter(Boolean);
 
   if (linePlayers.length < 4) {
     return { isValid: true, diffTop: 0, diffBottom: 0, message: "Jogadores insuficientes para rigor de Top/Bottom" };
   }
 
   const sortedLine = sortLinePlayersBySkills(linePlayers);
-
   const top2Ids = new Set(sortedLine.slice(0, 2).map(p => p.id));
   const bottom2Ids = new Set(sortedLine.slice(-2).map(p => p.id));
-
-  const allA = [result.teamA.setter, ...(result.teamA.players || [])].filter(Boolean);
-  const allB = [result.teamB.setter, ...(result.teamB.players || [])].filter(Boolean);
-
   const top4Ids = new Set(sortedLine.slice(0, 4).map(p => p.id));
   const bottom4Ids = new Set(sortedLine.slice(-4).map(p => p.id));
-  const t2A = allA.filter(p => top2Ids.has(p.id)).length;
-  const t2B = allB.filter(p => top2Ids.has(p.id)).length;
-  const b2A = allA.filter(p => bottom2Ids.has(p.id)).length;
-  const b2B = allB.filter(p => bottom2Ids.has(p.id)).length;
-  const t4A = allA.filter(p => top4Ids.has(p.id)).length;
-  const t4B = allB.filter(p => top4Ids.has(p.id)).length;
-  const b4A = allA.filter(p => bottom4Ids.has(p.id)).length;
-  const b4B = allB.filter(p => bottom4Ids.has(p.id)).length;
+
+  const lineA = result.teamA.players || [];
+  const lineB = result.teamB.players || [];
+
+  const t2A = lineA.filter(p => top2Ids.has(p.id)).length;
+  const t2B = lineB.filter(p => top2Ids.has(p.id)).length;
+  const b2A = lineA.filter(p => bottom2Ids.has(p.id)).length;
+  const b2B = lineB.filter(p => bottom2Ids.has(p.id)).length;
+  const t4A = lineA.filter(p => top4Ids.has(p.id)).length;
+  const t4B = lineB.filter(p => top4Ids.has(p.id)).length;
+  const b4A = lineA.filter(p => bottom4Ids.has(p.id)).length;
+  const b4B = lineB.filter(p => bottom4Ids.has(p.id)).length;
+
   const diffTop2 = Math.abs(t2A - t2B);
   const diffBottom2 = Math.abs(b2A - b2B);
   const diffTop4 = Math.abs(t4A - t4B);

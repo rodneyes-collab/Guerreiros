@@ -20,7 +20,7 @@ import {
   getFirestore, 
   collection, 
   doc, 
-  updateDoc as updateDoc, 
+  updateDoc, 
   onSnapshot, 
   setDoc, 
   deleteDoc, 
@@ -54,7 +54,7 @@ import { getMessaging, getToken, onMessage } from 'firebase/messaging';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import firebaseConfig from './firebase-applet-config.json';
 
-// Initialize Firebase with persistence-friendly settings
+// Initialize Firebase App
 let app;
 try {
   app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
@@ -63,21 +63,24 @@ try {
   app = getApp();
 }
 
-// Silencia logs internos do Firestore SDK para evitar ruído
+// Silencia logs internos verbosos do Firestore SDK
 if (typeof window !== 'undefined') {
   try {
     setLogLevel('silent');
   } catch (e) {}
 }
 
-// Selector e Gerenciador de Persistência / Cache no Firestore para evitar QuotaExceededError
 export type FirestorePersistenceMode = 'bounded' | 'memory' | 'unlimited';
 
+/**
+ * Define 'memory' como padrão absoluto para garantir sincronia 100% em tempo real
+ * entre Celular (PWA), Bot WhatsApp e AI Studio, evitando filas travadas no IndexedDB.
+ */
 export const getFirestorePersistenceMode = (): FirestorePersistenceMode => {
-  if (typeof window === 'undefined' || !window.localStorage) return 'bounded';
+  if (typeof window === 'undefined' || !window.localStorage) return 'memory';
   const saved = window.localStorage.getItem('guerreiros_firestore_persistence_mode');
-  if (saved === 'memory' || saved === 'unlimited' || saved === 'bounded') return saved;
-  return 'bounded';
+  if (saved === 'memory' || saved === 'bounded' || saved === 'unlimited') return saved;
+  return 'memory';
 };
 
 export const purgeFirestoreLocalStorageKeys = (): number => {
@@ -114,61 +117,65 @@ export const setFirestorePersistenceMode = (mode: FirestorePersistenceMode): voi
 };
 
 let dbInstance;
-export let isMemoryFallbackActive = false;
+export let isMemoryFallbackActive = true;
 
-// Prioriza o banco customizado se definido (ex.: volleyclub-manager)
-const dbId = (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)') 
-  ? firebaseConfig.firestoreDatabaseId 
-  : undefined;
+// TRAVA UNIFICADA DE BANCO DE DADOS (Idêntica ao server.ts):
+// Garante que Frontend e Backend sempre se conectem exatamente ao mesmo firestoreDatabaseId
+export const ACTIVE_FIRESTORE_DB_ID =
+  (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)')
+    ? firebaseConfig.firestoreDatabaseId
+    : undefined;
 
 if (typeof window !== 'undefined') {
   const currentMode = getFirestorePersistenceMode();
-  
-  // Limpa alvos velhos do localStorage para não exceder cota do projeto volleyclub-manager
-  if (currentMode !== 'unlimited') {
-    purgeFirestoreLocalStorageKeys();
-  }
+  purgeFirestoreLocalStorageKeys();
 
   let localCacheSetting;
-  if (currentMode === 'memory') {
-    localCacheSetting = memoryLocalCache();
+  if (currentMode === 'bounded') {
+    isMemoryFallbackActive = false;
+    localCacheSetting = persistentLocalCache({
+      tabManager: persistentMultipleTabManager(),
+      cacheSizeBytes: 10 * 1024 * 1024 // 10 MB
+    });
   } else if (currentMode === 'unlimited') {
+    isMemoryFallbackActive = false;
     localCacheSetting = persistentLocalCache({
       tabManager: persistentMultipleTabManager(),
       cacheSizeBytes: CACHE_SIZE_UNLIMITED
     });
   } else {
-    // 'bounded' - 10MB limit especificamente calibrado para a instância volleyclub-manager
-    localCacheSetting = persistentLocalCache({
-      tabManager: persistentMultipleTabManager(),
-      cacheSizeBytes: 10 * 1024 * 1024 // 10 MB
-    });
+    isMemoryFallbackActive = true;
+    localCacheSetting = memoryLocalCache();
   }
 
   try {
     const settings = { localCache: localCacheSetting };
-    dbInstance = dbId ? initializeFirestore(app, settings, dbId) : initializeFirestore(app, settings);
+    dbInstance = ACTIVE_FIRESTORE_DB_ID
+      ? initializeFirestore(app, settings, ACTIVE_FIRESTORE_DB_ID)
+      : initializeFirestore(app, settings);
   } catch (e: any) {
-    console.warn('[Firestore] Modern persistence init failed or quota exceeded, activating memoryLocalCache fallback:', e);
     isMemoryFallbackActive = true;
-    purgeFirestoreLocalStorageKeys();
     try {
       const memSettings = { localCache: memoryLocalCache() };
-      dbInstance = dbId ? initializeFirestore(app, memSettings, dbId) : initializeFirestore(app, memSettings);
+      dbInstance = ACTIVE_FIRESTORE_DB_ID
+        ? initializeFirestore(app, memSettings, ACTIVE_FIRESTORE_DB_ID)
+        : initializeFirestore(app, memSettings);
     } catch (fallbackErr) {
-      dbInstance = dbId ? getFirestore(app, dbId) : getFirestore(app);
+      dbInstance = ACTIVE_FIRESTORE_DB_ID
+        ? getFirestore(app, ACTIVE_FIRESTORE_DB_ID)
+        : getFirestore(app);
     }
   }
 
-  // Auto-reconnect when device regains connectivity
   window.addEventListener('online', () => {
-    console.info('[Firestore] Dispositivo online detectado, reestabelecendo conexão com o backend...');
     if (dbInstance) {
-      enableNetwork(dbInstance).catch((err) => console.warn('[Firestore] Erro ao reabilitar rede:', err));
+      enableNetwork(dbInstance).catch(() => {});
     }
   });
 } else {
-  dbInstance = dbId ? getFirestore(app, dbId) : getFirestore(app);
+  dbInstance = ACTIVE_FIRESTORE_DB_ID
+    ? getFirestore(app, ACTIVE_FIRESTORE_DB_ID)
+    : getFirestore(app);
 }
 
 export const db = dbInstance;
@@ -176,7 +183,6 @@ export const auth = getAuth(app);
 export const storage = getStorage(app);
 export const messaging = typeof window !== 'undefined' && 'Notification' in window ? getMessaging(app) : null;
 
-// Persistence Auth
 if (typeof window !== 'undefined') {
   setPersistence(auth, browserLocalPersistence).catch((err) => {
     console.warn('[Firebase Auth] Failed to configure persistence:', err);
@@ -214,21 +220,13 @@ export interface FirestoreErrorInfo {
   }
 }
 
-/**
- * Alterna temporariamente disableNetwork/enableNetwork e expurga alvos locais
- * do LocalStorage para prevenir QuotaExceededError durante o onAuthStateChanged
- * ou em resposta a erros críticos de cota.
- */
 export const resetFirestoreNetworkSession = async (): Promise<void> => {
   if (typeof window === 'undefined' || !db) return;
   try {
-    console.info('[Firestore Network Manager] Alternando estado de rede (disableNetwork -> enableNetwork) para rotacionar persistência...');
     await disableNetwork(db);
     purgeFirestoreLocalStorageKeys();
     await enableNetwork(db);
-    console.info('[Firestore Network Manager] Rede reabilitada com sucesso com cache purgado.');
   } catch (err) {
-    console.warn('[Firestore Network Manager] Erro ao alternar rede do Firestore:', err);
     try {
       await enableNetwork(db);
     } catch (e) {}
@@ -241,16 +239,15 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 
   if (code === 'resource-exhausted' || message.includes('bandwidth for writes') || message.includes('quota exceeded') || message.includes('QuotaExceededError') || message.includes('maximum bandwidth')) {
     isQuotaExceeded = true;
-    console.warn('[Firestore Quota Handled] Cota excedida ou limite de armazenamento atingido. Executando disableNetwork/enableNetwork e expurgo preventivo:', message);
     purgeFirestoreLocalStorageKeys();
     if (typeof window !== 'undefined' && db) {
-      resetFirestoreNetworkSession().catch(err => console.warn('[Firestore] Erro no reset de rede por quota:', err));
+      resetFirestoreNetworkSession().catch(() => {});
     }
     return;
   }
 
   if (code === 'unavailable' || message.includes('unavailable') || message.includes('Could not reach Cloud Firestore backend') || message.includes('client is offline')) {
-    console.warn('[Firestore Connection Handled] Servidor temporariamente inacessível ou offline. Operando com cache local IndexedDB:', message);
+    console.warn('[Firestore Connection Handled] Oscilação temporária de rede:', message);
     return;
   }
 
@@ -271,7 +268,7 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     },
     operationType,
     path
-  }
+  };
   console.error('Firestore Error: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
 }
@@ -279,11 +276,12 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 let pendingReads = 0;
 let pendingWrites = 0;
 let lastSyncTime = 0;
-let cachedLastUpdate: string | null = null; // Cache local para evitar getDoc desnecessário
+let cachedLastUpdate: string | null = null;
 let currentPlayerId: string | null = null;
 let cachedPlayerLastUpdate: string | null = null;
+let lastAccessTrackTime = 0;
 export let isQuotaExceeded = false;
-const SYNC_INTERVAL = 600000; // Aumentado para 10 minutos para máxima economia de banda e escrita
+const SYNC_INTERVAL = 600000; // 10 minutos
 
 export const setCurrentPlayerId = (id: string | null) => {
   if (id !== currentPlayerId) {
@@ -294,35 +292,11 @@ export const setCurrentPlayerId = (id: string | null) => {
 
 export const trackAccess = async (overridePlayerId?: string) => {
   if (isQuotaExceeded) return;
+  if (Date.now() - lastAccessTrackTime < 60000) return;
+  lastAccessTrackTime = Date.now();
+
   const targetId = overridePlayerId || currentPlayerId;
-  if (!targetId || isQuotaExceeded) {
-    if (!targetId && auth.currentUser) {
-      try {
-        const email = auth.currentUser.email;
-        const uid = auth.currentUser.uid;
-        const playersRef = collection(db, 'players');
-        let q = query(playersRef, where('uid', '==', uid), limit(1));
-        let snap = await getDocs(q);
-        let foundId: string | null = null;
-        if (!snap.empty) {
-          foundId = snap.docs[0].id;
-        } else if (email) {
-          q = query(playersRef, where('email', '==', email.trim().toLowerCase()), limit(1));
-          snap = await getDocs(q);
-          if (!snap.empty) {
-            foundId = snap.docs[0].id;
-          }
-        }
-        if (foundId) {
-          currentPlayerId = foundId;
-          return trackAccess(foundId);
-        }
-      } catch (err) {
-        console.warn('[trackAccess] Failed fallback player lookup:', err);
-      }
-    }
-    return;
-  }
+  if (!targetId) return;
 
   const today = getFirestoreDateKey();
   const playerRef = doc(db, 'players', targetId);
@@ -331,103 +305,54 @@ export const trackAccess = async (overridePlayerId?: string) => {
     const playerData = playerSnap.exists() ? playerSnap.data() : null;
     const isNewDay = !playerData || !playerData.lastReadUpdate || playerData.lastReadUpdate < today;
 
-    console.log(`[trackAccess] Initing track for ${targetId}. isNewDay: ${isNewDay}`);
-
     const now = new Date().toISOString();
     const loginHistory = playerData?.loginHistory || [];
     
-    // Avoid duplicate recording if called within 30 seconds
     if (loginHistory.length > 0) {
       const lastLoginTime = new Date(loginHistory[0]).getTime();
-      if (!isNaN(lastLoginTime) && Date.now() - lastLoginTime < 30000) {
-        console.log('[trackAccess] Skipping duplicate access within 30s');
+      if (!isNaN(lastLoginTime) && Date.now() - lastLoginTime < 60000) {
         return;
       }
     }
     
     const newHistory = [now, ...loginHistory].slice(0, 20);
     const currentAccesses = Number(playerData?.accesses || 0);
+    const currentDaily = Number(playerData?.dailyAccesses || 0);
 
     const batch = writeBatch(db);
-    let batchSize = 0;
+    batch.set(playerRef, {
+      accesses: currentAccesses + 1,
+      dailyAccesses: isNewDay ? 1 : currentDaily + 1,
+      lastReadUpdate: today,
+      lastLoginAt: now,
+      loginHistory: newHistory
+    }, { merge: true });
 
-    if (isNewDay) {
-      batch.update(playerRef, {
-        accesses: currentAccesses + 1,
-        dailyAccesses: 1,
-        lastReadUpdate: today,
-        lastLoginAt: now,
-        loginHistory: newHistory
-      });
-    } else {
-      const currentDaily = Number(playerData?.dailyAccesses || 0);
-      batch.update(playerRef, {
-        accesses: currentAccesses + 1,
-        dailyAccesses: currentDaily + 1,
-        lastReadUpdate: today,
-        lastLoginAt: now,
-        loginHistory: newHistory
-      });
-    }
-    batchSize++;
-
-    // Incrementar o contador global de acessos também
-    const usageRef = doc(db, 'metadata', 'usage');
-    batch.set(usageRef, {
+    batch.set(doc(db, 'metadata', 'usage'), {
       accesses: increment(1)
     }, { merge: true });
-    batchSize++;
 
-    console.log(`[trackAccess] Enviando lote de acesso (${targetId}): ${batchSize} operações.`);
     await batch.commit();
-
-    console.log(`[Usage] Acesso registrado para o sócio: ${targetId} (Dia: ${isNewDay ? 1 : 'inc'}) às ${now}`);
   } catch (e: any) {
     if (e?.code === 'resource-exhausted' || e?.message?.includes('bandwidth for writes')) {
       isQuotaExceeded = true;
-      console.error('[Firestore] Quota exceeded in trackAccess.');
-      return;
-    }
-    try {
-      const now = new Date().toISOString();
-      const batch = writeBatch(db);
-      batch.set(playerRef, { 
-        accesses: 1, 
-        dailyAccesses: 1, 
-        lastReadUpdate: today,
-        lastLoginAt: now,
-        loginHistory: [now]
-      }, { merge: true });
-      batch.set(doc(db, 'metadata', 'usage'), {
-        accesses: increment(1)
-      }, { merge: true });
-      await batch.commit();
-      console.log(`[Usage] Acesso registrado via lote fallback para o sócio: ${targetId}`);
-    } catch (err) {
-      console.warn('Erro ao rastrear acesso:', err);
     }
   }
 };
 
 export const getFirestoreDateKey = (date?: Date) => {
   const now = date || new Date();
-  
-  // Format the date strictly in Brazilian Timezone (America/Sao_Paulo)
-  // This avoids any local timezone or UTC offsets bugs
   const formatter = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/Sao_Paulo',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit'
   });
-  
-  // en-CA format returns YYYY-MM-DD
   return formatter.format(now);
 };
 
 export const getBrazilDay = () => {
   const now = new Date();
-  // A bulletproof way to get 0-6 day of week in Brazil
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/Sao_Paulo',
     weekday: 'short'
@@ -438,21 +363,18 @@ export const getBrazilDay = () => {
   return days[dayName || 'Sun'] || 0;
 };
 
-/**
- * Returns the date key (YYYY-MM-DD) for the next upcoming Thursday.
- * If today is Thursday, it returns today.
- */
 export const getNextThursday = () => {
   const todayStr = getFirestoreDateKey();
   const [y, m, d] = todayStr.split('-').map(Number);
-  const date = new Date(y, m - 1, d);
+  // Usa meio-dia UTC para evitar desvios de fuso horário local entre diferentes celulares e o servidor
+  const date = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
   const day = getBrazilDay();
   
   let diff = 4 - day;
   if (diff < 0) diff += 7;
   
-  date.setDate(date.getDate() + diff);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  date.setUTCDate(date.getUTCDate() + diff);
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
 };
 
 export const trackUsage = async (reads: number, writes: number) => {
@@ -463,12 +385,10 @@ export const trackUsage = async (reads: number, writes: number) => {
 
   const now = Date.now();
   const today = getFirestoreDateKey();
-  
-  // Se mudou o dia (comparando com a data da última sincronização), força o sync
   const lastSyncDate = lastSyncTime > 0 ? getFirestoreDateKey(new Date(lastSyncTime)) : null;
   const isNewDay = lastSyncDate && today !== lastSyncDate;
 
-  if (!isNewDay && now - lastSyncTime < SYNC_INTERVAL && pendingWrites < 10 && pendingReads < 50) {
+  if (!isNewDay && now - lastSyncTime < SYNC_INTERVAL && pendingWrites < 20 && pendingReads < 100) {
     return;
   }
 
@@ -487,7 +407,6 @@ export const trackUsage = async (reads: number, writes: number) => {
   let batchSize = 0;
 
   try {
-    // Sincronização do Sócio (Individual)
     if (playerRef) {
       if (cachedPlayerLastUpdate === today) {
         batch.update(playerRef, {
@@ -499,48 +418,31 @@ export const trackUsage = async (reads: number, writes: number) => {
         });
         batchSize++;
       } else {
-        const playerSnap = await getDoc(playerRef);
-        const playerData = playerSnap.exists() ? playerSnap.data() : null;
-        const shouldResetPlayer = !playerData || !playerData.lastReadUpdate || (playerData.lastReadUpdate < today);
-
-        if (shouldResetPlayer) {
-          batch.set(playerRef, {
-            reads: readsToSync,
-            writes: writesToSync,
-            totalReads: increment(readsToSync),
-            totalWrites: increment(writesToSync),
-            lastReadUpdate: today
-          }, { merge: true });
-        } else {
-          batch.update(playerRef, {
-            reads: increment(readsToSync),
-            writes: increment(writesToSync),
-            totalReads: increment(readsToSync),
-            totalWrites: increment(writesToSync),
-            lastReadUpdate: today
-          });
-        }
+        batch.set(playerRef, {
+          reads: increment(readsToSync),
+          writes: increment(writesToSync),
+          totalReads: increment(readsToSync),
+          totalWrites: increment(writesToSync),
+          lastReadUpdate: today
+        }, { merge: true });
         batchSize++;
         cachedPlayerLastUpdate = today;
       }
     }
 
-    // Se já sabemos que o documento de hoje existe, apenas incrementamos
     if (cachedLastUpdate === today) {
-      batch.update(usageRef, {
+      batch.set(usageRef, {
         reads: increment(readsToSync),
         writes: increment(writesToSync),
         lastUpdate: today
-      });
+      }, { merge: true });
       batchSize++;
-      console.log(`[Usage] Batching: +${readsToSync}R, +${writesToSync}W (Cache)`);
     } else {
       const usageSnap = await getDoc(usageRef);
       const currentData = usageSnap.exists() ? usageSnap.data() : null;
       const shouldReset = !currentData || (currentData.lastUpdate < today);
 
       if (shouldReset) {
-        console.log(`[Usage] Novo dia detectado (${today}). Arquivando e resetando contadores.`);
         if (currentData && currentData.lastUpdate) {
           const historyRef = doc(db, 'usage_history', currentData.lastUpdate);
           batch.set(historyRef, {
@@ -558,25 +460,17 @@ export const trackUsage = async (reads: number, writes: number) => {
           lastUpdate: today
         }, { merge: true });
         batchSize++;
-      } else if (currentData.lastUpdate === today) {
-        batch.update(usageRef, {
+      } else {
+        batch.set(usageRef, {
           reads: increment(readsToSync),
           writes: increment(writesToSync),
           lastUpdate: today
-        });
-        batchSize++;
-        console.log(`[Usage] Batching: +${readsToSync}R, +${writesToSync}W (DB Sync)`);
-      } else {
-        batch.update(usageRef, {
-          reads: increment(readsToSync),
-          writes: increment(writesToSync)
-        });
+        }, { merge: true });
         batchSize++;
       }
       cachedLastUpdate = today;
     }
 
-    // Monthly usage
     batch.set(monthlyUsageRef, {
       reads: increment(readsToSync),
       writes: increment(writesToSync),
@@ -585,17 +479,12 @@ export const trackUsage = async (reads: number, writes: number) => {
     batchSize++;
 
     if (batchSize > 0) {
-      console.log(`[trackUsage] Enviando lote de uso: ${batchSize} operações.`);
       await batch.commit();
     }
   } catch (e: any) {
     if (e?.code === 'resource-exhausted') {
       isQuotaExceeded = true;
-      console.error('Quota do Firestore excedida.');
-      return;
     }
-    // Fallback silencioso para não interromper o app
-    console.warn('Erro ao atualizar uso diário:', e);
   }
 };
 
@@ -620,10 +509,7 @@ export const trackAIUsage = async (calls: number) => {
     }, { merge: true });
 
     await batch.commit();
-    console.log(`[trackAIUsage] Uso de IA registrado: ${calls} chamadas.`);
-  } catch (e: any) {
-    console.warn('Erro ao rastrear uso de IA:', e);
-  }
+  } catch (e: any) {}
 };
 
 export { 
@@ -663,33 +549,8 @@ export {
   getStorage,
   ref,
   uploadBytes,
-  getDownloadURL
+  getDownloadURL,
+  getToken,
+  onMessage
 };
 export type { User };
-
-// Test connection
-async function testConnection() {
-  // Se o navegador estiver offline ou se estivermos em um ambiente de build headless/sandbox,
-  // evita registrar erro fatal de configuração para não quebrar a compilação do container.
-  if (typeof navigator !== 'undefined' && !navigator.onLine) {
-    console.warn("Dispositivo offline. Operando em modo de cache local.");
-    return;
-  }
-
-  try {
-    // Adiciona um timeout curto para falhar rápido caso a rede pública não esteja acessível do container
-    const checkPromise = getDocFromServer(doc(db, 'test', 'connection'));
-    await Promise.race([
-      checkPromise,
-      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 4000))
-    ]);
-  } catch (error) {
-    const errMsg = error instanceof Error ? error.message : String(error);
-    if (errMsg.includes('the client is offline') || errMsg.includes('timeout') || errMsg.includes('Could not reach') || errMsg.includes('unavailable')) {
-      console.warn("Verificação de conexão com Firebase expirou ou está offline. Operando em modo de cache local.");
-    } else {
-      console.warn("Verificação de conexão com Firebase indisponível no momento. Operando em modo de cache local.");
-    }
-  }
-}
-// testConnection();

@@ -12,19 +12,20 @@ Este documento detalha o padrão visual, a arquitetura de dados, os fluxos de au
 ---
 
 ## 🛑 DIRETRIZ ESTATUTÁRIA DE BANCO DE DADOS ÚNICO (UNIFIED DATABASE RULE)
-- **Proibição Absoluta de Múltiplos Bancos de Dados:** A aplicação NÃO PODE utilizar outro banco de dados. É estritamente proibido criar, provisionar, alternar ou apontar para instâncias secundárias ou bancos isolados (ex.: namespaces como `ai-studio-guerreirosvolley-...`).
-- **Banco Oficial Único:** Tanto o aplicativo instalado no celular (PWA / Produção) quanto o ambiente de desenvolvimento (AI Studio / Web) DEVEM utilizar obrigatoriamente a MESMA e ÚNICA instância do banco de dados Firestore: a base principal `(default)` do projeto `volleyclub-manager` (`"firestoreDatabaseId": "(default)"`).
+- **Proibição Absoluta de Múltiplos Bancos de Dados:** A aplicação NÃO PODE operar com instâncias divergentes entre o Frontend (`firebase.ts`) e o Backend (`server.ts`). É estritamente proibido inicializar o `firebase-admin/firestore` no backend sem verificar o mesmo `firestoreDatabaseId` utilizado pelo frontend em `firebase-applet-config.json`.
+- **Sincronia Estrita Frontend/Backend:** Tanto o aplicativo instalado no celular (PWA / Produção), quanto o servidor Node.js (`server.ts` / Webhook WhatsApp) e o ambiente de desenvolvimento (AI Studio / Web) DEVEM ler a mesma chave `firebaseConfig.firestoreDatabaseId` (ou a base principal `(default)` do projeto `volleyclub-manager` quando configurado como `"(default)"`), garantindo que todas as leituras e escritas ocorram exatamente no mesmo banco.
 - **Diretriz para MCP, Skills e Agentes (Firebase / Firestore):**
-  - Qualquer ferramenta de provisionamento (`set_up_firebase`), skill (`firebase-integration-rpc`) ou protocolo MCP DEVE operar estritamente sobre a instância `(default)`.
-  - É expressamente proibido a qualquer agente, skill ou automação alterar o campo `firestoreDatabaseId` no `firebase-applet-config.json` para qualquer valor diferente de `"(default)"`.
-  - Todas as partidas, presenças oficiais (68+ rodadas históricas), rankings, intenções e perfis de sócios pertencem única e exclusivamente à base `(default)` unificada.
+  - Qualquer ferramenta de provisionamento (`set_up_firebase`), skill (`firebase-integration-rpc`) ou protocolo MCP DEVE preservar a unificação da base de dados.
+  - É expressamente proibido a qualquer agente reescrever `getFirestore()` no `server.ts` ignorando `firebaseConfig.firestoreDatabaseId`.
+  - Todas as partidas, presenças oficiais (68+ rodadas históricas), rankings, intenções e perfis de sócios pertencem única e exclusivamente à mesma base unificada.
+
 Antes de executar QUALQUER alteração, a IA DEVE seguir estritamente este fluxo:
 
 1. **ANÁLISE DE IMPACTO:** Identifique os arquivos e funções que serão alterados. Se a alteração envolver `App.tsx`, a IA deve planejar a extração do código para um arquivo isolado antes de editá-lo.
 2. **PLANO DE EXECUÇÃO:** Apresente um plano de no máximo 3 etapas. Não comece a codificar antes do usuário confirmar.
 3. **ISOLAMENTO:** Jamais altere uma funcionalidade se ela estiver dentro de um componente genérico (como `App.tsx`) sem antes refatorá-la para um componente ou hook dedicado.
 4. **ZONAS DE NÃO INTERFERÊNCIA:** 
-    - **Filtro de Sócios Ativos e DM (Departamento Médico):** Na lista de presença, na seleção para convocar (chamada, intenções e presenças pública/interna) e no motor de geração de times, SOMENTE sócios com status de cadastro estritamente ATIVO (`status === 'active'`) e que NÃO estejam marcados como DM (`isDM: true` ou `status === 'dm'`) podem ser exibidos ou selecionados. Sócios com status Inativo (`status === 'inactive'`), DM, Departamento Médico ou Lista de Espera (`status === 'waiting'`) são estritamente proibidos de figurar em qualquer lista de presença ou convocação. Atualmente o clube conta com 30 sócios ativos.
+    - **Filtro de Sócios Ativos e DM (Departamento Médico):** Na lista de presença, na seleção para convocar (chamada, intenções e presenças pública/interna) e no motor de geração de times, SOMENTE sócios com status de cadastro estritamente ATIVO (`status === 'active'`) e que NÃO estejam marcados como DM (`isDM: true` ou `status === 'dm'`) podem ser exibidos ou selecionados. Sócios com status Inativo (`status === 'inactive'`), DM, Departamento Médico ou Lista de Espera (`status === 'waiting'`) são estritamente proibidos de figurar em qualquer lista de presença ou convocação.
     - **Gestão de Status de Saúde (Paulo Henrique e outros):** Sócios em DM (ex: Paulo Henrique) devem ser automaticamente ocultados de todas as interfaces de operação (Lista de Intenção, Presença e Escalação) até que seu status seja revertido para Ativo e o marcador `isDM` seja removido.
     - **Verificação e Comunicação Direta:** Após QUALQUER alteração, o agente deve validar o código (linter e build). A resposta enviada ao usuário NÃO deve detalhar arquivos modificados nem relatórios de testes, informando apenas que a solicitação foi verificada e testada com sucesso.
     - **Proibido "God Components":** É proibido adicionar lógica de negócio diretamente no `App.tsx`.
@@ -50,48 +51,77 @@ Para garantir a confiabilidade absoluta do histórico e dos rankings do Guerreir
 3. **Ordenação Cronológica Estrita (`timestamp`):**
    - Toda listagem, cálculo de ranking ou renderização no componente de histórico (`HistoryView`) deve ordenar as partidas obrigatoriamente por `timestamp` crescente (`(a, b) => (a.timestamp || 0) - (b.timestamp || 0)`), garantindo a sequência real em que os jogos ocorreram na quadra.
 
-3. **Validação de Data Redundante (Resiliência de Fuso):**
+4. **Validação de Data Redundante (Resiliência de Fuso):**
    - O filtro de partidas por data deve cruzar o campo `m.date` com a conversão explícita do `timestamp` para o fuso horário oficial de Brasília (`America/Sao_Paulo`), prevenindo falsos vazios causados por divergências de UTC ou fusos locais.
+   - O cálculo de `getNextThursday()` deve utilizar meio-dia UTC (`Date.UTC(y, m - 1, d, 12, 0, 0)`) com referência em `America/Sao_Paulo` tanto no frontend quanto no backend para evitar deslocamentos de 1 dia perto da meia-noite.
 
-4. **Auditoria Obrigatória em Caso de Discrepância:**
+5. **Auditoria Obrigatória em Caso de Discrepância:**
    - Antes de efetuar qualquer alteração no pipeline de salvamento de partidas, o agente deve utilizar ferramentas de auditoria e cruzamento (`Sync Debugger`) para garantir que o número de partidas no Firestore coincida com o volume registrado no Store e nas estatísticas dos atletas.
 
-5. **Proteção contra Estado Obsoleto e Duplicidade (Concurrency Protection):**
+6. **Proteção contra Estado Obsoleto e Duplicidade (Concurrency Protection):**
    - Ao finalizar (`handleFinishMatch`) ou excluir (`deleteMatch`) uma partida, o sistema deve obrigatoriamente buscar o estado mais atual do jogador no banco de dados (ou store centralizado) antes de aplicar os incrementos/decrementos de estatísticas. É proibido confiar cegamente nos objetos de jogador vindos do resultado da geração de times para realizar cálculos de saldo de ELO ou contagem de partidas.
    - **Trava de Sincronização:** Toda ação de escrita no banco de dados deve ser protegida pelo estado `isSyncing`. O botão de finalização de partida deve ser desabilitado e exibir um estado de carregamento ("SINCRONIZANDO...") imediatamente após o primeiro clique, prevenindo que cliques múltiplos ou instabilidades de rede gerem registros duplicados ou estatísticas infladas.
 
-6. **Auto-Heal e Recuperação de Integridade:**
+7. **Auto-Heal e Recuperação de Integridade:**
    - Em caso de discrepância entre o contador de partidas exibido no perfil do jogador e o número real de partidas registradas na coleção `matches` para o dia, o agente deve priorizar o reprocessamento baseado nos documentos de partida (Fonte da Verdade).
    - **Reset Manual Soberano (`recalculateDailyStats`):** Ao disparar o recálculo manual ou finalizar o dia, o sistema DEVE obrigatoriamente realizar a escrita de todos os campos diários (`dailyMatches`, `dailyWins`, `dailyLosses`, `dailyEloGain`, `dailyResults`, `playedLastMatch`, `consecutivePlayed`, `consecutiveBenched`) para TODOS os jogadores, removendo qualquer trava condicional que impeça o zeramento de valores residuais de sessões anteriores.
 
 ---
 
-## 📋 Integridade da Lista de Intenção e Ordenação por Chegada
+## 📋 Integridade da Lista de Intenção, Sincronização com Bot e Ordenação por Chegada
 
-O gerenciamento da lista de intenção (quem "VAI" ou "NÃO VAI" jogar) deve seguir regras rígidas de transparência e ordem cronológica:
+O gerenciamento da lista de intenção (quem "VAI" ou "NÃO VAI" jogar) deve seguir regras rígidas de transparência, sincronia bidirecional (App <-> Bot WhatsApp) e ordem cronológica:
 
-1. **Horário de Confirmação (Timestamp de Intenção):**
+1. **Fonte Única da Verdade e Espelhamento Obrigatório (`metadata/intentions` + `preConfirmations`):**
+   - Toda confirmação ou recusa de presença (seja via botão no App ou via comando `gv vou` / `gv naovou` no Bot do WhatsApp) DEVE atualizar o documento `metadata/intentions` com objetos aninhados limpos (`responses`, `confirmationTimestamps`, `remindersSent`) usando `.set(updatedDoc)` sem criar chaves literais com ponto (`responses.email@...`).
+   - Simultaneamente, o backend (`server.ts`) DEVE espelhar a confirmação na subcoleção `preConfirmations/{targetDate}/players/{playerId}` (criando/atualizando quando `GOING` e removendo quando `NOT_GOING` ou `RESET`), garantindo que os listeners em tempo real do `useFirestoreSync` e `useIntentions` reflitam a mudança instantaneamente no celular.
+
+2. **Horário de Confirmação (Timestamp de Intenção):**
    - O horário exibido ao lado do nome do sócio é estritamente o **horário de confirmação na lista de intenção** para a sessão/data atual.
    - **Proibição de Fallback de Cadastro:** É terminantemente proibido utilizar o timestamp de criação do sócio ou de registros de partidas passadas como substituto na ausência do horário de intenção atual. Se não houver horário na sessão, o campo deve permanecer vazio ou mostrar o status de processamento.
 
-2. **Mecanismo de Auto-Heal de Timestamps:**
-   - Caso um sócio confirme presença através do fluxo de Pré-Confirmação (`preConfirmations`), seu horário original deve ser propagado para o documento de intenções (`metadata/intentions`). Se o horário estiver ausente na interface de intenções, o sistema deve tentar recuperá-lo automaticamente da base de pré-confirmações da semana vigente.
+3. **Mecanismo de Auto-Heal de Timestamps:**
+   - Caso um sócio confirme presença através do fluxo de Pré-Confirmação (`preConfirmations`) ou Bot do WhatsApp, seu horário original deve ser propagado para o documento de intenções (`metadata/intentions`). Se o horário estiver ausente na interface de intenções, o sistema deve tentar recuperá-lo automaticamente da base de pré-confirmações da semana vigente.
 
-3. **Protocolo de Imutabilidade (Proteção de Fila):**
-   - Uma vez confirmada a presença, o horário original deve ser preservado. Ações administrativas ou cliques repetidos de re-confirmação **NÃO** podem sobrescrever o horário inicial, protegendo o direito de prioridade por ordem de chegada.
-   - **Resolução de IDs (Aliases):** O sistema deve cruzar o `uid`, `email` e `canonicalId`. Em caso de múltiplos timestamps para o mesmo sócio na mesma sessão, prevalece sempre o **mais antigo**.
+4. **Protocolo de Imutabilidade (Proteção de Fila):**
+   - Uma vez confirmada a presença no ciclo da semana (após o cutoff de sexta-feira), o horário original deve ser preservado. Ações administrativas ou comandos repetidos (`gv vou`) **NÃO** podem sobrescrever o horário inicial, protegendo o direito de prioridade por ordem de chegada.
+   - **Resolução de IDs (Aliases):** O sistema deve gravar e cruzar `id`, `uid`, `email` e `canonicalId`. Em caso de múltiplos timestamps para o mesmo sócio na mesma sessão, prevalece sempre o **mais antigo**.
 
-4. **Trava de Re-confirmação:**
-   - O sistema deve impedir tecnicamente que um sócio já confirmado execute uma nova ação de confirmação, exibindo uma mensagem informativa e desabilitando os controles visuais.
+5. **Trava de Re-confirmação:**
+   - O sistema deve impedir tecnicamente que um sócio já confirmado perca sua posição na fila ao re-confirmar, exibindo sua posição atualizada (`#X de Y confirmados`).
 
-5. **Automação de Lembretes (Push Notifications):**
-   - **Agendamento Fixo:** Disparos automáticos às **10:00** e **16:00** nos dias de partida.
-   - **Filtro de Destinatários:** Apenas sócios com status `active` que ainda constam como "Indecisos" (sem resposta GOING ou NOT_GOING na sessão).
+6. **Automação de Lembretes (Push Notifications e WhatsApp):**
+   - **Agendamento Fixo:** Disparos automáticos às **10:00** e **16:00** nos dias de partida (App) e lembretes individuais às quartas e quintas às **10:00** via Bot do WhatsApp.
+   - **Filtro de Destinatários:** Apenas sócios com status `active` e fora do DM que ainda constam como "Indecisos" (sem resposta GOING ou NOT_GOING na sessão).
 
-6. **Unicidade de Registro de Sócio (Proibição de Chaves Duplicadas / Falsos Convidados):**
+7. **Unicidade de Registro de Sócio (Proibição de Chaves Duplicadas / Falsos Convidados):**
    - Todo sócio ativo que confirma presença deve constar estritamente uma única vez na lista de confirmados, sob o seu nome e ID canônico (`p.id`).
    - É expressamente proibido propagar ou exibir o UID de autenticação ou o e-mail do atleta como registros adicionais de 'Convidado'.
    - O pipeline de intenções deve consolidar confirmações originadas por UID ou e-mail diretamente no ID mestre do sócio e expurgar chaves de alias redundantes da visualização de confirmados e da lista de exportação do WhatsApp.
+
+---
+
+## 🤖 Protocolo Operacional do Bot de WhatsApp e Inteligência Natural (NLP)
+
+O Bot Oficial do Guerreiros VC (`/api/whatsapp/webhook` e `/api/whatsapp/cron-tasks` em `server.ts`) deve operar sob as seguintes regras:
+
+1. **Proteção de Privacidade e Anti-Intromissão:**
+   - O bot **JAMAIS** deve responder a mensagens curtas soltas (`"1"`, `"2"`, `"sim"`, `"não"`, `"vou"`) enviadas em conversas normais com outros contatos.
+   - A ativação exige obrigatoriamente os prefixos explícitos (`gv`, `bot`, `botgv`, `!`, `/`, `@guerreiros`) ou resposta rápida (`1` ou `2`) exclusivamente dentro do chat privado direto com o próprio bot.
+
+2. **Roteamento de Intenção por Linguagem Natural (Gemini NLP):**
+   - Toda mensagem acionada com prefixo deve ser classificada pelo Gemini (`gemini-2.5-flash`) nas intenções: `CONFIRM_ATTENDANCE`, `DECLINE_ATTENDANCE`, `VIEW_LIST`, `VIEW_RANKING`, `CHECK_PIX`, `RAW_STATS_LIST` ou `DEEP_ANALYTICS_CHAT` (`serverDeepAnalysis.ts`).
+
+3. **Exibição Completa de Rankings (Diário vs. Acumulado):**
+   - Na intenção `VIEW_RANKING`, é proibido limitar a listagem a apenas 10 sócios. O bot deve exibir **todos os sócios ativos** do clube e separar claramente entre o **Ranking Geral Acumulado** (carreira/ELO) e o **Ranking Diário** (partidas da rodada/dia).
+
+4. **Engajamento e Giro Diário de Voleibol Nacional (12:00 BRT):**
+   - O agendador (`cron-tasks`) dispara 1 pílula diária às 12h no grupo oficial abordando: Superliga Masculina/Feminina (segunda), Dica Técnica de Fundamentos (terça), Seleção Brasileira (quarta), Aquecimento da Rodada de Quinta (quinta) e Curiosidades Históricas/Regras do Vôlei (sexta).
+   - Consultas abertas sobre Superliga, Seleções, técnicas, rivais e estatísticas históricas são processadas via `runDeepAnalyticsChat`.
+
+5. **Automação Financeira e Recebimento de Comprovantes PIX:**
+   - A chave PIX oficial e o valor da mensalidade são lidos de `metadata/system` (favorecida oficial: Elizabeth de Souza Santos - Nubank).
+   - Quando integrado ao fluxo de comprovantes (via envio para o contato da Administradora Beth ou grupo/bot com imagem/PDF), o sistema valida destinatário, valor e data via Gemini Vision para dar baixa automática na coleção `payments` (`status: 'PAID'`).
 
 ---
 
@@ -320,6 +350,7 @@ Para garantir a transparência histórica e a exatidão estatística de todos os
 - **`utils/teamLogic.ts`:** O cérebro do app. Contém toda a lógica de `generateTeams`, `runAutoCorrectionAgent` e simuladores de sinergia.
 - **`src/hooks/useAppLogic.ts`:** Gerencia o estado global, persistência no Firestore e integra os dados dos sócios com as partidas.
 - **`src/components/TeamBalancingSimulatorCard.tsx`:** Ferramenta administrativa para auditar a eficácia do algoritmo de balanceamento.
+- **`server.ts` & `serverDeepAnalysis.ts`:** Motor backend, agendador Cron, Webhook WhatsApp NLP e analítica profunda com Gemini.
 
 ---
 

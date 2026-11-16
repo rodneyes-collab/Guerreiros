@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { APP_VERSION } from '../../constants';
 import { forceAppUpdate } from '../utils/forceAppUpdate';
 import { useStore } from '../../store';
@@ -9,116 +9,127 @@ export function useAutoVersionCheck() {
   const [serverVersion, setServerVersion] = useState<string | null>(null);
   const firestoreAppVersion = useStore(state => state.systemMetadata?.appVersion);
 
-  // Helper para comparar versões (ex: "3.9.0" > "3.3.8")
-  const isNewerVersion = (current: string, incoming: string) => {
-    const c = current.split('.').map(Number);
-    const i = incoming.split('.').map(Number);
-    for (let x = 0; i.length > x || c.length > x; x++) {
+  // Compara versões semânticas (ex: "3.9.2" > "3.9.1")
+  const isNewerVersion = useCallback((current: string, incoming: string) => {
+    if (!current || !incoming) return false;
+    const cleanCurrent = String(current).replace(/^v/i, '').trim();
+    const cleanIncoming = String(incoming).replace(/^v/i, '').trim();
+    if (cleanCurrent === cleanIncoming) return false;
+
+    const c = cleanCurrent.split('.').map(n => parseInt(n, 10) || 0);
+    const i = cleanIncoming.split('.').map(n => parseInt(n, 10) || 0);
+    const len = Math.max(c.length, i.length);
+
+    for (let x = 0; x < len; x++) {
       const cv = c[x] || 0;
       const iv = i[x] || 0;
       if (iv > cv) return true;
       if (iv < cv) return false;
     }
     return false;
-  };
+  }, []);
 
+  // Registra a versão atual carregada com sucesso
   useEffect(() => {
-    // 1. If we are running the expected version, commit it to localStorage and sessionStorage
-    const storedVersion = localStorage.getItem('guerreiros_app_version');
-    const confirmedVersion = sessionStorage.getItem('guerreiros_confirmed_version');
-    
-    // Set global running version for index.html check
     (window as any).__RUNNING_APP_VERSION__ = APP_VERSION;
 
-    if (storedVersion !== APP_VERSION || confirmedVersion !== APP_VERSION) {
-      diagnosticLogService.log('info', `Committed successful version load: v${APP_VERSION}`, {
-        previousStored: storedVersion,
-        previousConfirmed: confirmedVersion
-      });
-      localStorage.setItem('guerreiros_app_version', APP_VERSION);
-      sessionStorage.setItem('guerreiros_confirmed_version', APP_VERSION);
-    }
+    try {
+      const storedVersion = localStorage.getItem('guerreiros_app_version');
+      const confirmedVersion = sessionStorage.getItem('guerreiros_confirmed_version');
 
-    // 2. Check for mismatch in Firestore metadata
-    if (firestoreAppVersion && isNewerVersion(APP_VERSION, firestoreAppVersion)) {
-      setServerVersion(firestoreAppVersion);
-      setHasNewVersion(true);
-      
-      const sessionUpdateKey = `update_attempt_${firestoreAppVersion}`;
-      const alreadyAttemptedInSession = sessionStorage.getItem(sessionUpdateKey);
-      
-      if (!alreadyAttemptedInSession) {
-        sessionStorage.setItem(sessionUpdateKey, 'true');
-        diagnosticLogService.log('warn', `Versão Firestore (v${firestoreAppVersion}) > Local (v${APP_VERSION}). Disparando atualização forçada...`);
-        forceAppUpdate(firestoreAppVersion);
+      if (storedVersion !== APP_VERSION || confirmedVersion !== APP_VERSION) {
+        diagnosticLogService.log('info', `Committed successful version load: v${APP_VERSION}`, {
+          previousStored: storedVersion,
+          previousConfirmed: confirmedVersion
+        });
+        localStorage.setItem('guerreiros_app_version', APP_VERSION);
+        sessionStorage.setItem('guerreiros_confirmed_version', APP_VERSION);
       }
-    } else if (firestoreAppVersion && firestoreAppVersion !== APP_VERSION) {
-      // Se a versão do Firestore for menor que a atual, apenas limpamos o flag de nova versão se estiver ativo
+    } catch (e) {}
+  }, []);
+
+  // Verifica a versão real disponível no servidor (/api/version) antes de forçar atualização
+  const checkVersion = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/version?v=${Date.now()}&r=${Math.random()}`, {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0'
+        }
+      });
+
+      if (!res.ok) return;
+      const data = await res.json();
+      const apiVersion: string | undefined = data?.version;
+
+      if (!apiVersion) return;
+      setServerVersion(apiVersion);
+
+      // Só existe atualização real se o próprio servidor onde o celular está conectado
+      // estiver servindo uma versão superior ao APP_VERSION atual do navegador.
+      if (isNewerVersion(APP_VERSION, apiVersion)) {
+        const sessionUpdateKey = `update_attempt_${apiVersion}`;
+        const alreadyAttemptedInSession = sessionStorage.getItem(sessionUpdateKey);
+
+        if (alreadyAttemptedInSession) {
+          // Já tentou atualizar nesta sessão e o servidor/CDN entregou o mesmo bundle:
+          // Não exibir banner bloqueante infinito para não impedir o sócio de confirmar presença!
+          console.warn(
+            `[VersionCheck] Atualização para v${apiVersion} já tentada nesta sessão. Liberando uso normal em v${APP_VERSION}.`
+          );
+          setHasNewVersion(false);
+          return;
+        }
+
+        diagnosticLogService.log(
+          'version_check',
+          `Nova versão disponível no servidor: v${apiVersion} (Atual: v${APP_VERSION})`
+        );
+        setHasNewVersion(true);
+
+        sessionStorage.setItem(sessionUpdateKey, 'true');
+        localStorage.setItem('last_auto_update_target', apiVersion);
+
+        setTimeout(() => {
+          forceAppUpdate(apiVersion);
+        }, 1200);
+      } else {
+        // O servidor está na mesma versão (ou anterior) que o app rodando no celular
+        setHasNewVersion(false);
+      }
+    } catch (err) {
+      // Silencioso se offline para não atrapalhar o uso do sócio
       setHasNewVersion(false);
-      console.log(`[VersionCheck] Firestore version (v${firestoreAppVersion}) is older or equal to current (v${APP_VERSION}). Update skipped.`);
     }
-  }, [firestoreAppVersion]);
+  }, [isNewerVersion]);
+
+  // Dispara verificação quando o Firestore reportar mudança de versão ou periodicamente
+  useEffect(() => {
+    checkVersion();
+  }, [firestoreAppVersion, checkVersion]);
 
   useEffect(() => {
-    let isMounted = true;
-
-    const checkVersion = async () => {
-      try {
-        const res = await fetch(`/api/version?v=${Date.now()}&r=${Math.random()}`, {
-          cache: 'no-store',
-          headers: { 
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'Pragma': 'no-cache',
-            'Expires': '0'
-          }
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.version && isMounted) {
-            setServerVersion(data.version);
-            if (data.version && isNewerVersion(APP_VERSION, data.version)) {
-              diagnosticLogService.log('version_check', `Versão API (v${data.version}) difere do App (v${APP_VERSION})`);
-              setHasNewVersion(true);
-              
-              const lastUpdateAttempt = localStorage.getItem('last_auto_update_target');
-              if (lastUpdateAttempt !== data.version) {
-                diagnosticLogService.log('update_attempt', `Disparando atualização automática para v${data.version}`);
-                localStorage.setItem('last_auto_update_target', data.version);
-                setTimeout(() => {
-                  forceAppUpdate(data.version);
-                }, 2000);
-              }
-            } else {
-              setHasNewVersion(false);
-            }
-          }
-        }
-      } catch (err) {
-        // Silent fail if offline
-        diagnosticLogService.log('error', 'Falha ao checar versão via API (offline ou erro de rede)', err);
-      }
-    };
-
-    checkVersion();
-    const interval = setInterval(checkVersion, 30000);
+    const interval = setInterval(checkVersion, 60000); // Checa a cada 60s sem sobrecarregar
 
     const onVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
         checkVersion();
       }
     };
+
     window.addEventListener('focus', checkVersion);
     window.addEventListener('online', checkVersion);
     document.addEventListener('visibilitychange', onVisibilityChange);
 
     return () => {
-      isMounted = false;
       clearInterval(interval);
       window.removeEventListener('focus', checkVersion);
       window.removeEventListener('online', checkVersion);
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, []);
+  }, [checkVersion]);
 
   return {
     hasNewVersion,

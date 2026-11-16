@@ -8,7 +8,7 @@ import { toStandardDateKey } from './dateUtils';
  * no fuso horário oficial de Brasília (America/Sao_Paulo).
  */
 export const toCanonicalDateString = (timestampOrDate: number | string): string => {
-  if (typeof timestampOrDate === 'number') {
+  if (typeof timestampOrDate === 'number' && !isNaN(timestampOrDate) && timestampOrDate > 0) {
     return new Intl.DateTimeFormat('en-CA', {
       timeZone: 'America/Sao_Paulo',
       year: 'numeric',
@@ -19,10 +19,24 @@ export const toCanonicalDateString = (timestampOrDate: number | string): string 
 
   if (typeof timestampOrDate === 'string' && timestampOrDate.trim()) {
     const trimmed = timestampOrDate.trim();
+
+    // Se for string numérica (ex: "1793928000000")
+    if (/^\d+$/.test(trimmed)) {
+      const parsedNum = Number(trimmed);
+      if (!isNaN(parsedNum) && parsedNum > 0) {
+        return new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'America/Sao_Paulo',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit'
+        }).format(new Date(parsedNum));
+      }
+    }
+
     // Trata formato ISO com horário (ex: 2026-11-05T20:14:33.000Z)
     if (trimmed.includes('T')) {
       const parsedTs = Date.parse(trimmed);
-      if (!isNaN(parsedTs)) {
+      if (!isNaN(parsedTs) && parsedTs > 0) {
         return toCanonicalDateString(parsedTs);
       }
     }

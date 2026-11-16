@@ -1,117 +1,73 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useStore } from '../../store';
-import { 
-  db, 
-  collection, 
-  getDocs, 
-  doc, 
-  setDoc, 
-  getDoc,
-  getFirestoreDateKey
-} from '../../firebase';
+import { db, doc, setDoc, getFirestoreDateKey } from '../../firebase';
 import { scanDatabaseAnomalies, executeDbAutoCorrection } from '../../services/dbAutoCorrectionAgent';
-import { Player } from '../../types';
 
 /**
- * Hook to perform autonomous and periodic database maintenance & auto-corrections.
- * Runs autonomously for Admin sessions according to configured schedule (Daily/Weekly).
+ * Manutenção e Autocorreção Autônoma Otimizada:
+ * Opera diretamente sobre os dados já carregados na Store (Zero getDocs redundantes),
+ * executando no máximo 1 vez por dia para sessões de Administrador.
  */
 export const useDatabaseMaintenance = () => {
   const user = useStore(state => state.user);
   const userRole = useStore(state => state.userRole);
+  const players = useStore(state => state.players);
+  const matches = useStore(state => state.matches);
   const showNotification = useStore(state => state.showNotification);
+  const executedRef = useRef(false);
 
   useEffect(() => {
-    const runAutonomousAgent = async () => {
-      // Delay execution to avoid resource contention during app startup (especially on mobile)
-      await new Promise(resolve => setTimeout(resolve, 20000));
+    if (executedRef.current || !user || userRole !== 'ADMIN') return;
+    if (!players || players.length === 0) return;
 
-      // 1. Authorization: Master Admin or Admin role
-      if (!user || userRole !== 'ADMIN') return;
+    const todayKey = getFirestoreDateKey();
+    const localRunKey = 'guerreiros_last_autonomous_db_check';
+    if (localStorage.getItem(localRunKey) === todayKey) {
+      executedRef.current = true;
+      return;
+    }
 
-      const todayKey = getFirestoreDateKey();
-      const configRef = doc(db, 'system_config', 'autocorrect_settings');
-      const maintenanceRef = doc(db, 'metadata', 'last_autocorrect_maintenance');
+    const timer = setTimeout(async () => {
+      if (executedRef.current) return;
+      executedRef.current = true;
 
       try {
-        // Fetch autonomous settings (Default: Enabled, Frequency: DAILY, AutoFix: true)
-        const configSnap = await getDoc(configRef);
-        const settings = configSnap.exists() ? configSnap.data() : {
+        const settings = {
           enabled: true,
-          frequency: 'DAILY', // 'DAILY' | 'WEEKLY'
+          frequency: 'DAILY',
           autoFix: true,
-          notifyAdmin: true
+          notifyAdmin: false // Silencioso para não interromper a operação de quadra
         };
 
-        if (!settings.enabled) {
-          console.log('[Agente Autônomo IA] Desativado nas configurações do sistema.');
-          return;
-        }
-
-        // Check last run timestamp
-        const lastRunSnap = await getDoc(maintenanceRef);
-        const lastRunData = lastRunSnap.exists() ? lastRunSnap.data() : null;
-        const lastRunTimestamp = lastRunData?.lastRunTimestamp || 0;
-        const now = Date.now();
-
-        const intervalMs = settings.frequency === 'WEEKLY' ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
-
-        if (now - lastRunTimestamp < intervalMs) {
-          console.log('[Agente Autônomo IA] Varredura já realizada no intervalo agendado.');
-          return;
-        }
-
-        console.log('[Agente Autônomo IA] Executando varredura e autocorreção autônoma...');
-
-        // Fetch data for analysis
-        const playersSnap = await getDocs(collection(db, 'players'));
-        const players: Player[] = [];
-        playersSnap.forEach(d => players.push({ ...d.data(), id: d.id } as Player));
-
-        const matchesSnap = await getDocs(collection(db, 'matches'));
-        const matches: any[] = [];
-        matchesSnap.forEach(d => matches.push({ ...d.data(), id: d.id }));
-
-        if (players.length === 0) return;
-
-        // Run anomaly scan
         const anomalies = scanDatabaseAnomalies(players, matches, settings);
 
-        if (anomalies.length > 0 && settings.autoFix) {
-          // Execute Autonomous Fixes
+        if (anomalies.length > 0) {
           const summary = await executeDbAutoCorrection(db, anomalies, players, matches);
-          console.log('[Agente Autônomo IA] Autocorreções executadas com sucesso:', summary);
-
-          if (settings.notifyAdmin) {
+          console.info('[Agente Autônomo] Autocorreção silenciosa concluída:', summary);
+          if (summary.duplicatePlayersMerged > 0 || summary.matchesRepaired > 0) {
             showNotification(
-              `🤖 Agente IA Autônomo: ${summary.duplicatePlayersMerged} duplicata(s) e ${summary.matchesRepaired} partida(s) corrigidas no banco.`,
-              'success'
-            );
-          }
-        } else if (anomalies.length > 0 && !settings.autoFix) {
-          if (settings.notifyAdmin) {
-            showNotification(
-              `⚠️ Agente IA Autônomo: ${anomalies.length} anomalia(s) detectada(s) no banco. Ação automática desativada.`,
+              ` Manutenção Automática: ${summary.duplicatePlayersMerged} duplicata(s) e ${summary.matchesRepaired} partida(s) ajustadas.`,
               'info'
             );
           }
         }
 
-        // Update Last Run Metadata
-        await setDoc(maintenanceRef, {
-          lastRunDate: todayKey,
-          lastRunTimestamp: now,
-          frequency: settings.frequency,
-          status: anomalies.length > 0 ? (settings.autoFix ? 'AUTOCORRECTED' : 'ANOMALIES_DETECTED') : 'CLEAN',
-          anomaliesCount: anomalies.length
-        }, { merge: true });
-
+        localStorage.setItem(localRunKey, todayKey);
+        await setDoc(
+          doc(db, 'metadata', 'last_autocorrect_maintenance'),
+          {
+            lastRunDate: todayKey,
+            lastRunTimestamp: Date.now(),
+            status: anomalies.length > 0 ? 'AUTOCORRECTED' : 'CLEAN',
+            anomaliesCount: anomalies.length
+          },
+          { merge: true }
+        );
       } catch (err) {
-        console.error('[Agente Autônomo IA] Erro ao executar manutenção autônoma:', err);
+        console.warn('[Agente Autônomo] Aviso na manutenção em segundo plano:', err);
       }
-    };
+    }, 12000);
 
-    runAutonomousAgent();
-  }, [user, userRole, showNotification]);
+    return () => clearTimeout(timer);
+  }, [user, userRole, players, matches, showNotification]);
 };
-

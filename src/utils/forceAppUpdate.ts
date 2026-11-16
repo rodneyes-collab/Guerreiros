@@ -1,109 +1,49 @@
 import { APP_VERSION } from '../../constants';
-import { db, doc, setDoc, serverTimestamp } from '../../firebase';
 
-/**
- * Registra o disparo da atualização crítica no Firestore para auditoria remota.
- */
-async function logUpdateTriggerToFirestore(serverVersion: string) {
-  try {
-    const logId = `update_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    const userEmail = typeof window !== 'undefined' ? localStorage.getItem('simpleLoginEmail') : 'unknown';
-    
-    await setDoc(doc(db, 'system_audit_logs', logId), {
-      type: 'CRITICAL_UPDATE_TRIGGERED',
-      runningVersion: (window as any).__RUNNING_APP_VERSION__ || APP_VERSION,
-      targetVersion: serverVersion,
-      bundleVersion: APP_VERSION,
-      userAgent: navigator.userAgent,
-      userEmail,
-      timestamp: serverTimestamp(),
-      localStorageMark: localStorage.getItem('guerreiros_app_version'),
-      sessionStorageMark: sessionStorage.getItem('guerreiros_confirmed_version')
-    });
-  } catch (e) {
-    console.warn('[AppUpdate] Falha ao registrar log de auditoria no Firestore:', e);
-  }
-}
+let isUpdating = false;
 
-export async function forceAppUpdate(serverVersion?: string) {
-  console.log('[AppUpdate] INITIALIZING ABSOLUTE PURGE - FORCING VERSION UPDATE...');
-  
-  if (serverVersion) {
-    await logUpdateTriggerToFirestore(serverVersion);
-  }
-  
+export async function forceAppUpdate(targetVersion?: string) {
+  if (isUpdating) return;
+  isUpdating = true;
+
+  const effectiveTarget = targetVersion || APP_VERSION;
+  console.info(`[ForceAppUpdate] Atualizando de v${APP_VERSION} para v${effectiveTarget} (preservando sessão do sócio)...`);
+
   try {
-    // 1. Unregister all service workers
+    // 1. Marcar tentativa na sessão para nunca entrar em loop infinito de reload
+    sessionStorage.setItem(`update_attempt_${effectiveTarget}`, 'true');
+    sessionStorage.setItem('guerreiros_confirmed_version', effectiveTarget);
+    localStorage.setItem('guerreiros_app_version', effectiveTarget);
+    localStorage.setItem('last_auto_update_target', effectiveTarget);
+
+    // 2. Remover APENAS caches de intenção obsoletos, preservando o login do sócio (simpleLoginEmail, etc.)
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && (k.startsWith('intentions_cache') || k.startsWith('preconfirmations_cache'))) {
+        keysToRemove.push(k);
+      }
+    }
+    keysToRemove.forEach(k => localStorage.removeItem(k));
+
+    // 3. Desregistrar Service Workers antigos para não servirem JS antigo do cache
     if ('serviceWorker' in navigator) {
       const registrations = await navigator.serviceWorker.getRegistrations();
-      for (const registration of registrations) {
-        await registration.unregister();
-        console.log('[AppUpdate] Unregistered SW:', registration.scope);
-      }
+      await Promise.all(registrations.map(r => r.unregister().catch(() => {})));
     }
-    
-    // 2. Clear ALL cache storage
+
+    // 4. Limpar Cache Storage (arquivos estáticos JS/CSS/HTML antigos)
     if ('caches' in window) {
-      const cacheNames = await caches.keys();
-      for (const name of cacheNames) {
-        await caches.delete(name);
-        console.log('[AppUpdate] Purged cache:', name);
-      }
+      const cacheKeys = await caches.keys();
+      await Promise.all(cacheKeys.map(k => caches.delete(k).catch(() => {})));
     }
-
-    // 3. Clear IndexedDB (Firestore local cache)
-    if (typeof indexedDB !== 'undefined' && indexedDB.databases) {
-      try {
-        const dbs = await indexedDB.databases();
-        for (const dbInfo of dbs) {
-          if (dbInfo.name) {
-            indexedDB.deleteDatabase(dbInfo.name);
-            console.log('[AppUpdate] Deleted IndexedDB:', dbInfo.name);
-          }
-        }
-      } catch (idbErr) {
-        console.warn('[AppUpdate] Non-fatal IndexedDB cleanup error:', idbErr);
-      }
-    }
-
-    // 4. Comprehensive Storage Cleanup (LocalStorage & SessionStorage)
-    const authKeys = ['emailForSignIn', 'simpleLoginEmail', 'hasBiometricsLinked', 'firebase:auth:'];
-    
-    const purgeStorage = (storage: Storage) => {
-      const keys: string[] = [];
-      for (let i = 0; i < storage.length; i++) {
-        const key = storage.key(i);
-        if (key && !authKeys.some(ak => key.includes(ak))) {
-          keys.push(key);
-        }
-      }
-      keys.forEach(k => storage.removeItem(k));
-    };
-
-    if (typeof window !== 'undefined') {
-      if (window.localStorage) purgeStorage(window.localStorage);
-      if (window.sessionStorage) purgeStorage(window.sessionStorage);
-    }
-    
-    console.log('[AppUpdate] All storages purged successfully.');
-
-  } catch (e) {
-    console.error('[AppUpdate] Critical error during cleanup:', e);
+  } catch (err) {
+    console.warn('[ForceAppUpdate] Aviso durante limpeza de cache:', err);
   } finally {
-    // 5. Hard Reload with multiple cache-busting layers
-    console.log('[AppUpdate] Triggering hard reload with cache-bust...');
-    
-    const url = new URL(window.location.origin + window.location.pathname);
-    url.searchParams.set('v_update', APP_VERSION);
-    url.searchParams.set('bust', Date.now().toString());
-    url.searchParams.set('nocache', 'true');
-    
-    // Using replace to prevent going back to stale version
+    // 5. Recarregar com cache-buster na URL mantendo o sócio na aba atual
+    const url = new URL(window.location.href);
+    url.searchParams.set('v', effectiveTarget);
+    url.searchParams.set('t', String(Date.now()));
     window.location.replace(url.toString());
-    
-    // Fallback if replace is somehow blocked
-    setTimeout(() => {
-      window.location.href = url.toString();
-    }, 500);
   }
 }

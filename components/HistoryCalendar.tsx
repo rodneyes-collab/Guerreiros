@@ -2,6 +2,8 @@ import React, { useState, useMemo } from 'react';
 import { ChevronLeft, ChevronRight, Trophy, Calendar as CalendarIcon } from 'lucide-react';
 import { Match, Tournament } from '../types';
 
+import { toCanonicalDateString } from '../src/utils/matchIntegrity';
+
 interface HistoryCalendarProps {
   matches: Match[];
   tournaments: Tournament[];
@@ -26,42 +28,8 @@ export const HistoryCalendar: React.FC<HistoryCalendarProps> = ({ matches, tourn
   const matchDates = useMemo(() => {
     const dates = new Set<string>();
     matches.forEach(m => {
-      // Robust standard date key parsing
-      const rawDate = m.date;
-      let d = '';
-      if (rawDate) {
-        if (rawDate.includes('/')) {
-          const parts = rawDate.split('/');
-          if (parts.length === 3) {
-            const day = parts[0].padStart(2, '0');
-            const month = parts[1].padStart(2, '0');
-            const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
-            d = `${year}-${month}-${day}`;
-          }
-        } else if (rawDate.includes('-') && rawDate.split('-')[0].length !== 4) {
-          const parts = rawDate.split('-');
-          if (parts.length === 3) {
-            const day = parts[0].padStart(2, '0');
-            const month = parts[1].padStart(2, '0');
-            const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
-            d = `${year}-${month}-${day}`;
-          }
-        } else {
-          d = rawDate;
-        }
-      }
-      
-      if (d) dates.add(d);
-
-      if (m.timestamp) {
-        const tsDate = new Intl.DateTimeFormat('en-CA', {
-          timeZone: 'America/Sao_Paulo',
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit'
-        }).format(new Date(m.timestamp));
-        if (tsDate) dates.add(tsDate);
-      }
+      const canonical = toCanonicalDateString(m.timestamp || m.date || '');
+      if (canonical) dates.add(canonical);
     });
     return dates;
   }, [matches]);

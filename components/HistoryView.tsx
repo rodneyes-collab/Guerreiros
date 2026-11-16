@@ -7,7 +7,7 @@ import { formatTime } from '../utils/helpers';
 import { WinLossChart } from '../src/components/WinLossChart';
 import { getFirestoreDateKey } from '../firebase';
 import { toStandardDateKey } from '../src/utils/dateUtils';
-import { standardizeMatchesList } from '../src/utils/matchIntegrity';
+import { standardizeMatchesList, toCanonicalDateString } from '../src/utils/matchIntegrity';
 import { 
   Trophy, 
   Clock, 
@@ -51,16 +51,8 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
   const players = React.useMemo(() => allPlayers.filter(p => p.status !== 'inactive'), [allPlayers]);
   const attendance = React.useMemo(() => allAttendance.filter(p => p.status !== 'inactive'), [allAttendance]);
   
-  const getMatchStandardDate = (m: { date?: string; timestamp?: number }): string => {
-    if (m.timestamp) {
-      return new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'America/Sao_Paulo',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit'
-      }).format(new Date(m.timestamp));
-    }
-    return m.date ? toStandardDateKey(m.date) : '';
+  const getMatchStandardDate = (m: { date?: string; timestamp?: number | string }): string => {
+    return toCanonicalDateString(m.timestamp || m.date || '');
   };
 
   const filterSessionDates = useMemo(() => {
@@ -77,17 +69,18 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
   const [performanceDate, setPerformanceDate] = useState<string>(() => {
     const today = getFirestoreDateKey();
     const todayMatches = (rawMatches || []).filter(m => {
-      const matchDate = m.timestamp ? new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'America/Sao_Paulo',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit'
-      }).format(new Date(m.timestamp)) : (m.date ? toStandardDateKey(m.date) : '');
+      const matchDate = toCanonicalDateString(m.timestamp || m.date || '');
       return matchDate === today;
     });
     if (todayMatches.length > 0) return 'Hoje';
     // Se hoje não teve partidas, inicializa com a sessão de jogos mais recente
-    return filterSessionDates[0] || 'Hoje';
+    const dates = new Set<string>();
+    (rawMatches || []).forEach(m => {
+      const d = toCanonicalDateString(m.timestamp || m.date || '');
+      if (d) dates.add(d);
+    });
+    const sortedDates = Array.from(dates).sort((a, b) => b.localeCompare(a));
+    return sortedDates[0] || 'Hoje';
   });
 
   // Sincronizar performanceDate: se hoje não tiver partidas e estiver sem data ou em Hoje sem partidas, direciona para a última sessão disponível
@@ -241,8 +234,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
       const matchIdStr = String(m.id || '');
       const matchNum = m.dailyNumber || (matchIdStr.includes('_') ? matchIdStr.split('_')[1]?.slice(-3).toUpperCase() : matchIdStr.slice(-3).toUpperCase()) || '---';
       
-      const mDateObj = new Date(m.timestamp);
-      const mDate = mDateObj.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+      const mDate = toCanonicalDateString(m.timestamp || m.date || '').split('-').reverse().join('/');
       
       const startTimeText = formatHour(m.startTime);
       const endTimeText = formatHour(m.endTime);
@@ -288,9 +280,11 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
     });
   };
 
-  const formatHour = (timestamp?: number) => {
+  const formatHour = (timestamp?: number | string) => {
     if (!timestamp) return '--:--';
-    return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const num = typeof timestamp === 'number' ? timestamp : Number(timestamp);
+    if (isNaN(num) || num <= 0) return '--:--';
+    return new Date(num).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
   };
 
   const renderScore = (match: Match, team: 'A' | 'B') => {
@@ -424,7 +418,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onDeleteMatch, onDelet
                 </div>
                 <div className="flex flex-wrap items-center justify-center md:justify-start gap-4">
                   <div className="flex items-center gap-2 text-white/60 text-[10px] font-black uppercase tracking-widest">
-                    <Calendar className="w-3.5 h-3.5" /> {new Date(selectedMatch.timestamp).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
+                    <Calendar className="w-3.5 h-3.5" /> {toCanonicalDateString(selectedMatch.timestamp || selectedMatch.date || '').split('-').reverse().join('/')}
                   </div>
                   <div className="flex items-center gap-2 text-white/60 text-[10px] font-black uppercase tracking-widest">
                     <Clock className="w-3.5 h-3.5" /> {formatHour(selectedMatch.startTime)} - {formatHour(selectedMatch.endTime)} ({formatTime(selectedMatch.duration)})
