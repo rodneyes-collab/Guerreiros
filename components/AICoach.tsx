@@ -43,7 +43,7 @@ export const AICoach: React.FC<AICoachProps> = ({ player, allPlayers, recentMatc
       if (data.success) {
         setFeedback(data.feedback);
       } else {
-        throw new Error(data.error || 'Falha ao gerar feedback');
+        throw new Error(data.details || data.error || 'Falha ao gerar feedback');
       }
     } catch (err: any) {
       console.error('[AICoach] Error:', err);

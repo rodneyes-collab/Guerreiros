@@ -13,7 +13,10 @@ import {
   handleFirestoreError,
   OperationType,
   getFirestoreDateKey,
-  getNextThursday
+  getNextThursday,
+  isQuotaExceeded,
+  isFirestoreQuotaError,
+  markQuotaExceeded
 } from '../../firebase';
 import { IntentionsData, Player } from '../../types';
 import { useStore } from '../../store';
@@ -140,6 +143,7 @@ export const useIntentions = () => {
   const preConfirmations = useStore(state => state.preConfirmations);
 
   const recentlyModifiedIdsRef = useRef<Record<string, number>>({});
+  const lastRefreshTimeRef = useRef<number>(0);
 
   const isRecentlyReset = useCallback((idOrAlias: string) => {
     const resetTime = recentlyModifiedIdsRef.current[idOrAlias];
@@ -320,7 +324,14 @@ export const useIntentions = () => {
     return PROD_URL;
   }, []);
 
-  const _refreshIntentions = useCallback(async () => {
+  const _refreshIntentions = useCallback(async (force = false) => {
+    if (isQuotaExceeded) return DEFAULT_INTENTIONS;
+    const now = Date.now();
+    if (!force && now - lastRefreshTimeRef.current < 60000) {
+      return DEFAULT_INTENTIONS;
+    }
+    lastRefreshTimeRef.current = now;
+
     try {
       const resp = await fetch(`/api/presence/state?t=${Date.now()}`, {
         headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
@@ -337,6 +348,8 @@ export const useIntentions = () => {
       }
     } catch (e) {}
 
+    if (isQuotaExceeded) return DEFAULT_INTENTIONS;
+
     try {
       const snap = await getDocFromServer(doc(db, 'metadata', 'intentions'));
       if (snap.exists()) {
@@ -347,29 +360,41 @@ export const useIntentions = () => {
         return normalized;
       }
     } catch (err) {
-      const snap = await getDoc(doc(db, 'metadata', 'intentions'));
-      if (snap.exists()) {
-        const normalized = normalizeIntentionsData(snap.data());
-        updateIntentionsLock(normalized.targetDate);
-        setRawIntentions(normalized);
-        setIsLoaded(true);
-        return normalized;
+      if (isFirestoreQuotaError(err)) {
+        markQuotaExceeded();
+        return DEFAULT_INTENTIONS;
+      }
+      try {
+        const snap = await getDoc(doc(db, 'metadata', 'intentions'));
+        if (snap.exists()) {
+          const normalized = normalizeIntentionsData(snap.data());
+          updateIntentionsLock(normalized.targetDate);
+          setRawIntentions(normalized);
+          setIsLoaded(true);
+          return normalized;
+        }
+      } catch (fallbackErr) {
+        if (isFirestoreQuotaError(fallbackErr)) {
+          markQuotaExceeded();
+        }
       }
     }
     return DEFAULT_INTENTIONS;
   }, []);
 
-  const refreshIntentions = _refreshIntentions;
+  const refreshIntentions = useCallback(() => _refreshIntentions(true), [_refreshIntentions]);
 
   // Atualiza ao montar, ao mudar para a aba 'intentions', ao disparar syncTrigger ou focar o app
   useEffect(() => {
-    _refreshIntentions().catch(() => {});
+    if (viewMode === 'intentions' || syncTrigger > 0) {
+      _refreshIntentions(syncTrigger > 0).catch(() => {});
+    }
   }, [_refreshIntentions, viewMode, syncTrigger]);
 
   useEffect(() => {
     const handleVisibility = () => {
-      if (document.visibilityState === 'visible') {
-        _refreshIntentions().catch(() => {});
+      if (document.visibilityState === 'visible' && !isQuotaExceeded) {
+        _refreshIntentions(false).catch(() => {});
       }
     };
     window.addEventListener('visibilitychange', handleVisibility);
@@ -422,6 +447,11 @@ export const useIntentions = () => {
         setIsLoaded(true);
       },
       err => {
+        if (isFirestoreQuotaError(err)) {
+          markQuotaExceeded();
+          setIsLoaded(true);
+          return;
+        }
         console.error('useIntentions: Error in intentions snapshot:', err);
         setIsLoaded(true);
       }

@@ -1,4 +1,4 @@
-import { Team, Player, GenerationResult, Match } from "../types";
+import type { Team, Player, GenerationResult, Match } from "../types.ts";
 
 // Cache persistente para evitar chamadas repetidas à IA com os mesmos dados
 const CACHE_KEY = 'spikegen_ai_cache_v2';

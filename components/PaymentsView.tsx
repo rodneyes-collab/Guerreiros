@@ -274,7 +274,6 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
           amount: fee,
           dueDate,
           status: PaymentStatus.PENDING,
-          method: '',
           paymentDate: ''
         };
         batch.set(doc(db, 'payments', paymentId), newPayment, { merge: true });

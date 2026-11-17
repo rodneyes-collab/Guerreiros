@@ -21,7 +21,10 @@ import {
   addDoc,
   collection,
   serverTimestamp,
-  resetFirestoreNetworkSession
+  resetFirestoreNetworkSession,
+  isQuotaExceeded,
+  isFirestoreQuotaError,
+  markQuotaExceeded
 } from '../../firebase';
 import { useStore } from '../../store';
 import { cleanObject } from '../../utils/helpers';
@@ -115,10 +118,13 @@ export const useAuth = () => {
       }
     }
 
+    let prevUid: string | null | undefined = undefined;
     const unsubscribeAuth = onAuthStateChanged(auth, async (u) => {
       console.log('useAuth: onAuthStateChanged fired', u?.uid);
-      // Alterna preventivamente o estado de rede e expurga alvos obsoletos ao mudar sessão
-      resetFirestoreNetworkSession().catch(err => console.warn('[useAuth] Reset de rede no auth state change:', err));
+      if (prevUid !== undefined && prevUid !== (u?.uid || null) && !isQuotaExceeded) {
+        resetFirestoreNetworkSession().catch(err => console.warn('[useAuth] Reset de rede no auth state change:', err));
+      }
+      prevUid = u?.uid || null;
       if (u) {
         setUser(u);
         setIsAuthReady(true);
@@ -219,6 +225,11 @@ export const useAuth = () => {
         setIsRoleLoading(false);
       }
     }, (err) => {
+      if (isFirestoreQuotaError(err)) {
+        markQuotaExceeded();
+        setIsRoleLoading(false);
+        return;
+      }
       console.error('useAuth: User doc snapshot error:', err);
       if (err.message.includes('permission') && !auth.currentUser) {
         setIsRoleLoading(false);

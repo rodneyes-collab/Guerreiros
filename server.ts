@@ -11,7 +11,7 @@ import {
   getAuthenticationOptions,
   verifyAuthentication
 } from "./src/services/webauthn.ts";
-import { runDeepAnalyticsChat } from "./serverDeepAnalysis.ts";
+import { runDeepAnalyticsChat, buildPlayerDeepStatsReport } from "./serverDeepAnalysis.ts";
 
 const __dirname = process.cwd();
 
@@ -43,6 +43,69 @@ interface TemporaryChallenge {
   playerId?: string;
   playerName?: string;
   createdAt: number;
+}
+
+// ============================================================================
+// ⚡ DISJUNTOR ANTI-TIMEOUT E CACHE EM MEMÓRIA
+// ============================================================================
+let firestoreCircuitOpenUntil = 0;
+let cachedPlayers: any[] = [];
+let cachedPlayersLastFetch = 0;
+const PLAYERS_CACHE_TTL_MS = 15 * 60 * 1000;
+
+let cachedMatches: any[] = [];
+let cachedMatchesLastFetch = 0;
+const MATCHES_CACHE_TTL_MS = 10 * 60 * 1000;
+
+let cachedIntentions: any = null;
+let cachedIntentionsLastFetch = 0;
+const INTENTIONS_CACHE_TTL_MS = 3 * 60 * 1000;
+
+let cachedScheduler: Record<string, any> | null = null;
+let cachedSystemConfig: Record<string, any> | null = null;
+let cachedSystemConfigLastFetch = 0;
+const SYSTEM_CONFIG_CACHE_TTL_MS = 10 * 60 * 1000;
+
+const LOCAL_INTENTIONS_PATH = path.join(process.cwd(), "intentions_backup_local.json");
+
+function loadLocalIntentionsBackup(): any {
+  try {
+    if (fs.existsSync(LOCAL_INTENTIONS_PATH)) {
+      return JSON.parse(fs.readFileSync(LOCAL_INTENTIONS_PATH, "utf-8"));
+    }
+  } catch {}
+  return null;
+}
+
+function saveLocalIntentionsBackup(doc: any) {
+  try {
+    fs.writeFileSync(LOCAL_INTENTIONS_PATH, JSON.stringify(doc, null, 2), "utf-8");
+  } catch {}
+}
+
+async function withFirestoreGuard<T>(fn: () => Promise<T>, fallbackValue: T, timeoutMs = 8000): Promise<T> {
+  if (Date.now() < firestoreCircuitOpenUntil) {
+    return fallbackValue;
+  }
+  try {
+    const result = await Promise.race([
+      fn(),
+      new Promise<T>((_, reject) =>
+        setTimeout(() => reject(new Error("FIRESTORE_TIMEOUT")), timeoutMs)
+      )
+    ]);
+    return result;
+  } catch (err: any) {
+    const msg = String(err?.message || err || "");
+    // Só abre o disjuntor se for erro explícito de Quota Excedida (RESOURCE_EXHAUSTED), nunca por timeout de cold start
+    if (msg.includes("RESOURCE_EXHAUSTED") || msg.includes("Quota")) {
+      firestoreCircuitOpenUntil = Date.now() + 5 * 60 * 1000;
+      console.warn("[Firestore Circuit Breaker] Ativado por 5 min (Quota):", msg.slice(0, 120));
+    } else {
+      console.warn("[Firestore Guard] Aviso de leitura:", msg.slice(0, 120));
+    }
+    return fallbackValue;
+  }
 }
 
 export const getFirestoreDateKey = (date?: Date) => {
@@ -88,17 +151,99 @@ export const getBrazilTimeParts = () => {
   });
   const [hourStr, minStr] = timeStr.split(":");
   const [yearStr, monthStr, dayStr] = dateKey.split("-");
+  const hour = Number(hourStr) % 24;
+  const minute = Number(minStr);
   return {
     dateKey,
     yearMonth: `${yearStr}-${monthStr}`,
     monthDay: `${monthStr}-${dayStr}`,
     dayOfMonth: Number(dayStr),
     dayOfWeek,
-    hour: Number(hourStr),
-    minute: Number(minStr),
-    totalMinutes: Number(hourStr) * 60 + Number(minStr)
+    hour,
+    minute,
+    totalMinutes: hour * 60 + minute
   };
 };
+
+export const parseBirthMonthDay = (
+  birthDate?: string | null
+): { month: number; day: number } | null => {
+  if (!birthDate || typeof birthDate !== "string") return null;
+  const clean = birthDate.trim().split("T")[0].split(" ")[0];
+  const parts = clean.split(/[-/]/);
+  if (parts.length !== 3) return null;
+
+  let month: number;
+  let day: number;
+  if (parts[0].length === 4) {
+    month = parseInt(parts[1], 10);
+    day = parseInt(parts[2], 10);
+  } else {
+    day = parseInt(parts[0], 10);
+    month = parseInt(parts[1], 10);
+  }
+
+  if (isNaN(day) || isNaN(month) || month < 1 || month > 12 || day < 1 || day > 31) {
+    return null;
+  }
+  return { month, day };
+};
+
+export const getTodayBirthdayPlayers = (players: any[], brDateKey: string): any[] => {
+  const [, monthStr, dayStr] = brDateKey.split("-");
+  const targetMonth = Number(monthStr);
+  const targetDay = Number(dayStr);
+  const seenNames = new Set<string>();
+
+  return (players || []).filter((p) => {
+    if (!p || (p.status && p.status !== "active")) return false;
+    const parsed = parseBirthMonthDay(p.birthDate);
+    if (!parsed || parsed.month !== targetMonth || parsed.day !== targetDay) return false;
+    const normName = String(p.name || p.id || "")
+      .trim()
+      .toLowerCase();
+    if (normName && seenNames.has(normName)) return false;
+    if (normName) seenNames.add(normName);
+    return true;
+  });
+};
+
+async function buildGroupBirthdayMessage(birthdayPlayers: any[]): Promise<string> {
+  const names = birthdayPlayers.map((p) => String(p.name || "Sócio").trim()).filter(Boolean);
+  const formattedNames =
+    names.length <= 1
+      ? names[0] || "Guerreiro(a)"
+      : `${names.slice(0, -1).join(", ")} e ${names[names.length - 1]}`;
+
+  let aiGreeting = "";
+  const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+  if (apiKey) {
+    try {
+      const { serverGenerateBirthdayMessage } = await import("./services/serverGemini.ts");
+      aiGreeting = (await serverGenerateBirthdayMessage(formattedNames)).trim();
+    } catch (e) {
+      console.warn("[Birthday Cron] Fallback de mensagem usado:", e);
+    }
+  }
+
+  const fallbackGreeting =
+    names.length === 1
+      ? `Parabéns, ${formattedNames}! Que seu novo ciclo seja repleto de saúde, energia boa, muitos aces e vitórias dentro e fora das quadras! 🏐🎉`
+      : `Parabéns em dose dupla para ${formattedNames}! Que o novo ciclo de vocês seja repleto de saúde, muitos aces, defesas impossíveis e grandes vitórias dentro e fora das quadras! 🏐🎉`;
+
+  const body = aiGreeting || fallbackGreeting;
+  const header =
+    names.length === 1
+      ? `🎂🎉 *FELIZ ANIVERSÁRIO, ${formattedNames.toUpperCase()}!* 🏐🥳`
+      : `🎂🎉 *ANIVERSARIANTES DO DIA: ${formattedNames.toUpperCase()}!* 🏐🥳`;
+
+  return (
+    `${header}\n\n` +
+    `${body}\n\n` +
+    `Toda a família *Guerreiros VC* deseja felicidades e grandes rachões pela frente! 💛🖤\n\n` +
+    `— Guerreirinho, o robô do clube 🤖`
+  );
+}
 
 export const getNextThursday = () => {
   const todayStr = getFirestoreDateKey();
@@ -226,12 +371,13 @@ async function getFirestore() {
   const { getFirestore: getAdminFirestoreInstance } = await import("firebase-admin/firestore");
   const lockedDbId = process.env.FIRESTORE_DATABASE_ID || firebaseConfig?.firestoreDatabaseId;
   if (lockedDbId && lockedDbId !== "(default)") {
-    console.log(`[Firestore] Conectando ao banco nomeado: ${lockedDbId}`);
     adminDb = getAdminFirestoreInstance(app, lockedDbId);
   } else {
-    console.log(`[Firestore] Conectando ao banco (default)`);
     adminDb = getAdminFirestoreInstance(app);
   }
+  try {
+    adminDb.settings({ maxIdleChannels: 1 });
+  } catch {}
   return adminDb;
 }
 
@@ -241,6 +387,72 @@ async function getAdminAuth() {
   const { getAuth } = await import("firebase-admin/auth");
   adminAuth = getAuth(app);
   return adminAuth;
+}
+
+async function getCachedPlayers(forceRefresh = false): Promise<any[]> {
+  const now = Date.now();
+  if (!forceRefresh && cachedPlayers.length > 0 && now - cachedPlayersLastFetch < PLAYERS_CACHE_TTL_MS) {
+    return cachedPlayers;
+  }
+
+  return withFirestoreGuard(
+    async () => {
+      const db = await getFirestore();
+      const playersSnap = await db.collection("players").get();
+      const list: any[] = [];
+      playersSnap.forEach((d: any) => list.push({ id: d.id, ...d.data() }));
+      if (list.length > 0) {
+        cachedPlayers = list;
+        cachedPlayersLastFetch = now;
+      }
+      return cachedPlayers;
+    },
+    cachedPlayers
+  );
+}
+
+async function getCachedMatches(forceRefresh = false): Promise<any[]> {
+  const now = Date.now();
+  if (!forceRefresh && cachedMatches.length > 0 && now - cachedMatchesLastFetch < MATCHES_CACHE_TTL_MS) {
+    return cachedMatches;
+  }
+
+  return withFirestoreGuard(
+    async () => {
+      const db = await getFirestore();
+      const matchesSnap = await db.collection("matches").get();
+      const list: any[] = [];
+      matchesSnap.forEach((d: any) => list.push({ id: d.id, ...d.data() }));
+      if (list.length > 0) {
+        cachedMatches = list;
+        cachedMatchesLastFetch = now;
+      }
+      return cachedMatches;
+    },
+    cachedMatches
+  );
+}
+
+async function getCachedSystemConfig(forceRefresh = false): Promise<Record<string, any>> {
+  const now = Date.now();
+  if (
+    !forceRefresh &&
+    cachedSystemConfig &&
+    now - cachedSystemConfigLastFetch < SYSTEM_CONFIG_CACHE_TTL_MS
+  ) {
+    return cachedSystemConfig;
+  }
+
+  return withFirestoreGuard(
+    async () => {
+      const db = await getFirestore();
+      const sysSnap = await db.collection("metadata").doc("system").get();
+      cachedSystemConfig = sysSnap.exists ? sysSnap.data() || {} : {};
+      cachedSystemConfigLastFetch = now;
+      return cachedSystemConfig;
+    },
+    cachedSystemConfig || {}
+  );
 }
 
 async function verifyCallerIdentity(req: express.Request): Promise<{
@@ -272,27 +484,17 @@ async function verifyCallerIdentity(req: express.Request): Promise<{
     return { uid, email, isAdmin: true };
   }
 
-  try {
-    const db = await getFirestore();
-    if (uid) {
-      const userDoc = await db.collection("users").doc(uid).get();
-      if (userDoc.exists && userDoc.data()?.role === "ADMIN") {
-        return { uid, email, isAdmin: true };
-      }
-    }
-    if (email) {
-      const pSnap = await db.collection("players").where("email", "==", email).limit(1).get();
-      if (!pSnap.empty && pSnap.docs[0].data()?.isAdmin) {
-        return { uid, email, isAdmin: true };
-      }
-    }
-  } catch (e) {}
+  const allPlayers = await getCachedPlayers();
+  if (email) {
+    const found = allPlayers.find((p) => p.email && p.email.trim().toLowerCase() === email);
+    if (found?.isAdmin) return { uid, email, isAdmin: true };
+  }
 
   return { uid, email, isAdmin: Boolean(req.body?.isAdmin && email) };
 }
 
 async function syncCredentialsFromFirestore() {
-  try {
+  await withFirestoreGuard(async () => {
     const db = await getFirestore();
     const metaSnap = await db.collection("metadata").doc("webauthn_credentials").get();
     if (metaSnap.exists) {
@@ -306,53 +508,89 @@ async function syncCredentialsFromFirestore() {
       );
       delete memoryCredentialsCache["init"];
     }
-  } catch (err: any) {
-    console.warn("[WebAuthn] Aviso ao sincronizar credenciais:", err.message);
-  }
+  }, undefined);
 }
 
-async function ensureFreshIntentionsDocument() {
-  const db = await getFirestore();
+async function ensureFreshIntentionsDocument(forceRefresh = false) {
   const nextThu = getNextThursday();
   const todayStr = getFirestoreDateKey();
-  const intentionsRef = db.collection("metadata").doc("intentions");
-  const snap = await intentionsRef.get();
+  const now = Date.now();
 
-  if (!snap.exists) {
-    const freshDoc = {
-      targetDate: nextThu,
-      automationEnabled: true,
-      responses: {},
-      confirmationTimestamps: {},
-      remindersSent: {},
-      lastUpdated: Date.now()
-    };
-    await intentionsRef.set(freshDoc);
-    return freshDoc;
+  if (!cachedIntentions) {
+    const diskBackup = loadLocalIntentionsBackup();
+    if (diskBackup && diskBackup.targetDate === nextThu) {
+      cachedIntentions = diskBackup;
+    }
   }
 
-  const unpacked = unpackIntentionsDoc(snap.data(), nextThu);
-  const storedTarget = unpacked.targetDate;
-
-  if (storedTarget && storedTarget < todayStr) {
-    const rotatedDoc = {
-      targetDate: nextThu,
-      automationEnabled: unpacked.automationEnabled ?? true,
-      responses: {},
-      confirmationTimestamps: {},
-      remindersSent: {},
-      lastUpdated: Date.now()
-    };
-    await intentionsRef.set(rotatedDoc);
-    return rotatedDoc;
+  if (
+    !forceRefresh &&
+    cachedIntentions &&
+    cachedIntentions.targetDate === nextThu &&
+    now - cachedIntentionsLastFetch < INTENTIONS_CACHE_TTL_MS
+  ) {
+    return cachedIntentions;
   }
 
-  if (unpacked.targetDate !== nextThu) {
-    unpacked.targetDate = nextThu;
-    await intentionsRef.set(unpacked);
-  }
+  const fallbackDoc = cachedIntentions || {
+    targetDate: nextThu,
+    automationEnabled: true,
+    responses: {},
+    confirmationTimestamps: {},
+    remindersSent: {},
+    lastUpdated: now
+  };
 
-  return unpacked;
+  return withFirestoreGuard(async () => {
+    const db = await getFirestore();
+    const intentionsRef = db.collection("metadata").doc("intentions");
+    const snap = await intentionsRef.get();
+
+    if (!snap.exists) {
+      const freshDoc = {
+        targetDate: nextThu,
+        automationEnabled: true,
+        responses: {},
+        confirmationTimestamps: {},
+        remindersSent: {},
+        lastUpdated: now
+      };
+      await intentionsRef.set(freshDoc);
+      cachedIntentions = freshDoc;
+      cachedIntentionsLastFetch = now;
+      saveLocalIntentionsBackup(freshDoc);
+      return freshDoc;
+    }
+
+    const unpacked = unpackIntentionsDoc(snap.data(), nextThu);
+    const storedTarget = unpacked.targetDate;
+
+    if (storedTarget && storedTarget < todayStr) {
+      const rotatedDoc = {
+        targetDate: nextThu,
+        automationEnabled: unpacked.automationEnabled ?? true,
+        responses: {},
+        confirmationTimestamps: {},
+        remindersSent: {},
+        lastUpdated: now
+      };
+      await intentionsRef.set(rotatedDoc);
+      cachedIntentions = rotatedDoc;
+      cachedIntentionsLastFetch = now;
+      saveLocalIntentionsBackup(rotatedDoc);
+      return rotatedDoc;
+    }
+
+    if (unpacked.targetDate !== nextThu) {
+      unpacked.targetDate = nextThu;
+      await intentionsRef.set(unpacked);
+    }
+
+    cachedIntentions = unpacked;
+    cachedIntentionsLastFetch = now;
+    saveLocalIntentionsBackup(unpacked);
+    return unpacked;
+  }, fallbackDoc);
 }
 
 async function syncPlayerPreConfirmationDoc(
@@ -362,8 +600,22 @@ async function syncPlayerPreConfirmationDoc(
   status: "GOING" | "NOT_GOING" | "RESET",
   timestamp: number
 ) {
-  try {
-    if (!player || !player.id || !targetDate) return;
+  if (!player || !player.id || !targetDate) return;
+
+  const existingIdx = cachedPlayers.findIndex((p) => p.id === player.id);
+  if (existingIdx === -1 && player.name) {
+    cachedPlayers.push({
+      id: player.id,
+      name: player.name,
+      email: player.email || null,
+      phone: player.phone || null,
+      status: "active",
+      isDM: false,
+      isOfficialSetter: Boolean(player.isOfficialSetter)
+    });
+  }
+
+  await withFirestoreGuard(async () => {
     const preConfRef = db
       .collection("preConfirmations")
       .doc(targetDate)
@@ -386,11 +638,9 @@ async function syncPlayerPreConfirmationDoc(
         { merge: true }
       );
     } else {
-      await preConfRef.delete().catch(() => {});
+      await preConfRef.delete();
     }
-  } catch (err: any) {
-    console.warn("[PreConfirmations Sync] Aviso:", err.message);
-  }
+  }, undefined);
 }
 
 function matchBrazilianPhone(rawSenderPhone: string, playerPhone?: string): boolean {
@@ -419,98 +669,9 @@ function normalizePhoneToJid(phone?: string): string | null {
   return `${digits}@s.whatsapp.net`;
 }
 
-async function buildThursdayPostGameReport(db: any, allPlayers: any[], dateKey: string): Promise<string> {
-  const matchesSnap = await db.collection("matches").where("date", "==", dateKey).get();
-  const todayMatches: any[] = [];
-  matchesSnap.forEach((d: any) => todayMatches.push({ id: d.id, ...d.data() }));
-
-  const perfMap = new Map<
-    string,
-    { name: string; wins: number; losses: number; matches: number; ptsBalance: number; eloGain: number }
-  >();
-
-  todayMatches.forEach((m) => {
-    const teamA: string[] = Array.isArray(m.teamA) ? m.teamA : [];
-    const teamB: string[] = Array.isArray(m.teamB) ? m.teamB : [];
-    const scoreA = Number(m.scoreA || 0);
-    const scoreB = Number(m.scoreB || 0);
-    const winA = m.winner === "A";
-
-    const processParticipant = (pid: string, inA: boolean) => {
-      const pObj = allPlayers.find((p) => p.id === pid);
-      const name = pObj?.name || "Sócio";
-      const prev = perfMap.get(pid) || { name, wins: 0, losses: 0, matches: 0, ptsBalance: 0, eloGain: 0 };
-      const won = (inA && winA) || (!inA && !winA);
-      const diff = inA ? scoreA - scoreB : scoreB - scoreA;
-      prev.matches += 1;
-      if (won) {
-        prev.wins += 1;
-        prev.eloGain += 20;
-      } else {
-        prev.losses += 1;
-        prev.eloGain -= 20;
-      }
-      prev.ptsBalance += diff;
-      perfMap.set(pid, prev);
-    };
-
-    teamA.forEach((pid) => processParticipant(pid, true));
-    teamB.forEach((pid) => processParticipant(pid, false));
-  });
-
-  const dailyRanking = Array.from(perfMap.values()).sort((a, b) => {
-    if (b.wins !== a.wins) return b.wins - a.wins;
-    if (b.eloGain !== a.eloGain) return b.eloGain - a.eloGain;
-    return b.ptsBalance - a.ptsBalance;
-  });
-
-  const formattedDate = dateKey.split("-").reverse().slice(0, 2).join("/");
-
-  let dailySection = "";
-  if (todayMatches.length === 0) {
-    dailySection = `_Nenhuma partida oficial registrada hoje (${formattedDate})._\n`;
-  } else {
-    dailySection =
-      `🔥 *RANKING DO DIA (${formattedDate} • ${todayMatches.length} Partidas)*\n` +
-      dailyRanking
-        .map((r, i) => {
-          const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${String(i + 1).padStart(2, "0")}.`;
-          const sign = r.eloGain >= 0 ? "+" : "";
-          const balSign = r.ptsBalance >= 0 ? "+" : "";
-          return `${medal} *${r.name}* — ${r.wins}V/${r.losses}D (${sign}${r.eloGain} ELO | Saldo ${balSign}${r.ptsBalance})`;
-        })
-        .join("\n") +
-      "\n";
-  }
-
-  const topOverall = allPlayers
-    .filter((p) => p.status === "active" && !p.isDM && (p.matchesPlayed || 0) > 0)
-    .sort((a, b) => (b.elo || 1200) - (a.elo || 1200));
-
-  const overallSection =
-    `🏆 *RANKING GERAL ACUMULADO (TODOS OS SÓCIOS)*\n` +
-    topOverall
-      .map((p, i) => {
-        const wr = p.matchesPlayed > 0 ? Math.round(((p.wins || 0) / p.matchesPlayed) * 100) : 0;
-        return `${String(i + 1).padStart(2, "0")}. *${p.name}* — *${Math.round(p.elo || 1200)} pts* (${p.wins || 0}V/${p.losses || 0}D • ${wr}%)`;
-      })
-      .join("\n");
-
-  return (
-    `🏐 *FECHAMENTO DA RODADA — GUERREIROS VC* 🏐\n\n` +
-    dailySection +
-    `\n` +
-    overallSection +
-    `\n\n👏 _Parabéns a todos pelo jogão! Até a próxima quinta!_`
-  );
-}
-
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
-
-  syncCredentialsFromFirestore().catch(() => {});
-  ensureFreshIntentionsDocument().catch(() => {});
 
   app.use(cors());
   app.use(express.json({ limit: "10mb" }));
@@ -526,23 +687,15 @@ async function startServer() {
 
   app.get("/api/version", (_req, res) => {
     res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-    res.setHeader("Pragma", "no-cache");
-    res.setHeader("Expires", "0");
     res.json({ version: APP_VERSION, timestamp: Date.now() });
   });
 
-  app.get("/api/health", async (_req, res) => {
-    let dbStatus = "unknown";
-    try {
-      const db = await getFirestore();
-      await db.collection("metadata").doc("system").get();
-      dbStatus = "connected";
-    } catch (e: any) {
-      dbStatus = `error: ${e.message}`;
-    }
+  app.get("/api/health", (_req, res) => {
     res.json({
       status: "ok",
-      db: dbStatus,
+      circuitBreakerActive: Date.now() < firestoreCircuitOpenUntil,
+      cachedPlayersCount: cachedPlayers.length,
+      cachedMatchesCount: cachedMatches.length,
       projectId: configProjectId,
       databaseId: firebaseConfig?.firestoreDatabaseId || "(default)",
       timestamp: new Date().toISOString()
@@ -551,8 +704,8 @@ async function startServer() {
 
   app.get("/api/ai/status", async (_req, res) => {
     try {
-      const { getAIStatus } = await import("./services/geminiService.ts");
-      res.json(getAIStatus());
+      const { getServerAIStatus } = await import("./services/serverGemini.ts");
+      res.json(getServerAIStatus());
     } catch (err) {
       res.status(500).json({ error: "Failed to get AI status" });
     }
@@ -561,21 +714,17 @@ async function startServer() {
   app.get(
     ["/api/status-info", "/api/sys-info", "/api/sysinfo", "/sys-info", "/sysinfo", "/api/system-info"],
     (_req, res) => {
-      try {
-        const used = process.memoryUsage();
-        res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-        res.json({
-          status: "ok",
-          rss: Math.round(used.rss / 1024 / 1024),
-          heapUsed: Math.round(used.heapUsed / 1024 / 1024),
-          heapTotal: Math.round(used.heapTotal / 1024 / 1024),
-          external: Math.round(used.external / 1024 / 1024),
-          uptime: Math.floor(process.uptime()),
-          timestamp: new Date().toISOString()
-        });
-      } catch (err: any) {
-        res.status(200).json({ status: "error", error: err?.message || String(err) });
-      }
+      const used = process.memoryUsage();
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      res.json({
+        status: "ok",
+        rss: Math.round(used.rss / 1024 / 1024),
+        heapUsed: Math.round(used.heapUsed / 1024 / 1024),
+        heapTotal: Math.round(used.heapTotal / 1024 / 1024),
+        external: Math.round(used.external / 1024 / 1024),
+        uptime: Math.floor(process.uptime()),
+        timestamp: new Date().toISOString()
+      });
     }
   );
 
@@ -605,29 +754,20 @@ async function startServer() {
       const isGuest = playerId.startsWith("guest_");
       let player: any = null;
 
+      const allPlayers = await getCachedPlayers(cachedPlayers.length === 0);
       if (!isGuest) {
-        let playerSnap = await db.collection("players").doc(playerId).get();
-        if (!playerSnap.exists) {
-          const allSnap = await db.collection("players").get();
-          const normReq = playerId.toLowerCase();
-          for (const d of allSnap.docs) {
-            const pData = d.data() || {};
-            if (
-              d.id.toLowerCase() === normReq ||
-              (pData.name && pData.name.trim().toLowerCase() === normReq) ||
-              (pData.uid && pData.uid === playerId) ||
-              (caller.email && (pData.email || "").trim().toLowerCase() === caller.email)
-            ) {
-              playerId = d.id;
-              player = { id: d.id, ...pData };
-              break;
-            }
-          }
-          if (!player) {
-            return res.status(404).json({ error: "Sócio não encontrado" });
-          }
+        const normReq = playerId.toLowerCase();
+        player = allPlayers.find(
+          (p) =>
+            p.id.toLowerCase() === normReq ||
+            (p.name && p.name.trim().toLowerCase() === normReq) ||
+            (p.uid && p.uid === playerId) ||
+            (caller.email && (p.email || "").trim().toLowerCase() === caller.email)
+        );
+        if (!player) {
+          player = { id: playerId, name: req.body?.playerName || "Sócio", status: "active" };
         } else {
-          player = { id: playerSnap.id, ...playerSnap.data() };
+          playerId = player.id;
         }
       } else {
         player = { id: playerId, name: playerId.replace("guest_", "Convidado "), status: "guest" };
@@ -674,12 +814,18 @@ async function startServer() {
         lastUpdated: now
       };
 
-      await db.collection("metadata").doc("intentions").set(updatedDoc);
+      cachedIntentions = updatedDoc;
+      cachedIntentionsLastFetch = now;
+      saveLocalIntentionsBackup(updatedDoc);
+
+      await withFirestoreGuard(
+        () => db.collection("metadata").doc("intentions").set(updatedDoc),
+        undefined
+      );
       await syncPlayerPreConfirmationDoc(db, targetDate, player, status, effectiveTs);
 
       res.json({ success: true, data: updatedDoc });
     } catch (e: any) {
-      console.error("[Presence API] Error:", e);
       res.status(500).json({ error: e.message });
     }
   });
@@ -702,14 +848,14 @@ async function startServer() {
         lastUpdated: Date.now()
       };
 
-      await db.collection("metadata").doc("intentions").set(clearedDoc);
+      cachedIntentions = clearedDoc;
+      cachedIntentionsLastFetch = Date.now();
+      saveLocalIntentionsBackup(clearedDoc);
 
-      try {
-        const preSnap = await db.collection("preConfirmations").doc(nextThu).collection("players").get();
-        const batch = db.batch();
-        preSnap.forEach((d: any) => batch.delete(d.ref));
-        await batch.commit();
-      } catch (e) {}
+      await withFirestoreGuard(
+        () => db.collection("metadata").doc("intentions").set(clearedDoc),
+        undefined
+      );
 
       res.json({ success: true, data: clearedDoc });
     } catch (err: any) {
@@ -717,68 +863,141 @@ async function startServer() {
     }
   });
 
-  app.get("/api/presence/sync-accesses", async (_req, res) => {
-    res.json({ success: true, synced: 0 });
-  });
-
-  app.post("/api/players/:id/link", async (req, res) => {
-    try {
-      const playerId = req.params.id;
-      const { uid } = req.body;
-      if (!playerId || !uid) return res.status(400).json({ error: "Missing parameters" });
-      const db = await getFirestore();
-      await db.collection("players").doc(playerId).update({ uid });
-      res.json({ success: true });
-    } catch (e: any) {
-      res.status(500).json({ error: e.message });
-    }
-  });
-
   // ============================================================================
-  // ⏰ MOTOR DE AGENDAMENTO AUTOMÁTICO DO BOT WHATSAPP (/api/whatsapp/cron-tasks)
+  // ⏰ MOTOR DE AGENDAMENTO AUTOMÁTICO (Aniversários, Indecisos, Lista, Resgate e Pílula Diária)
   // ============================================================================
   app.post("/api/whatsapp/cron-tasks", async (req, res) => {
     try {
       const groupJid = req.body?.groupJid || "120363401268459791@g.us";
-      const db = await getFirestore();
+      const dryRun = req.body?.dryRun === true;
       const br = getBrazilTimeParts();
 
+      if (br.totalMinutes < 8 * 60 || br.totalMinutes > 23 * 60 + 35) {
+        return res.json({ success: true, messages: [] });
+      }
+
+      const db = await getFirestore();
       const schedRef = db.collection("metadata").doc("whatsapp_scheduler");
-      const schedSnap = await schedRef.get();
-      const schedData = schedSnap.exists ? schedSnap.data() || {} : {};
+
+      if (!cachedScheduler) {
+        cachedScheduler = await withFirestoreGuard(async () => {
+          const schedSnap = await schedRef.get();
+          return schedSnap.exists ? schedSnap.data() || {} : {};
+        }, {});
+      }
+
+      const schedData = cachedScheduler || {};
       const updates: Record<string, any> = {};
       const messagesToSend: Array<{ to: string; text: string; delayMs?: number }> = [];
 
-      const playersSnap = await db.collection("players").get();
-      const allPlayers: any[] = [];
-      playersSnap.forEach((d: any) => allPlayers.push({ id: d.id, ...d.data() }));
+      const [allPlayers, systemConfig] = await Promise.all([
+        getCachedPlayers(cachedPlayers.length === 0),
+        getCachedSystemConfig()
+      ]);
       const activePlayers = allPlayers.filter((p) => p.status === "active" && !p.isDM);
 
-      // 1. ANIVERSARIANTE DO DIA (08:30 BRT)
-      if (br.totalMinutes >= 8 * 60 + 30 && br.totalMinutes <= 11 * 60 && schedData.lastBirthdayDate !== br.dateKey) {
-        updates.lastBirthdayDate = br.dateKey;
-        const birthdayPlayers = activePlayers.filter((p) => {
-          if (!p.birthDate) return false;
-          const parts = String(p.birthDate).split("-");
-          return parts.length >= 3 && `${parts[1]}-${parts[2]}` === br.monthDay;
-        });
+      // 🎂 MENSAGEM AUTOMÁTICA DE ANIVERSÁRIO PARA O GRUPO (1x por dia a partir das 08:00 BRT)
+      const autoBirthdaysEnabled =
+        systemConfig?.birthdayNotificationsEnabled !== false &&
+        systemConfig?.enableAutoBirthdays !== false;
 
-        for (const bp of birthdayPlayers) {
-          let bdayMsg = `🎂🏐 *PARABÉNS, ${bp.name.toUpperCase()}!* 🎉🔥\n\nHoje é dia de festa nos Guerreiros! Desejamos muita saúde, vitórias na quadra e que não falte aquele bloqueio monstro na quinta-feira! Parabéns, Guerreiro(a)! 👏🥳`;
-          try {
-            const { serverGenerateBirthdayMessage } = await import("./services/serverGemini.ts");
-            const aiMsg = await serverGenerateBirthdayMessage(bp.name);
-            if (aiMsg) {
-              bdayMsg = `🎂🏐 *FELIZ ANIVERSÁRIO, ${bp.name.toUpperCase()}!* 🎉\n\n${aiMsg}`;
-            }
-          } catch {}
-          messagesToSend.push({ to: groupJid, text: bdayMsg });
+      if (autoBirthdaysEnabled && schedData.lastBirthdayMessageDate !== br.dateKey) {
+        const birthdayPlayers = getTodayBirthdayPlayers(allPlayers, br.dateKey);
+        if (birthdayPlayers.length > 0) {
+          updates.lastBirthdayMessageDate = br.dateKey;
+          updates.lastBirthdayPlayers = birthdayPlayers.map((p) => p.name);
+          const birthdayText = await buildGroupBirthdayMessage(birthdayPlayers);
+          messagesToSend.push({ to: groupJid, text: birthdayText });
         }
       }
 
-      // 2. GIRO DIÁRIO DINÂMICO COM IA (Horário aleatório entre 10:00 e 18:00 BRT — Sem repetição)
+      const isWednesday = br.dayOfWeek === 3;
+      const isThursday = br.dayOfWeek === 4;
+
+      const isWed15h = isWednesday && br.hour === 15 && br.minute < 30;
+      const isThu10h = isThursday && br.hour === 10 && br.minute < 30;
+      const isThu16h = isThursday && br.hour === 16 && br.minute < 30;
+
+      const slotIdentifier = isWed15h
+        ? `${br.dateKey}_wed_15h`
+        : isThu10h
+        ? `${br.dateKey}_thu_10h`
+        : isThu16h
+        ? `${br.dateKey}_thu_16h`
+        : null;
+
+      if (slotIdentifier && schedData.lastPrivateInviteSlot !== slotIdentifier) {
+        updates.lastPrivateInviteSlot = slotIdentifier;
+        const currentInt = await ensureFreshIntentionsDocument();
+        const targetDate = currentInt.targetDate || getNextThursday();
+        const formattedDate = targetDate.split("-").reverse().slice(0, 2).join("/");
+        const responses = currentInt.responses || {};
+
+        const undecided = activePlayers.filter((p) => {
+          const resp =
+            responses[p.id] ||
+            (p.uid ? responses[p.uid] : null) ||
+            (p.email ? responses[p.email.trim().toLowerCase()] : null);
+          return !resp;
+        });
+
+        undecided.forEach((p, idx) => {
+          const jid = normalizePhoneToJid(p.phone);
+          if (!jid) return;
+          const firstName = p.name.split(" ")[0];
+
+          let textMessage = `Fala, *${firstName}*! 🏐🔥\nAinda não vimos sua confirmação na *Lista de Quinta (${formattedDate})* dos Guerreiros!\n\nToque em uma das opções abaixo ou me mande um áudio para registrar sua resposta:\n\n🟢 *[ ✅ CONFIRMAR PRESENÇA ]*\nhttps://wa.me/558197330924?text=gv%20vou\n\n🔴 *[ ❌ INFORMAR AUSÊNCIA ]*\nhttps://wa.me/558197330924?text=gv%20naovou\n\n— Guerreirinho, o robô do clube 🤖`;
+
+          if (isThu16h) {
+            textMessage = `Fala, *${firstName}*! ⏰🏐\nFechamento da *Lista de Quinta (${formattedDate})* logo mais à noite!\n\nVocê ainda não confirmou presença. Vai jogar hoje?\n\n🟢 *[ ✅ CONFIRMAR PRESENÇA ]*\nhttps://wa.me/558197330924?text=gv%20vou\n\n🔴 *[ ❌ INFORMAR AUSÊNCIA ]*\nhttps://wa.me/558197330924?text=gv%20naovou\n\n— Guerreirinho, o robô do clube 🤖`;
+          }
+
+          messagesToSend.push({
+            to: jid,
+            delayMs: idx * 12000,
+            text: textMessage
+          });
+        });
+      }
+
+      const isTuesday = br.dayOfWeek === 2;
+      const isTue14h = isTuesday && br.hour === 14 && br.minute < 30;
+      const absenceSlotKey = `${br.dateKey}_absence_rescue`;
+
+      if (isTue14h && schedData.lastAbsenceRescueSlot !== absenceSlotKey) {
+        updates.lastAbsenceRescueSlot = absenceSlotKey;
+        try {
+          const recentMatches = (await getCachedMatches(cachedMatches.length === 0)).slice(-15);
+          const attendanceMap = new Map<string, number>();
+          activePlayers.forEach((p) => attendanceMap.set(p.id, 0));
+
+          recentMatches.forEach((m) => {
+            const participants = [...(m.teamA || []), ...(m.teamB || [])];
+            participants.forEach((pid) => {
+              if (attendanceMap.has(pid)) {
+                attendanceMap.set(pid, (attendanceMap.get(pid) || 0) + 1);
+              }
+            });
+          });
+
+          const absentPlayers = activePlayers.filter((p) => (attendanceMap.get(p.id) || 0) === 0 && p.phone);
+
+          absentPlayers.forEach((p, idx) => {
+            const jid = normalizePhoneToJid(p.phone);
+            if (!jid) return;
+            const firstName = p.name.split(" ")[0];
+
+            messagesToSend.push({
+              to: jid,
+              delayMs: idx * 15000,
+              text: `Fala, *${firstName}*! 🏐👀\n\nO Guerreirinho aqui estava olhando as súmulas dos últimos rachões e percebi que a sua presença tem feito falta na nossa resenha! A rede está armada, o ELO está guardado e o time está sentindo falta do seu braço em quadra.\n\nTá tudo bem por aí? Quando puder colar com a gente de novo, é só mandar uma mensagem ou áudio dizendo que vai!\n\nUm abraço dos Guerreiros! 👊\n\n— Guerreirinho, o robô do clube 🤖`
+            });
+          });
+        } catch {}
+      }
+
       const dateSeed = br.dateKey.split("-").reduce((acc, val) => acc * 31 + Number(val), 7);
-      const randomTargetMinute = 600 + (Math.abs(dateSeed * 16807) % 481); // 600 (10h00) até 1080 (18h00)
+      const randomTargetMinute = 600 + (Math.abs(dateSeed * 16807) % 481);
 
       if (
         br.totalMinutes >= randomTargetMinute &&
@@ -793,23 +1012,30 @@ async function startServer() {
           : [];
 
         const themeByDay: Record<number, string> = {
-          1: "Bastidores, história, grandes clubes ou destaques da Superliga Brasileira de Vôlei (Masculina ou Feminina).",
-          2: "Dica técnica e prática de quadra para vôlei (manchete, levantamento, tempo de bloqueio, cobertura de ataque, saque flutuante, defesa ou leitura de jogo).",
-          3: "História, conquistas marcantes, grandes ídolos, técnicos lendários (Bernardinho, Zé Roberto) ou curiosidades da Seleção Brasileira de Vôlei.",
-          4: "Mensagem vibrante de aquecimento para o jogo de HOJE (quinta-feira) dos Guerreiros VC + 1 dica rápida de foco tático e comunicação em quadra.",
-          5: "Curiosidade histórica do vôlei mundial/olímpico, evolução de regras (líbero, rally point, desafio) ou recordes impressionantes do esporte.",
-          6: "Dica de preparo físico, prevenção de lesões (ombro, joelho, tornozelo) ou recuperação muscular para quem joga vôlei toda semana.",
-          0: "Resenha de domingo: grandes rivalidades históricas do vôlei brasileiro ou jogos inesquecíveis que pararam o Brasil."
+          1: "Atividade física regular, fortalecimento muscular (ombros, core e pernas) e constância nos treinos para jogar vôlei em alto nível e com saúde.",
+          2: "Dica técnica e prática de quadra (manchete, levantamento, tempo de bloqueio, cobertura de ataque, saque flutuante, defesa) + importância da mobilidade.",
+          3: "Alimentação balanceada, hidratação e nutrição inteligente para dar explosão muscular, evitar cãibras e acelerar a recuperação para o vôlei.",
+          4: "HOJE É DIA DE JOGO (Quinta-feira)! A importância fundamental do AQUECIMENTO articular e ativação muscular antes de entrar em quadra e do ALONGAMENTO para proteger ombros, joelhos e tornozelos.",
+          5: "Recuperação pós-jogo (sono, alongamento leve, nutrição regenerativa) + curiosidade histórica do vôlei mundial/olímpico.",
+          6: "Prevenção de lesões no vôlei (manguito rotador, tendão patelar, tornozelo), longevidade esportiva e qualidade de vida através do esporte.",
+          0: "Resenha de domingo: grandes jogos históricos do vôlei brasileiro + motivação de saúde e energia para começar a semana no ritmo dos Guerreiros."
         };
 
-        const chosenTheme = themeByDay[dayOfWeek] || themeByDay[2];
+        const chosenTheme = themeByDay[dayOfWeek] || themeByDay[4];
         let dailyContent = "";
 
         if (apiKey) {
           try {
-            const ai = new GoogleGenAI({ apiKey });
-            const prompt = `Você é o Bot Oficial do clube de vôlei "Guerreiros VC".
-Escreva uma pílula diária curta, envolvente e bem formatada para o WhatsApp (use *negrito* e emojis de vôlei) para enviar hoje (${br.dateKey}) no grupo dos sócios.
+            const ai = new GoogleGenAI({
+              apiKey,
+              httpOptions: {
+                headers: {
+                  "User-Agent": "aistudio-build"
+                }
+              }
+            });
+            const prompt = `Você é o Guerreirinho, o mascote digital e Agente de IA oficial do clube de vôlei "Guerreiros VC".
+Escreva uma pílula diária curta, envolvente e muito bem formatada para o WhatsApp (use *negrito* e emojis de vôlei/saúde) para enviar hoje (${br.dateKey}) no grupo dos sócios.
 
 TEMA DO DIA: ${chosenTheme}
 
@@ -818,10 +1044,10 @@ ${recentTopics.length > 0 ? recentTopics.join(" | ") : "Nenhum ainda"}
 
 REGRAS DE FORMATO:
 1. Na primeira linha, escreva APENAS: RESUMO_TEMA: <resumo de 4 palavras do assunto específico escolhido>
-2. A partir da segunda linha, escreva a mensagem pronta para o WhatsApp (máximo de 2 parágrafos curtos + 1 frase final convidando os sócios a digitarem *gv* para receber ranking/estatísticas no privado ou *gv vou* para confirmar presença na quinta).`;
+2. A partir da segunda linha, escreva a mensagem pronta para o WhatsApp (máximo de 2 parágrafos curtos + 1 frase final convidando os sócios a conversarem com o Guerreirinho no privado por texto ou áudio, ou digitarem *gv meusjogos* para ver seu histórico completo).`;
 
             const aiResp = await ai.models.generateContent({
-              model: "gemini-2.5-flash",
+              model: "gemini-4-hydrogen",
               contents: prompt
             });
 
@@ -836,120 +1062,25 @@ REGRAS DE FORMATO:
                 dailyContent = rawOutput;
               }
             }
-          } catch (err) {
-            console.warn("[WhatsApp Cron] Fallback no Giro Diário IA:", err);
-          }
+          } catch {}
         }
 
         if (!dailyContent) {
           dailyContent =
-            `🏐 *PÍLULA DO VÔLEI — GUERREIROS VC* 🔥\n\n` +
-            `💡 *Dica de Quadra:* A comunicação antes do saque adversário evita 70% das bolas que caem entre dois jogadores. Chame a bola alto ("MINHA!" / "SUA!") e mantenha a base baixa na recepção!\n\n` +
-            `👉 _Digite *gv ranking* ou *gv lista* aqui mesmo para receber os dados no seu privado!_`;
+            `🏐 *PÍLULA DO VÔLEI & SAÚDE — GUERREIROS VC* 🔥\n\n` +
+            `💡 *Dica do Guerreirinho:* Nunca entre frio na quadra! Dedicar 10 minutos ao *aquecimento articular* (ombros, joelhos e tornozelos) antes da partida reduz drasticamente o risco de lesões e melhora seu tempo de reação na defesa. Combine isso com boa hidratação e alimentação equilibrada!\n\n` +
+            `👉 _Mande um áudio ou digite *gv meusjogos* no meu privado para ver seu histórico completo!_\n\n— Guerreirinho, o robô do clube 🤖`;
+        } else {
+          dailyContent += `\n\n— Guerreirinho, o robô do clube 🤖`;
         }
 
         messagesToSend.push({ to: groupJid, text: dailyContent });
       }
 
-      // 3. DIA 02 DO MÊS ÀS 09:00 — COMUNICADO DE MENSALIDADE NO GRUPO
-      if (
-        br.dayOfMonth === 2 &&
-        br.totalMinutes >= 9 * 60 &&
-        br.totalMinutes <= 12 * 60 &&
-        schedData.lastDay02NoticeMonth !== br.yearMonth
-      ) {
-        updates.lastDay02NoticeMonth = br.yearMonth;
-        const sysSnap = await db.collection("metadata").doc("system").get();
-        const sysData = sysSnap.exists ? sysSnap.data() || {} : {};
-        const pixKey = sysData.pixKey || "elizabeth.santos.pe@gmail.com";
-        const fee = Number(sysData.monthlyFee || 0).toFixed(2).replace(".", ",");
-
-        messagesToSend.push({
-          to: groupJid,
-          text:
-            `💰 *ABERTURA DO MÊS FINANCEIRO (${br.yearMonth}) — GUERREIROS VC* 🏐\n\n` +
-            `Fala, Guerreiros! Lembrando que a mensalidade deste mês já está aberta para pagamento até o *dia 10*.\n\n` +
-            `💵 *Valor Mensal:* R$ ${fee}\n` +
-            `🔑 *Chave PIX:* ${pixKey}\n` +
-            `👤 *Favorecido:* Elizabeth de Souza Santos (Nubank)\n\n` +
-            `💡 _Digite *gv pix* para consultar seu status no privado!_`
-        });
-      }
-
-      // 4. DIA 10 DO MÊS ÀS 10:00 — LEMBRETE INDIVIDUAL NO PRIVADO DOS PENDENTES
-      if (
-        br.dayOfMonth === 10 &&
-        br.totalMinutes >= 10 * 60 &&
-        br.totalMinutes <= 13 * 60 &&
-        schedData.lastDay10PrivateMonth !== br.yearMonth
-      ) {
-        updates.lastDay10PrivateMonth = br.yearMonth;
-        const sysSnap = await db.collection("metadata").doc("system").get();
-        const sysData = sysSnap.exists ? sysSnap.data() || {} : {};
-        const pixKey = sysData.pixKey || "elizabeth.santos.pe@gmail.com";
-        const fee = Number(sysData.monthlyFee || 0).toFixed(2).replace(".", ",");
-
-        const paySnap = await db.collection("payments").where("month", "==", br.yearMonth).get();
-        const paidIds = new Set<string>();
-        paySnap.forEach((d: any) => {
-          const pData = d.data();
-          if (pData?.status === "PAID" && pData?.playerId) paidIds.add(pData.playerId);
-        });
-
-        const unpaidMembers = activePlayers.filter((p) => !p.isExempt && !paidIds.has(p.id));
-        unpaidMembers.forEach((p, idx) => {
-          const jid = normalizePhoneToJid(p.phone);
-          if (!jid) return;
-          const firstName = p.name.split(" ")[0];
-          messagesToSend.push({
-            to: jid,
-            delayMs: idx * 12000,
-            text:
-              `Olá, *${firstName}*! Tudo bem? 🏐\n\n` +
-              `Passando para lembrar que hoje (*dia 10*) é o vencimento da mensalidade dos *Guerreiros VC* referente a *${br.yearMonth}*.\n\n` +
-              `💵 *Valor:* R$ ${fee}\n` +
-              `🔑 *Chave PIX:* ${pixKey}\n` +
-              `👤 *Favorecido:* Elizabeth de Souza Santos (Nubank)\n\n` +
-              `_Caso já tenha realizado o pagamento, basta desconsiderar esta mensagem!_`
-          });
-        });
-      }
-
-      // 5. QUARTA (10:00) E QUINTA (10:00) — COBRANÇA NO PRIVADO DOS INDECISOS DA LISTA
-      const isWedOrThu = br.dayOfWeek === 3 || br.dayOfWeek === 4;
-      if (
-        isWedOrThu &&
-        br.totalMinutes >= 10 * 60 &&
-        br.totalMinutes <= 12 * 60 &&
-        schedData.lastPrivateInviteDate !== br.dateKey
-      ) {
-        updates.lastPrivateInviteDate = br.dateKey;
-        const currentInt = await ensureFreshIntentionsDocument();
-        const targetDate = currentInt.targetDate || getNextThursday();
-        const formattedDate = targetDate.split("-").reverse().slice(0, 2).join("/");
-        const responses = currentInt.responses || {};
-
-        const undecided = activePlayers.filter((p) => !responses[p.id]);
-        undecided.forEach((p, idx) => {
-          const jid = normalizePhoneToJid(p.phone);
-          if (!jid) return;
-          const firstName = p.name.split(" ")[0];
-          messagesToSend.push({
-            to: jid,
-            delayMs: idx * 12000,
-            text:
-              `Fala, *${firstName}*! 🏐🔥\n\n` +
-              `Ainda não vimos sua confirmação na *Lista de Quinta (${formattedDate})* dos Guerreiros!\n\n` +
-              `Responda aqui mesmo com apenas um número:\n` +
-              `*1* — Vou Jogar! ✅\n` +
-              `*2* — Não Vou 😢`
-          });
-        });
-      }
-
-      // 6. BOLETIM A CADA 30 MINUTOS NO GRUPO (Se houve novo confirmado na lista)
-      if (isWedOrThu && br.totalMinutes >= 8 * 60 && br.totalMinutes <= 19 * 60 + 30 && br.minute % 30 === 0) {
-        const slotKey = `${br.dateKey}_${br.hour}:${br.minute}`;
+      const isMondayToThursday = br.dayOfWeek >= 1 && br.dayOfWeek <= 4;
+      if (isMondayToThursday && br.totalMinutes >= 8 * 60 && br.totalMinutes <= 19 * 60 + 30) {
+        const halfHourBucket = Math.floor(br.minute / 30);
+        const slotKey = `${br.dateKey}_${br.hour}_${halfHourBucket}`;
         if (schedData.last30MinCheckSlot !== slotKey) {
           updates.last30MinCheckSlot = slotKey;
           const currentInt = await ensureFreshIntentionsDocument();
@@ -973,62 +1104,90 @@ REGRAS DE FORMATO:
             const formattedDate = targetDate.split("-").reverse().slice(0, 2).join("/");
             const settersCount = goingList.filter((p) => p.isOfficialSetter).length;
 
+            const count = goingList.length;
+            let statusNoite = "";
+            if (count < 6) {
+              statusNoite = "🔥 *Status da Noite:* Montando a base... Faltam guerreiros para o primeiro time!";
+            } else if (count < 12) {
+              statusNoite = "🔥 *Status da Noite:* Esquentando o braço! Já temos o início de um jogaço.";
+            } else if (count < 18) {
+              statusNoite = "🔥 *Status da Noite:* Já temos 2 times formados na quadra! O bicho vai pegar! ⚡";
+            } else if (count < 24) {
+              statusNoite = "🔥 *Status da Noite:* Presença forte! Vamos rodar 3 times completos sem tempo ruim.";
+            } else {
+              statusNoite = "🔥 *Status da Noite:* Quadra estourando de gente! Sócios em peso, rodízio pesado e nível lá no alto! 🚀";
+            }
+
+            const frasesResenha = [
+              "\"Aquecimento em dia, passe na mão e braço duro para matar o ponto!\"",
+              "\"Quem tem um bom levantador na quadra joga com tranquilidade.\"",
+              "\"Defesa difícil é aquela que a gente busca com a alma e levanta de manchete.\"",
+              "\"O bloqueio fecha a porta, a defesa recolhe o resto e o ataque decide!\""
+            ];
+            const fraseAleatoria = frasesResenha[Math.floor(Math.random() * frasesResenha.length)];
+
             messagesToSend.push({
               to: groupJid,
               text:
                 `📋 *ATUALIZAÇÃO DA LISTA DE QUINTA (${formattedDate})* 🏐\n` +
-                `✅ *Confirmados:* ${goingList.length} (${settersCount} Levantadores)\n\n` +
+                `✅ *Confirmados:* ${goingList.length}/29 (${settersCount} Levantadores)\n` +
                 goingList
-                  .map((p, i) => `${String(i + 1).padStart(2, "0")}. ${p.name}${p.isOfficialSetter ? " *(L)*" : ""}`)
+                  .map((p, i) => `${i + 1}. ${p.name}${p.isOfficialSetter ? " *(L)*" : ""}`)
                   .join("\n") +
-                `\n\n💡 _Digite *gv vou* para confirmar presença ou *gv naovou* para informar ausência._`
+                `\n\n${statusNoite}\n` +
+                `💬 *${fraseAleatoria}*\n` +
+                `───────────────────\n` +
+                `🤖 *FALE COM O GUERREIRINHO NO PRIVADO (1 CLIQUE OU ÁUDIO):*\n` +
+                `✅ *Confirmar (Vou):* https://wa.me/558197330924?text=gv%20vou\n\n` +
+                `❌ *Informar Ausência:* https://wa.me/558197330924?text=gv%20naovou\n\n— Guerreirinho, o robô do clube 🤖`
             });
           }
         }
       }
 
-      // 7. QUINTA-FEIRA ÀS 22:25 — RANKING DO DIA + RANKING ACUMULADO NO GRUPO
-      if (
-        br.dayOfWeek === 4 &&
-        br.totalMinutes >= 22 * 60 + 25 &&
-        br.totalMinutes <= 23 * 60 + 30 &&
-        schedData.lastThuPostGameDate !== br.dateKey
-      ) {
-        updates.lastThuPostGameDate = br.dateKey;
-        const postGameReport = await buildThursdayPostGameReport(db, allPlayers, br.dateKey);
-        messagesToSend.push({
-          to: groupJid,
-          text: postGameReport
-        });
+      if (!dryRun && Object.keys(updates).length > 0) {
+        cachedScheduler = { ...schedData, ...updates };
+        await withFirestoreGuard(() => schedRef.set(updates, { merge: true }), undefined);
       }
 
-      if (Object.keys(updates).length > 0) {
-        await schedRef.set(updates, { merge: true });
-      }
-
-      res.json({ success: true, messages: messagesToSend });
+      res.json({ success: true, messages: messagesToSend, ...(dryRun ? { dryRun: true } : {}) });
     } catch (err: any) {
-      console.error("[WhatsApp Cron] Erro:", err);
       res.status(200).json({ success: false, messages: [], error: err.message });
     }
   });
 
-  // ============================================================================
-  // 🤖 WEBHOOK DO BOT DE WHATSAPP (Auto-Delete no Grupo + Resposta no Privado)
-  // ============================================================================
   app.post("/api/whatsapp/webhook", async (req, res) => {
     try {
       const body = req.body || {};
       const payload = body.payload || body.data || body;
 
-      const rawText: string =
+      let rawText: string =
         payload.body ||
         payload?.message?.conversation ||
         payload?.message?.extendedTextMessage?.text ||
         "";
 
+      const audioMessage = payload?.message?.audioMessage || payload?.audioMessage;
+      let audioBuffer: Buffer | null = null;
+      let audioMimeType = "audio/ogg";
+
+      if (audioMessage) {
+        try {
+          if (audioMessage.base64) {
+            audioBuffer = Buffer.from(audioMessage.base64, "base64");
+            audioMimeType = audioMessage.mimetype || "audio/ogg";
+          } else if (audioMessage.url) {
+            const respAudio = await fetch(audioMessage.url);
+            const arrayBuf = await respAudio.arrayBuffer();
+            audioBuffer = Buffer.from(arrayBuf);
+          }
+        } catch (e) {
+          console.warn("[Webhook] Falha ao baixar áudio:", e);
+        }
+      }
+
       const text = String(rawText).trim();
-      if (!text) {
+      if (!text && !audioBuffer) {
         return res.status(200).json({ ignored: true, reason: "empty" });
       }
 
@@ -1044,7 +1203,7 @@ REGRAS DE FORMATO:
         text.startsWith("📝 Registrado") ||
         text.startsWith("🤖");
 
-      if (isBotGeneratedOutput) {
+      if (isBotGeneratedOutput && !audioBuffer) {
         return res.status(200).json({ ignored: true, reason: "bot_output" });
       }
 
@@ -1053,20 +1212,16 @@ REGRAS DE FORMATO:
       const isGroup = chatId.endsWith("@g.us");
       const lower = text.toLowerCase().trim();
 
-      const isAliasTrigger = /^@?(gv|bot|botgv)($|[\s,!?:])/i.test(lower);
+      const isAliasTrigger = /^@?(gv|bot|botgv|guerreirinho)($|[\s,!?:])/i.test(lower);
 
-      if (isFromMe && !isAliasTrigger) {
+      if (isFromMe && !isAliasTrigger && !audioBuffer) {
         return res.status(200).json({ ignored: true, reason: "fromMe_non_command" });
       }
 
-      const isPrivateQuickReply =
-        !isGroup &&
-        !isFromMe &&
-        ["1", "2"].includes(lower) &&
-        (payload.toMe || chatId.endsWith("@s.whatsapp.net"));
-
+      const isPrivateChat = !isGroup && (payload.toMe || chatId.endsWith("@s.whatsapp.net"));
       const isTrigger =
-        isPrivateQuickReply ||
+        isPrivateChat ||
+        Boolean(audioBuffer && !isGroup) ||
         isAliasTrigger ||
         lower.startsWith("!") ||
         lower.startsWith("/") ||
@@ -1087,9 +1242,8 @@ REGRAS DE FORMATO:
       const senderPhone = String(senderJid).split("@")[0].replace(/\D/g, "");
 
       const db = await getFirestore();
-      const playersSnap = await db.collection("players").get();
-      const allPlayers: any[] = [];
-      playersSnap.forEach((d: any) => allPlayers.push({ id: d.id, ...d.data() }));
+      // Força o carregamento se o cache estiver vazio no momento da mensagem
+      const allPlayers = await getCachedPlayers(cachedPlayers.length === 0);
 
       const normStr = (s: string) =>
         String(s || "")
@@ -1098,221 +1252,208 @@ REGRAS DE FORMATO:
           .replace(/[\u0300-\u036f]/g, "")
           .trim();
 
-      let senderPlayer = allPlayers.find(
+      const matchingPlayers = allPlayers.filter(
         (p) =>
           (p.whatsappLid && p.whatsappLid === senderLid) ||
-          (!senderJid.endsWith("@lid") && matchBrazilianPhone(senderPhone, p.phone))
+          (!senderJid.endsWith("@lid") && matchBrazilianPhone(senderPhone, p.phone)) ||
+          (senderPhone.length >= 8 && p.phone && p.phone.replace(/\D/g, "").slice(-8) === senderPhone.slice(-8))
       );
+
+      // Ordena pelo maior número de partidas jogadas para sempre pegar o perfil principal
+      matchingPlayers.sort((a, b) => (Number(b.matchesPlayed) || 0) - (Number(a.matchesPlayed) || 0));
+      let senderPlayer = matchingPlayers[0];
 
       if (!senderPlayer && pushName.length >= 3) {
         const cleanPush = normStr(pushName);
-        const pushFirst = cleanPush.split(/\s+/)[0];
-        senderPlayer = allPlayers.find((p) => {
-          if (p.status !== "active" || !p.name) return false;
-          const cleanName = normStr(p.name);
-          const nameFirst = cleanName.split(/\s+/)[0];
-          return (
-            cleanName === cleanPush ||
-            cleanName.includes(cleanPush) ||
-            (pushFirst.length >= 4 && nameFirst === pushFirst)
-          );
-        });
+        const nameCandidates = allPlayers
+          .filter((p) => {
+            if (p.status !== "active" || !p.name) return false;
+            const cleanName = normStr(p.name);
+            return cleanName === cleanPush || cleanName.includes(cleanPush) || cleanPush.includes(cleanName);
+          })
+          .sort((a, b) => (Number(b.matchesPlayed) || 0) - (Number(a.matchesPlayed) || 0));
 
-        if (senderPlayer && senderLid.endsWith("@lid")) {
-          db.collection("players")
-            .doc(senderPlayer.id)
-            .set({ whatsappLid: senderLid }, { merge: true })
-            .catch(() => {});
+        senderPlayer = nameCandidates[0];
+
+        if (senderPlayer && (!senderPlayer.phone || senderPlayer.phone.trim() === "")) {
+          const cleanCurrentPhone = senderPhone.replace(/\D/g, "");
+          if (cleanCurrentPhone.length >= 10) {
+            senderPlayer.phone = cleanCurrentPhone;
+            withFirestoreGuard(async () => {
+              await db.collection("players").doc(senderPlayer.id).update({
+                phone: cleanCurrentPhone,
+                autoLinkedAt: Date.now()
+              });
+            }, undefined).catch(() => {});
+          }
         }
       }
 
-      if (!senderPlayer && isFromMe) {
-        senderPlayer = allPlayers.find(
-          (p) => p.email && p.email.trim().toLowerCase() === "rodneyes@gmail.com"
-        );
+      if (!senderPlayer && (isFromMe || senderPhone.includes("97330924"))) {
+        const rodneyCandidates = allPlayers
+          .filter(
+            (p) =>
+              (p.email && p.email.trim().toLowerCase() === "rodneyes@gmail.com") ||
+              (p.name && normStr(p.name).includes("rodney"))
+          )
+          .sort((a, b) => (Number(b.matchesPlayed) || 0) - (Number(a.matchesPlayed) || 0));
+
+        senderPlayer = rodneyCandidates[0] || {
+          id: "rodney_admin",
+          name: "Rodney",
+          email: "rodneyes@gmail.com",
+          phone: "558197330924",
+          status: "active",
+          isDM: false
+        };
       }
 
-      // --- CLASSIFICAÇÃO INTELIGENTE DE INTENÇÃO POR LINGUAGEM NATURAL (NLP) ---
+      if (!senderPlayer) {
+        senderPlayer = {
+          id: `wa_${senderPhone || "socio"}`,
+          name: pushName && pushName !== "Socio" ? pushName : "Guerreiro(a)",
+          phone: senderPhone,
+          status: "active",
+          isDM: false,
+          matchesPlayed: 0,
+          elo: 1200
+        };
+      }
+
       const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
-      let intent = "DEEP_ANALYTICS_CHAT";
+      let finalMessageToProcess = text;
 
-      const cleanAfterAlias = lower.replace(/^(@?gv|@?bot|@?botgv|@guerreiros|guerreiros|!|\/)[,:\s]*/i, "").trim();
-
-      if (isPrivateQuickReply) {
-        intent = lower === "1" ? "CONFIRM_ATTENDANCE" : "DECLINE_ATTENDANCE";
-      } else if (["vou", "eu vou", "confirmar", "sim", "presenca", "presença"].includes(cleanAfterAlias)) {
-        intent = "CONFIRM_ATTENDANCE";
-      } else if (["naovou", "nao vou", "não vou", "ausente", "nao", "não"].includes(cleanAfterAlias)) {
-        intent = "DECLINE_ATTENDANCE";
-      } else if (["lista", "confirmados", "quem vai"].includes(cleanAfterAlias)) {
-        intent = "VIEW_LIST";
-      } else if (cleanAfterAlias.startsWith("ranking")) {
-        intent = "VIEW_RANKING";
-      } else if (["pix", "mensalidade", "financeiro"].includes(cleanAfterAlias)) {
-        intent = "CHECK_PIX";
-      } else if (cleanAfterAlias.startsWith("meusjogos") || cleanAfterAlias.startsWith("meus jogos")) {
-        intent = "RAW_STATS_LIST";
-      } else if (apiKey) {
+      if (audioBuffer && apiKey) {
         try {
-          const ai = new GoogleGenAI({ apiKey });
-          const classificationResponse = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: `Classifique a frase de um sócio do clube de vôlei no WhatsApp em exatamente UMA destas intenções:
-- CONFIRM_ATTENDANCE (ex: confirmar presença, vai jogar, vou, eu vou, sim)
-- DECLINE_ATTENDANCE (ex: não vai, ausente, não vou)
-- VIEW_LIST (ex: ver lista, confirmados)
-- VIEW_RANKING (ex: ranking, top 10, elo, ranking diário, ranking acumulado, ver todos os sócios)
-- CHECK_PIX (ex: pix, mensalidade)
-- RAW_STATS_LIST (ex: ver tabela dos meus últimos 20 jogos, meus jogos)
-- DEEP_ANALYTICS_CHAT (ex: perguntas complexas, quem é meu rival, estatísticas, Superliga, Seleção Brasileira, técnicas, dúvidas)
-
-Frase: "${cleanAfterAlias}"
-Retorne apenas a intenção em maiúsculo, sem mais nada.`
+          const ai = new GoogleGenAI({
+            apiKey,
+            httpOptions: {
+              headers: {
+                "User-Agent": "aistudio-build"
+              }
+            }
           });
-
-          const classified = classificationResponse.text?.trim().toUpperCase();
-          if (
-            classified &&
-            [
-              "CONFIRM_ATTENDANCE",
-              "DECLINE_ATTENDANCE",
-              "VIEW_LIST",
-              "VIEW_RANKING",
-              "CHECK_PIX",
-              "RAW_STATS_LIST",
-              "DEEP_ANALYTICS_CHAT"
-            ].includes(classified)
-          ) {
-            intent = classified;
-          }
+          const audioPart = {
+            inlineData: {
+              data: audioBuffer.toString("base64"),
+              mimeType: audioMimeType
+            }
+          };
+          const transcriptionResp = await ai.models.generateContent({
+            model: "gemini-4-hydrogen",
+            contents: [
+              audioPart,
+              "Transcreva exatamente em português do Brasil o que o sócio disse neste áudio enviado para o robô do clube de vôlei Guerreiros VC."
+            ]
+          });
+          finalMessageToProcess = (transcriptionResp.text || "").trim() || "Áudio enviado pelo sócio.";
         } catch (e) {
-          console.warn("[NLP Intent Classification Warning]:", e);
+          finalMessageToProcess = "Áudio recebido.";
         }
       }
 
-      let replyText = "";
+      const executeConfirmAttendance = async (): Promise<string> => {
+        if (senderPlayer.status !== "active" || senderPlayer.isDM) {
+          return `⚠️ Olá, *${senderPlayer.name}*! Apenas sócios com status Ativo e fora do DM podem confirmar presença.`;
+        }
+        const currentInt = await ensureFreshIntentionsDocument();
+        const targetDate = currentInt.targetDate || getNextThursday();
+        const responses: Record<string, string> = { ...(currentInt.responses || {}) };
+        const timestamps: Record<string, number> = { ...(currentInt.confirmationTimestamps || {}) };
 
-      // 1. CONFIRMAR PRESENÇA
-      if (intent === "CONFIRM_ATTENDANCE") {
-        if (!senderPlayer) {
-          replyText = `⚠️ Não consegui vincular seu WhatsApp (*${pushName || senderPhone}*) ao cadastro de sócios. Peça ao Admin para atualizar seu telefone no perfil!`;
-        } else if (senderPlayer.status !== "active" || senderPlayer.isDM) {
-          replyText = `⚠️ Olá, *${senderPlayer.name}*! Apenas sócios com status Ativo e fora do DM podem confirmar presença.`;
-        } else {
-          const matchingDocs = allPlayers.filter(
+        const now = Date.now();
+        const cutoffTs = getCycleFridayCutoffTimestamp(targetDate);
+        const prevTs = Number(timestamps[senderPlayer.id] || 0);
+        const alreadyConfirmed = responses[senderPlayer.id] === "GOING" && prevTs >= cutoffTs;
+        const effectiveTs = alreadyConfirmed ? prevTs : now;
+
+        responses[senderPlayer.id] = "GOING";
+        timestamps[senderPlayer.id] = effectiveTs;
+        if (senderPlayer.uid) {
+          responses[senderPlayer.uid] = "GOING";
+          timestamps[senderPlayer.uid] = effectiveTs;
+        }
+        if (senderPlayer.email) {
+          const em = senderPlayer.email.trim().toLowerCase();
+          responses[em] = "GOING";
+          timestamps[em] = effectiveTs;
+        }
+
+        const updatedDoc = {
+          targetDate,
+          automationEnabled: currentInt.automationEnabled ?? true,
+          responses,
+          confirmationTimestamps: timestamps,
+          remindersSent: currentInt.remindersSent || {},
+          lastUpdated: now
+        };
+
+        cachedIntentions = updatedDoc;
+        cachedIntentionsLastFetch = now;
+        saveLocalIntentionsBackup(updatedDoc);
+
+        await withFirestoreGuard(
+          () => db.collection("metadata").doc("intentions").set(updatedDoc),
+          undefined
+        );
+        await syncPlayerPreConfirmationDoc(db, targetDate, senderPlayer, "GOING", effectiveTs);
+
+        const pool = allPlayers.length > 0 ? allPlayers : [senderPlayer];
+        const activeGoing = pool
+          .filter(
             (p) =>
-              p.id === senderPlayer.id ||
-              (senderPlayer.email && p.email && p.email.trim().toLowerCase() === senderPlayer.email.trim().toLowerCase()) ||
-              (senderPlayer.uid && p.uid && p.uid === senderPlayer.uid)
-          );
+              p.status === "active" &&
+              !p.isDM &&
+              (responses[p.id] === "GOING" ||
+                (p.uid && responses[p.uid] === "GOING") ||
+                (p.email && responses[p.email.trim().toLowerCase()] === "GOING"))
+          )
+          .sort((a, b) => (timestamps[a.id] || 0) - (timestamps[b.id] || 0));
 
-          const currentInt = await ensureFreshIntentionsDocument();
-          const targetDate = currentInt.targetDate || getNextThursday();
-          const responses: Record<string, string> = { ...(currentInt.responses || {}) };
-          const timestamps: Record<string, number> = { ...(currentInt.confirmationTimestamps || {}) };
+        const pos = Math.max(1, activeGoing.findIndex((p) => p.id === senderPlayer.id) + 1);
+        const totalGoing = Math.max(1, activeGoing.length);
+        const formattedDate = targetDate.split("-").reverse().slice(0, 2).join("/");
 
-          const now = Date.now();
-          const cutoffTs = getCycleFridayCutoffTimestamp(targetDate);
-          const prevTs = Number(timestamps[senderPlayer.id] || 0);
-          const alreadyConfirmed = responses[senderPlayer.id] === "GOING" && prevTs >= cutoffTs;
-          const effectiveTs = alreadyConfirmed ? prevTs : now;
+        return alreadyConfirmed
+          ? `✅ *${senderPlayer.name}*, você já estava confirmado(a) para Quinta (${formattedDate})! Sua posição na lista é *#${pos}* de *${totalGoing}* / 29.`
+          : `🏐🔥 *Bora pra cima, ${senderPlayer.name}!*\nPresença confirmada para Quinta (${formattedDate})!\n📍 Você é o *#${pos}* de *${totalGoing}* / 29 confirmados.\n\n_Caso precise cancelar depois, toque aqui:_\nhttps://wa.me/558197330924?text=gv%20naovou`;
+      };
 
-          const aliases = new Set<string>([senderPlayer.id]);
-          matchingDocs.forEach((mp) => {
-            if (mp.id) aliases.add(mp.id);
-            if (mp.uid) aliases.add(mp.uid);
-            if (mp.email) aliases.add(mp.email.trim().toLowerCase());
-          });
+      const executeDeclineAttendance = async (): Promise<string> => {
+        const currentInt = await ensureFreshIntentionsDocument();
+        const targetDate = currentInt.targetDate || getNextThursday();
+        const responses: Record<string, string> = { ...(currentInt.responses || {}) };
+        const timestamps: Record<string, number> = { ...(currentInt.confirmationTimestamps || {}) };
+        const now = Date.now();
 
-          aliases.forEach((alias) => {
-            responses[alias] = "GOING";
-            timestamps[alias] = effectiveTs;
-          });
+        responses[senderPlayer.id] = "NOT_GOING";
+        timestamps[senderPlayer.id] = now;
+        if (senderPlayer.uid) responses[senderPlayer.uid] = "NOT_GOING";
+        if (senderPlayer.email) responses[senderPlayer.email.trim().toLowerCase()] = "NOT_GOING";
 
-          const updatedDoc = {
-            targetDate,
-            automationEnabled: currentInt.automationEnabled ?? true,
-            responses,
-            confirmationTimestamps: timestamps,
-            remindersSent: currentInt.remindersSent || {},
-            lastUpdated: now
-          };
+        const updatedDoc = {
+          targetDate,
+          automationEnabled: currentInt.automationEnabled ?? true,
+          responses,
+          confirmationTimestamps: timestamps,
+          remindersSent: currentInt.remindersSent || {},
+          lastUpdated: now
+        };
 
-          await db.collection("metadata").doc("intentions").set(updatedDoc);
-          for (const mp of matchingDocs) {
-            await syncPlayerPreConfirmationDoc(db, targetDate, mp, "GOING", effectiveTs);
-          }
+        cachedIntentions = updatedDoc;
+        cachedIntentionsLastFetch = now;
+        saveLocalIntentionsBackup(updatedDoc);
 
-          const activeGoing = allPlayers
-            .filter(
-              (p) =>
-                p.status === "active" &&
-                !p.isDM &&
-                (responses[p.id] === "GOING" ||
-                  (p.uid && responses[p.uid] === "GOING") ||
-                  (p.email && responses[p.email.trim().toLowerCase()] === "GOING"))
-            )
-            .sort((a, b) => (timestamps[a.id] || 0) - (timestamps[b.id] || 0));
+        await withFirestoreGuard(
+          () => db.collection("metadata").doc("intentions").set(updatedDoc),
+          undefined
+        );
+        await syncPlayerPreConfirmationDoc(db, targetDate, senderPlayer, "NOT_GOING", now);
 
-          const pos = activeGoing.findIndex((p) => p.id === senderPlayer.id) + 1;
-          const formattedDate = targetDate.split("-").reverse().slice(0, 2).join("/");
+        return `📝 Registrado, *${senderPlayer.name}*. Sua ausência foi atualizada na lista. Fica para a próxima!\n\n_Mudei de ideia, quero ir:_ 👉 https://wa.me/558197330924?text=gv%20vou`;
+      };
 
-          replyText = alreadyConfirmed
-            ? `✅ *${senderPlayer.name}*, você já estava confirmado(a) para Quinta (${formattedDate})! Sua posição na lista é *#${pos}* de *${activeGoing.length}*.`
-            : `🏐🔥 *Bora pra cima, ${senderPlayer.name}!*\nPresença confirmada para Quinta (${formattedDate})!\n📍 Você é o *#${pos}* de *${activeGoing.length}* confirmados.`;
-        }
-      }
-
-      // 2. RECUSAR PRESENÇA
-      else if (intent === "DECLINE_ATTENDANCE") {
-        if (!senderPlayer) {
-          replyText = `⚠️ Perfil (*${pushName || senderPhone}*) não localizado no cadastro de sócios.`;
-        } else {
-          const matchingDocs = allPlayers.filter(
-            (p) =>
-              p.id === senderPlayer.id ||
-              (senderPlayer.email && p.email && p.email.trim().toLowerCase() === senderPlayer.email.trim().toLowerCase()) ||
-              (senderPlayer.uid && p.uid && p.uid === senderPlayer.uid)
-          );
-
-          const currentInt = await ensureFreshIntentionsDocument();
-          const targetDate = currentInt.targetDate || getNextThursday();
-          const responses: Record<string, string> = { ...(currentInt.responses || {}) };
-          const timestamps: Record<string, number> = { ...(currentInt.confirmationTimestamps || {}) };
-          const now = Date.now();
-
-          const aliases = new Set<string>([senderPlayer.id]);
-          matchingDocs.forEach((mp) => {
-            if (mp.id) aliases.add(mp.id);
-            if (mp.uid) aliases.add(mp.uid);
-            if (mp.email) aliases.add(mp.email.trim().toLowerCase());
-          });
-
-          aliases.forEach((alias) => {
-            responses[alias] = "NOT_GOING";
-            timestamps[alias] = now;
-          });
-
-          const updatedDoc = {
-            targetDate,
-            automationEnabled: currentInt.automationEnabled ?? true,
-            responses,
-            confirmationTimestamps: timestamps,
-            remindersSent: currentInt.remindersSent || {},
-            lastUpdated: now
-          };
-
-          await db.collection("metadata").doc("intentions").set(updatedDoc);
-          for (const mp of matchingDocs) {
-            await syncPlayerPreConfirmationDoc(db, targetDate, mp, "NOT_GOING", now);
-          }
-
-          replyText = `📝 Registrado, *${senderPlayer.name}*. Informamos sua ausência para esta quinta-feira. Até a próxima!`;
-        }
-      }
-
-      // 3. VER LISTA
-      else if (intent === "VIEW_LIST") {
+      const executeGetAttendanceList = async (): Promise<string> => {
         const currentInt = await ensureFreshIntentionsDocument();
         const targetDate = currentInt.targetDate || getNextThursday();
         const responses = currentInt.responses || {};
@@ -1332,222 +1473,149 @@ Retorne apenas a intenção em maiúsculo, sem mais nada.`
         const formattedDate = targetDate.split("-").reverse().slice(0, 2).join("/");
         const settersCount = goingList.filter((p) => p.isOfficialSetter).length;
 
-        replyText =
-          `📋 *LISTA DE QUINTA (${formattedDate}) — GUERREIROS VC*\n` +
-          `✅ *Confirmados:* ${goingList.length} (${settersCount} Levantadores)\n\n` +
+        return (
+          `📋 *ATUALIZAÇÃO DA LISTA DE QUINTA (${formattedDate})* 🏐\n` +
+          `✅ *Confirmados:* ${goingList.length}/29 (${settersCount} Levantadores)\n` +
           (goingList.length > 0
             ? goingList
-                .map((p, i) => `${String(i + 1).padStart(2, "0")}. ${p.name}${p.isOfficialSetter ? " *(L)*" : ""}`)
+                .map((p, i) => `${i + 1}. ${p.name}${p.isOfficialSetter ? " *(L)*" : ""}`)
                 .join("\n")
-            : "_Ninguém confirmou ainda. Digite gv vou para estrear a lista!_") +
-          `\n\n💡 _Digite *gv vou* para confirmar ou *gv naovou* para informar ausência._`;
-      }
+            : "_Ninguém confirmou ainda._") +
+          `\n───────────────────\n` +
+          `🤖 *FALE COM O GUERREIRINHO NO PRIVADO (1 CLIQUE):*\n` +
+          `✅ *Confirmar (Vou):* https://wa.me/558197330924?text=gv%20vou\n\n` +
+          `❌ *Informar Ausência:* https://wa.me/558197330924?text=gv%20naovou`
+        );
+      };
 
-      // 4. VER RANKING
-      else if (intent === "VIEW_RANKING") {
-        const textLower = text.toLowerCase();
-        const isDaily =
-          textLower.includes("diario") ||
-          textLower.includes("diário") ||
-          textLower.includes("hoje") ||
-          textLower.includes("dia");
+      const executeGetRanking = async (): Promise<string> => {
+        const allActiveSorted = allPlayers
+          .filter((p) => p.status === "active" && !p.isDM && (p.matchesPlayed || 0) > 0)
+          .sort((a, b) => (b.elo || 1200) - (a.elo || 1200));
 
-        if (isDaily) {
-          const todayKey = getFirestoreDateKey();
-          const matchesSnap = await db.collection("matches").where("date", "==", todayKey).get();
-          const todayMatches: any[] = [];
-          matchesSnap.forEach((d: any) => todayMatches.push(d.data()));
-
-          const perfMap = new Map<
-            string,
-            { name: string; wins: number; losses: number; ptsBalance: number; eloGain: number }
-          >();
-
-          todayMatches.forEach((m) => {
-            const teamA: string[] = Array.isArray(m.teamA) ? m.teamA : [];
-            const teamB: string[] = Array.isArray(m.teamB) ? m.teamB : [];
-            const scoreA = Number(m.scoreA || 0);
-            const scoreB = Number(m.scoreB || 0);
-            const winA = m.winner === "A";
-
-            const processParticipant = (pid: string, inA: boolean) => {
-              const pObj = allPlayers.find((p) => p.id === pid);
-              const name = pObj?.name || "Sócio";
-              const prev = perfMap.get(pid) || { name, wins: 0, losses: 0, ptsBalance: 0, eloGain: 0 };
-              const won = (inA && winA) || (!inA && !winA);
-              const diff = inA ? scoreA - scoreB : scoreB - scoreA;
-              if (won) {
-                prev.wins += 1;
-                prev.eloGain += 20;
-              } else {
-                prev.losses += 1;
-                prev.eloGain -= 20;
-              }
-              prev.ptsBalance += diff;
-              perfMap.set(pid, prev);
-            };
-
-            teamA.forEach((pid) => processParticipant(pid, true));
-            teamB.forEach((pid) => processParticipant(pid, false));
-          });
-
-          const dailyRanking = Array.from(perfMap.values()).sort((a, b) => {
-            if (b.wins !== a.wins) return b.wins - a.wins;
-            if (b.eloGain !== a.eloGain) return b.eloGain - a.eloGain;
-            return b.ptsBalance - a.ptsBalance;
-          });
-
-          if (dailyRanking.length === 0) {
-            replyText = `📊 *RANKING DIÁRIO — GUERREIROS VC*\n\n_Nenhuma partida oficial registrada hoje (${todayKey.split("-").reverse().slice(0, 2).join("/")})._`;
-          } else {
-            replyText =
-              `🔥 *RANKING DIÁRIO (${todayKey.split("-").reverse().slice(0, 2).join("/")})* 🔥\n\n` +
-              dailyRanking
-                .map((r, i) => {
-                  const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${String(i + 1).padStart(2, "0")}.`;
-                  const sign = r.eloGain >= 0 ? "+" : "";
-                  const balSign = r.ptsBalance >= 0 ? "+" : "";
-                  return `${medal} *${r.name}* — ${r.wins}V/${r.losses}D (${sign}${r.eloGain} ELO | Saldo ${balSign}${r.ptsBalance})`;
-                })
-                .join("\n");
-          }
-        } else {
-          const allActiveSorted = allPlayers
-            .filter((p) => p.status === "active" && !p.isDM && (p.matchesPlayed || 0) > 0)
-            .sort((a, b) => (b.elo || 1200) - (a.elo || 1200));
-
-          replyText =
-            `🏆 *RANKING GERAL ACUMULADO (TODOS OS ${allActiveSorted.length} SÓCIOS)* 🏆\n\n` +
-            allActiveSorted
-              .map((p, i) => {
-                const wr = p.matchesPlayed > 0 ? Math.round(((p.wins || 0) / p.matchesPlayed) * 100) : 0;
-                return `${String(i + 1).padStart(2, "0")}. *${p.name}* — *${Math.round(p.elo || 1200)} pts* (${p.wins || 0}V/${p.losses || 0}D • ${wr}%)`;
-              })
-              .join("\n");
+        if (allActiveSorted.length === 0) {
+          return `🏆 *RANKING GERAL ACUMULADO — GUERREIROS VC*\n\n_O banco de dados diário está sincronizando. Tente novamente em instantes!_`;
         }
-      }
+        return (
+          `🏆 *RANKING GERAL ACUMULADO (TODOS OS ${allActiveSorted.length} SÓCIOS)* 🏆\n\n` +
+          allActiveSorted
+            .map((p, i) => {
+              const wr = p.matchesPlayed > 0 ? Math.round(((p.wins || 0) / p.matchesPlayed) * 100) : 0;
+              return `${String(i + 1).padStart(2, "0")}. *${p.name}* — *${Math.round(p.elo || 1200)} pts* (${p.wins || 0}V/${p.losses || 0}D • ${wr}%)`;
+            })
+            .join("\n")
+        );
+      };
 
-      // 5. CONSULTAR PIX
-      else if (intent === "CHECK_PIX") {
-        const sysSnap = await db.collection("metadata").doc("system").get();
-        const sysData = sysSnap.exists ? sysSnap.data() || {} : {};
-        const pixKey = sysData.pixKey || "elizabeth.santos.pe@gmail.com";
-        const fee = Number(sysData.monthlyFee || 0).toFixed(2).replace(".", ",");
-        const currentMonth = getFirestoreDateKey().slice(0, 7);
+      const executeGetPixInfo = async (): Promise<string> => {
+        const sysConfig = await getCachedSystemConfig();
+        const pixKey = sysConfig?.pixKey || "elizabeth.santos.pe@gmail.com";
+        const pixPayload = sysConfig?.pixPayload || pixKey;
+        const fee = Number(sysConfig?.monthlyFee || 50).toFixed(2).replace(".", ",");
 
-        let statusLine = "";
-        if (senderPlayer) {
-          if (senderPlayer.isExempt) {
-            statusLine = `✅ *${senderPlayer.name}*, seu cadastro é *Isento* de mensalidade.\n\n`;
-          } else {
-            const paySnap = await db
-              .collection("payments")
-              .where("playerId", "==", senderPlayer.id)
-              .where("month", "==", currentMonth)
-              .limit(1)
-              .get();
-            const isPaid = !paySnap.empty && paySnap.docs[0].data()?.status === "PAID";
-            statusLine = isPaid
-              ? `✅ *${senderPlayer.name}*, sua mensalidade de *${currentMonth}* já consta como *PAGA*!\n\n`
-              : `⏳ *${senderPlayer.name}*, sua mensalidade de *${currentMonth}* consta como *PENDENTE*.\n\n`;
-          }
-        }
-
-        replyText =
+        return (
           `💰 *TESOURARIA GUERREIROS VC*\n\n` +
-          statusLine +
           `💵 *Valor Mensal:* R$ ${fee}\n` +
-          `🔑 *Chave PIX:* ${pixKey}\n` +
-          `👤 *Favorecido:* Elizabeth de Souza Santos (Nubank)`;
-      }
+          `👤 *Favorecido:* Elizabeth de Souza Santos (Nubank)\n` +
+          `🔑 *Chave PIX:* ${pixKey}\n\n` +
+          `📋 *PIX Copia e Cola (toque para copiar):*\n` +
+          `\`\`\`${pixPayload}\`\`\``
+        );
+      };
 
-      // 6. EXTRATO SECO DE PARTIDAS
-      else if (intent === "RAW_STATS_LIST") {
-        const numMatch = lower.match(/(\d+)/);
-        const limitGames = numMatch ? Math.min(100, Math.max(1, parseInt(numMatch[1], 10))) : 20;
+      const executeGetBirthdays = async (): Promise<string> => {
+        const br = getBrazilTimeParts();
+        const todayList = getTodayBirthdayPlayers(allPlayers, br.dateKey);
+        const currentMonth = Number(br.dateKey.split("-")[1]);
+        const monthList = allPlayers
+          .filter((p) => {
+            if (!p || (p.status && p.status !== "active")) return false;
+            const parsed = parseBirthMonthDay(p.birthDate);
+            return parsed?.month === currentMonth;
+          })
+          .map((p) => ({ player: p, parsed: parseBirthMonthDay(p.birthDate)! }))
+          .sort((a, b) => a.parsed.day - b.parsed.day);
 
-        const matchesSnap = await db.collection("matches").get();
-        const playerMatches: any[] = [];
-        matchesSnap.forEach((d: any) => {
-          const m = d.data();
-          if (
-            senderPlayer &&
-            ((Array.isArray(m.teamA) && m.teamA.includes(senderPlayer.id)) ||
-              (Array.isArray(m.teamB) && m.teamB.includes(senderPlayer.id)))
-          ) {
-            playerMatches.push({ id: d.id, ...m });
-          }
-        });
+        const todaySection =
+          todayList.length > 0
+            ? `🎂 *ANIVERSARIANTE(S) DE HOJE (${br.dateKey.split("-").reverse().slice(0, 2).join("/")}):*\n` +
+              todayList.map((p) => `🎉 *${p.name}*`).join("\n") +
+              `\n\n`
+            : `🎂 *Hoje (${br.dateKey.split("-").reverse().slice(0, 2).join("/")}):* Nenhum sócio aniversariante cadastrado.\n\n`;
 
-        playerMatches.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-        const recentSlice = playerMatches.slice(0, limitGames);
+        const monthSection =
+          monthList.length > 0
+            ? `📅 *ANIVERSARIANTES DO MÊS:*\n` +
+              monthList
+                .map(
+                  ({ player, parsed }) =>
+                    `• *${String(parsed.day).padStart(2, "0")}/${String(parsed.month).padStart(2, "0")}* — ${player.name}`
+                )
+                .join("\n")
+            : `_Nenhum aniversariante cadastrado para este mês._`;
 
-        if (!senderPlayer) {
-          replyText = `⚠️ Cadastro não localizado para exibir histórico.`;
-        } else if (recentSlice.length === 0) {
-          replyText = `🏐 *${senderPlayer.name}* ainda não possui partidas registradas no histórico oficial.`;
-        } else {
-          let wins = 0;
-          let losses = 0;
-          let ptsFor = 0;
-          let ptsAgainst = 0;
-          const formSeq: string[] = [];
+        return `${todaySection}${monthSection}`;
+      };
 
-          recentSlice.forEach((m, idx) => {
-            const inA = Array.isArray(m.teamA) && m.teamA.includes(senderPlayer.id);
-            const won = (inA && m.winner === "A") || (!inA && m.winner === "B");
-            if (won) wins++;
-            else losses++;
+      const cleanAfterAlias = finalMessageToProcess
+        .replace(/^(@?gv|@?bot|@?botgv|@?guerreirinho|@guerreiros|guerreiros|!|\/)[,:\s]*/i, "")
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .trim();
 
-            ptsFor += inA ? (m.scoreA || 0) : (m.scoreB || 0);
-            ptsAgainst += inA ? (m.scoreB || 0) : (m.scoreA || 0);
-            if (idx < 5) formSeq.push(won ? "✅V" : "❌D");
-          });
+      let replyBody = "";
 
-          const wr = Math.round((wins / recentSlice.length) * 100);
-          const eloDelta = wins * 20 - losses * 20;
-          const ptsBalance = ptsFor - ptsAgainst;
-
-          replyText =
-            `📊 *RAIO-X DE ${senderPlayer.name.toUpperCase()}*\n` +
-            `_(Últimos ${recentSlice.length} jogos oficiais disputados)_\n\n` +
-            `✅ *Vitórias:* ${wins} | ❌ *Derrotas:* ${losses} (*${wr}%*)\n` +
-            `🔥 *Últimos ${formSeq.length}:* ${formSeq.join(" • ")}\n` +
-            `📈 *Saldo ELO no período:* ${eloDelta >= 0 ? "+" : ""}${eloDelta} pts (ELO Atual: *${Math.round(senderPlayer.elo || 1200)}*)\n` +
-            `🎯 *Saldo de Pontos:* ${ptsBalance >= 0 ? "+" : ""}${ptsBalance} (${ptsFor} pró / ${ptsAgainst} contra)\n` +
-            `🏅 *Carreira Total:* ${senderPlayer.matchesPlayed || playerMatches.length} jogos (${senderPlayer.wins || 0}V / ${senderPlayer.losses || 0}D)`;
-        }
-      }
-
-      // 7. ANÁLISE PROFUNDA, TÉCNICAS, SUPERLIGA E IA (DEEP_ANALYTICS_CHAT)
-      else {
+      if (["1", "vou", "eu vou", "confirmar", "presenca"].includes(cleanAfterAlias)) {
+        replyBody = await executeConfirmAttendance();
+      } else if (["2", "naovou", "nao vou", "ausente"].includes(cleanAfterAlias)) {
+        replyBody = await executeDeclineAttendance();
+      } else if (["lista", "confirmados", "quem vai"].includes(cleanAfterAlias)) {
+        replyBody = await executeGetAttendanceList();
+      } else if (cleanAfterAlias === "ranking") {
+        replyBody = await executeGetRanking();
+      } else if (["pix", "mensalidade", "financeiro", "tesouraria"].includes(cleanAfterAlias)) {
+        replyBody = await executeGetPixInfo();
+      } else if (
+        ["aniversario", "aniversarios", "aniversariante", "aniversariantes", "niver"].includes(
+          cleanAfterAlias
+        )
+      ) {
+        replyBody = await executeGetBirthdays();
+      } else if (
+        ["meusjogos", "meus jogos", "historico", "meu historico", "estatisticas", "minhas estatisticas", "raiox", "raio-x"].includes(
+          cleanAfterAlias
+        )
+      ) {
+        const allMatches = await getCachedMatches(cachedMatches.length === 0);
+        const report = buildPlayerDeepStatsReport(senderPlayer, allPlayers, allMatches, "geral");
+        replyBody = `${report}\n\n💬 _Quer que eu filtre essa análise apenas pelos seus últimos 15 jogos ou confirme sua presença para quinta-feira?_`;
+      } else {
+        const allMatches = await getCachedMatches(cachedMatches.length === 0);
         if (!apiKey) {
-          replyText = `🤖 Digite *gv vou* para confirmar presença ou *gv ranking* para ver o topo do ELO.`;
+          const report = buildPlayerDeepStatsReport(senderPlayer, allPlayers, allMatches, "geral");
+          replyBody = `${report}\n\n🤖 _Atalhos rápidos: *gv vou*, *gv lista*, *gv ranking*, *gv meusjogos* ou *gv pix*._`;
         } else {
-          const cleanQuestion = text.replace(/^(@?gv|@?bot|@?botgv|@guerreiros|guerreiros)[,:\s]*/i, "");
-
-          const matchesSnap = await db.collection("matches").get();
-          const allMatches: any[] = [];
-          matchesSnap.forEach((d: any) => allMatches.push(d.data()));
-
-          const aiReply = await runDeepAnalyticsChat(
+          replyBody = await runDeepAnalyticsChat(
             apiKey,
-            cleanQuestion,
+            finalMessageToProcess,
             senderPlayer,
             allPlayers,
-            allMatches
+            allMatches,
+            {
+              confirmAttendance: executeConfirmAttendance,
+              declineAttendance: executeDeclineAttendance,
+              getAttendanceList: executeGetAttendanceList,
+              getRanking: executeGetRanking,
+              getPixInfo: executeGetPixInfo
+            }
           );
-
-          replyText =
-            aiReply ||
-            `🤖 Desculpe, Guerreiro(a), não tenho dados suficientes para responder a essa pergunta. Foco total no vôlei! 🏐`;
         }
       }
 
-      // Define o destino da resposta: PROÍBE responder no grupo (@g.us), redirecionando SEMPRE ao privado
-      let targetReplyChatId = chatId;
-      let deleteMessageKey: any = null;
+      const replyText = `${replyBody}\n\n— Guerreirinho, o robô do clube 🤖`;
 
+      let targetReplyChatId = chatId;
       if (isGroup) {
         const cleanSenderPhone = senderPlayer?.phone
           ? normalizePhoneToJid(senderPlayer.phone)
@@ -1556,14 +1624,9 @@ Retorne apenas a intenção em maiúsculo, sem mais nada.`
         if (cleanSenderPhone) {
           targetReplyChatId = cleanSenderPhone;
         } else if (senderJid && !senderJid.endsWith("@g.us")) {
-          // Suporta tanto @s.whatsapp.net quanto @lid diretamente no Baileys
           targetReplyChatId = senderJid;
         } else if (senderLid && !senderLid.endsWith("@g.us")) {
           targetReplyChatId = senderLid;
-        }
-
-        if (payload?.key) {
-          deleteMessageKey = payload.key;
         }
       }
 
@@ -1571,11 +1634,9 @@ Retorne apenas a intenção em maiúsculo, sem mais nada.`
         success: true,
         chatId: targetReplyChatId,
         groupChatId: isGroup ? chatId : null,
-        text: replyText,
-        deleteMessageKey
+        text: replyText
       });
     } catch (err: any) {
-      console.error("[WhatsApp Webhook] Erro:", err);
       return res.status(200).json({ success: false, error: err.message });
     }
   });
@@ -1715,6 +1776,45 @@ Retorne apenas a intenção em maiúsculo, sem mais nada.`
     }
   });
 
+  app.post("/api/gemini/stream", async (req, res) => {
+    try {
+      const { prompt, systemInstruction } = req.body || {};
+      if (!prompt || typeof prompt !== "string") {
+        return res.status(400).json({ error: "Prompt is required" });
+      }
+
+      const { serverStreamText } = await import("./services/serverGemini.ts");
+      const stream = await serverStreamText(prompt, systemInstruction);
+
+      res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("Connection", "keep-alive");
+      res.flushHeaders?.();
+
+      try {
+        for await (const chunk of stream) {
+          if (chunk.text) {
+            res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`);
+          }
+        }
+        res.write("data: [DONE]\n\n");
+        res.end();
+      } catch (streamErr: any) {
+        const { recordServerAIError } = await import("./services/serverGemini.ts");
+        recordServerAIError(streamErr);
+        res.write(`data: ${JSON.stringify({ error: streamErr?.message || "Stream interrupted" })}\n\n`);
+        res.end();
+      }
+    } catch (err: any) {
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Failed to start Gemini stream", details: err.message });
+      } else {
+        res.write(`data: ${JSON.stringify({ error: err?.message || "Stream error" })}\n\n`);
+        res.end();
+      }
+    }
+  });
+
   // --- Rotas WebAuthn ---
   app.post("/api/auth/webauthn/register/options", async (req, res) => {
     try {
@@ -1726,19 +1826,12 @@ Retorne apenas a intenção em maiúsculo, sem mais nada.`
         bodyPlayerName || (trimmedEmail === "rodneyes@gmail.com" ? "Administrador" : "Jogador");
 
       if (!bodyPlayerId) {
-        try {
-          const db = await getFirestore();
-          const querySnap = await db
-            .collection("players")
-            .where("email", "==", trimmedEmail)
-            .limit(1)
-            .get();
-          if (!querySnap.empty) {
-            const docDoc = querySnap.docs[0];
-            playerId = docDoc.id;
-            playerName = docDoc.data()?.name || "Jogador";
-          }
-        } catch (e) {}
+        const allPlayers = await getCachedPlayers(cachedPlayers.length === 0);
+        const found = allPlayers.find((p) => p.email && p.email.trim().toLowerCase() === trimmedEmail);
+        if (found) {
+          playerId = found.id;
+          playerName = found.name || "Jogador";
+        }
       }
 
       const options = await getRegistrationOptions(playerId, playerName, rpID);
@@ -1827,10 +1920,14 @@ Retorne apenas a intenção em maiúsculo, sem mais nada.`
 
       saveLocalCredential(credentialIdStr, credentialDataToSave);
       const db = await getFirestore();
-      await db
-        .collection("metadata")
-        .doc("webauthn_credentials")
-        .set({ [credentialIdStr]: credentialDataToSave }, { merge: true });
+      await withFirestoreGuard(
+        () =>
+          db
+            .collection("metadata")
+            .doc("webauthn_credentials")
+            .set({ [credentialIdStr]: credentialDataToSave }, { merge: true }),
+        undefined
+      );
 
       res.json({ verified: true, credential: credentialDataToSave });
     } catch (e: any) {
@@ -1938,10 +2035,6 @@ Retorne apenas a intenção em maiúsculo, sem mais nada.`
     }
   });
 
-  const server = http.createServer(app);
-  const { setupGeminiLiveWebSocket } = await import("./services/serverLiveApi.ts");
-  setupGeminiLiveWebSocket(server);
-
   if (process.env.NODE_ENV !== "production") {
     const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
@@ -1963,8 +2056,23 @@ Retorne apenas a intenção em maiúsculo, sem mais nada.`
     });
   }
 
+  const server = http.createServer(app);
+
+  // 🚀 Abre a porta 3000 imediatamente para passar no Health Check do Cloud Run
   server.listen(PORT, "0.0.0.0", () => {
     console.log(`[Guerreiros] Servidor Ativado na porta ${PORT}`);
+
+    import("./services/serverLiveApi.ts")
+      .then(({ setupGeminiLiveWebSocket }) => {
+        setupGeminiLiveWebSocket(server);
+      })
+      .catch((e) => console.warn("[LiveAPI] Aviso ao inicializar WebSocket:", e));
+
+    setTimeout(() => {
+      ensureFreshIntentionsDocument().catch(() => {});
+      getCachedPlayers(true).catch(() => {});
+      getCachedMatches(true).catch(() => {});
+    }, 1500);
   });
 }
 

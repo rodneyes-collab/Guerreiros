@@ -166,6 +166,8 @@ export interface SystemMetadata {
   isTournamentEnabled?: boolean;
   showEliteQueue?: boolean;
   matchNotificationsGlobalEnabled?: boolean;
+  birthdayNotificationsEnabled?: boolean;
+  intentionNotificationsEnabled?: boolean;
   mvpEfficiencyBonusPercent?: number;
   consecutiveAbsenceLimit?: number;
   dailyAttendanceBonus?: number;

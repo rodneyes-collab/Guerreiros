@@ -1,6 +1,17 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useStore } from '../../store';
-import { db, doc, getDoc, onSnapshot, setDoc, getFirestoreDateKey, getBrazilDay } from '../../firebase';
+import {
+  db,
+  doc,
+  getDoc,
+  onSnapshot,
+  setDoc,
+  getFirestoreDateKey,
+  getBrazilDay,
+  isQuotaExceeded,
+  isFirestoreQuotaError,
+  markQuotaExceeded
+} from '../../firebase';
 import { analyzeBillingCosts } from '../../services/geminiService';
 import { runAdminIntentionsCleanupOnLoad } from '../utils/intentionsCleanup';
 
@@ -29,25 +40,39 @@ export const useAdminAutomations = () => {
   const [cleanupStatus, setCleanupStatus] = useState<IntentionCleanupReportData | null>(null);
   const [isPurging, setIsPurging] = useState(false);
 
+  const playersRef = useRef(players);
+  const idToCanonicalIdRef = useRef(idToCanonicalId);
+  useEffect(() => {
+    playersRef.current = players;
+    idToCanonicalIdRef.current = idToCanonicalId;
+  }, [players, idToCanonicalId]);
+
   const isAdmin = userRole === 'ADMIN' || Boolean(currentPlayer?.isAdmin) || (user?.email?.trim().toLowerCase() === 'rodneyes@gmail.com');
 
   // 1. Escuta em tempo real do relatório de purga de 7 dias
   useEffect(() => {
-    if (!isAdmin) return;
+    if (!isAdmin || isQuotaExceeded) return;
 
     const unsub = onSnapshot(doc(db, 'metadata', 'intentions_cleanup_status'), (snapshot) => {
       if (snapshot.exists()) {
         setCleanupStatus(snapshot.data() as IntentionCleanupReportData);
       } else {
         // Inicialização se ainda não existir
-        runAdminIntentionsCleanupOnLoad({ players, idToCanonicalId }).catch(console.warn);
+        runAdminIntentionsCleanupOnLoad({
+          players: playersRef.current,
+          idToCanonicalId: idToCanonicalIdRef.current
+        }).catch(console.warn);
       }
     }, (err) => {
+      if (isFirestoreQuotaError(err)) {
+        markQuotaExceeded();
+        return;
+      }
       console.warn('[useAdminAutomations] Erro ao escutar status de limpeza de intenções:', err);
     });
 
     return () => unsub();
-  }, [isAdmin, players, idToCanonicalId]);
+  }, [isAdmin]);
 
   // 2. Método para disparar limpeza manual de intenções > 7 dias
   const triggerManualPurge = useCallback(async () => {

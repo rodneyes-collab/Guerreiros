@@ -181,7 +181,21 @@ if (typeof window !== 'undefined') {
 export const db = dbInstance;
 export const auth = getAuth(app);
 export const storage = getStorage(app);
-export const messaging = typeof window !== 'undefined' && 'Notification' in window ? getMessaging(app) : null;
+
+let messagingInstance: ReturnType<typeof getMessaging> | null = null;
+if (
+  typeof window !== 'undefined' &&
+  'Notification' in window &&
+  'serviceWorker' in navigator &&
+  'PushManager' in window
+) {
+  try {
+    messagingInstance = getMessaging(app);
+  } catch {
+    messagingInstance = null;
+  }
+}
+export const messaging = messagingInstance;
 
 if (typeof window !== 'undefined') {
   setPersistence(auth, browserLocalPersistence).catch((err) => {
@@ -233,16 +247,36 @@ export const resetFirestoreNetworkSession = async (): Promise<void> => {
   }
 };
 
+export function isFirestoreQuotaError(error: unknown): boolean {
+  const message = (error instanceof Error ? error.message : String(error || '')).toLowerCase();
+  const code = (error as any)?.code;
+  return (
+    code === 'resource-exhausted' ||
+    message.includes('quota limit exceeded') ||
+    message.includes('quota exceeded') ||
+    message.includes('free daily read units') ||
+    message.includes('bandwidth for writes') ||
+    message.includes('quotaexceedederror') ||
+    message.includes('maximum bandwidth')
+  );
+}
+
+export const markQuotaExceeded = (): void => {
+  if (!isQuotaExceeded) {
+    isQuotaExceeded = true;
+    console.warn('[Firestore] Cota diária excedida. Pausando reconexões e leituras automáticas.');
+  }
+  if (typeof window !== 'undefined' && db) {
+    disableNetwork(db).catch(() => {});
+  }
+};
+
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
   const message = error instanceof Error ? error.message : String(error);
   const code = (error as any)?.code;
 
-  if (code === 'resource-exhausted' || message.includes('bandwidth for writes') || message.includes('quota exceeded') || message.includes('QuotaExceededError') || message.includes('maximum bandwidth')) {
-    isQuotaExceeded = true;
-    purgeFirestoreLocalStorageKeys();
-    if (typeof window !== 'undefined' && db) {
-      resetFirestoreNetworkSession().catch(() => {});
-    }
+  if (isFirestoreQuotaError(error)) {
+    markQuotaExceeded();
     return;
   }
 
@@ -334,8 +368,8 @@ export const trackAccess = async (overridePlayerId?: string) => {
 
     await batch.commit();
   } catch (e: any) {
-    if (e?.code === 'resource-exhausted' || e?.message?.includes('bandwidth for writes')) {
-      isQuotaExceeded = true;
+    if (isFirestoreQuotaError(e)) {
+      markQuotaExceeded();
     }
   }
 };
@@ -482,8 +516,8 @@ export const trackUsage = async (reads: number, writes: number) => {
       await batch.commit();
     }
   } catch (e: any) {
-    if (e?.code === 'resource-exhausted') {
-      isQuotaExceeded = true;
+    if (isFirestoreQuotaError(e)) {
+      markQuotaExceeded();
     }
   }
 };

@@ -1,6 +1,42 @@
 import { GoogleGenAI, ThinkingLevel } from "@google/genai";
-import { GenerationResult, Player, Match, Team } from "../types";
-import { calculateCompositePerformanceRating } from "../utils/teamLogic";
+import type { GenerationResult, Player, Match, Team } from "../types.ts";
+import { calculateCompositePerformanceRating } from "../utils/teamLogic.ts";
+
+let serverAiHealth = {
+  isAvailable: true,
+  lastQuotaError: 0,
+  errorMessage: ""
+};
+
+export const recordServerAIError = (error: any) => {
+  const msg = (error?.message || (typeof error === "string" ? error : "")).toLowerCase();
+  const isQuota = msg.includes("429") || msg.includes("quota") || msg.includes("resource_exhausted") || msg.includes("exceeded");
+  const isBilling = msg.includes("403") || msg.includes("permission_denied") || msg.includes("spending cap") || msg.includes("billing");
+  if (isQuota || isBilling) {
+    serverAiHealth = {
+      isAvailable: false,
+      lastQuotaError: Date.now(),
+      errorMessage: isQuota
+        ? "Cota de IA excedida. Tente novamente em alguns minutos."
+        : "Erro de permissão ou faturamento na IA."
+    };
+  }
+};
+
+export const getServerAIStatus = () => {
+  const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+  if (!apiKey) {
+    return {
+      isAvailable: false,
+      lastQuotaError: 0,
+      errorMessage: "GEMINI_API_KEY is not configured on the server. Please verify your API key in Settings > Secrets."
+    };
+  }
+  if (!serverAiHealth.isAvailable && Date.now() - serverAiHealth.lastQuotaError > 600000) {
+    serverAiHealth = { isAvailable: true, lastQuotaError: 0, errorMessage: "" };
+  }
+  return serverAiHealth;
+};
 
 export const getAI = () => {
   const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
@@ -51,13 +87,18 @@ export const serverAnalyzeMatch = async (result: GenerationResult, attendance: P
     
     ESTILO: Analítico, direto e profissional. Max 100 palavras.`;
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-3.8-flash',
-    contents: prompt,
-    config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
-  });
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-4-hydrogen',
+      contents: prompt,
+      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+    });
 
-  return response.text || "Análise indisponível no momento.";
+    return response.text || "Análise indisponível no momento.";
+  } catch (err) {
+    recordServerAIError(err);
+    throw err;
+  }
 };
 
 export const serverVerifyRules = async (
@@ -108,13 +149,18 @@ export const serverVerifyRules = async (
 
     ESTILO: Respostas equilibradas, técnicas e diretas. Use emojis. Max 200 palavras.`;
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-3.8-flash',
-    contents: prompt,
-    config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
-  });
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-4-hydrogen',
+      contents: prompt,
+      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+    });
 
-  return response.text || `Auditoria Guerreiros Volei: Escalação validada. Equilíbrio ${balanceLevel} garantido.`;
+    return response.text || `Auditoria Guerreiros Volei: Escalação validada. Equilíbrio ${balanceLevel} garantido.`;
+  } catch (err) {
+    recordServerAIError(err);
+    throw err;
+  }
 };
 
 export const serverDailySummary = async (stats: {
@@ -155,39 +201,49 @@ export const serverDailySummary = async (stats: {
     4. Termos: Use "Equipe" em vez de "Time".
     5. Fechamento: Finalize dizendo "Guerreiros Volleyball: onde o racha é de outro nível!".`;
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-3.8-flash',
-    contents: prompt,
-    config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
-  });
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-4-hydrogen',
+      contents: prompt,
+      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+    });
 
-  return response.text || "Racha épico hoje! Parabéns a todos os guerreiros!";
+    return response.text || "Racha épico hoje! Parabéns a todos os guerreiros!";
+  } catch (err) {
+    recordServerAIError(err);
+    throw err;
+  }
 };
 
 export const serverTTS = async (text: string): Promise<string | null> => {
   const ai = getAI();
   const promptText = `Narre o seguinte texto com empolgação e naturalidade de locutor esportivo, gerando apenas áudio: ${text}`;
   
-  const response = await ai.models.generateContent({
-    model: "gemini-3.8-flash-lite-tts",
-    contents: [
-      {
-        role: "user",
-        parts: [{ text: promptText }],
-      },
-    ],
-    config: {
-      responseModalities: ["AUDIO"],
-      speechConfig: {
-        voiceConfig: {
-          prebuiltVoiceConfig: { voiceName: 'Zephyr' }
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3.8-flash-lite-tts",
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: promptText }],
+        },
+      ],
+      config: {
+        responseModalities: ["AUDIO"],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: { voiceName: 'Zephyr' }
+          },
         },
       },
-    },
-  });
+    });
 
-  const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-  return base64Audio || null;
+    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    return base64Audio || null;
+  } catch (err) {
+    recordServerAIError(err);
+    throw err;
+  }
 };
 
 export const serverDetectAnomalies = async (data: { players: Player[], matches: any[], metadata: any }): Promise<string> => {
@@ -222,13 +278,18 @@ export const serverDetectAnomalies = async (data: { players: Player[], matches: 
 
     Mantenha o tom profissional e técnico. Max 300 palavras.`;
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-3.8-flash',
-    contents: prompt,
-    config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
-  });
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-4-hydrogen',
+      contents: prompt,
+      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+    });
 
-  return response.text || "Varredura concluída sem observações.";
+    return response.text || "Varredura concluída sem observações.";
+  } catch (err) {
+    recordServerAIError(err);
+    throw err;
+  }
 };
 
 export const serverAnalyzeBillingCosts = async (billingData: {
@@ -263,13 +324,18 @@ export const serverAnalyzeBillingCosts = async (billingData: {
 
     ESTILO: Tom executivo, consultivo, direto e útil. Use Markdown e emojis. Max 250 palavras.`;
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-3.8-flash',
-    contents: prompt,
-    config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
-  });
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-4-hydrogen',
+      contents: prompt,
+      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+    });
 
-  return response.text || "Análise de faturamento temporariamente indisponível.";
+    return response.text || "Análise de faturamento temporariamente indisponível.";
+  } catch (err) {
+    recordServerAIError(err);
+    throw err;
+  }
 };
 
 export const serverGenerateBirthdayMessage = async (playerName: string): Promise<string> => {
@@ -280,11 +346,30 @@ export const serverGenerateBirthdayMessage = async (playerName: string): Promise
     Evite usar palavras com gênero específico como "guerreiro" ou "guerreira", use termos neutros ou apenas o nome.
     Não use aspas na resposta. Max 50 palavras.`;
 
-  const response = await ai.models.generateContent({
-    model: "gemini-3.8-flash",
-    contents: prompt,
-    config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
-  });
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-4-hydrogen",
+      contents: prompt,
+      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+    });
 
-  return response.text || `Parabéns, ${playerName}! Que seu dia seja repleto de aces e vitórias dentro e fora de quadra! 🏐🎉`;
+    return response.text || `Parabéns, ${playerName}! Que seu dia seja repleto de aces e vitórias dentro e fora de quadra! 🏐🎉`;
+  } catch (err) {
+    recordServerAIError(err);
+    throw err;
+  }
+};
+
+export const serverStreamText = async (prompt: string, systemInstruction?: string) => {
+  const ai = getAI();
+  try {
+    return await ai.models.generateContentStream({
+      model: "gemini-4-hydrogen",
+      contents: prompt,
+      config: systemInstruction ? { systemInstruction } : undefined,
+    });
+  } catch (err) {
+    recordServerAIError(err);
+    throw err;
+  }
 };

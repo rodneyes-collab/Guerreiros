@@ -1,7 +1,7 @@
 import React from 'react';
 import { motion } from 'motion/react';
 import { Logo } from './Logo';
-import { LogOut } from 'lucide-react';
+import { LogOut, Settings } from 'lucide-react';
 import { Player } from '../../types';
 import { PlayerAvatar } from './PlayerAvatar';
 
@@ -20,6 +20,7 @@ interface SidebarNavigationProps {
   isAdmin: boolean;
   handleLogout: () => void;
   isLoggingOut: boolean;
+  onOpenPlayerSettings?: () => void;
 }
 
 export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
@@ -29,7 +30,8 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
   currentPlayer,
   isAdmin,
   handleLogout,
-  isLoggingOut
+  isLoggingOut,
+  onOpenPlayerSettings
 }) => {
   return (
     <motion.aside
@@ -53,10 +55,14 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
 
       {/* User Profile Card */}
       {currentPlayer && (
-        <motion.div
+        <motion.button
+          type="button"
+          onClick={onOpenPlayerSettings}
           whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.99 }}
           transition={{ type: 'spring', stiffness: 400, damping: 25 }}
-          className="p-3.5 mx-3 my-3 bg-zinc-900/90 border border-white/10 rounded-2xl flex items-center justify-between gap-3 shadow-lg shadow-black/40"
+          title="Configurações do Jogador"
+          className="p-3.5 mx-3 my-3 bg-zinc-900/90 hover:bg-zinc-800/90 border border-white/10 hover:border-brand-primary/40 rounded-2xl flex items-center justify-between gap-3 shadow-lg shadow-black/40 text-left transition-colors group"
         >
           <div className="flex items-center gap-3 overflow-hidden">
             <PlayerAvatar player={currentPlayer} size="sm" />
@@ -69,7 +75,10 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
               </span>
             </div>
           </div>
-        </motion.div>
+          {onOpenPlayerSettings && (
+            <Settings className="w-4 h-4 text-white/40 group-hover:text-brand-primary transition-colors shrink-0" />
+          )}
+        </motion.button>
       )}
 
       {/* Navigation List */}

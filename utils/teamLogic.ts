@@ -1,4 +1,4 @@
-import { Player, Gender, GenerationResult, Team, ClubGenerationRules } from '../types';
+import type { Player, Gender, GenerationResult, Team, ClubGenerationRules } from '../types.ts';
 
 // Runtime-safe Gender object and helper functions to prevent ReferenceError
 export const SAFE_GENDER = {

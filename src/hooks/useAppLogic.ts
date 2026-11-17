@@ -53,6 +53,7 @@ import { auditDayPurgeIntegrity } from '../services/dayPurgeAuditAgent';
 import { analyzeMatch, verifyRules, detectAnomalies, generateTeamAnnouncementAudio } from '../../services/geminiService';
 import { logAction, AuditAction } from '../../services/auditService';
 import { playFeedbackSound, triggerHaptic } from '../utils/feedback';
+import { parseBirthMonthDay } from './useBirthdayAutomation';
 
 let activeBirthdaysSyncId: string | null = null;
 let activeGuardianId: string | null = null;
@@ -217,8 +218,10 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
     const indices = new Set<string>();
     for (const p of players) {
       if (p.status === 'active' && p.birthDate) {
-        const parts = p.birthDate.split('-');
-        if (parts.length >= 3) indices.add(`${parts[1]}-${parts[2]}`);
+        const parsed = parseBirthMonthDay(p.birthDate);
+        if (parsed) {
+          indices.add(`${String(parsed.month).padStart(2, '0')}-${String(parsed.day).padStart(2, '0')}`);
+        }
       }
     }
     const newIndex = Array.from(indices).sort();

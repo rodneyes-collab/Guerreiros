@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useStore } from '../../store';
-import { db, doc, writeBatch, getFirestoreDateKey } from '../../firebase';
+import { db, doc, writeBatch, getFirestoreDateKey, isQuotaExceeded, isFirestoreQuotaError, markQuotaExceeded } from '../../firebase';
 
 /**
  * Automação Inteligente de Reset Diário (Zero Leituras Extras):
@@ -17,7 +17,7 @@ export const useDailyReset = () => {
   const hasCheckedRef = useRef(false);
 
   useEffect(() => {
-    if (isInitialLoading || hasCheckedRef.current) return;
+    if (isInitialLoading || hasCheckedRef.current || isQuotaExceeded) return;
     if (userRole !== 'ADMIN' || !players || players.length === 0) return;
 
     const todayStr = getFirestoreDateKey();
@@ -87,6 +87,10 @@ export const useDailyReset = () => {
           `[AutoDailyReset] Estatísticas diárias residuais zeradas automaticamente para ${dirtyPlayers.length} sócio(s).`
         );
       } catch (err) {
+        if (isFirestoreQuotaError(err)) {
+          markQuotaExceeded();
+          return;
+        }
         console.warn('[AutoDailyReset] Aviso não impeditivo ao zerar contadores diários:', err);
       }
     };

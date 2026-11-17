@@ -58,10 +58,10 @@ export const AIChatBot: React.FC = () => {
       if (data.success) {
         setChatHistory(prev => [...prev, { role: 'model', parts: data.response }]);
       } else {
-        throw new Error(data.error);
+        throw new Error(data.details || data.error || 'Erro ao processar resposta');
       }
-    } catch (err) {
-      setChatHistory(prev => [...prev, { role: 'model', parts: "Desculpe, estou com dificuldades para responder agora." }]);
+    } catch (err: any) {
+      setChatHistory(prev => [...prev, { role: 'model', parts: err?.message || "Desculpe, estou com dificuldades para responder agora." }]);
     } finally {
       setIsLoading(false);
     }

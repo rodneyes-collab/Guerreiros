@@ -1,6 +1,6 @@
 
-import { Player, Match } from "../types";
-import { getAI } from "./serverGemini";
+import type { Player, Match } from "../types.ts";
+import { getAI, recordServerAIError } from "./serverGemini.ts";
 
 export interface CoachAnalysisData {
   player: Player;
@@ -69,15 +69,13 @@ export const runAICoachAnalysis = async (_apiKey: string, data: CoachAnalysisDat
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3.8-flash",
+      model: "gemini-4-hydrogen",
       contents: prompt,
     });
     return response.text || "O Treinador IA está sem fôlego no momento. Tente novamente mais tarde.";
   } catch (error: any) {
     console.error("[AI Coach] Analysis failed:", error);
-    if (error.message?.includes('429') || error.status === 429) {
-      return "O Treinador IA atingiu o limite de uso mensal (Cota Excedida). Por favor, verifique as configurações de faturamento em ai.studio/spend.";
-    }
-    return "Desculpe, não consegui processar seu feedback agora. O Treinador está em tempo técnico.";
+    recordServerAIError(error);
+    throw error;
   }
 };

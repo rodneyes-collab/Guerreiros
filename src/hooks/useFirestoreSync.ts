@@ -13,7 +13,10 @@ import {
   auth,
   getFirestoreDateKey,
   getNextThursday,
-  trackUsage
+  trackUsage,
+  isQuotaExceeded,
+  isFirestoreQuotaError,
+  markQuotaExceeded
 } from '../../firebase';
 import { useStore } from '../../store';
 import { safeLocalStorage } from '../../utils/helpers';
@@ -168,7 +171,6 @@ const parseAttendanceSnapshot = (snapshot: any, allPlayers?: Player[]) => {
 export const useFirestoreSync = () => {
   const user = useStore(state => state.user);
   const userRole = useStore(state => state.userRole);
-  const players = useStore(state => state.players);
   const currentPlayer = useStore(state => state.currentPlayer);
   const setPlayers = useStore(state => state.setPlayers);
   const setIdToCanonicalId = useStore(state => state.setIdToCanonicalId);
@@ -211,22 +213,27 @@ export const useFirestoreSync = () => {
   }, [setLastSyncTimestamp]);
 
   const revalidateAttendanceSilently = useCallback(async () => {
+    if (isQuotaExceeded) return;
     try {
       const dateKey = getFirestoreDateKey();
       const attendanceSnap = await getDocs(collection(db, 'attendance', dateKey, 'players'));
       const { sorted } = parseAttendanceSnapshot(attendanceSnap);
       setAttendance(sorted);
       setSyncError(null);
-    } catch (err) {}
+    } catch (err) {
+      if (isFirestoreQuotaError(err)) {
+        markQuotaExceeded();
+      }
+    }
   }, [setAttendance, setSyncError]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || isQuotaExceeded) return;
     trackUsage(15, 0).catch(() => {});
   }, [user, currentPlayer?.id]);
 
   const executeBatchFetch = useCallback(async () => {
-    if (isFetchingRef.current) return;
+    if (isFetchingRef.current || isQuotaExceeded) return;
     isFetchingRef.current = true;
     setIsBackgroundSyncing(true);
     setSyncError(null);
@@ -329,7 +336,12 @@ export const useFirestoreSync = () => {
       setLastSyncTimestamp(Date.now());
       setIsInitialLoading(false);
     } catch (err) {
-      setSyncError('Falha ao sincronizar dados.');
+      if (isFirestoreQuotaError(err)) {
+        markQuotaExceeded();
+        setSyncError('Cota diária do Firestore excedida.');
+      } else {
+        setSyncError('Falha ao sincronizar dados.');
+      }
     } finally {
       isFetchingRef.current = false;
       setTimeout(() => setIsBackgroundSyncing(false), 500);
@@ -372,6 +384,12 @@ export const useFirestoreSync = () => {
     useStore.setState({ dateKey });
     let financialTimer: NodeJS.Timeout | undefined;
 
+    if (isQuotaExceeded) {
+      setIsBackgroundSyncing(false);
+      setIsInitialLoading(false);
+      return;
+    }
+
     if (syncMode === 'realtime') {
       let unsubscribePlayers: (() => void) | undefined;
       let unsubscribeAttendance: (() => void) | undefined;
@@ -392,6 +410,21 @@ export const useFirestoreSync = () => {
       let unsubscribeExpenses: (() => void) | undefined;
       let unsubscribeIntentions: (() => void) | undefined;
 
+      const handleListenerError = (label: string, critical = false) => (err: any) => {
+        if (isFirestoreQuotaError(err)) {
+          markQuotaExceeded();
+          setSyncError('Cota diária do Firestore excedida.');
+          setIsBackgroundSyncing(false);
+          setIsInitialLoading(false);
+          return;
+        }
+        if (critical) {
+          handleFirestoreError(err, OperationType.LIST, label);
+        } else {
+          console.warn(`[FirestoreSync] Erro no listener (${label}):`, err?.message || err);
+        }
+      };
+
       setIsBackgroundSyncing(true);
       setSyncError(null);
 
@@ -400,6 +433,7 @@ export const useFirestoreSync = () => {
 
         const setupPreConfirmations = (target: string) => {
           if (unsubscribePreConfirmations) unsubscribePreConfirmations();
+          if (isQuotaExceeded) return;
           unsubscribePreConfirmations = onSnapshot(
             collection(db, 'preConfirmations', target, 'players'),
             snapshot => {
@@ -412,22 +446,27 @@ export const useFirestoreSync = () => {
               });
               setPreConfirmations(list);
               throttleSyncTimestamp();
-            }
+            },
+            handleListenerError(`preConfirmations/${target}`)
           );
         };
 
         setupPreConfirmations(currentTargetDate);
 
-        unsubscribeIntentions = onSnapshot(doc(db, 'metadata', 'intentions'), snapshot => {
-          if (snapshot.exists()) {
-            const data = snapshot.data();
-            const newTarget = data.targetDate || getNextThursday();
-            if (newTarget !== currentTargetDate) {
-              currentTargetDate = newTarget;
-              setupPreConfirmations(newTarget);
+        unsubscribeIntentions = onSnapshot(
+          doc(db, 'metadata', 'intentions'),
+          snapshot => {
+            if (snapshot.exists()) {
+              const data = snapshot.data();
+              const newTarget = data.targetDate || getNextThursday();
+              if (newTarget !== currentTargetDate) {
+                currentTargetDate = newTarget;
+                setupPreConfirmations(newTarget);
+              }
             }
-          }
-        });
+          },
+          handleListenerError('metadata/intentions')
+        );
 
         unsubscribePlayers = onSnapshot(
           collection(db, 'players'),
@@ -444,103 +483,166 @@ export const useFirestoreSync = () => {
               } catch (e) {}
             }, 250);
           },
-          err => handleFirestoreError(err, OperationType.LIST, 'players')
+          handleListenerError('players', true)
         );
 
-        unsubscribeSystem = onSnapshot(doc(db, 'metadata', 'system'), snapshot => {
-          if (snapshot.exists()) setSystemMetadata(snapshot.data());
-        });
+        unsubscribeSystem = onSnapshot(
+          doc(db, 'metadata', 'system'),
+          snapshot => {
+            if (snapshot.exists()) setSystemMetadata(snapshot.data());
+          },
+          handleListenerError('metadata/system')
+        );
 
-        unsubscribeCurrentMatch = onSnapshot(doc(db, 'metadata', 'currentMatch'), snapshot => {
-          setGenerationResult(snapshot.exists() ? (snapshot.data() as GenerationResult) : null);
-        });
+        unsubscribeCurrentMatch = onSnapshot(
+          doc(db, 'metadata', 'currentMatch'),
+          snapshot => {
+            setGenerationResult(snapshot.exists() ? (snapshot.data() as GenerationResult) : null);
+          },
+          handleListenerError('metadata/currentMatch')
+        );
 
-        unsubscribeNextMatchPreview = onSnapshot(doc(db, 'metadata', 'nextMatchPreview'), snapshot => {
-          setNextMatchPreview(snapshot.exists() ? (snapshot.data() as GenerationResult) : null);
-        });
+        unsubscribeNextMatchPreview = onSnapshot(
+          doc(db, 'metadata', 'nextMatchPreview'),
+          snapshot => {
+            setNextMatchPreview(snapshot.exists() ? (snapshot.data() as GenerationResult) : null);
+          },
+          handleListenerError('metadata/nextMatchPreview')
+        );
 
-        unsubscribeUsage = onSnapshot(doc(db, 'metadata', 'usage'), snapshot => {
-          if (snapshot.exists()) setUsageStats(snapshot.data() as UsageStats);
-        });
+        unsubscribeUsage = onSnapshot(
+          doc(db, 'metadata', 'usage'),
+          snapshot => {
+            if (snapshot.exists()) setUsageStats(snapshot.data() as UsageStats);
+          },
+          handleListenerError('metadata/usage')
+        );
 
         const monthKey = dateKey.slice(0, 7);
-        unsubscribeMonthlyUsage = onSnapshot(doc(db, 'metadata', `usage_${monthKey}`), snapshot => {
-          if (snapshot.exists()) useStore.getState().setMonthlyUsageStats(snapshot.data() as UsageStats);
-        });
+        unsubscribeMonthlyUsage = onSnapshot(
+          doc(db, 'metadata', `usage_${monthKey}`),
+          snapshot => {
+            if (snapshot.exists()) useStore.getState().setMonthlyUsageStats(snapshot.data() as UsageStats);
+          },
+          handleListenerError(`metadata/usage_${monthKey}`)
+        );
 
-        unsubscribeAttendance = onSnapshot(collection(db, 'attendance', dateKey, 'players'), snapshot => {
-          if (attendanceDebounceRef.current) clearTimeout(attendanceDebounceRef.current);
-          attendanceDebounceRef.current = setTimeout(async () => {
-            try {
-              const docs = snapshot.docs.map(d => ({ id: d.id, data: d.data() }));
-              const { sorted, isInconsistent } = await syncWorkerService.parseAttendance(docs);
-              const activeMasterPlayers = useStore.getState().players;
-              const activeSorted = sorted.filter(p => {
-                const master = activeMasterPlayers.find(m => m.id === p.id || (m.uid && m.uid === p.uid));
-                const status = master?.status || p.status || 'active';
-                const isDM = Boolean(master?.isDM || p.isDM || status === 'dm');
-                return (status === 'active' || status === 'guest') && !isDM;
-              });
-              setAttendance(activeSorted);
-              if (isInconsistent) revalidateAttendanceSilently();
-            } catch (e) {}
-          }, 250);
-        });
+        unsubscribeAttendance = onSnapshot(
+          collection(db, 'attendance', dateKey, 'players'),
+          snapshot => {
+            if (attendanceDebounceRef.current) clearTimeout(attendanceDebounceRef.current);
+            attendanceDebounceRef.current = setTimeout(async () => {
+              try {
+                const docs = snapshot.docs.map(d => ({ id: d.id, data: d.data() }));
+                const { sorted, isInconsistent } = await syncWorkerService.parseAttendance(docs);
+                const activeMasterPlayers = useStore.getState().players;
+                const activeSorted = sorted.filter(p => {
+                  const master = activeMasterPlayers.find(m => m.id === p.id || (m.uid && m.uid === p.uid));
+                  const status = master?.status || p.status || 'active';
+                  const isDM = Boolean(master?.isDM || p.isDM || status === 'dm');
+                  return (status === 'active' || status === 'guest') && !isDM;
+                });
+                setAttendance(activeSorted);
+                throttleSyncTimestamp();
+                if (isInconsistent) revalidateAttendanceSilently();
+              } catch (e) {}
+            }, 250);
+          },
+          handleListenerError(`attendance/${dateKey}/players`)
+        );
 
-        unsubscribeMatches = onSnapshot(collection(db, 'matches'), snapshot => {
-          if (matchesDebounceRef.current) clearTimeout(matchesDebounceRef.current);
-          matchesDebounceRef.current = setTimeout(async () => {
-            try {
-              const docs = snapshot.docs.map(d => ({
-                id: d.id,
-                data: { ...d.data(), timestamp: safeTimestamp(d.data().timestamp) }
-              }));
-              const { sorted } = await syncWorkerService.parseMatches(docs);
-              setMatches(sorted);
-              if (players.length > 0) setIsInitialLoading(false);
-            } catch (e) {}
-          }, 300);
-        });
+        unsubscribeMatches = onSnapshot(
+          collection(db, 'matches'),
+          snapshot => {
+            if (matchesDebounceRef.current) clearTimeout(matchesDebounceRef.current);
+            matchesDebounceRef.current = setTimeout(async () => {
+              try {
+                const docs = snapshot.docs.map(d => ({
+                  id: d.id,
+                  data: { ...d.data(), timestamp: safeTimestamp(d.data().timestamp) }
+                }));
+                const { sorted } = await syncWorkerService.parseMatches(docs);
+                setMatches(sorted);
+                throttleSyncTimestamp();
+                if (useStore.getState().players.length > 0) setIsInitialLoading(false);
+              } catch (e) {}
+            }, 300);
+          },
+          handleListenerError('matches')
+        );
 
-        unsubscribeSynergy = onSnapshot(doc(db, 'metadata', 'synergy'), s => {
-          if (s.exists()) setSynergy(s.data());
-        });
-        unsubscribeNegativeSynergy = onSnapshot(doc(db, 'metadata', 'negative_synergy'), s => {
-          if (s.exists()) setNegativeSynergy(s.data());
-        });
-        unsubscribeRivalry = onSnapshot(doc(db, 'metadata', 'rivalry'), s => {
-          if (s.exists()) setRivalry(s.data());
-        });
+        unsubscribeSynergy = onSnapshot(
+          doc(db, 'metadata', 'synergy'),
+          s => {
+            if (s.exists()) setSynergy(s.data());
+          },
+          handleListenerError('metadata/synergy')
+        );
+        unsubscribeNegativeSynergy = onSnapshot(
+          doc(db, 'metadata', 'negative_synergy'),
+          s => {
+            if (s.exists()) setNegativeSynergy(s.data());
+          },
+          handleListenerError('metadata/negative_synergy')
+        );
+        unsubscribeRivalry = onSnapshot(
+          doc(db, 'metadata', 'rivalry'),
+          s => {
+            if (s.exists()) setRivalry(s.data());
+          },
+          handleListenerError('metadata/rivalry')
+        );
 
-        unsubscribeTournaments = onSnapshot(collection(db, 'tournaments'), snapshot => {
-          const list: Tournament[] = [];
-          snapshot.forEach(d => list.push({ ...d.data(), id: d.id } as Tournament));
-          setTournaments(list.sort((a, b) => b.date.localeCompare(a.date)));
-        });
+        unsubscribeTournaments = onSnapshot(
+          collection(db, 'tournaments'),
+          snapshot => {
+            const list: Tournament[] = [];
+            snapshot.forEach(d => list.push({ ...d.data(), id: d.id } as Tournament));
+            setTournaments(list.sort((a, b) => b.date.localeCompare(a.date)));
+          },
+          handleListenerError('tournaments')
+        );
 
-        unsubscribeActiveTournament = onSnapshot(doc(db, 'metadata', 'activeTournament'), s => {
-          setActiveTournament(s.exists() ? (s.data() as Tournament) : null);
-        });
+        unsubscribeActiveTournament = onSnapshot(
+          doc(db, 'metadata', 'activeTournament'),
+          s => {
+            setActiveTournament(s.exists() ? (s.data() as Tournament) : null);
+          },
+          handleListenerError('metadata/activeTournament')
+        );
 
         financialTimer = setTimeout(() => {
-          unsubscribePayments = onSnapshot(collection(db, 'payments'), snapshot => {
-            const list: Payment[] = [];
-            snapshot.forEach(d => list.push({ ...d.data(), id: d.id } as Payment));
-            setPayments(list);
-          });
+          if (isQuotaExceeded) return;
+          unsubscribePayments = onSnapshot(
+            collection(db, 'payments'),
+            snapshot => {
+              const list: Payment[] = [];
+              snapshot.forEach(d => list.push({ ...d.data(), id: d.id } as Payment));
+              setPayments(list);
+            },
+            handleListenerError('payments')
+          );
 
-          unsubscribeExpenses = onSnapshot(collection(db, 'expenses'), snapshot => {
-            const list: Expense[] = [];
-            snapshot.forEach(d => list.push({ ...d.data(), id: d.id } as Expense));
-            useStore.setState({ expenses: list });
-          });
+          unsubscribeExpenses = onSnapshot(
+            collection(db, 'expenses'),
+            snapshot => {
+              const list: Expense[] = [];
+              snapshot.forEach(d => list.push({ ...d.data(), id: d.id } as Expense));
+              useStore.setState({ expenses: list });
+            },
+            handleListenerError('expenses')
+          );
 
           if (userRole === 'ADMIN' && auth.currentUser) {
-            unsubscribePending = onSnapshot(collection(db, 'pendingRequests'), snapshot => {
-              const list: any[] = [];
-              snapshot.forEach(d => list.push({ id: d.id, ...d.data() }));
-              setPendingRequests(list);
-            });
+            unsubscribePending = onSnapshot(
+              collection(db, 'pendingRequests'),
+              snapshot => {
+                const list: any[] = [];
+                snapshot.forEach(d => list.push({ id: d.id, ...d.data() }));
+                setPendingRequests(list);
+              },
+              handleListenerError('pendingRequests')
+            );
           }
         }, 800);
       } catch (e) {}
@@ -550,14 +652,9 @@ export const useFirestoreSync = () => {
         setIsInitialLoading(false);
       }, 2000);
 
-      const heartbeatInterval = setInterval(() => {
-        revalidateAttendanceSilently();
-      }, 45000);
-
       return () => {
         clearTimeout(syncTimer);
         if (financialTimer) clearTimeout(financialTimer);
-        clearInterval(heartbeatInterval);
         if (attendanceDebounceRef.current) clearTimeout(attendanceDebounceRef.current);
         if (playersDebounceRef.current) clearTimeout(playersDebounceRef.current);
         if (matchesDebounceRef.current) clearTimeout(matchesDebounceRef.current);
@@ -632,8 +729,7 @@ export const useFirestoreSync = () => {
     setSyncError,
     setIdToCanonicalId,
     setCollectionSyncMeta,
-    throttleSyncTimestamp,
-    players.length
+    throttleSyncTimestamp
   ]);
 
   const commitBatchWithLog = useCallback(async (batch: any, _label: string, size: number) => {
@@ -644,6 +740,7 @@ export const useFirestoreSync = () => {
   }, []);
 
   const hardSync = useCallback(async () => {
+    if (isQuotaExceeded) return false;
     setIsBackgroundSyncing(true);
     try {
       const dateKey = getFirestoreDateKey();
@@ -677,10 +774,15 @@ export const useFirestoreSync = () => {
       });
       setPreConfirmations(preConfList);
 
-      useStore.setState(s => ({ syncTrigger: (s.syncTrigger || 0) + 1 }));
+      if (useStore.getState().syncMode !== 'realtime') {
+        useStore.setState(s => ({ syncTrigger: (s.syncTrigger || 0) + 1 }));
+      }
       setLastSyncTimestamp(Date.now());
       return true;
     } catch (err) {
+      if (isFirestoreQuotaError(err)) {
+        markQuotaExceeded();
+      }
       return false;
     } finally {
       setIsBackgroundSyncing(false);

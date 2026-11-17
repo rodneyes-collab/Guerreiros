@@ -1,25 +1,31 @@
 import { useState, useEffect, useRef } from 'react';
 import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, deleteDoc, writeBatch, getDocs } from 'firebase/firestore';
-import { db, auth } from '../../firebase';
+import { db, auth, isQuotaExceeded, isFirestoreQuotaError, markQuotaExceeded } from '../../firebase';
 import { AppNotification } from '../../types';
 import { useStore } from '../../store';
 
 export const useNotifications = () => {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const currentPlayer = useStore(state => state.currentPlayer);
+  const currentPlayerId = currentPlayer?.id;
+  const currentUid = auth.currentUser?.uid;
   const prevNotificationsRef = useRef<AppNotification[]>([]);
 
   useEffect(() => {
-    if (!currentPlayer || !auth.currentUser?.uid) {
-      setNotifications([]);
+    if (!currentPlayerId || !currentUid || isQuotaExceeded) {
+      if (!currentPlayerId || !currentUid) {
+        setNotifications([]);
+      }
       return;
     }
-    console.log('useNotifications: setting up listener for playerUid:', auth.currentUser.uid);
+
+    let isActive = true;
     const q = query(
       collection(db, 'notifications'),
-      where('playerUid', '==', auth.currentUser.uid)
+      where('playerUid', '==', currentUid)
     );
     const unsub = onSnapshot(q, async (snap) => {
+      if (!isActive) return;
       const notifs = snap.docs.map(d => ({ id: d.id, ...d.data() } as AppNotification));
       
       // Detect new notifications
@@ -27,56 +33,78 @@ export const useNotifications = () => {
       const newNotifs = notifs.filter(n => !prevNotifs.find(p => p.id === n.id));
 
       if (newNotifs.length > 0) {
-        console.log('New notifications detected, playing sound:', newNotifs.length);
-        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-        const oscillator = audioCtx.createOscillator();
-        const gainNode = audioCtx.createGain();
-        oscillator.type = 'square';
-        oscillator.frequency.setValueAtTime(880, audioCtx.currentTime);
-        oscillator.frequency.exponentialRampToValueAtTime(1760, audioCtx.currentTime + 0.1);
-        oscillator.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.2);
-        gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
-        oscillator.connect(gainNode);
-        gainNode.connect(audioCtx.destination);
-        oscillator.start();
-        oscillator.stop(audioCtx.currentTime + 0.5);
+        try {
+          const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+          const oscillator = audioCtx.createOscillator();
+          const gainNode = audioCtx.createGain();
+          oscillator.type = 'square';
+          oscillator.frequency.setValueAtTime(880, audioCtx.currentTime);
+          oscillator.frequency.exponentialRampToValueAtTime(1760, audioCtx.currentTime + 0.1);
+          oscillator.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.2);
+          gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+          gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+          oscillator.connect(gainNode);
+          gainNode.connect(audioCtx.destination);
+          oscillator.start();
+          oscillator.stop(audioCtx.currentTime + 0.5);
+        } catch {}
       }
 
       prevNotificationsRef.current = notifs;
-      console.log('Notifications (', currentPlayer?.id, '):', notifs);
       
       // Sort in memory instead of using orderBy to avoid requiring a composite index
       notifs.sort((a, b) => b.createdAt - a.createdAt);
 
       setNotifications(notifs.slice(0, 50));
     }, (err) => {
-      console.error('useNotifications: Error in snapshot for playerUid:', auth.currentUser?.uid, err);
+      if (isFirestoreQuotaError(err)) {
+        markQuotaExceeded();
+        isActive = false;
+        try {
+          unsub();
+        } catch {}
+        return;
+      }
       if (err.message.includes('permission')) {
         console.warn('useNotifications: Permission denied. This usually means playerUid in document does not match auth.uid, or isAdmin check failed.');
+      } else {
+        console.warn('useNotifications: Error in snapshot for playerUid:', currentUid, err);
       }
     });
-    return () => unsub();
-  }, [currentPlayer]);
+    return () => {
+      isActive = false;
+      unsub();
+    };
+  }, [currentPlayerId, currentUid]);
 
   const markAsRead = async (id: string) => {
+    if (isQuotaExceeded) return;
     try {
       await updateDoc(doc(db, 'notifications', id), { read: true });
     } catch (e) {
+      if (isFirestoreQuotaError(e)) {
+        markQuotaExceeded();
+        return;
+      }
       console.error("Error marking notification as read", e);
     }
   };
 
   const deleteNotification = async (id: string) => {
+    if (isQuotaExceeded) return;
     try {
       await deleteDoc(doc(db, 'notifications', id));
     } catch (e) {
+      if (isFirestoreQuotaError(e)) {
+        markQuotaExceeded();
+        return;
+      }
       console.error("Error deleting notification", e);
     }
   };
 
   const clearAll = async () => {
-    if (!auth.currentUser?.uid) return;
+    if (!auth.currentUser?.uid || isQuotaExceeded) return;
     try {
       const q = query(
         collection(db, 'notifications'),

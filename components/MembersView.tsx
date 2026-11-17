@@ -56,7 +56,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
   repairDatabase,
   savePlayer
 }) => {
-  const { players, userRole, isSyncing, showConfirmModal, matches, attendance, systemMetadata } = useStore(useShallow(state => ({players: state.players, userRole: state.userRole, isSyncing: state.isSyncing, showConfirmModal: state.showConfirmModal, matches: state.matches, attendance: state.attendance, systemMetadata: state.systemMetadata})));
+  const { players, userRole, currentPlayer, isSyncing, showConfirmModal, matches, attendance, systemMetadata } = useStore(useShallow(state => ({players: state.players, userRole: state.userRole, currentPlayer: state.currentPlayer, isSyncing: state.isSyncing, showConfirmModal: state.showConfirmModal, matches: state.matches, attendance: state.attendance, systemMetadata: state.systemMetadata})));
   const { intentions } = useIntentions();
   const { monthBirthdays, getBirthdaysByMonth } = useBirthdays(players);
   const [selectedMonth, setSelectedMonth] = React.useState<string>((new Date().getMonth() + 1).toString().padStart(2, '0'));
@@ -337,18 +337,20 @@ export const MembersView: React.FC<MembersViewProps> = ({
 
   const isBirthdayMonth = (birthDate?: string) => {
     if (!birthDate) return false;
-    const parts = birthDate.split('-');
+    const parts = birthDate.trim().split('T')[0].split(/[-/]/);
     if (parts.length < 2) return false;
-    const birthMonth = parts[1];
+    const birthMonth = parts[1].padStart(2, '0');
     const currentMonth = (new Date().getMonth() + 1).toString().padStart(2, '0');
     return birthMonth === currentMonth;
   };
 
   const formatBirthday = (birthDate?: string) => {
     if (!birthDate) return '-';
-    const parts = birthDate.split('-');
+    const parts = birthDate.trim().split('T')[0].split(/[-/]/);
     if (parts.length < 3) return birthDate;
-    return `${parts[2]}/${parts[1]}`;
+    const day = parts[0].length === 4 ? parts[2] : parts[0];
+    const month = parts[1];
+    return `${day.padStart(2, '0')}/${month.padStart(2, '0')}`;
   };
 
   const { setViewMode } = useStore(useShallow(state => ({setViewMode: state.setViewMode})));
@@ -653,6 +655,15 @@ export const MembersView: React.FC<MembersViewProps> = ({
                           </button>
                         </Tooltip>
                       </>
+                    ) : currentPlayer && player.id === currentPlayer.id ? (
+                      <Tooltip content="Configurações do Jogador" position="left">
+                        <button
+                          onClick={() => { setEditingPlayer(player); setIsFormOpen(true); }}
+                          className="p-1.5 text-brand-primary bg-brand-primary/10 hover:bg-brand-primary hover:text-brand-secondary rounded-lg transition-all font-bold border border-brand-primary/20"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                      </Tooltip>
                     ) : '-'}
                   </td>
                 </tr>
@@ -792,7 +803,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
                 })()}
               </div>
             </div>
-            {userRole === 'ADMIN' && (
+            {userRole === 'ADMIN' ? (
               <div className="flex gap-2 pt-2 border-t border-white/5">
                 <button onClick={() => { setEditingPlayer(player); setIsFormOpen(true); }} className="flex-1 py-3 bg-brand-primary/10 text-brand-primary border border-brand-primary/20 rounded-2xl font-black text-[9px] uppercase hover:bg-brand-primary hover:text-brand-secondary transition-all flex items-center justify-center gap-2">
                   <Edit2 className="w-3 h-3" /> Editar
@@ -801,7 +812,13 @@ export const MembersView: React.FC<MembersViewProps> = ({
                   <Trash2 className="w-3 h-3" /> Excluir
                 </button>
               </div>
-            )}
+            ) : currentPlayer && player.id === currentPlayer.id ? (
+              <div className="flex gap-2 pt-2 border-t border-white/5">
+                <button onClick={() => { setEditingPlayer(player); setIsFormOpen(true); }} className="flex-1 py-3 bg-brand-primary/10 text-brand-primary border border-brand-primary/20 rounded-2xl font-black text-[9px] uppercase hover:bg-brand-primary hover:text-brand-secondary transition-all flex items-center justify-center gap-2">
+                  <Edit2 className="w-3 h-3" /> Configurações do Jogador
+                </button>
+              </div>
+            ) : null}
           </div>
         ))}
       </div>

@@ -557,6 +557,12 @@ export const ViewManager: React.FC<ViewManagerProps> = (props) => {
         isAdmin={isAdmin}
         handleLogout={handleLogout}
         isLoggingOut={isLoggingOut}
+        onOpenPlayerSettings={() => {
+          if (currentPlayer) {
+            setEditingPlayer(currentPlayer);
+            setIsFormOpen(true);
+          }
+        }}
       />
 
       {/* Main Content Area (Offset by sidebar width on desktop) */}

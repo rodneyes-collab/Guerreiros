@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { playSound } from './src/utils/audio';
 import ViewManager from './src/components/ViewManager';
 
-import { getBrazilDay, getFirestoreDateKey, db, doc, clearIndexedDbPersistence, onSnapshot } from './firebase';
+import { getBrazilDay, getFirestoreDateKey, db, doc, clearIndexedDbPersistence, onSnapshot, isQuotaExceeded, isFirestoreQuotaError, markQuotaExceeded } from './firebase';
 import { useStore } from './store';
 import { useAuth } from './src/hooks/useAuth';
 import { useFirestoreSync } from './src/hooks/useFirestoreSync';
@@ -18,6 +18,7 @@ import { useIntentions } from './src/hooks/useIntentions';
 import { useNavItems } from './src/hooks/useNavItems';
 import { clearOldStorage } from './services/geminiService';
 import { useBirthdays } from './src/hooks/useBirthdays';
+import { useBirthdayAutomation } from './src/hooks/useBirthdayAutomation';
 import { useWelcomeCelebration } from './src/hooks/useWelcomeCelebration';
 import { useAdminAutomations } from './src/hooks/useAdminAutomations';
 import { useDatabaseMaintenance } from './src/hooks/useDatabaseMaintenance';
@@ -151,20 +152,28 @@ const App: React.FC = () => {
 
   // 1. Force Reload Listener: Monitora se o Admin disparou um comando de recarregamento nuclear no Firestore
   useEffect(() => {
-    if (!db) return;
-    const unsub = onSnapshot(doc(db, 'metadata', 'system'), (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        const forceReloadId = data.forceReloadId;
-        const lastLocalReload = localStorage.getItem('guerreiros_last_force_reload');
-        
-        if (forceReloadId && forceReloadId !== lastLocalReload) {
-          console.warn('[System] COMANDO DE RECARREGAMENTO FORÇADO DETECTADO!');
-          localStorage.setItem('guerreiros_last_force_reload', forceReloadId);
-          forceUpdate();
+    if (!db || isQuotaExceeded) return;
+    const unsub = onSnapshot(
+      doc(db, 'metadata', 'system'),
+      (snap) => {
+        if (snap.exists()) {
+          const data = snap.data();
+          const forceReloadId = data.forceReloadId;
+          const lastLocalReload = localStorage.getItem('guerreiros_last_force_reload');
+          
+          if (forceReloadId && forceReloadId !== lastLocalReload) {
+            console.warn('[System] COMANDO DE RECARREGAMENTO FORÇADO DETECTADO!');
+            localStorage.setItem('guerreiros_last_force_reload', forceReloadId);
+            forceUpdate();
+          }
+        }
+      },
+      (err) => {
+        if (isFirestoreQuotaError(err)) {
+          markQuotaExceeded();
         }
       }
-    });
+    );
     return () => unsub();
   }, [forceUpdate]);
 
@@ -239,6 +248,7 @@ const App: React.FC = () => {
   }, [user, entryRoute, players, registerAttendance, setViewMode]);
 
   const { todayBirthdays } = useBirthdays();
+  useBirthdayAutomation();
   const { showWelcome, setShowWelcome } = useWelcomeCelebration();
 
   // Limpeza de storage antigo uma única vez no boot
@@ -378,6 +388,7 @@ const App: React.FC = () => {
   const [formData, setFormData] = useState({
     name: '',
     gender: 'MALE',
+    photoUrl: '',
     elo: 1200,
     matchesPlayed: 0,
     isOfficialSetter: false,
@@ -405,6 +416,7 @@ const App: React.FC = () => {
       setFormData({
         name: editingPlayer.name || '',
         gender: editingPlayer.gender || 'MALE',
+        photoUrl: editingPlayer.photoUrl || '',
         elo: editingPlayer.elo || 1200,
         matchesPlayed: editingPlayer.matchesPlayed || 0,
         isOfficialSetter: editingPlayer.isOfficialSetter || false,
@@ -429,6 +441,7 @@ const App: React.FC = () => {
       setFormData({
         name: '',
         gender: 'MALE',
+        photoUrl: '',
         elo: 1200,
         matchesPlayed: 0,
         isOfficialSetter: false,
@@ -454,10 +467,23 @@ const App: React.FC = () => {
 
   const handlePlayerSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    await savePlayer({
-      ...editingPlayer,
-      ...formData
-    } as any);
+    if (userRole !== 'ADMIN') {
+      if (!editingPlayer) return;
+      await savePlayer({
+        ...editingPlayer,
+        name: formData.name,
+        gender: formData.gender,
+        photoUrl: formData.photoUrl,
+        birthDate: formData.birthDate,
+        email: formData.email,
+        phone: formData.phone
+      } as any);
+    } else {
+      await savePlayer({
+        ...editingPlayer,
+        ...formData
+      } as any);
+    }
     setIsFormOpen(false);
     setEditingPlayer(null);
   };

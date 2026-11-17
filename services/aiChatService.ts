@@ -1,6 +1,6 @@
 
-import { Player, Match } from "../types";
-import { getAI } from "./serverGemini";
+import type { Player, Match } from "../types.ts";
+import { getAI, recordServerAIError } from "./serverGemini.ts";
 
 /**
  * AI Chat Service to answer member questions with club context.
@@ -44,16 +44,14 @@ export const runAIChat = async (
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3.8-flash",
+      model: "gemini-4-hydrogen",
       contents: fullPrompt,
     });
 
     return response.text || "Ops! Não consegui gerar uma resposta agora.";
   } catch (error: any) {
     console.error("[AI Chat] Error:", error);
-    if (error.message?.includes('429') || error.status === 429) {
-      return "Infelizmente meu limite de mensagens mensais foi atingido (Cota Excedida). Peça ao administrador para verificar o faturamento em ai.studio/spend.";
-    }
-    return "Ops! Tive um pequeno problema técnico. Pode repetir a pergunta?";
+    recordServerAIError(error);
+    throw error;
   }
 };

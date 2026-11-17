@@ -2,7 +2,7 @@
 import React, { useMemo } from 'react';
 import { motion } from 'motion/react';
 import { getPlayerTier } from '../../utils/tierUtils';
-import { Zap, Clock, PlayCircle, Smartphone, Trophy, Target, Medal, Flame } from 'lucide-react';
+import { Zap, Clock, PlayCircle, Smartphone, Trophy, Target, Medal, Flame, Settings } from 'lucide-react';
 import { Player, GenerationResult, Match, SystemMetadata, Tournament } from '../../types';
 import { getPriorityQueue } from '../../utils/teamLogic';
 import { usePlayerStatusNotification } from '../hooks/usePlayerStatusNotification';
@@ -28,6 +28,8 @@ export const PlayerStatusCard: React.FC<PlayerStatusCardProps> = ({
   const showNotification = useStore(state => state.showNotification);
   const swapSelection = useStore(state => state.swapSelection);
   const allPlayers = useStore(state => state.players);
+  const setEditingPlayer = useStore(state => state.setEditingPlayer);
+  const setIsFormOpen = useStore(state => state.setIsFormOpen);
   const isSelectedForSwap = currentPlayer && swapSelection?.playerId === currentPlayer.id;
   const { 
     isEnabled, 
@@ -283,6 +285,20 @@ export const PlayerStatusCard: React.FC<PlayerStatusCardProps> = ({
           title={isMatchEnabled ? "Desativar Alertas de Resultados" : "Ativar Alertas de Resultados"}
         >
           <Trophy className={`w-4 h-4 ${isMatchEnabled ? 'fill-current' : ''} ${isTogglingMatch ? 'animate-bounce' : ''}`} />
+        </button>
+      )}
+
+      {currentPlayer && (
+        <button
+          type="button"
+          onClick={() => {
+            setEditingPlayer(currentPlayer);
+            setIsFormOpen(true);
+          }}
+          className="flex items-center justify-center w-8 h-8 rounded-full bg-white/5 border border-white/10 text-white/70 hover:text-brand-primary hover:border-brand-primary/40 hover:bg-brand-primary/10 transition-all"
+          title="Configurações do Jogador"
+        >
+          <Settings className="w-4 h-4" />
         </button>
       )}
     </div>

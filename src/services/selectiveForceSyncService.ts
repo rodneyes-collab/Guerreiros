@@ -7,7 +7,10 @@ import {
   query, 
   orderBy, 
   limit, 
-  getFirestoreDateKey 
+  getFirestoreDateKey,
+  isQuotaExceeded,
+  isFirestoreQuotaError,
+  markQuotaExceeded
 } from '../../firebase';
 import { useStore } from '../../store';
 import { SelectiveSyncResult, CollectionSyncMeta } from '../../types';
@@ -38,7 +41,9 @@ class SelectiveForceSyncService {
    * Avalia individualmente as coleções contra o Firestore (via getDocFromServer / getDocsFromServer),
    * identificando discrepâncias de timestamp ou de contagem entre o cache/estado local e a nuvem.
    */
-  public async evaluateDiscrepancies(): Promise<CollectionCheckItem[]> {
+  public async evaluateDiscrepancies(specificKeys?: string[]): Promise<CollectionCheckItem[]> {
+    if (isQuotaExceeded) return [];
+    const shouldCheck = (key: string) => !specificKeys || specificKeys.length === 0 || specificKeys.includes(key);
     const state = useStore.getState();
     const meta = state.collectionsSyncMeta;
     const dateKey = getFirestoreDateKey();
@@ -47,7 +52,7 @@ class SelectiveForceSyncService {
     const results: CollectionCheckItem[] = [];
 
     // 1. Coleção: Lista de Intenções (metadata/intentions)
-    try {
+    if (shouldCheck('intentions')) try {
       const intentionsSnap = await getDocFromServer(doc(db, 'metadata', 'intentions'));
       const intentionsData = intentionsSnap.data() || {};
       const serverUpdated = safeTimestamp(intentionsData.lastUpdated);
@@ -73,11 +78,12 @@ class SelectiveForceSyncService {
         reason
       });
     } catch (e: any) {
+      if (isFirestoreQuotaError(e)) { markQuotaExceeded(); return results; }
       console.warn('[SelectiveSync] Erro ao checar metadata/intentions:', e);
     }
 
     // 2. Coleção: Histórico de Partidas (matches)
-    try {
+    if (shouldCheck('matches')) try {
       // Busca a partida mais recente diretamente do servidor com limit(1) ordenado por timestamp desc
       const qLatest = query(collection(db, 'matches'), orderBy('timestamp', 'desc'), limit(1));
       const latestMatchSnap = await getDocsFromServer(qLatest);
@@ -107,11 +113,12 @@ class SelectiveForceSyncService {
         reason
       });
     } catch (e: any) {
+      if (isFirestoreQuotaError(e)) { markQuotaExceeded(); return results; }
       console.warn('[SelectiveSync] Erro ao checar matches:', e);
     }
 
     // 3. Coleção: Lista de Presença do Dia (attendance/dateKey/players)
-    try {
+    if (shouldCheck('attendance')) try {
       const attendanceServerSnap = await getDocsFromServer(collection(db, 'attendance', dateKey, 'players'));
       const serverAttendanceCount = attendanceServerSnap.docs.length;
       let maxServerAttendanceTs = 0;
@@ -141,11 +148,12 @@ class SelectiveForceSyncService {
         reason
       });
     } catch (e: any) {
+      if (isFirestoreQuotaError(e)) { markQuotaExceeded(); return results; }
       console.warn('[SelectiveSync] Erro ao checar attendance:', e);
     }
 
     // 4. Coleção: Sócios Cadastrados (players)
-    try {
+    if (shouldCheck('players')) try {
       const playersServerSnap = await getDocsFromServer(collection(db, 'players'));
       const serverPlayersCount = playersServerSnap.docs.length;
       const localPlayers = state.players;
@@ -168,11 +176,12 @@ class SelectiveForceSyncService {
         reason
       });
     } catch (e: any) {
+      if (isFirestoreQuotaError(e)) { markQuotaExceeded(); return results; }
       console.warn('[SelectiveSync] Erro ao checar players:', e);
     }
 
     // 5. Coleção: Metadados do Sistema (metadata/system)
-    try {
+    if (shouldCheck('system')) try {
       const sysSnap = await getDocFromServer(doc(db, 'metadata', 'system'));
       const sysData = sysSnap.data() || {};
       const serverResetTs = safeTimestamp(sysData.lastResetTimestamp);
@@ -194,6 +203,7 @@ class SelectiveForceSyncService {
         reason
       });
     } catch (e: any) {
+      if (isFirestoreQuotaError(e)) { markQuotaExceeded(); return results; }
       console.warn('[SelectiveSync] Erro ao checar metadata/system:', e);
     }
 
@@ -205,7 +215,8 @@ class SelectiveForceSyncService {
    * poupando leitura e recarga do restante do banco de dados.
    */
   public async executeSelectiveForceSync(specificKeys?: string[]): Promise<SelectiveSyncResult[]> {
-    const discrepancies = await this.evaluateDiscrepancies();
+    if (isQuotaExceeded) return [];
+    const discrepancies = await this.evaluateDiscrepancies(specificKeys);
     const targets = discrepancies.filter(d => {
       if (specificKeys && specificKeys.length > 0) {
         return specificKeys.includes(d.key);
@@ -385,6 +396,9 @@ class SelectiveForceSyncService {
           });
         }
       } catch (err: any) {
+        if (isFirestoreQuotaError(err)) {
+          markQuotaExceeded();
+        }
         console.error(`[SelectiveSync] Falha no force-sync da coleção "${item.key}":`, err);
         setCollectionSyncMeta(item.key, {
           status: 'error',

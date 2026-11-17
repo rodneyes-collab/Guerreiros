@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Player, Gender } from '../types';
 import { getPlayerTier } from '../utils/tierUtils';
-import { X, Target, Camera, Upload } from 'lucide-react';
+import { X, Target, Upload, Cake } from 'lucide-react';
 import { PlayerAvatar } from '../src/components/PlayerAvatar';
 
 interface PlayerFormProps {
@@ -14,6 +14,23 @@ interface PlayerFormProps {
   isAdmin?: boolean;
 }
 
+const normalizeBirthDateForInput = (value?: string | null): string => {
+  if (!value || typeof value !== 'string') return '';
+  const trimmed = value.trim().split('T')[0];
+  const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+  const brMatch = trimmed.match(/^(\d{2})[/-](\d{2})[/-](\d{4})$/);
+  if (brMatch) return `${brMatch[3]}-${brMatch[2]}-${brMatch[1]}`;
+  return '';
+};
+
+const formatBirthDayMonth = (isoDate?: string): string | null => {
+  if (!isoDate) return null;
+  const parts = isoDate.split('-');
+  if (parts.length !== 3) return null;
+  return `${parts[2]}/${parts[1]}`;
+};
+
 export const PlayerForm: React.FC<PlayerFormProps> = ({
   isOpen,
   onClose,
@@ -25,17 +42,29 @@ export const PlayerForm: React.FC<PlayerFormProps> = ({
 }) => {
   if (!isOpen) return null;
 
+  const isPlayerSelfSettings = !isAdmin && Boolean(editingPlayer);
+  const normalizedBirthDate = normalizeBirthDateForInput(formData.birthDate);
+  const formattedDayMonth = formatBirthDayMonth(normalizedBirthDate);
+
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-in fade-in duration-300 overflow-y-auto">
       <div className="bg-black w-full max-w-lg rounded-[2.5rem] shadow-2xl border border-white/5 border-l-[8px] border-l-brand-primary overflow-hidden animate-in zoom-in-95 duration-300 my-auto">
         <div className="p-8 border-b border-brand-primary/40 flex justify-between items-center bg-white/5">
           <div>
             <h3 className="text-2xl font-black text-brand-primary uppercase tracking-tight">
-              {editingPlayer ? 'Editar Sócio' : 'Novo Sócio'}
+              {isPlayerSelfSettings
+                ? 'Configurações do Jogador'
+                : editingPlayer
+                  ? 'Editar Sócio'
+                  : 'Novo Sócio'}
             </h3>
-            <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest mt-1">Preencha os dados abaixo</p>
+            <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest mt-1">
+              {isPlayerSelfSettings
+                ? 'Atualize seus dados pessoais e data de nascimento'
+                : 'Preencha os dados abaixo'}
+            </p>
           </div>
-          <button onClick={onClose} className="p-3 hover:bg-white/10 rounded-2xl transition-all text-white/60 hover:text-white"><X className="w-6 h-6" /></button>
+          <button type="button" onClick={onClose} className="p-3 hover:bg-white/10 rounded-2xl transition-all text-white/60 hover:text-white"><X className="w-6 h-6" /></button>
         </div>
         
         <form onSubmit={onSubmit} className="p-8 space-y-6">
@@ -132,7 +161,7 @@ export const PlayerForm: React.FC<PlayerFormProps> = ({
             />
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className={`grid grid-cols-1 ${isAdmin ? 'md:grid-cols-3' : ''} gap-6`}>
             <div className="space-y-2">
               <label className="text-[10px] font-black text-white/40 uppercase tracking-widest ml-1">Gênero</label>
               <select
@@ -145,88 +174,88 @@ export const PlayerForm: React.FC<PlayerFormProps> = ({
                 <option value={Gender.FEMALE} className="bg-brand-secondary text-white">Feminino</option>
               </select>
             </div>
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-white/40 uppercase tracking-widest ml-1">Partidas Jogadas</label>
-              <input
-                type="number"
-                name="matchesPlayed"
-                required
-                value={formData.matchesPlayed ?? 0}
-                onChange={e => setFormData({ ...formData, matchesPlayed: parseInt(e.target.value) || 0 })}
-                className="w-full px-6 py-4 bg-white/5 border border-brand-primary/40 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-white/40 uppercase tracking-widest ml-1">ELO Inicial</label>
-              <input
-                type="number"
-                name="elo"
-                required
-                value={formData.elo}
-                onChange={e => setFormData({ ...formData, elo: parseInt(e.target.value) || 0 })}
-                className="w-full px-6 py-4 bg-white/5 border border-brand-primary/40 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none"
-              />
-            </div>
+            {isAdmin && (
+              <>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-white/40 uppercase tracking-widest ml-1">Partidas Jogadas</label>
+                  <input
+                    type="number"
+                    name="matchesPlayed"
+                    required
+                    value={formData.matchesPlayed ?? 0}
+                    onChange={e => setFormData({ ...formData, matchesPlayed: parseInt(e.target.value) || 0 })}
+                    className="w-full px-6 py-4 bg-white/5 border border-brand-primary/40 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-white/40 uppercase tracking-widest ml-1">ELO Inicial</label>
+                  <input
+                    type="number"
+                    name="elo"
+                    required
+                    value={formData.elo}
+                    onChange={e => setFormData({ ...formData, elo: parseInt(e.target.value) || 0 })}
+                    className="w-full px-6 py-4 bg-white/5 border border-brand-primary/40 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none"
+                  />
+                </div>
+              </>
+            )}
           </div>
 
           {/* Tier Preview */}
-          <div className="bg-white/5 p-4 rounded-2xl border border-brand-primary/20 flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-brand-primary/10 rounded-xl">
-                <Target className="w-5 h-5 text-brand-primary" />
+          {isAdmin && (
+            <div className="bg-white/5 p-4 rounded-2xl border border-brand-primary/20 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-brand-primary/10 rounded-xl">
+                  <Target className="w-5 h-5 text-brand-primary" />
+                </div>
+                <div>
+                  <p className="text-[8px] font-black text-white/40 uppercase tracking-widest">Nível Calculado</p>
+                  <p className={`text-sm font-black uppercase tracking-tight ${getPlayerTier(formData).color}`}>
+                    {getPlayerTier(formData).label}
+                  </p>
+                </div>
               </div>
-              <div>
-                <p className="text-[8px] font-black text-white/40 uppercase tracking-widest">Nível Calculado</p>
-                <p className={`text-sm font-black uppercase tracking-tight ${getPlayerTier(formData).color}`}>
-                  {getPlayerTier(formData).label}
-                </p>
+              <div className="text-right">
+                <p className="text-[8px] font-black text-white/40 uppercase tracking-widest">Status Inicial</p>
+                <p className="text-[10px] font-bold text-white/60 uppercase">Baseado em ELO e Jogos</p>
               </div>
             </div>
-            <div className="text-right">
-              <p className="text-[8px] font-black text-white/40 uppercase tracking-widest">Status Inicial</p>
-              <p className="text-[10px] font-bold text-white/60 uppercase">Baseado em ELO e Jogos</p>
-            </div>
-          </div>
+          )}
 
           <div className="space-y-2">
-            <label className="text-[10px] font-black text-white/40 uppercase tracking-widest ml-1">Data de Nascimento (Dia/Mês)</label>
-            <div className="grid grid-cols-2 gap-4">
-              <select
-                value={formData.birthDate ? formData.birthDate.split('-')[2] : ''}
-                onChange={e => {
-                  const day = e.target.value;
-                  const current = formData.birthDate || '1900-01-01';
-                  const [y, m] = current.split('-');
-                  setFormData({ ...formData, birthDate: `${y}-${m}-${day.padStart(2, '0')}` });
-                }}
-                className="w-full px-6 py-4 bg-white/5 border border-brand-primary/40 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none appearance-none"
-              >
-                <option value="" className="bg-brand-secondary text-white/40">Dia</option>
-                {Array.from({ length: 31 }, (_, i) => i + 1).map(d => (
-                  <option key={d} value={d.toString().padStart(2, '0')} className="bg-brand-secondary text-white">{d}</option>
-                ))}
-              </select>
-              <select
-                value={formData.birthDate ? formData.birthDate.split('-')[1] : ''}
-                onChange={e => {
-                  const month = e.target.value;
-                  const current = formData.birthDate || '1900-01-01';
-                  const [y, _, d] = current.split('-');
-                  setFormData({ ...formData, birthDate: `${y}-${month.padStart(2, '0')}-${d}` });
-                }}
-                className="w-full px-6 py-4 bg-white/5 border border-brand-primary/40 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none appearance-none"
-              >
-                <option value="" className="bg-brand-secondary text-white/40">Mês</option>
-                {[
-                  { v: '01', l: 'Janeiro' }, { v: '02', l: 'Fevereiro' }, { v: '03', l: 'Março' },
-                  { v: '04', l: 'Abril' }, { v: '05', l: 'Maio' }, { v: '06', l: 'Junho' },
-                  { v: '07', l: 'Julho' }, { v: '08', l: 'Agosto' }, { v: '09', l: 'Setembro' },
-                  { v: '10', l: 'Outubro' }, { v: '11', l: 'Novembro' }, { v: '12', l: 'Dezembro' }
-                ].map(m => (
-                  <option key={m.v} value={m.v} className="bg-brand-secondary text-white">{m.l}</option>
-                ))}
-              </select>
+            <div className="flex items-center justify-between ml-1">
+              <label className="text-[10px] font-black text-white/40 uppercase tracking-widest flex items-center gap-1.5">
+                <Cake className="w-3.5 h-3.5 text-brand-primary" />
+                <span>Data de Nascimento</span>
+              </label>
+              {formattedDayMonth && (
+                <span className="text-[10px] font-black text-brand-primary uppercase tracking-widest">
+                  Aniversário: {formattedDayMonth}
+                </span>
+              )}
             </div>
+            <div className="flex items-center gap-3">
+              <input
+                type="date"
+                name="birthDate"
+                value={normalizedBirthDate}
+                onChange={e => setFormData({ ...formData, birthDate: e.target.value })}
+                className="w-full px-6 py-4 bg-white/5 border border-brand-primary/40 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none [color-scheme:dark]"
+              />
+              {normalizedBirthDate && (
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, birthDate: '' })}
+                  className="px-4 py-4 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-[10px] font-black uppercase tracking-widest text-white/60 hover:text-white transition-all shrink-0"
+                >
+                  Limpar
+                </button>
+              )}
+            </div>
+            <p className="text-[9px] font-bold text-white/30 uppercase tracking-wider ml-1">
+              Usado para felicitações automáticas no grupo no dia do seu aniversário
+            </p>
           </div>
 
           <div className="space-y-2">
@@ -253,19 +282,21 @@ export const PlayerForm: React.FC<PlayerFormProps> = ({
             />
           </div>
 
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-white/40 uppercase tracking-widest ml-1">Device ID (Bluetooth NRF52810)</label>
-            <input
-              type="text"
-              name="deviceId"
-              value={formData.deviceId || ''}
-              onChange={e => setFormData({ ...formData, deviceId: e.target.value })}
-              className="w-full px-6 py-4 bg-white/5 border border-brand-primary/40 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none placeholder:text-white/20"
-              placeholder="Ex: NRF-XXXX"
-            />
-          </div>
+          {isAdmin && (
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-white/40 uppercase tracking-widest ml-1">Device ID (Bluetooth NRF52810)</label>
+              <input
+                type="text"
+                name="deviceId"
+                value={formData.deviceId || ''}
+                onChange={e => setFormData({ ...formData, deviceId: e.target.value })}
+                className="w-full px-6 py-4 bg-white/5 border border-brand-primary/40 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none placeholder:text-white/20"
+                placeholder="Ex: NRF-XXXX"
+              />
+            </div>
+          )}
 
-          {(isAdmin || editingPlayer?.isAdmin) && (
+          {isAdmin && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-2">
                 <label className="text-[10px] font-black text-white/40 uppercase tracking-widest ml-1">Data de Entrada</label>
@@ -334,23 +365,25 @@ export const PlayerForm: React.FC<PlayerFormProps> = ({
             </div>
           )}
 
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-white/40 uppercase tracking-widest ml-1">Status do Sócio</label>
-            <select
-              name="status"
-              value={formData.status || 'active'}
-              onChange={e => setFormData({ ...formData, status: e.target.value })}
-              className="w-full px-6 py-4 bg-white/5 border border-brand-primary/40 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none appearance-none"
-            >
-              <option value="active" className="bg-brand-secondary text-white">Ativo</option>
-              <option value="guest" className="bg-brand-secondary text-white">Convidado</option>
-              <option value="waitlist" className="bg-brand-secondary text-white">Lista de Espera</option>
-              <option value="dm" className="bg-brand-secondary text-white">Departamento Médico (DM)</option>
-              <option value="inactive" className="bg-brand-secondary text-white">Inativo</option>
-            </select>
-          </div>
+          {isAdmin && (
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-white/40 uppercase tracking-widest ml-1">Status do Sócio</label>
+              <select
+                name="status"
+                value={formData.status || 'active'}
+                onChange={e => setFormData({ ...formData, status: e.target.value })}
+                className="w-full px-6 py-4 bg-white/5 border border-brand-primary/40 rounded-2xl focus:ring-4 focus:ring-brand-primary/10 focus:border-brand-primary transition-all font-bold text-white outline-none appearance-none"
+              >
+                <option value="active" className="bg-brand-secondary text-white">Ativo</option>
+                <option value="guest" className="bg-brand-secondary text-white">Convidado</option>
+                <option value="waitlist" className="bg-brand-secondary text-white">Lista de Espera</option>
+                <option value="dm" className="bg-brand-secondary text-white">Departamento Médico (DM)</option>
+                <option value="inactive" className="bg-brand-secondary text-white">Inativo</option>
+              </select>
+            </div>
+          )}
 
-          {formData.status === 'guest' && (
+          {isAdmin && formData.status === 'guest' && (
             <div className="space-y-3 bg-brand-primary/5 p-5 rounded-3xl border border-brand-primary/20 animate-in slide-in-from-top-2 duration-200">
               <label className="text-[10px] font-black text-brand-primary uppercase tracking-widest ml-1 block">
                 Nível Técnico do Convidado

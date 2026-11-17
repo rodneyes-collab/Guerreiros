@@ -538,10 +538,14 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                                     </span>
                                   )}
                                   {player.checkInMethod === 'NFC' && (
-                                    <SmartphoneNfc className="w-3 h-3 text-emerald-400" title="NFC" />
+                                    <span title="NFC" className="inline-flex">
+                                      <SmartphoneNfc className="w-3 h-3 text-emerald-400" />
+                                    </span>
                                   )}
                                   {player.checkInMethod === 'QR' && (
-                                    <QrCode className="w-3 h-3 text-blue-400" title="QR Code" />
+                                    <span title="QR Code" className="inline-flex">
+                                      <QrCode className="w-3 h-3 text-blue-400" />
+                                    </span>
                                   )}
                                 </div>
                               </div>

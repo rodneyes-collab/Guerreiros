@@ -134,7 +134,7 @@ ${statusColor} **SISTEMA EM MODO MONITORADO: ${status}**
 };
 
 export const runSentinelDeepScan = async (_apiKey: string, data: SentinelSystemData): Promise<string> => {
-  const { getAI } = await import("./serverGemini");
+  const { getAI, recordServerAIError } = await import("./serverGemini.ts");
   const ai = getAI();
 
   const prompt = `Você é o "Agente Sentinela IA" do Guerreiros Volleyball Club. 
@@ -171,26 +171,23 @@ export const runSentinelDeepScan = async (_apiKey: string, data: SentinelSystemD
 
   try {
     const result = await ai.models.generateContent({
-      model: "gemini-3.8-flash",
+      model: "gemini-4-hydrogen",
       contents: prompt,
     });
     return result.text || "Sem resposta do Sentinela.";
   } catch (error: any) {
+    recordServerAIError(error);
     const errorMsg = error?.message || "";
-    const isBillingOrQuota = 
-      errorMsg.includes("429") || 
-      errorMsg.toLowerCase().includes("spending cap") || 
-      errorMsg.toLowerCase().includes("quota") || 
-      errorMsg.toLowerCase().includes("billing") || 
-      errorMsg.toLowerCase().includes("resource_exhausted") || 
-      errorMsg.toLowerCase().includes("exceeded");
+    const isQuota =
+      errorMsg.includes("429") ||
+      errorMsg.toLowerCase().includes("quota") ||
+      errorMsg.toLowerCase().includes("resource_exhausted");
 
-    if (isBillingOrQuota) {
-      console.warn("Sentinel: Gemini API call returned resource exhaustion/monthly billing limit (429/RESOURCE_EXHAUSTED). Rolling back to robust local heuristic scan.");
-    } else {
-      console.warn("Sentinel: Gemini API call failed. Rolling back to robust local heuristic scan.", errorMsg);
+    if (isQuota) {
+      console.warn("Sentinel: Gemini API quota exhausted. Falling back to local heuristic scan.");
+      return runLocalHeuristicScan(data, errorMsg || "RESOURCE_EXHAUSTED");
     }
-    return runLocalHeuristicScan(data, errorMsg || "RESOURCE_EXHAUSTED");
+    throw error;
   }
 };
 

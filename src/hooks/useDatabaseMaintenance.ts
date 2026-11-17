@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useStore } from '../../store';
-import { db, doc, setDoc, getFirestoreDateKey } from '../../firebase';
+import { db, doc, setDoc, getFirestoreDateKey, isQuotaExceeded, isFirestoreQuotaError, markQuotaExceeded } from '../../firebase';
 import { scanDatabaseAnomalies, executeDbAutoCorrection } from '../../services/dbAutoCorrectionAgent';
 
 /**
@@ -17,7 +17,7 @@ export const useDatabaseMaintenance = () => {
   const executedRef = useRef(false);
 
   useEffect(() => {
-    if (executedRef.current || !user || userRole !== 'ADMIN') return;
+    if (executedRef.current || !user || userRole !== 'ADMIN' || isQuotaExceeded) return;
     if (!players || players.length === 0) return;
 
     const todayKey = getFirestoreDateKey();
@@ -64,6 +64,10 @@ export const useDatabaseMaintenance = () => {
           { merge: true }
         );
       } catch (err) {
+        if (isFirestoreQuotaError(err)) {
+          markQuotaExceeded();
+          return;
+        }
         console.warn('[Agente Autônomo] Aviso na manutenção em segundo plano:', err);
       }
     }, 12000);
