@@ -707,13 +707,24 @@ export async function runDeepAnalyticsChat(
   // 3. Executa ações de banco de dados se solicitadas (presença, ausência, lista, pix, ranking)
   const actionOutputs: string[] = [];
   if (callbacks) {
+    const isThirdPersonQuery =
+      referencedPlayers.length > 0 &&
+      senderPlayer &&
+      referencedPlayers.every((p) => p.id !== senderPlayer.id);
+
     const wantsConfirm =
-      semanticNLU?.intent === "CONFIRM_ATTENDANCE" ||
-      (/\b(confirma|confirmar|coloca meu nome|bota meu nome|eu vou|vou jogar)\b/.test(msgNorm) &&
-        !/\b(nao vou|naovou)\b/.test(msgNorm));
+      !isThirdPersonQuery &&
+      (semanticNLU?.intent === "CONFIRM_ATTENDANCE" ||
+        (/\b(confirma minha|confirmar minha|coloca meu nome|bota meu nome|eu vou jogar|eu vou na quinta|confirma ai que eu vou)\b/.test(
+          msgNorm
+        ) &&
+          !/\b(nao vou|naovou)\b/.test(msgNorm)));
     const wantsDecline =
-      semanticNLU?.intent === "DECLINE_ATTENDANCE" ||
-      /\b(nao vou|naovou|vou faltar|tira meu nome|cancelar presenca)\b/.test(msgNorm);
+      !isThirdPersonQuery &&
+      (semanticNLU?.intent === "DECLINE_ATTENDANCE" ||
+        /\b(nao vou poder ir|vou faltar|tira meu nome|cancelar minha presenca|nao vou jogar)\b/.test(
+          msgNorm
+        ));
 
     if (wantsConfirm) {
       actionOutputs.push(await callbacks.confirmAttendance());

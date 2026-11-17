@@ -239,24 +239,21 @@ export const useIntentions = () => {
           return;
         }
 
-        const isGoing =
-          filteredResponses[p.id] === 'GOING' ||
-          Boolean(uidKey && filteredResponses[uidKey] === 'GOING') ||
-          Boolean(emailKey && filteredResponses[emailKey] === 'GOING') ||
-          Boolean(responses[p.id] === 'GOING') ||
-          Boolean(uidKey && responses[uidKey] === 'GOING') ||
-          Boolean(emailKey && responses[emailKey] === 'GOING');
+        const candidateKeys = [p.id, uidKey, emailKey].filter(Boolean) as string[];
+        let bestStatus: 'GOING' | 'NOT_GOING' | null = null;
+        let bestTs = 0;
 
-        const isNotGoing =
-          !isGoing &&
-          (filteredResponses[p.id] === 'NOT_GOING' ||
-            Boolean(uidKey && filteredResponses[uidKey] === 'NOT_GOING') ||
-            Boolean(emailKey && filteredResponses[emailKey] === 'NOT_GOING') ||
-            Boolean(responses[p.id] === 'NOT_GOING') ||
-            Boolean(uidKey && responses[uidKey] === 'NOT_GOING') ||
-            Boolean(emailKey && responses[emailKey] === 'NOT_GOING'));
+        candidateKeys.forEach(k => {
+          const st = filteredResponses[k] || responses[k];
+          const kTs = Number(filteredTimestamps[k] || timestamps[k] || 0);
+          if ((st === 'GOING' || st === 'NOT_GOING') && kTs >= bestTs) {
+            bestStatus = st;
+            bestTs = kTs;
+          }
+        });
 
         const ts =
+          bestTs ||
           filteredTimestamps[p.id] ||
           (uidKey ? filteredTimestamps[uidKey] : 0) ||
           (emailKey ? filteredTimestamps[emailKey] : 0) ||
@@ -265,10 +262,10 @@ export const useIntentions = () => {
           (emailKey ? timestamps[emailKey] : 0) ||
           0;
 
-        if (isGoing && ts >= cutoffTimestamp) {
+        if (bestStatus === 'GOING' && ts >= cutoffTimestamp) {
           filteredResponses[p.id] = 'GOING';
           filteredTimestamps[p.id] = ts;
-        } else if (isNotGoing && ts >= cutoffTimestamp) {
+        } else if (bestStatus === 'NOT_GOING' && ts >= cutoffTimestamp) {
           filteredResponses[p.id] = 'NOT_GOING';
           filteredTimestamps[p.id] = ts;
         } else {
@@ -333,24 +330,6 @@ export const useIntentions = () => {
     lastRefreshTimeRef.current = now;
 
     try {
-      const resp = await fetch(`/api/presence/state?t=${Date.now()}`, {
-        headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
-      });
-      if (resp.ok) {
-        const json = await resp.json();
-        if (json.success && json.data) {
-          const normalized = normalizeIntentionsData(json.data);
-          updateIntentionsLock(normalized.targetDate);
-          setRawIntentions(normalized);
-          setIsLoaded(true);
-          return normalized;
-        }
-      }
-    } catch (e) {}
-
-    if (isQuotaExceeded) return DEFAULT_INTENTIONS;
-
-    try {
       const snap = await getDocFromServer(doc(db, 'metadata', 'intentions'));
       if (snap.exists()) {
         const normalized = normalizeIntentionsData(snap.data());
@@ -376,9 +355,29 @@ export const useIntentions = () => {
       } catch (fallbackErr) {
         if (isFirestoreQuotaError(fallbackErr)) {
           markQuotaExceeded();
+          return DEFAULT_INTENTIONS;
         }
       }
     }
+
+    try {
+      const resp = await fetch(`/api/presence/state?t=${Date.now()}`, {
+        headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
+      });
+      if (resp.ok) {
+        const json = await resp.json();
+        if (json.success && json.data) {
+          const normalized = normalizeIntentionsData(json.data);
+          if (Object.keys(normalized.responses || {}).length > 0) {
+            updateIntentionsLock(normalized.targetDate);
+            setRawIntentions(normalized);
+            setIsLoaded(true);
+            return normalized;
+          }
+        }
+      }
+    } catch (e) {}
+
     return DEFAULT_INTENTIONS;
   }, []);
 

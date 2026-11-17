@@ -347,6 +347,8 @@ function updateLocalCredentialCounter(id: string, counter: number) {
 let adminApp: any = null;
 let adminDb: any = null;
 let adminAuth: any = null;
+let clientFirestoreDb: any = null;
+let useClientFirestoreFallback = false;
 
 async function getAdminApp() {
   if (adminApp) return adminApp;
@@ -365,7 +367,82 @@ async function getAdminApp() {
   return adminApp;
 }
 
-async function getFirestore() {
+async function getClientFirestoreAdapter() {
+  if (clientFirestoreDb) return clientFirestoreDb;
+  const { initializeApp: initClientApp, getApps: getClientApps } = await import("firebase/app");
+  const {
+    getFirestore: getClientFirestore,
+    collection,
+    doc,
+    getDoc,
+    getDocs,
+    setDoc,
+    updateDoc,
+    deleteDoc
+  } = await import("firebase/firestore");
+
+  const clientApp =
+    getClientApps().length > 0 ? getClientApps()[0] : initClientApp(firebaseConfig);
+  const lockedDbId = process.env.FIRESTORE_DATABASE_ID || firebaseConfig?.firestoreDatabaseId;
+  const rawDb =
+    lockedDbId && lockedDbId !== "(default)"
+      ? getClientFirestore(clientApp, lockedDbId)
+      : getClientFirestore(clientApp);
+
+  const makeDocRef = (pathSegments: string[]): any => ({
+    id: pathSegments[pathSegments.length - 1],
+    async get() {
+      const snap = await getDoc(doc(rawDb, ...(pathSegments as [string, ...string[]])));
+      return {
+        id: snap.id,
+        exists: snap.exists(),
+        data: () => snap.data()
+      };
+    },
+    async set(data: any, options?: any) {
+      if (options) {
+        await setDoc(doc(rawDb, ...(pathSegments as [string, ...string[]])), data, options);
+      } else {
+        await setDoc(doc(rawDb, ...(pathSegments as [string, ...string[]])), data);
+      }
+    },
+    async update(data: any) {
+      await updateDoc(doc(rawDb, ...(pathSegments as [string, ...string[]])), data);
+    },
+    async delete() {
+      await deleteDoc(doc(rawDb, ...(pathSegments as [string, ...string[]])));
+    },
+    collection(subCol: string) {
+      return makeColRef([...pathSegments, subCol]);
+    }
+  });
+
+  const makeColRef = (pathSegments: string[]): any => ({
+    doc(docId: string) {
+      return makeDocRef([...pathSegments, docId]);
+    },
+    async get() {
+      const snap = await getDocs(collection(rawDb, ...(pathSegments as [string, ...string[]])));
+      return {
+        empty: snap.empty,
+        size: snap.size,
+        docs: snap.docs.map((d) => ({ id: d.id, exists: true, data: () => d.data() })),
+        forEach(cb: (d: any) => void) {
+          snap.forEach((d) => cb({ id: d.id, exists: true, data: () => d.data() }));
+        }
+      };
+    }
+  });
+
+  clientFirestoreDb = {
+    collection(colName: string) {
+      return makeColRef([colName]);
+    }
+  };
+  return clientFirestoreDb;
+}
+
+async function getRawAdminFirestore() {
   if (adminDb) return adminDb;
   const app = await getAdminApp();
   const { getFirestore: getAdminFirestoreInstance } = await import("firebase-admin/firestore");
@@ -379,6 +456,161 @@ async function getFirestore() {
     adminDb.settings({ maxIdleChannels: 1 });
   } catch {}
   return adminDb;
+}
+
+function isPermissionDeniedError(err: any): boolean {
+  const msg = String(err?.message || err || "");
+  return err?.code === 7 || msg.includes("PERMISSION_DENIED") || msg.includes("insufficient permissions");
+}
+
+async function getFirestore() {
+  if (useClientFirestoreFallback && firebaseConfig?.apiKey) {
+    return getClientFirestoreAdapter();
+  }
+
+  const rawAdmin = await getRawAdminFirestore();
+  if (!firebaseConfig?.apiKey) {
+    return rawAdmin;
+  }
+
+  const wrapDocRef = (pathSegments: string[], adminDocRef: any): any => ({
+    id: pathSegments[pathSegments.length - 1],
+    async get() {
+      if (useClientFirestoreFallback) {
+        const client = await getClientFirestoreAdapter();
+        let ref: any = client;
+        for (let i = 0; i < pathSegments.length; i += 2) {
+          ref = ref.collection(pathSegments[i]).doc(pathSegments[i + 1]);
+        }
+        return ref.get();
+      }
+      try {
+        return await adminDocRef.get();
+      } catch (err) {
+        if (isPermissionDeniedError(err)) {
+          useClientFirestoreFallback = true;
+          const client = await getClientFirestoreAdapter();
+          let ref: any = client;
+          for (let i = 0; i < pathSegments.length; i += 2) {
+            ref = ref.collection(pathSegments[i]).doc(pathSegments[i + 1]);
+          }
+          return ref.get();
+        }
+        throw err;
+      }
+    },
+    async set(data: any, options?: any) {
+      if (useClientFirestoreFallback) {
+        const client = await getClientFirestoreAdapter();
+        let ref: any = client;
+        for (let i = 0; i < pathSegments.length; i += 2) {
+          ref = ref.collection(pathSegments[i]).doc(pathSegments[i + 1]);
+        }
+        return ref.set(data, options);
+      }
+      try {
+        return options ? await adminDocRef.set(data, options) : await adminDocRef.set(data);
+      } catch (err) {
+        if (isPermissionDeniedError(err)) {
+          useClientFirestoreFallback = true;
+          const client = await getClientFirestoreAdapter();
+          let ref: any = client;
+          for (let i = 0; i < pathSegments.length; i += 2) {
+            ref = ref.collection(pathSegments[i]).doc(pathSegments[i + 1]);
+          }
+          return ref.set(data, options);
+        }
+        throw err;
+      }
+    },
+    async update(data: any) {
+      if (useClientFirestoreFallback) {
+        const client = await getClientFirestoreAdapter();
+        let ref: any = client;
+        for (let i = 0; i < pathSegments.length; i += 2) {
+          ref = ref.collection(pathSegments[i]).doc(pathSegments[i + 1]);
+        }
+        return ref.update(data);
+      }
+      try {
+        return await adminDocRef.update(data);
+      } catch (err) {
+        if (isPermissionDeniedError(err)) {
+          useClientFirestoreFallback = true;
+          const client = await getClientFirestoreAdapter();
+          let ref: any = client;
+          for (let i = 0; i < pathSegments.length; i += 2) {
+            ref = ref.collection(pathSegments[i]).doc(pathSegments[i + 1]);
+          }
+          return ref.update(data);
+        }
+        throw err;
+      }
+    },
+    async delete() {
+      if (useClientFirestoreFallback) {
+        const client = await getClientFirestoreAdapter();
+        let ref: any = client;
+        for (let i = 0; i < pathSegments.length; i += 2) {
+          ref = ref.collection(pathSegments[i]).doc(pathSegments[i + 1]);
+        }
+        return ref.delete();
+      }
+      try {
+        return await adminDocRef.delete();
+      } catch (err) {
+        if (isPermissionDeniedError(err)) {
+          useClientFirestoreFallback = true;
+          const client = await getClientFirestoreAdapter();
+          let ref: any = client;
+          for (let i = 0; i < pathSegments.length; i += 2) {
+            ref = ref.collection(pathSegments[i]).doc(pathSegments[i + 1]);
+          }
+          return ref.delete();
+        }
+        throw err;
+      }
+    },
+    collection(subCol: string) {
+      return wrapColRef([...pathSegments, subCol], adminDocRef.collection(subCol));
+    }
+  });
+
+  const wrapColRef = (pathSegments: string[], adminColRef: any): any => ({
+    doc(docId: string) {
+      return wrapDocRef([...pathSegments, docId], adminColRef.doc(docId));
+    },
+    async get() {
+      if (useClientFirestoreFallback) {
+        const client = await getClientFirestoreAdapter();
+        let ref: any = client.collection(pathSegments[0]);
+        for (let i = 1; i < pathSegments.length; i += 2) {
+          ref = ref.doc(pathSegments[i]).collection(pathSegments[i + 1]);
+        }
+        return ref.get();
+      }
+      try {
+        return await adminColRef.get();
+      } catch (err) {
+        if (isPermissionDeniedError(err)) {
+          useClientFirestoreFallback = true;
+          const client = await getClientFirestoreAdapter();
+          let ref: any = client.collection(pathSegments[0]);
+          for (let i = 1; i < pathSegments.length; i += 2) {
+            ref = ref.doc(pathSegments[i]).collection(pathSegments[i + 1]);
+          }
+          return ref.get();
+        }
+        throw err;
+      }
+    }
+  });
+
+  return {
+    collection(colName: string) {
+      return wrapColRef([colName], rawAdmin.collection(colName));
+    }
+  };
 }
 
 async function getAdminAuth() {
@@ -1237,9 +1469,13 @@ REGRAS DE FORMATO:
         payload.author ||
         payload?.key?.participant ||
         chatId;
-      const senderLid: string = payload.participantLid || senderJid || "";
+      const isLidSender = String(senderJid).endsWith("@lid");
+      const senderLid: string =
+        payload.participantLid || (isLidSender ? String(senderJid) : "");
       const pushName: string = String(payload.pushName || "").trim();
-      const senderPhone = String(senderJid).split("@")[0].replace(/\D/g, "");
+      const senderPhone = isLidSender
+        ? ""
+        : String(senderJid).split("@")[0].replace(/\D/g, "");
 
       const db = await getFirestore();
       // Força o carregamento se o cache estiver vazio no momento da mensagem
@@ -1252,39 +1488,99 @@ REGRAS DE FORMATO:
           .replace(/[\u0300-\u036f]/g, "")
           .trim();
 
-      const matchingPlayers = allPlayers.filter(
-        (p) =>
-          (p.whatsappLid && p.whatsappLid === senderLid) ||
-          (!senderJid.endsWith("@lid") && matchBrazilianPhone(senderPhone, p.phone)) ||
-          (senderPhone.length >= 8 && p.phone && p.phone.replace(/\D/g, "").slice(-8) === senderPhone.slice(-8))
-      );
+      const matchingPlayers = allPlayers.filter((p) => {
+        if (senderLid && p.whatsappLid && p.whatsappLid === senderLid) return true;
+        if (!isLidSender && senderPhone.length >= 8) {
+          if (matchBrazilianPhone(senderPhone, p.phone)) return true;
+          const cleanPlayerPhone = String(p.phone || "").replace(/\D/g, "");
+          if (
+            cleanPlayerPhone.length >= 8 &&
+            cleanPlayerPhone.length <= 13 &&
+            senderPhone.length <= 13 &&
+            cleanPlayerPhone.slice(-8) === senderPhone.slice(-8)
+          ) {
+            return true;
+          }
+        }
+        return false;
+      });
 
       // Ordena pelo maior número de partidas jogadas para sempre pegar o perfil principal
       matchingPlayers.sort((a, b) => (Number(b.matchesPlayed) || 0) - (Number(a.matchesPlayed) || 0));
       let senderPlayer = matchingPlayers[0];
 
-      if (!senderPlayer && pushName.length >= 3) {
+      if (!senderPlayer && pushName.length >= 2) {
         const cleanPush = normStr(pushName);
-        const nameCandidates = allPlayers
-          .filter((p) => {
-            if (p.status !== "active" || !p.name) return false;
+        const pushTokens = cleanPush.split(/[^a-z0-9]+/).filter(Boolean);
+
+        const scoredCandidates = allPlayers
+          .filter((p) => p.status === "active" && p.name)
+          .map((p) => {
             const cleanName = normStr(p.name);
-            return cleanName === cleanPush || cleanName.includes(cleanPush) || cleanPush.includes(cleanName);
+            const nameTokens = cleanName.split(/[^a-z0-9]+/).filter(Boolean);
+            let score = 0;
+
+            if (cleanName === cleanPush) {
+              score = 100;
+            } else if (
+              nameTokens.length === 1 &&
+              pushTokens.length > 0 &&
+              pushTokens[0] === nameTokens[0] &&
+              nameTokens[0].length >= 3
+            ) {
+              // Ex: pushName "Alê Hermanos" -> primeiro nome exato "ale" === "ale"
+              score = 90;
+            } else if (
+              nameTokens.length > 1 &&
+              nameTokens.every((t) => pushTokens.includes(t))
+            ) {
+              score = 85;
+            } else if (
+              pushTokens.length === 1 &&
+              pushTokens[0].length >= 3 &&
+              nameTokens[0] === pushTokens[0]
+            ) {
+              score = 80;
+            } else if (
+              nameTokens.length === 1 &&
+              nameTokens[0].length >= 4 &&
+              pushTokens.includes(nameTokens[0])
+            ) {
+              score = 70;
+            }
+            return { player: p, score };
           })
-          .sort((a, b) => (Number(b.matchesPlayed) || 0) - (Number(a.matchesPlayed) || 0));
+          .filter((item) => item.score > 0)
+          .sort((a, b) => {
+            if (b.score !== a.score) return b.score - a.score;
+            return (Number(b.player.matchesPlayed) || 0) - (Number(a.player.matchesPlayed) || 0);
+          });
 
-        senderPlayer = nameCandidates[0];
+        senderPlayer = scoredCandidates[0]?.player;
 
-        if (senderPlayer && (!senderPlayer.phone || senderPlayer.phone.trim() === "")) {
-          const cleanCurrentPhone = senderPhone.replace(/\D/g, "");
-          if (cleanCurrentPhone.length >= 10) {
-            senderPlayer.phone = cleanCurrentPhone;
+        if (senderPlayer) {
+          if (isLidSender && senderLid && !senderPlayer.whatsappLid) {
+            senderPlayer.whatsappLid = senderLid;
             withFirestoreGuard(async () => {
               await db.collection("players").doc(senderPlayer.id).update({
-                phone: cleanCurrentPhone,
+                whatsappLid: senderLid,
                 autoLinkedAt: Date.now()
               });
             }, undefined).catch(() => {});
+          } else if (
+            !isLidSender &&
+            (!senderPlayer.phone || senderPlayer.phone.trim() === "")
+          ) {
+            const cleanCurrentPhone = senderPhone.replace(/\D/g, "");
+            if (cleanCurrentPhone.length >= 10 && cleanCurrentPhone.length <= 13) {
+              senderPlayer.phone = cleanCurrentPhone;
+              withFirestoreGuard(async () => {
+                await db.collection("players").doc(senderPlayer.id).update({
+                  phone: cleanCurrentPhone,
+                  autoLinkedAt: Date.now()
+                });
+              }, undefined).catch(() => {});
+            }
           }
         }
       }
@@ -1428,8 +1724,15 @@ REGRAS DE FORMATO:
 
         responses[senderPlayer.id] = "NOT_GOING";
         timestamps[senderPlayer.id] = now;
-        if (senderPlayer.uid) responses[senderPlayer.uid] = "NOT_GOING";
-        if (senderPlayer.email) responses[senderPlayer.email.trim().toLowerCase()] = "NOT_GOING";
+        if (senderPlayer.uid) {
+          responses[senderPlayer.uid] = "NOT_GOING";
+          timestamps[senderPlayer.uid] = now;
+        }
+        if (senderPlayer.email) {
+          const em = senderPlayer.email.trim().toLowerCase();
+          responses[em] = "NOT_GOING";
+          timestamps[em] = now;
+        }
 
         const updatedDoc = {
           targetDate,
