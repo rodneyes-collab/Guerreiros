@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Gender, Player } from '../../types';
 
 interface PlayerAvatarProps {
@@ -10,7 +10,56 @@ interface PlayerAvatarProps {
   size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl';
   className?: string;
   showBorder?: boolean;
+  onClick?: () => void;
+  title?: string;
 }
+
+export const normalizeAvatarSrc = (raw?: string | null): string | null => {
+  if (!raw || typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed === 'null' || trimmed === 'undefined') return null;
+
+  // Corrige Data URIs que foram salvos com MIME genérico ou com quebras de linha
+  if (trimmed.startsWith('data:')) {
+    const compact = trimmed.replace(/\s+/g, '');
+    if (compact.startsWith('data:application/octet-stream;base64,')) {
+      return compact.replace('data:application/octet-stream;base64,', 'data:image/jpeg;base64,');
+    }
+    return compact;
+  }
+
+  // Converte Base64 puro sem cabeçalho Data URI
+  const compact = trimmed.replace(/\s+/g, '');
+  if (compact.startsWith('/9j/')) {
+    return `data:image/jpeg;base64,${compact}`;
+  }
+  if (compact.startsWith('iVBOR')) {
+    return `data:image/png;base64,${compact}`;
+  }
+  if (compact.startsWith('UklGR')) {
+    return `data:image/webp;base64,${compact}`;
+  }
+  if (compact.startsWith('R0lGOD')) {
+    return `data:image/gif;base64,${compact}`;
+  }
+
+  // URLs http/https ou caminhos locais
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('/')) {
+    return trimmed;
+  }
+
+  return null;
+};
+
+const shouldUseProxyImmediately = (src: string): boolean => {
+  const lower = src.toLowerCase();
+  return (
+    lower.startsWith('http://') ||
+    lower.includes('pps.whatsapp.net') ||
+    lower.includes('mmg.whatsapp.net') ||
+    lower.includes('whatsapp.net')
+  );
+};
 
 export const PlayerAvatar = React.memo<PlayerAvatarProps>(({
   player,
@@ -21,13 +70,24 @@ export const PlayerAvatar = React.memo<PlayerAvatarProps>(({
   size = 'md',
   className = '',
   showBorder = true,
+  onClick,
+  title,
 }) => {
-  const [imgError, setImgError] = useState(false);
-
   const name = player?.name || propName || 'Sócio';
-  const photoUrl = player?.photoUrl || propPhotoUrl;
+  const rawPhotoUrl = player?.photoUrl || propPhotoUrl;
   const rawGender = player?.gender || propGender;
   const id = player?.id || propId || name;
+
+  const normalizedPhotoUrl = useMemo(() => normalizeAvatarSrc(rawPhotoUrl), [rawPhotoUrl]);
+
+  const [imgError, setImgError] = useState(false);
+  const [proxyAttempted, setProxyAttempted] = useState(false);
+
+  // Reseta estados de erro sempre que a URL da foto mudar (ex.: após Sync WhatsApp ou edição)
+  useEffect(() => {
+    setImgError(false);
+    setProxyAttempted(false);
+  }, [normalizedPhotoUrl]);
 
   const isFemale = String(rawGender) === Gender.FEMALE || String(rawGender) === 'F' || String(rawGender) === 'FEMALE';
 
@@ -54,38 +114,67 @@ export const PlayerAvatar = React.memo<PlayerAvatarProps>(({
     id
   )}&gender=${avatarStyle}&backgroundColor=18181b,27272a,3f3f46`;
 
+  const resolvedSrc = useMemo(() => {
+    if (!normalizedPhotoUrl) return null;
+    if (normalizedPhotoUrl.startsWith('data:') || normalizedPhotoUrl.startsWith('/')) {
+      return normalizedPhotoUrl;
+    }
+    if (proxyAttempted || shouldUseProxyImmediately(normalizedPhotoUrl)) {
+      return `/api/whatsapp/photo-proxy?url=${encodeURIComponent(normalizedPhotoUrl)}`;
+    }
+    return normalizedPhotoUrl;
+  }, [normalizedPhotoUrl, proxyAttempted]);
+
+  const handlePrimaryImageError = () => {
+    if (
+      normalizedPhotoUrl &&
+      !normalizedPhotoUrl.startsWith('data:') &&
+      !normalizedPhotoUrl.startsWith('/') &&
+      !proxyAttempted &&
+      !shouldUseProxyImmediately(normalizedPhotoUrl)
+    ) {
+      setProxyAttempted(true);
+      return;
+    }
+    setImgError(true);
+  };
+
   const borderClass = showBorder ? 'border-2 border-brand-primary/40 shadow-sm' : '';
 
   return (
     <div
-      className={`relative inline-flex items-center justify-center rounded-full overflow-hidden flex-shrink-0 bg-zinc-800 select-none ${sizeClasses} ${borderClass} ${className}`}
+      onClick={onClick}
+      title={title}
+      className={`relative inline-flex items-center justify-center rounded-full overflow-hidden flex-shrink-0 bg-zinc-800 select-none ${sizeClasses} ${borderClass} ${onClick ? 'cursor-pointer hover:scale-105 transition-transform' : ''} ${className}`}
     >
-      {photoUrl && !imgError ? (
+      {/* Iniciais no fundo para caso imagem transparente ou erro de rede */}
+      <span
+        className={`absolute inset-0 z-0 flex items-center justify-center font-black uppercase ${
+          isFemale ? 'text-pink-300 bg-pink-950/80' : 'text-brand-primary bg-zinc-900'
+        }`}
+      >
+        {initials || 'VB'}
+      </span>
+
+      {resolvedSrc && !imgError ? (
         <img
-          src={photoUrl}
+          src={resolvedSrc}
           alt={name}
-          className="w-full h-full object-cover"
-          onError={() => setImgError(true)}
+          referrerPolicy="no-referrer"
+          className="relative z-10 w-full h-full object-cover"
+          onError={handlePrimaryImageError}
         />
       ) : (
         <img
           src={defaultAvatarUrl}
           alt={name}
-          className="w-full h-full object-cover bg-zinc-900"
+          referrerPolicy="no-referrer"
+          className="relative z-10 w-full h-full object-cover bg-zinc-900"
           onError={(e) => {
-            // Fallback to text initials if network fails
             (e.target as HTMLElement).style.display = 'none';
           }}
         />
       )}
-      {/* Absolute fallback initials element rendered behind/if image fails */}
-      <span
-        className={`absolute inset-0 flex items-center justify-center font-black uppercase ${
-          isFemale ? 'text-pink-300 bg-pink-950/80' : 'text-brand-primary bg-zinc-900'
-        } -z-10`}
-      >
-        {initials || 'VB'}
-      </span>
     </div>
   );
 }, (prevProps, nextProps) => {
@@ -99,5 +188,7 @@ export const PlayerAvatar = React.memo<PlayerAvatarProps>(({
     prevProps.id === nextProps.id &&
     prevProps.size === nextProps.size &&
     prevProps.className === nextProps.className &&
-    prevProps.showBorder === nextProps.showBorder;
+    prevProps.showBorder === nextProps.showBorder &&
+    prevProps.title === nextProps.title;
 });
+

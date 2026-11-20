@@ -32,14 +32,16 @@ import { QuotaExceededModal } from './QuotaExceededModal';
 import { useQuotaErrorMonitor } from '../hooks/useQuotaErrorMonitor';
 import { useSyncHealthCheck } from '../hooks/useSyncHealthCheck';
 
-// Atomic Lazy Loaded Views to isolate bundle chunks and prevent dependency cycles
-const AttendanceView = safeLazy(() => import('../../components/AttendanceView').then(m => ({ default: m.AttendanceView })));
+// Core Views imported directly for instant navigation and zero dynamic fetch failures
+import { AttendanceView } from '../../components/AttendanceView';
+import { IntentionsView } from '../../components/IntentionsView';
+import { MembersView } from '../../components/MembersView';
+import { PaymentsView } from '../../components/PaymentsView';
+
+// Atomic Lazy Loaded Secondary Views
 const AttendanceReportView = safeLazy(() => import('../../components/AttendanceReportView').then(m => ({ default: m.AttendanceReportView })));
-const IntentionsView = safeLazy(() => import('../../components/IntentionsView').then(m => ({ default: m.IntentionsView })));
 const MatchView = safeLazy(() => import('../../components/MatchView').then(m => ({ default: m.MatchView })));
 const RankingView = safeLazy(() => import('../../components/RankingView').then(m => ({ default: m.RankingView })));
-const MembersView = safeLazy(() => import('../../components/MembersView').then(m => ({ default: m.MembersView })));
-const PaymentsView = safeLazy(() => import('../../components/PaymentsView').then(m => ({ default: m.PaymentsView })));
 const RulesView = safeLazy(() => import('../../components/RulesView').then(m => ({ default: m.RulesView })));
 const AdminView = safeLazy(() => import('../../components/AdminView').then(m => ({ default: m.AdminView })));
 const HistoryView = safeLazy(() => import('../../components/HistoryView').then(m => ({ default: m.HistoryView })));

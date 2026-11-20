@@ -102,44 +102,16 @@ export const useBirthdays = (providedPlayers?: Player[]) => {
 
   const sendBirthdayPush = async (player: Player) => {
     try {
-      const batch = writeBatch(db);
-      
-      // Send to everyone except the birthday person? 
-      // Or just a general broadcast. 
-      // For now, let's send to all players who have a token
-      const playersWithToken = players.filter(p => p.fcmToken && p.id !== player.id);
-      
-      playersWithToken.forEach(p => {
-        // In-app notification
-        const appNotifRef = doc(collection(db, 'notifications'));
-        batch.set(appNotifRef, {
-          playerId: p.id,
-          playerUid: p.uid || null,
-          title: '🎉 Aniversariante do Dia!',
-          message: `Hoje é aniversário de ${player.name}! Vamos dar os parabéns no grupo! 🎂🏐`,
-          createdAt: Date.now(),
-          read: false,
-          type: 'system'
-        });
-
-        // FCM notification
-        const notifRef = doc(collection(db, 'fcm_messages'));
-        batch.set(notifRef, {
-          token: p.fcmToken,
-          notification: {
-            title: '🎉 Aniversariante do Dia!',
-            body: `Hoje é aniversário de ${player.name}! Vamos dar os parabéns no grupo! 🎂🏐`,
-            sound: 'default'
-          },
-          createdAt: serverTimestamp()
-        });
+      const resp = await fetch('/api/whatsapp/send-birthday', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ playerId: player.id })
       });
-
-      await batch.commit();
-      showNotification(`Notificações de aniversário enviadas para o grupo!`, 'success');
+      if (!resp.ok) throw new Error('Falha no envio via WhatsApp');
+      showNotification(`Parabéns de ${player.name} enviado no grupo do WhatsApp! 🎂🏐`, 'success');
     } catch (error) {
-      console.error("Error sending birthday push:", error);
-      showNotification('Erro ao enviar notificações de aniversário.', 'error');
+      console.error("Error sending birthday via WhatsApp:", error);
+      showNotification('Erro ao enviar parabéns no WhatsApp.', 'error');
     }
   };
 

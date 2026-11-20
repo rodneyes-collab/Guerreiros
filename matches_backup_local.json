@@ -1,0 +1,6709 @@
+[
+  {
+    "endTime": 1776380190656,
+    "teamB": [
+      "Po4aaM2rpaGd2t6IlmVP",
+      "RbnH4XsBdgaPfUYUiah0",
+      "eann8eWQgeeyTcFGf1sN",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "dPjVqaSm2IanpFU5mqgB",
+      "XHVBCuWkIoSjA44TWLYN"
+    ],
+    "date": "2026-04-16",
+    "scoreA": 23,
+    "duration": 727,
+    "timestamp": 1776380190656,
+    "winner": "B",
+    "mode": "QUICK",
+    "dailyNumber": 1,
+    "scoreB": 25,
+    "startTime": 1776379462217,
+    "id": "625892e3-a4e8-4287-87f9-80d3f147229e",
+    "teamA": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "4XLSTef8902WS81yNfO5",
+      "QcGEmh4rFZnmFKNlpdV4",
+      "8930e308-2405-420b-971b-43e37f6b7d5b",
+      "G0swJVSs3PZiQICRLl4Q"
+    ]
+  },
+  {
+    "teamA": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "RbnH4XsBdgaPfUYUiah0",
+      "pm5ILJssVof1cdBX0Go1",
+      "XHVBCuWkIoSjA44TWLYN",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "G0swJVSs3PZiQICRLl4Q"
+    ],
+    "duration": 714,
+    "startTime": 1776380199439,
+    "date": "2026-04-16",
+    "scoreA": 25,
+    "endTime": 1776380914902,
+    "dailyNumber": 2,
+    "timestamp": 1776380914902,
+    "mode": "QUICK",
+    "teamB": [
+      "Po4aaM2rpaGd2t6IlmVP",
+      "eann8eWQgeeyTcFGf1sN",
+      "4XLSTef8902WS81yNfO5",
+      "BeOpoqbsbvm7bPHe750z",
+      "re6SEokdd71hNgwlFa5r",
+      "8930e308-2405-420b-971b-43e37f6b7d5b"
+    ],
+    "scoreB": 23,
+    "id": "c39b80d9-1e17-43b7-9af1-b740594ef408",
+    "winner": "A"
+  },
+  {
+    "scoreB": 25,
+    "timestamp": 1776381633258,
+    "date": "2026-04-16",
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "tVeC06SBJpoxsSfJt7JC",
+      "QcGEmh4rFZnmFKNlpdV4",
+      "dPjVqaSm2IanpFU5mqgB"
+    ],
+    "winner": "B",
+    "duration": 697,
+    "endTime": 1776381633258,
+    "id": "280e7c96-7533-4a4d-a5a3-264078d1cd2c",
+    "mode": "QUICK",
+    "scoreA": 23,
+    "teamA": [
+      "Po4aaM2rpaGd2t6IlmVP",
+      "pm5ILJssVof1cdBX0Go1",
+      "BeOpoqbsbvm7bPHe750z",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "re6SEokdd71hNgwlFa5r"
+    ],
+    "dailyNumber": 3,
+    "startTime": 1776380935428
+  },
+  {
+    "startTime": 1776381639107,
+    "mode": "QUICK",
+    "endTime": 1776382469207,
+    "scoreA": 25,
+    "dailyNumber": 4,
+    "teamA": [
+      "Po4aaM2rpaGd2t6IlmVP",
+      "RbnH4XsBdgaPfUYUiah0",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "QcGEmh4rFZnmFKNlpdV4",
+      "G0swJVSs3PZiQICRLl4Q",
+      "mQ4ivYdcOmxwTV1eZ3Sp"
+    ],
+    "winner": "A",
+    "scoreB": 23,
+    "id": "85f6e67d-fc3a-458e-a997-2a1155b9b274",
+    "timestamp": 1776382469207,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "eann8eWQgeeyTcFGf1sN",
+      "4XLSTef8902WS81yNfO5",
+      "tVeC06SBJpoxsSfJt7JC",
+      "XHVBCuWkIoSjA44TWLYN",
+      "8930e308-2405-420b-971b-43e37f6b7d5b"
+    ],
+    "date": "2026-04-16",
+    "duration": 829
+  },
+  {
+    "dailyNumber": 5,
+    "scoreA": 25,
+    "timestamp": 1776383215744,
+    "date": "2026-04-16",
+    "teamA": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "dPjVqaSm2IanpFU5mqgB",
+      "tVeC06SBJpoxsSfJt7JC",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "re6SEokdd71hNgwlFa5r",
+      "8930e308-2405-420b-971b-43e37f6b7d5b"
+    ],
+    "teamB": [
+      "Po4aaM2rpaGd2t6IlmVP",
+      "pm5ILJssVof1cdBX0Go1",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "XHVBCuWkIoSjA44TWLYN",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "BeOpoqbsbvm7bPHe750z"
+    ],
+    "startTime": 1776382475469,
+    "id": "0ffea3ea-1517-4cb5-8187-f2883e8b83db",
+    "winner": "A",
+    "mode": "QUICK",
+    "duration": 739,
+    "endTime": 1776383215744,
+    "scoreB": 23
+  },
+  {
+    "id": "f98330ec-9f23-48e2-925c-c93d360921c8",
+    "winner": "A",
+    "scoreB": 23,
+    "startTime": 1776383222006,
+    "date": "2026-04-16",
+    "endTime": 1776383991494,
+    "teamA": [
+      "Po4aaM2rpaGd2t6IlmVP",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "tXgucAtHhC6SAmRMjnhN",
+      "G0swJVSs3PZiQICRLl4Q",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "QcGEmh4rFZnmFKNlpdV4"
+    ],
+    "dailyNumber": 6,
+    "timestamp": 1776383991494,
+    "mode": "QUICK",
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "RbnH4XsBdgaPfUYUiah0",
+      "eann8eWQgeeyTcFGf1sN",
+      "4XLSTef8902WS81yNfO5",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "dPjVqaSm2IanpFU5mqgB"
+    ],
+    "scoreA": 25,
+    "duration": 768
+  },
+  {
+    "winner": "A",
+    "duration": 861,
+    "scoreB": 23,
+    "dailyNumber": 7,
+    "mode": "QUICK",
+    "startTime": 1776383996990,
+    "teamA": [
+      "Po4aaM2rpaGd2t6IlmVP",
+      "pm5ILJssVof1cdBX0Go1",
+      "tVeC06SBJpoxsSfJt7JC",
+      "re6SEokdd71hNgwlFa5r",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "BeOpoqbsbvm7bPHe750z"
+    ],
+    "endTime": 1776384858379,
+    "id": "30886351-cb24-4a0e-a553-72dac1d32d35",
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "tXgucAtHhC6SAmRMjnhN",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "XHVBCuWkIoSjA44TWLYN",
+      "8930e308-2405-420b-971b-43e37f6b7d5b"
+    ],
+    "scoreA": 25,
+    "date": "2026-04-16",
+    "timestamp": 1776384858379
+  },
+  {
+    "scoreA": 23,
+    "date": "2026-04-16",
+    "endTime": 1776385784913,
+    "timestamp": 1776385784913,
+    "id": "28caebd5-9e67-4553-8733-52b4455523d6",
+    "teamA": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "4XLSTef8902WS81yNfO5",
+      "dPjVqaSm2IanpFU5mqgB",
+      "QcGEmh4rFZnmFKNlpdV4",
+      "Tg4CC8JaOeu0gH6rouaF"
+    ],
+    "dailyNumber": 8,
+    "startTime": 1776384969914,
+    "duration": 814,
+    "teamB": [
+      "Po4aaM2rpaGd2t6IlmVP",
+      "RbnH4XsBdgaPfUYUiah0",
+      "eann8eWQgeeyTcFGf1sN",
+      "G0swJVSs3PZiQICRLl4Q",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "BeOpoqbsbvm7bPHe750z"
+    ],
+    "mode": "QUICK",
+    "winner": "B",
+    "scoreB": 25
+  },
+  {
+    "date": "2026-04-16",
+    "id": "288dc411-558b-4fb4-8906-80434eaced82",
+    "dailyNumber": 9,
+    "teamB": [
+      "Po4aaM2rpaGd2t6IlmVP",
+      "tXgucAtHhC6SAmRMjnhN",
+      "tVeC06SBJpoxsSfJt7JC",
+      "XHVBCuWkIoSjA44TWLYN",
+      "BeOpoqbsbvm7bPHe750z",
+      "mQ4ivYdcOmxwTV1eZ3Sp"
+    ],
+    "scoreB": 23,
+    "timestamp": 1776386557367,
+    "winner": "A",
+    "teamA": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "pm5ILJssVof1cdBX0Go1",
+      "4XLSTef8902WS81yNfO5",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "re6SEokdd71hNgwlFa5r"
+    ],
+    "scoreA": 25,
+    "mode": "QUICK",
+    "startTime": 1776385803198,
+    "duration": 754,
+    "endTime": 1776386557367
+  },
+  {
+    "mode": "QUICK",
+    "duration": 719,
+    "startTime": 1776386564698,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "pm5ILJssVof1cdBX0Go1",
+      "dPjVqaSm2IanpFU5mqgB",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "XHVBCuWkIoSjA44TWLYN",
+      "Tg4CC8JaOeu0gH6rouaF"
+    ],
+    "scoreA": 23,
+    "scoreB": 25,
+    "winner": "B",
+    "teamA": [
+      "Po4aaM2rpaGd2t6IlmVP",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "eann8eWQgeeyTcFGf1sN",
+      "G0swJVSs3PZiQICRLl4Q",
+      "QcGEmh4rFZnmFKNlpdV4",
+      "mQ4ivYdcOmxwTV1eZ3Sp"
+    ],
+    "endTime": 1776387283937,
+    "id": "b131f8ce-9cd1-4a9a-b199-f903a8e77ce4",
+    "date": "2026-04-16",
+    "timestamp": 1776387283937,
+    "dailyNumber": 10
+  },
+  {
+    "duration": 360,
+    "timestamp": 1776387649410,
+    "id": "68a9eae8-a814-43de-9655-234b86503063",
+    "endTime": 1776387649410,
+    "teamB": [
+      "Po4aaM2rpaGd2t6IlmVP",
+      "tXgucAtHhC6SAmRMjnhN",
+      "G0swJVSs3PZiQICRLl4Q",
+      "tVeC06SBJpoxsSfJt7JC",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "99nsBpzNKtNXFG8l9Vnx"
+    ],
+    "scoreB": 23,
+    "winner": "A",
+    "mode": "QUICK",
+    "dailyNumber": 11,
+    "teamA": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "4XLSTef8902WS81yNfO5",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "re6SEokdd71hNgwlFa5r",
+      "QcGEmh4rFZnmFKNlpdV4",
+      "BeOpoqbsbvm7bPHe750z"
+    ],
+    "date": "2026-04-16",
+    "scoreA": 25,
+    "startTime": 1776387288910
+  },
+  {
+    "teamB": [
+      "Po4aaM2rpaGd2t6IlmVP",
+      "pm5ILJssVof1cdBX0Go1",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "480a2567-1723-48e7-b09d-c987f32b0aac",
+      "MhOSvxdNZ44fvVsBvTnc",
+      "sQjjxhPf1RnFxBMwFzQW"
+    ],
+    "startTime": 1777589261165,
+    "date": "2026-04-30",
+    "id": "f1638cd0-6391-41ec-8987-caffa37c8275",
+    "scoreA": 25,
+    "endTime": 1777590011620,
+    "timestamp": 1777590011620,
+    "dailyNumber": 1,
+    "winner": "A",
+    "scoreB": 23,
+    "duration": 750,
+    "teamA": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "RbnH4XsBdgaPfUYUiah0",
+      "QcGEmh4rFZnmFKNlpdV4",
+      "dPjVqaSm2IanpFU5mqgB",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "8930e308-2405-420b-971b-43e37f6b7d5b"
+    ],
+    "mode": "QUICK"
+  },
+  {
+    "id": "05541872-12a7-48ea-a64a-a4c01337faed",
+    "timestamp": 1777591792190,
+    "scoreB": 25,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "re6SEokdd71hNgwlFa5r",
+      "MhOSvxdNZ44fvVsBvTnc",
+      "BeOpoqbsbvm7bPHe750z"
+    ],
+    "mode": "QUICK",
+    "duration": 757,
+    "winner": "B",
+    "date": "2026-04-30",
+    "teamA": [
+      "Po4aaM2rpaGd2t6IlmVP",
+      "eann8eWQgeeyTcFGf1sN",
+      "QcGEmh4rFZnmFKNlpdV4",
+      "480a2567-1723-48e7-b09d-c987f32b0aac",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "cA7Bi2baoQIpPU3ds2XP"
+    ],
+    "scoreA": 23,
+    "startTime": 1777591033894,
+    "dailyNumber": 2,
+    "endTime": 1777591792190
+  },
+  {
+    "timestamp": 1777592462461,
+    "duration": 655,
+    "teamA": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "pm5ILJssVof1cdBX0Go1",
+      "8930e308-2405-420b-971b-43e37f6b7d5b",
+      "tVeC06SBJpoxsSfJt7JC",
+      "480a2567-1723-48e7-b09d-c987f32b0aac"
+    ],
+    "winner": "B",
+    "mode": "QUICK",
+    "scoreB": 25,
+    "teamB": [
+      "Po4aaM2rpaGd2t6IlmVP",
+      "RbnH4XsBdgaPfUYUiah0",
+      "4XLSTef8902WS81yNfO5",
+      "dPjVqaSm2IanpFU5mqgB",
+      "OsohRuSKGB81XWXi7yZ2",
+      "Tg4CC8JaOeu0gH6rouaF"
+    ],
+    "scoreA": 23,
+    "endTime": 1777592462461,
+    "dailyNumber": 3,
+    "date": "2026-04-30",
+    "startTime": 1777591806367,
+    "id": "e504ad50-89fa-4a98-bf49-3558a505d748"
+  },
+  {
+    "timestamp": 1777593172749,
+    "scoreB": 23,
+    "winner": "A",
+    "id": "4144848e-b800-4f07-b01f-107c22ab2b8b",
+    "mode": "QUICK",
+    "teamB": [
+      "Po4aaM2rpaGd2t6IlmVP",
+      "4XLSTef8902WS81yNfO5",
+      "OsohRuSKGB81XWXi7yZ2",
+      "MhOSvxdNZ44fvVsBvTnc",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "BeOpoqbsbvm7bPHe750z"
+    ],
+    "teamA": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "eann8eWQgeeyTcFGf1sN",
+      "re6SEokdd71hNgwlFa5r",
+      "QcGEmh4rFZnmFKNlpdV4",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "mQ4ivYdcOmxwTV1eZ3Sp"
+    ],
+    "date": "2026-04-30",
+    "startTime": 1777592472448,
+    "endTime": 1777593172749,
+    "scoreA": 25,
+    "dailyNumber": 4,
+    "duration": 700
+  },
+  {
+    "teamA": [
+      "Po4aaM2rpaGd2t6IlmVP",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "pm5ILJssVof1cdBX0Go1",
+      "dPjVqaSm2IanpFU5mqgB",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "Tg4CC8JaOeu0gH6rouaF"
+    ],
+    "date": "2026-04-30",
+    "scoreB": 23,
+    "startTime": 1777593179614,
+    "winner": "A",
+    "dailyNumber": 5,
+    "duration": 772,
+    "timestamp": 1777593953576,
+    "id": "3a0362cf-0607-454e-ade9-632f0c4f9f81",
+    "endTime": 1777593953576,
+    "mode": "QUICK",
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "RbnH4XsBdgaPfUYUiah0",
+      "8930e308-2405-420b-971b-43e37f6b7d5b",
+      "tVeC06SBJpoxsSfJt7JC",
+      "480a2567-1723-48e7-b09d-c987f32b0aac",
+      "cA7Bi2baoQIpPU3ds2XP"
+    ],
+    "scoreA": 25
+  },
+  {
+    "teamB": [
+      "Po4aaM2rpaGd2t6IlmVP",
+      "eann8eWQgeeyTcFGf1sN",
+      "re6SEokdd71hNgwlFa5r",
+      "OsohRuSKGB81XWXi7yZ2",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "sQjjxhPf1RnFxBMwFzQW"
+    ],
+    "startTime": 1777593959477,
+    "dailyNumber": 6,
+    "id": "7f13edcf-35e1-4516-9aae-5c9eea974382",
+    "winner": "B",
+    "mode": "QUICK",
+    "endTime": 1777594599044,
+    "scoreB": 25,
+    "scoreA": 23,
+    "date": "2026-04-30",
+    "timestamp": 1777594599044,
+    "duration": 639,
+    "teamA": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "4XLSTef8902WS81yNfO5",
+      "G0swJVSs3PZiQICRLl4Q",
+      "QcGEmh4rFZnmFKNlpdV4",
+      "MhOSvxdNZ44fvVsBvTnc",
+      "BeOpoqbsbvm7bPHe750z"
+    ]
+  },
+  {
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "RbnH4XsBdgaPfUYUiah0",
+      "8930e308-2405-420b-971b-43e37f6b7d5b",
+      "G0swJVSs3PZiQICRLl4Q",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "480a2567-1723-48e7-b09d-c987f32b0aac"
+    ],
+    "timestamp": 1777595446073,
+    "scoreA": 25,
+    "mode": "QUICK",
+    "endTime": 1777595446073,
+    "id": "8d7423b8-fddd-41ae-8dd0-10be6e56a4bb",
+    "date": "2026-04-30",
+    "duration": 841,
+    "startTime": 1777594604640,
+    "winner": "A",
+    "teamA": [
+      "Po4aaM2rpaGd2t6IlmVP",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "pm5ILJssVof1cdBX0Go1",
+      "dPjVqaSm2IanpFU5mqgB",
+      "tVeC06SBJpoxsSfJt7JC",
+      "Tg4CC8JaOeu0gH6rouaF"
+    ],
+    "dailyNumber": 7,
+    "scoreB": 23
+  },
+  {
+    "mode": "QUICK",
+    "endTime": 1777596346741,
+    "scoreA": 23,
+    "startTime": 1777595453194,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "eann8eWQgeeyTcFGf1sN",
+      "G0swJVSs3PZiQICRLl4Q",
+      "BeOpoqbsbvm7bPHe750z",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "re6SEokdd71hNgwlFa5r"
+    ],
+    "dailyNumber": 8,
+    "timestamp": 1777596346741,
+    "id": "111b8ec5-cc38-4c5b-9990-345dd7ebda46",
+    "teamA": [
+      "Po4aaM2rpaGd2t6IlmVP",
+      "4XLSTef8902WS81yNfO5",
+      "OsohRuSKGB81XWXi7yZ2",
+      "QcGEmh4rFZnmFKNlpdV4",
+      "tVeC06SBJpoxsSfJt7JC",
+      "MhOSvxdNZ44fvVsBvTnc"
+    ],
+    "duration": 892,
+    "date": "2026-04-30",
+    "scoreB": 25,
+    "winner": "B"
+  },
+  {
+    "winner": "B",
+    "date": "2026-04-30",
+    "scoreB": 25,
+    "timestamp": 1777597280288,
+    "duration": 924,
+    "teamA": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "RbnH4XsBdgaPfUYUiah0",
+      "pm5ILJssVof1cdBX0Go1",
+      "8930e308-2405-420b-971b-43e37f6b7d5b",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "cA7Bi2baoQIpPU3ds2XP"
+    ],
+    "teamB": [
+      "Po4aaM2rpaGd2t6IlmVP",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "dPjVqaSm2IanpFU5mqgB",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "G0swJVSs3PZiQICRLl4Q",
+      "480a2567-1723-48e7-b09d-c987f32b0aac"
+    ],
+    "id": "f0f234f5-082d-4732-9e00-c0b03c3b0368",
+    "endTime": 1777597280288,
+    "dailyNumber": 9,
+    "scoreA": 23,
+    "startTime": 1777596356248,
+    "mode": "QUICK"
+  },
+  {
+    "teamA": [
+      "Po4aaM2rpaGd2t6IlmVP",
+      "RbnH4XsBdgaPfUYUiah0",
+      "eann8eWQgeeyTcFGf1sN",
+      "G0swJVSs3PZiQICRLl4Q",
+      "BeOpoqbsbvm7bPHe750z",
+      "sQjjxhPf1RnFxBMwFzQW"
+    ],
+    "date": "2026-05-07",
+    "startTime": 1778194312425,
+    "scoreB": 25,
+    "winner": "B",
+    "scoreA": 23,
+    "dailyNumber": 1,
+    "mode": "QUICK",
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "4XLSTef8902WS81yNfO5",
+      "8930e308-2405-420b-971b-43e37f6b7d5b",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "cA7Bi2baoQIpPU3ds2XP"
+    ],
+    "duration": 669,
+    "endTime": 1778194982334,
+    "timestamp": 1778194982334,
+    "id": "79350a16-078d-4e2b-8c91-fb5af7816061"
+  },
+  {
+    "dailyNumber": 2,
+    "mode": "QUICK",
+    "startTime": 1778195063641,
+    "id": "ba23ba6d-7030-470c-96d0-2b13073cef20",
+    "teamB": [
+      "Po4aaM2rpaGd2t6IlmVP",
+      "RbnH4XsBdgaPfUYUiah0",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "QcGEmh4rFZnmFKNlpdV4",
+      "BeOpoqbsbvm7bPHe750z"
+    ],
+    "winner": "B",
+    "scoreB": 25,
+    "duration": 921,
+    "endTime": 1778195985341,
+    "scoreA": 23,
+    "timestamp": 1778195985341,
+    "date": "2026-05-07",
+    "teamA": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "eann8eWQgeeyTcFGf1sN",
+      "G0swJVSs3PZiQICRLl4Q",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "8930e308-2405-420b-971b-43e37f6b7d5b"
+    ]
+  },
+  {
+    "id": "2b5a9622-ef8e-40d1-b341-86bf53039763",
+    "dailyNumber": 3,
+    "scoreA": 23,
+    "startTime": 1778197108670,
+    "duration": 618,
+    "mode": "QUICK",
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "eann8eWQgeeyTcFGf1sN",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "re6SEokdd71hNgwlFa5r",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "8930e308-2405-420b-971b-43e37f6b7d5b"
+    ],
+    "date": "2026-05-07",
+    "teamA": [
+      "Po4aaM2rpaGd2t6IlmVP",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "RbnH4XsBdgaPfUYUiah0",
+      "480a2567-1723-48e7-b09d-c987f32b0aac",
+      "G0swJVSs3PZiQICRLl4Q",
+      "tVeC06SBJpoxsSfJt7JC"
+    ],
+    "endTime": 1778197727923,
+    "scoreB": 25,
+    "timestamp": 1778197727923,
+    "winner": "B"
+  },
+  {
+    "mode": "QUICK",
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "G0swJVSs3PZiQICRLl4Q",
+      "480a2567-1723-48e7-b09d-c987f32b0aac",
+      "Tg4CC8JaOeu0gH6rouaF"
+    ],
+    "duration": 751,
+    "timestamp": 1778199252076,
+    "scoreA": 23,
+    "id": "aeca3f85-16b5-410c-aa7a-89b9fe56b8ce",
+    "winner": "B",
+    "scoreB": 25,
+    "endTime": 1778199252076,
+    "dailyNumber": 4,
+    "startTime": 1778198500359,
+    "teamA": [
+      "Po4aaM2rpaGd2t6IlmVP",
+      "eann8eWQgeeyTcFGf1sN",
+      "RbnH4XsBdgaPfUYUiah0",
+      "re6SEokdd71hNgwlFa5r",
+      "tVeC06SBJpoxsSfJt7JC",
+      "8930e308-2405-420b-971b-43e37f6b7d5b"
+    ],
+    "date": "2026-05-07"
+  },
+  {
+    "teamB": [
+      "Po4aaM2rpaGd2t6IlmVP",
+      "RbnH4XsBdgaPfUYUiah0",
+      "eann8eWQgeeyTcFGf1sN",
+      "re6SEokdd71hNgwlFa5r",
+      "G0swJVSs3PZiQICRLl4Q",
+      "480a2567-1723-48e7-b09d-c987f32b0aac"
+    ],
+    "winner": "A",
+    "startTime": 1778199923527,
+    "scoreB": 23,
+    "mode": "QUICK",
+    "timestamp": 1778200810213,
+    "date": "2026-05-07",
+    "scoreA": 25,
+    "teamA": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "tVeC06SBJpoxsSfJt7JC",
+      "8930e308-2405-420b-971b-43e37f6b7d5b"
+    ],
+    "endTime": 1778200810213,
+    "dailyNumber": 5,
+    "id": "8287120e-f483-44ba-83ab-b44ffc69ebfe",
+    "duration": 886
+  },
+  {
+    "scoreB": 25,
+    "duration": 714,
+    "winner": "B",
+    "teamB": [
+      "BeOpoqbsbvm7bPHe750z",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "6Hi00e3WYNYKkpGOWGin",
+      "480a2567-1723-48e7-b09d-c987f32b0aac"
+    ],
+    "startTime": 1778200876855,
+    "dailyNumber": 6,
+    "date": "2026-05-07",
+    "id": "f7fbb3d4-c7ad-45ee-88df-e080c0984bf6",
+    "endTime": 1778201592043,
+    "mode": "QUICK",
+    "teamA": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "4XLSTef8902WS81yNfO5",
+      "tXgucAtHhC6SAmRMjnhN",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "OsohRuSKGB81XWXi7yZ2",
+      "sQjjxhPf1RnFxBMwFzQW"
+    ],
+    "timestamp": 1778201592043,
+    "scoreA": 23
+  },
+  {
+    "duration": 679,
+    "teamA": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "RbnH4XsBdgaPfUYUiah0",
+      "eann8eWQgeeyTcFGf1sN",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "8930e308-2405-420b-971b-43e37f6b7d5b"
+    ],
+    "id": "9c5c98fc-6686-40c3-900b-2bec202b8c3d",
+    "timestamp": 1778202280056,
+    "date": "2026-05-07",
+    "scoreA": 23,
+    "startTime": 1778201599281,
+    "endTime": 1778202280056,
+    "scoreB": 25,
+    "mode": "QUICK",
+    "winner": "B",
+    "dailyNumber": 7,
+    "teamB": [
+      "Po4aaM2rpaGd2t6IlmVP",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "G0swJVSs3PZiQICRLl4Q",
+      "re6SEokdd71hNgwlFa5r",
+      "tVeC06SBJpoxsSfJt7JC"
+    ]
+  },
+  {
+    "scoreA": 12,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "tXgucAtHhC6SAmRMjnhN",
+      "4XLSTef8902WS81yNfO5",
+      "QZxOlfOoxwj4PWxgxcBj",
+      "XHVBCuWkIoSjA44TWLYN",
+      "cA7Bi2baoQIpPU3ds2XP"
+    ],
+    "endTime": 1779407611215,
+    "mode": "QUICK",
+    "timestamp": 1779407611215,
+    "id": "e073cff0-bc65-4da7-8b01-8d8bb7534805",
+    "teamA": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "eann8eWQgeeyTcFGf1sN",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "tVeC06SBJpoxsSfJt7JC"
+    ],
+    "duration": 756,
+    "date": "2026-05-21",
+    "dailyNumber": 1,
+    "startTime": 1779406853982,
+    "scoreB": 15,
+    "winner": "B"
+  },
+  {
+    "timestamp": 1779409103302,
+    "duration": 934,
+    "teamA": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "eann8eWQgeeyTcFGf1sN",
+      "QZxOlfOoxwj4PWxgxcBj",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "tVeC06SBJpoxsSfJt7JC"
+    ],
+    "date": "2026-05-21",
+    "scoreA": 15,
+    "scoreB": 14,
+    "winner": "A",
+    "startTime": 1779408168392,
+    "id": "ef4f0efb-3d9d-4f5b-9ba1-ba8a17fd8ff2",
+    "mode": "QUICK",
+    "endTime": 1779409103302,
+    "dailyNumber": 2,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "tXgucAtHhC6SAmRMjnhN",
+      "XHVBCuWkIoSjA44TWLYN",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "BeOpoqbsbvm7bPHe750z",
+      "sQjjxhPf1RnFxBMwFzQW"
+    ]
+  },
+  {
+    "scoreB": 15,
+    "winner": "B",
+    "teamA": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "tXgucAtHhC6SAmRMjnhN",
+      "eann8eWQgeeyTcFGf1sN",
+      "XHVBCuWkIoSjA44TWLYN",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "tVeC06SBJpoxsSfJt7JC"
+    ],
+    "timestamp": 1779409904896,
+    "date": "2026-05-21",
+    "endTime": 1779409904896,
+    "duration": 773,
+    "id": "be45e7f6-2c27-46d5-80b2-825329d6ed5c",
+    "mode": "QUICK",
+    "dailyNumber": 3,
+    "teamB": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "RbnH4XsBdgaPfUYUiah0",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "4XLSTef8902WS81yNfO5",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "Tg4CC8JaOeu0gH6rouaF"
+    ],
+    "startTime": 1779409130207,
+    "scoreA": 12
+  },
+  {
+    "scoreA": 7,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "4XLSTef8902WS81yNfO5",
+      "QZxOlfOoxwj4PWxgxcBj",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "BeOpoqbsbvm7bPHe750z"
+    ],
+    "date": "2026-05-21",
+    "timestamp": 1779410520671,
+    "id": "f56fddd0-ecd0-4b69-bb93-b49c79ef5ee7",
+    "duration": 611,
+    "mode": "QUICK",
+    "dailyNumber": 4,
+    "teamA": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "RbnH4XsBdgaPfUYUiah0",
+      "tXgucAtHhC6SAmRMjnhN",
+      "tVeC06SBJpoxsSfJt7JC",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "sQjjxhPf1RnFxBMwFzQW"
+    ],
+    "scoreB": 15,
+    "startTime": 1779409908780,
+    "winner": "B",
+    "endTime": 1779410520671
+  },
+  {
+    "timestamp": 1779411390877,
+    "teamA": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "tXgucAtHhC6SAmRMjnhN",
+      "4XLSTef8902WS81yNfO5",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "BeOpoqbsbvm7bPHe750z",
+      "XHVBCuWkIoSjA44TWLYN"
+    ],
+    "scoreA": 13,
+    "date": "2026-05-21",
+    "duration": 863,
+    "startTime": 1779410527365,
+    "teamB": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "eann8eWQgeeyTcFGf1sN",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "QZxOlfOoxwj4PWxgxcBj",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "tVeC06SBJpoxsSfJt7JC"
+    ],
+    "scoreB": 15,
+    "mode": "QUICK",
+    "dailyNumber": 5,
+    "endTime": 1779411390877,
+    "id": "16bbae7c-9ead-468f-8d9f-30a93661048b",
+    "winner": "B"
+  },
+  {
+    "date": "2026-05-28",
+    "scoreB": 15,
+    "startTime": 1780008478085,
+    "winner": "B",
+    "teamB": [
+      "ea05cbf4-1b85-4854-81e0-831a6382a24a",
+      "KU0dYRNMb07YcGl9e0D6",
+      "eann8eWQgeeyTcFGf1sN",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "G0swJVSs3PZiQICRLl4Q",
+      "mQ4ivYdcOmxwTV1eZ3Sp"
+    ],
+    "duration": 587,
+    "id": "05dab67c-2ed1-4020-a6f0-eb8b8393ebc0",
+    "teamA": [
+      "pm5ILJssVof1cdBX0Go1",
+      "4XLSTef8902WS81yNfO5",
+      "RbnH4XsBdgaPfUYUiah0",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "8930e308-2405-420b-971b-43e37f6b7d5b",
+      "cA7Bi2baoQIpPU3ds2XP"
+    ],
+    "timestamp": 1780009066209,
+    "endTime": 1780009066209,
+    "mode": "QUICK",
+    "dailyNumber": 1,
+    "scoreA": 2
+  },
+  {
+    "mode": "QUICK",
+    "timestamp": 1780010012266,
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "re6SEokdd71hNgwlFa5r",
+      "RbnH4XsBdgaPfUYUiah0",
+      "OsohRuSKGB81XWXi7yZ2",
+      "G0swJVSs3PZiQICRLl4Q",
+      "mQ4ivYdcOmxwTV1eZ3Sp"
+    ],
+    "endTime": 1780010012266,
+    "scoreA": 12,
+    "duration": 869,
+    "dailyNumber": 2,
+    "startTime": 1780009141899,
+    "scoreB": 15,
+    "date": "2026-05-28",
+    "id": "6760a1cf-ee9d-4c5e-a54f-75de060d0344",
+    "winner": "B",
+    "teamB": [
+      "ea05cbf4-1b85-4854-81e0-831a6382a24a",
+      "4XLSTef8902WS81yNfO5",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "8930e308-2405-420b-971b-43e37f6b7d5b",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "KU0dYRNMb07YcGl9e0D6"
+    ]
+  },
+  {
+    "id": "3cc4213f-ac66-4024-b928-43bd3b8eb659",
+    "duration": 810,
+    "scoreA": 15,
+    "startTime": 1780010017886,
+    "teamB": [
+      "BeOpoqbsbvm7bPHe750z",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "RbnH4XsBdgaPfUYUiah0",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "KU0dYRNMb07YcGl9e0D6"
+    ],
+    "endTime": 1780010828767,
+    "mode": "QUICK",
+    "timestamp": 1780010828767,
+    "teamA": [
+      "ea05cbf4-1b85-4854-81e0-831a6382a24a",
+      "re6SEokdd71hNgwlFa5r",
+      "pm5ILJssVof1cdBX0Go1",
+      "eann8eWQgeeyTcFGf1sN",
+      "4XLSTef8902WS81yNfO5",
+      "OsohRuSKGB81XWXi7yZ2"
+    ],
+    "date": "2026-05-28",
+    "scoreB": 8,
+    "dailyNumber": 3,
+    "winner": "A"
+  },
+  {
+    "startTime": 1780010910124,
+    "endTime": 1780011776789,
+    "winner": "A",
+    "id": "5cf135bb-14ad-4889-a4f0-ee56cf69ce96",
+    "scoreB": 14,
+    "teamA": [
+      "ea05cbf4-1b85-4854-81e0-831a6382a24a",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "eann8eWQgeeyTcFGf1sN",
+      "8930e308-2405-420b-971b-43e37f6b7d5b",
+      "OsohRuSKGB81XWXi7yZ2",
+      "cA7Bi2baoQIpPU3ds2XP"
+    ],
+    "mode": "QUICK",
+    "dailyNumber": 4,
+    "teamB": [
+      "BeOpoqbsbvm7bPHe750z",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "pm5ILJssVof1cdBX0Go1",
+      "G0swJVSs3PZiQICRLl4Q",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "QZxOlfOoxwj4PWxgxcBj"
+    ],
+    "duration": 866,
+    "date": "2026-05-28",
+    "timestamp": 1780011776789,
+    "scoreA": 15
+  },
+  {
+    "mode": "QUICK",
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "re6SEokdd71hNgwlFa5r",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "4XLSTef8902WS81yNfO5",
+      "8930e308-2405-420b-971b-43e37f6b7d5b",
+      "mQ4ivYdcOmxwTV1eZ3Sp"
+    ],
+    "endTime": 1780012584218,
+    "scoreA": 15,
+    "startTime": 1780011781070,
+    "dailyNumber": 5,
+    "duration": 802,
+    "scoreB": 14,
+    "date": "2026-05-28",
+    "id": "80e92634-99e1-4cd1-8da8-7ba9a25d1e50",
+    "winner": "A",
+    "timestamp": 1780012584218,
+    "teamB": [
+      "ea05cbf4-1b85-4854-81e0-831a6382a24a",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "RbnH4XsBdgaPfUYUiah0",
+      "QZxOlfOoxwj4PWxgxcBj",
+      "KU0dYRNMb07YcGl9e0D6",
+      "G0swJVSs3PZiQICRLl4Q"
+    ]
+  },
+  {
+    "startTime": 1780012630344,
+    "endTime": 1780013350785,
+    "date": "2026-05-28",
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "re6SEokdd71hNgwlFa5r",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "RbnH4XsBdgaPfUYUiah0",
+      "OsohRuSKGB81XWXi7yZ2",
+      "QZxOlfOoxwj4PWxgxcBj"
+    ],
+    "winner": "B",
+    "scoreB": 15,
+    "teamB": [
+      "pm5ILJssVof1cdBX0Go1",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "eann8eWQgeeyTcFGf1sN",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "KU0dYRNMb07YcGl9e0D6"
+    ],
+    "duration": 720,
+    "scoreA": 7,
+    "timestamp": 1780013350785,
+    "id": "822ee46a-f2a8-4429-a382-91c0ab919857",
+    "dailyNumber": 6,
+    "mode": "QUICK"
+  },
+  {
+    "timestamp": 1780014107459,
+    "scoreA": 15,
+    "id": "81a5e865-add0-40ee-8c8f-305062180673",
+    "teamB": [
+      "ea05cbf4-1b85-4854-81e0-831a6382a24a",
+      "4XLSTef8902WS81yNfO5",
+      "eann8eWQgeeyTcFGf1sN",
+      "OsohRuSKGB81XWXi7yZ2",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "8930e308-2405-420b-971b-43e37f6b7d5b"
+    ],
+    "date": "2026-05-28",
+    "dailyNumber": 7,
+    "endTime": 1780014107459,
+    "startTime": 1780013411497,
+    "mode": "QUICK",
+    "winner": "A",
+    "scoreB": 7,
+    "duration": 695,
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "pm5ILJssVof1cdBX0Go1",
+      "QZxOlfOoxwj4PWxgxcBj",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "G0swJVSs3PZiQICRLl4Q"
+    ]
+  },
+  {
+    "startTime": 1780014127435,
+    "endTime": 1780014941400,
+    "mode": "QUICK",
+    "teamA": [
+      "ea05cbf4-1b85-4854-81e0-831a6382a24a",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "RbnH4XsBdgaPfUYUiah0",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "QZxOlfOoxwj4PWxgxcBj",
+      "G0swJVSs3PZiQICRLl4Q"
+    ],
+    "duration": 813,
+    "dailyNumber": 8,
+    "scoreA": 11,
+    "id": "24bbbec8-e024-4524-bd23-e67397619113",
+    "scoreB": 15,
+    "winner": "B",
+    "timestamp": 1780014941400,
+    "date": "2026-05-28",
+    "teamB": [
+      "BeOpoqbsbvm7bPHe750z",
+      "re6SEokdd71hNgwlFa5r",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "4XLSTef8902WS81yNfO5",
+      "KU0dYRNMb07YcGl9e0D6",
+      "mQ4ivYdcOmxwTV1eZ3Sp"
+    ]
+  },
+  {
+    "timestamp": 1780015899827,
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "RbnH4XsBdgaPfUYUiah0",
+      "OsohRuSKGB81XWXi7yZ2",
+      "G0swJVSs3PZiQICRLl4Q"
+    ],
+    "dailyNumber": 9,
+    "scoreB": 15,
+    "winner": "B",
+    "date": "2026-05-28",
+    "duration": 896,
+    "startTime": 1780015002878,
+    "mode": "QUICK",
+    "endTime": 1780015899827,
+    "scoreA": 14,
+    "teamB": [
+      "pm5ILJssVof1cdBX0Go1",
+      "re6SEokdd71hNgwlFa5r",
+      "eann8eWQgeeyTcFGf1sN",
+      "4XLSTef8902WS81yNfO5",
+      "QZxOlfOoxwj4PWxgxcBj",
+      "WjRWvo8TEUx6kYvFuxO3"
+    ],
+    "id": "de2d7205-8b59-40cb-bdc9-4022e168661a"
+  },
+  {
+    "teamB": [
+      "pm5ILJssVof1cdBX0Go1",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "eann8eWQgeeyTcFGf1sN",
+      "OsohRuSKGB81XWXi7yZ2",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "QZxOlfOoxwj4PWxgxcBj"
+    ],
+    "winner": "B",
+    "duration": 854,
+    "scoreB": 15,
+    "mode": "QUICK",
+    "endTime": 1780016761618,
+    "startTime": 1780015907538,
+    "date": "2026-05-28",
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "re6SEokdd71hNgwlFa5r",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "RbnH4XsBdgaPfUYUiah0",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "cA7Bi2baoQIpPU3ds2XP"
+    ],
+    "timestamp": 1780016761618,
+    "scoreA": 12,
+    "dailyNumber": 10,
+    "id": "1a95e1d2-ebbe-497f-a324-8ccba59b06cd"
+  },
+  {
+    "id": "1c0bf554-72d5-429e-bbff-2dfe910b2bfb",
+    "timestamp": 1780615835336,
+    "dailyNumber": 1,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "pm5ILJssVof1cdBX0Go1",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "8930e308-2405-420b-971b-43e37f6b7d5b",
+      "mQ4ivYdcOmxwTV1eZ3Sp"
+    ],
+    "endTime": 1780615835336,
+    "winner": "B",
+    "date": "2026-06-04",
+    "scoreB": 15,
+    "scoreA": 12,
+    "startTime": 1780615021980,
+    "mode": "QUICK",
+    "duration": 812,
+    "teamA": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "eann8eWQgeeyTcFGf1sN",
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "dPjVqaSm2IanpFU5mqgB"
+    ]
+  },
+  {
+    "mode": "QUICK",
+    "timestamp": 1780616647095,
+    "teamA": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "6Hi00e3WYNYKkpGOWGin",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "tXgucAtHhC6SAmRMjnhN",
+      "OsohRuSKGB81XWXi7yZ2",
+      "8930e308-2405-420b-971b-43e37f6b7d5b"
+    ],
+    "endTime": 1780616647095,
+    "scoreA": 6,
+    "dailyNumber": 2,
+    "duration": 614,
+    "startTime": 1780616032262,
+    "scoreB": 15,
+    "date": "2026-06-04",
+    "id": "bb02baf9-fe32-421d-912a-b564e122b4fd",
+    "winner": "B",
+    "teamB": [
+      "BeOpoqbsbvm7bPHe750z",
+      "4XLSTef8902WS81yNfO5",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "dPjVqaSm2IanpFU5mqgB",
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "99nsBpzNKtNXFG8l9Vnx"
+    ]
+  },
+  {
+    "dailyNumber": 3,
+    "date": "2026-06-04",
+    "startTime": 1780616653259,
+    "teamA": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "6Hi00e3WYNYKkpGOWGin",
+      "pm5ILJssVof1cdBX0Go1",
+      "tXgucAtHhC6SAmRMjnhN",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "mQ4ivYdcOmxwTV1eZ3Sp"
+    ],
+    "winner": "A",
+    "id": "0577bb09-e24e-46ba-91ad-5bba92eb93dd",
+    "endTime": 1780617636361,
+    "scoreB": 14,
+    "scoreA": 15,
+    "timestamp": 1780617636361,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "eann8eWQgeeyTcFGf1sN",
+      "dPjVqaSm2IanpFU5mqgB",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "99nsBpzNKtNXFG8l9Vnx"
+    ],
+    "duration": 982,
+    "mode": "QUICK"
+  },
+  {
+    "teamA": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "4XLSTef8902WS81yNfO5",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "tXgucAtHhC6SAmRMjnhN",
+      "dPjVqaSm2IanpFU5mqgB",
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d"
+    ],
+    "date": "2026-06-04",
+    "timestamp": 1780618410820,
+    "dailyNumber": 4,
+    "scoreA": 15,
+    "endTime": 1780618410820,
+    "scoreB": 9,
+    "winner": "A",
+    "id": "99e5e05d-401e-4301-a765-de410a89d8ae",
+    "mode": "QUICK",
+    "duration": 769,
+    "teamB": [
+      "BeOpoqbsbvm7bPHe750z",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "OsohRuSKGB81XWXi7yZ2",
+      "8930e308-2405-420b-971b-43e37f6b7d5b",
+      "6Hi00e3WYNYKkpGOWGin"
+    ],
+    "startTime": 1780617640482
+  },
+  {
+    "id": "162bdbcf-128c-4767-ad79-3b3a7003234f",
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "eann8eWQgeeyTcFGf1sN",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "cA7Bi2baoQIpPU3ds2XP"
+    ],
+    "dailyNumber": 5,
+    "scoreB": 15,
+    "winner": "B",
+    "startTime": 1780618472259,
+    "mode": "QUICK",
+    "date": "2026-06-04",
+    "endTime": 1780619302294,
+    "teamB": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "4XLSTef8902WS81yNfO5",
+      "pm5ILJssVof1cdBX0Go1",
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "OsohRuSKGB81XWXi7yZ2",
+      "mQ4ivYdcOmxwTV1eZ3Sp"
+    ],
+    "scoreA": 8,
+    "timestamp": 1780619302294,
+    "duration": 829
+  },
+  {
+    "dailyNumber": 6,
+    "date": "2026-06-04",
+    "scoreA": 15,
+    "id": "ee8649d6-ab27-46c1-bda6-31d570c512cc",
+    "teamB": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "tXgucAtHhC6SAmRMjnhN",
+      "dPjVqaSm2IanpFU5mqgB",
+      "cA7Bi2baoQIpPU3ds2XP"
+    ],
+    "startTime": 1780619308529,
+    "teamA": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "pm5ILJssVof1cdBX0Go1",
+      "eann8eWQgeeyTcFGf1sN",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "6Hi00e3WYNYKkpGOWGin"
+    ],
+    "endTime": 1780620246259,
+    "duration": 936,
+    "mode": "QUICK",
+    "timestamp": 1780620246259,
+    "scoreB": 14,
+    "winner": "A"
+  },
+  {
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "4XLSTef8902WS81yNfO5",
+      "eann8eWQgeeyTcFGf1sN",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "OsohRuSKGB81XWXi7yZ2",
+      "cA7Bi2baoQIpPU3ds2XP"
+    ],
+    "date": "2026-06-04",
+    "scoreB": 7,
+    "isManual": true,
+    "winner": "A",
+    "id": "c6cc75f6-cee6-4d0f-9223-95d41573bd4f",
+    "isDraft": false,
+    "courtTime": 0,
+    "timestamp": 1780621022273,
+    "dailyNumber": 7,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "pm5ILJssVof1cdBX0Go1",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "mQ4ivYdcOmxwTV1eZ3Sp"
+    ],
+    "scoreA": 15,
+    "synced": true
+  },
+  {
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "4XLSTef8902WS81yNfO5",
+      "eann8eWQgeeyTcFGf1sN",
+      "RbnH4XsBdgaPfUYUiah0",
+      "OsohRuSKGB81XWXi7yZ2",
+      "G0swJVSs3PZiQICRLl4Q"
+    ],
+    "winner": "A",
+    "date": "2026-06-11",
+    "dailyNumber": 1,
+    "scoreB": 14,
+    "duration": 912,
+    "endTime": 1781220079364,
+    "startTime": 1781219166763,
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "re6SEokdd71hNgwlFa5r",
+      "pm5ILJssVof1cdBX0Go1",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "c09da5e0-c821-4a7d-b0a7-333004a71dc2",
+      "cA7Bi2baoQIpPU3ds2XP"
+    ],
+    "scoreA": 15,
+    "mode": "QUICK",
+    "id": "5713c312-e3c0-4408-a2a2-a94038a061db",
+    "timestamp": 1781220079364
+  },
+  {
+    "winner": "A",
+    "duration": 754,
+    "scoreB": 9,
+    "teamB": [
+      "BeOpoqbsbvm7bPHe750z",
+      "4XLSTef8902WS81yNfO5",
+      "eann8eWQgeeyTcFGf1sN",
+      "G0swJVSs3PZiQICRLl4Q",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "Tg4CC8JaOeu0gH6rouaF"
+    ],
+    "startTime": 1781220115022,
+    "dailyNumber": 2,
+    "date": "2026-06-11",
+    "endTime": 1781220870710,
+    "mode": "QUICK",
+    "id": "f0d1580f-2f0a-48c0-93ec-d94a56ca48d6",
+    "scoreA": 15,
+    "teamA": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "re6SEokdd71hNgwlFa5r",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "RbnH4XsBdgaPfUYUiah0",
+      "tVeC06SBJpoxsSfJt7JC",
+      "OsohRuSKGB81XWXi7yZ2"
+    ],
+    "timestamp": 1781220870710
+  },
+  {
+    "endTime": 1781221527007,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "tVeC06SBJpoxsSfJt7JC",
+      "pm5ILJssVof1cdBX0Go1",
+      "eann8eWQgeeyTcFGf1sN",
+      "tXgucAtHhC6SAmRMjnhN",
+      "cA7Bi2baoQIpPU3ds2XP"
+    ],
+    "startTime": 1781220890250,
+    "scoreA": 5,
+    "id": "aa9472f0-51ef-418c-af45-24522a2d91a7",
+    "dailyNumber": 3,
+    "date": "2026-06-11",
+    "duration": 636,
+    "winner": "B",
+    "mode": "QUICK",
+    "scoreB": 15,
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "RbnH4XsBdgaPfUYUiah0",
+      "OsohRuSKGB81XWXi7yZ2",
+      "Tg4CC8JaOeu0gH6rouaF"
+    ],
+    "timestamp": 1781221527007
+  },
+  {
+    "date": "2026-06-11",
+    "id": "4e423f26-e296-448e-92ef-ac4af4230776",
+    "teamB": [
+      "BeOpoqbsbvm7bPHe750z",
+      "4XLSTef8902WS81yNfO5",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "tXgucAtHhC6SAmRMjnhN",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "G0swJVSs3PZiQICRLl4Q"
+    ],
+    "duration": 805,
+    "timestamp": 1781222340026,
+    "winner": "A",
+    "endTime": 1781222340026,
+    "scoreB": 14,
+    "scoreA": 15,
+    "dailyNumber": 4,
+    "teamA": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "re6SEokdd71hNgwlFa5r",
+      "pm5ILJssVof1cdBX0Go1",
+      "RbnH4XsBdgaPfUYUiah0",
+      "tVeC06SBJpoxsSfJt7JC",
+      "99nsBpzNKtNXFG8l9Vnx"
+    ],
+    "mode": "QUICK",
+    "startTime": 1781221533768
+  },
+  {
+    "id": "9f69c8a4-84b3-4d54-8678-a0f80c8152c2",
+    "duration": 882,
+    "date": "2026-06-11",
+    "scoreA": 11,
+    "timestamp": 1781223231943,
+    "teamA": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "pm5ILJssVof1cdBX0Go1",
+      "tXgucAtHhC6SAmRMjnhN",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "Tg4CC8JaOeu0gH6rouaF"
+    ],
+    "dailyNumber": 5,
+    "winner": "B",
+    "endTime": 1781223231943,
+    "mode": "QUICK",
+    "scoreB": 15,
+    "teamB": [
+      "BeOpoqbsbvm7bPHe750z",
+      "re6SEokdd71hNgwlFa5r",
+      "eann8eWQgeeyTcFGf1sN",
+      "4XLSTef8902WS81yNfO5",
+      "OsohRuSKGB81XWXi7yZ2",
+      "G0swJVSs3PZiQICRLl4Q"
+    ],
+    "startTime": 1781222348725
+  },
+  {
+    "startTime": 1781223239673,
+    "endTime": 1781223962686,
+    "date": "2026-06-11",
+    "teamA": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "tXgucAtHhC6SAmRMjnhN",
+      "OsohRuSKGB81XWXi7yZ2",
+      "tVeC06SBJpoxsSfJt7JC"
+    ],
+    "id": "564d3866-f74e-4a09-bd01-7f9c9fe0355b",
+    "winner": "A",
+    "dailyNumber": 6,
+    "scoreB": 9,
+    "teamB": [
+      "BeOpoqbsbvm7bPHe750z",
+      "re6SEokdd71hNgwlFa5r",
+      "eann8eWQgeeyTcFGf1sN",
+      "RbnH4XsBdgaPfUYUiah0",
+      "4XLSTef8902WS81yNfO5",
+      "cA7Bi2baoQIpPU3ds2XP"
+    ],
+    "scoreA": 15,
+    "duration": 722,
+    "timestamp": 1781223962686,
+    "mode": "QUICK"
+  },
+  {
+    "id": "6446192e-c543-4500-bb06-67625f7dbaf0",
+    "timestamp": 1781224824812,
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "eann8eWQgeeyTcFGf1sN",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "tXgucAtHhC6SAmRMjnhN",
+      "G0swJVSs3PZiQICRLl4Q"
+    ],
+    "mode": "QUICK",
+    "endTime": 1781224824812,
+    "duration": 854,
+    "scoreA": 14,
+    "scoreB": 15,
+    "startTime": 1781223968945,
+    "winner": "B",
+    "dailyNumber": 7,
+    "date": "2026-06-11",
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "tVeC06SBJpoxsSfJt7JC",
+      "pm5ILJssVof1cdBX0Go1",
+      "RbnH4XsBdgaPfUYUiah0",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "Tg4CC8JaOeu0gH6rouaF"
+    ]
+  },
+  {
+    "duration": 744,
+    "scoreA": 15,
+    "endTime": 1781225575395,
+    "startTime": 1781224830714,
+    "dailyNumber": 8,
+    "mode": "QUICK",
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "4XLSTef8902WS81yNfO5",
+      "tXgucAtHhC6SAmRMjnhN",
+      "OsohRuSKGB81XWXi7yZ2",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "G0swJVSs3PZiQICRLl4Q"
+    ],
+    "date": "2026-06-11",
+    "id": "1b74011a-66a4-4613-a742-611d1a6ade92",
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "re6SEokdd71hNgwlFa5r",
+      "pm5ILJssVof1cdBX0Go1",
+      "RbnH4XsBdgaPfUYUiah0",
+      "tVeC06SBJpoxsSfJt7JC",
+      "99nsBpzNKtNXFG8l9Vnx"
+    ],
+    "timestamp": 1781225575395,
+    "scoreB": 12,
+    "winner": "A"
+  },
+  {
+    "date": "2026-06-11",
+    "teamB": [
+      "BeOpoqbsbvm7bPHe750z",
+      "4XLSTef8902WS81yNfO5",
+      "eann8eWQgeeyTcFGf1sN",
+      "OsohRuSKGB81XWXi7yZ2",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "tVeC06SBJpoxsSfJt7JC"
+    ],
+    "scoreB": 12,
+    "startTime": 1781225581461,
+    "endTime": 1781226375757,
+    "winner": "A",
+    "dailyNumber": 9,
+    "teamA": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "re6SEokdd71hNgwlFa5r",
+      "pm5ILJssVof1cdBX0Go1",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "G0swJVSs3PZiQICRLl4Q",
+      "99nsBpzNKtNXFG8l9Vnx"
+    ],
+    "scoreA": 15,
+    "duration": 793,
+    "id": "1a7d9972-18bf-4fef-ae9d-bff5bc0b4c22",
+    "mode": "QUICK",
+    "timestamp": 1781226375757
+  },
+  {
+    "id": "42d061f7-1595-4ef1-8b41-7ec30a581f70",
+    "scoreB": 15,
+    "teamA": [
+      "xAu4cy3yJRjRbnF3Nng7",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "eann8eWQgeeyTcFGf1sN",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "tXgucAtHhC6SAmRMjnhN",
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d"
+    ],
+    "startTime": 1782169677282,
+    "dailyNumber": 1,
+    "winner": "B",
+    "duration": 1215,
+    "stats": [],
+    "mode": "QUICK",
+    "endTime": 1782170892698,
+    "timestamp": 1782170892698,
+    "date": "2026-06-22",
+    "teamB": [
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "c09da5e0-c821-4a7d-b0a7-333004a71dc2",
+      "RbnH4XsBdgaPfUYUiah0",
+      "OsohRuSKGB81XWXi7yZ2",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "mQ4ivYdcOmxwTV1eZ3Sp"
+    ],
+    "scoreA": 14
+  },
+  {
+    "endTime": 1782172276938,
+    "timestamp": 1782172276938,
+    "duration": 1354,
+    "date": "2026-06-22",
+    "teamB": [
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "eann8eWQgeeyTcFGf1sN",
+      "tXgucAtHhC6SAmRMjnhN",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "cA7Bi2baoQIpPU3ds2XP"
+    ],
+    "scoreA": 15,
+    "id": "67b11e60-13c8-40a8-9518-d10d86e73a20",
+    "teamA": [
+      "xAu4cy3yJRjRbnF3Nng7",
+      "4XLSTef8902WS81yNfO5",
+      "RbnH4XsBdgaPfUYUiah0",
+      "c09da5e0-c821-4a7d-b0a7-333004a71dc2",
+      "OsohRuSKGB81XWXi7yZ2",
+      "mQ4ivYdcOmxwTV1eZ3Sp"
+    ],
+    "dailyNumber": 2,
+    "scoreB": 14,
+    "startTime": 1782170922666,
+    "winner": "A",
+    "mode": "QUICK",
+    "stats": []
+  },
+  {
+    "teamB": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "RbnH4XsBdgaPfUYUiah0",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "mQ4ivYdcOmxwTV1eZ3Sp"
+    ],
+    "date": "2026-06-22",
+    "dailyNumber": 3,
+    "duration": 1282,
+    "winner": "A",
+    "startTime": 1782172541523,
+    "scoreB": 14,
+    "id": "45a08b9e-b121-4c60-bf0e-92ed27dd4ce9",
+    "scoreA": 15,
+    "stats": [],
+    "endTime": 1782173824624,
+    "timestamp": 1782173824624,
+    "teamA": [
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "4XLSTef8902WS81yNfO5",
+      "eann8eWQgeeyTcFGf1sN",
+      "tXgucAtHhC6SAmRMjnhN",
+      "c09da5e0-c821-4a7d-b0a7-333004a71dc2",
+      "cA7Bi2baoQIpPU3ds2XP"
+    ],
+    "mode": "QUICK"
+  },
+  {
+    "startTime": 1782173866113,
+    "mode": "QUICK",
+    "scoreA": 14,
+    "teamB": [
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "eann8eWQgeeyTcFGf1sN",
+      "tXgucAtHhC6SAmRMjnhN",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "mQ4ivYdcOmxwTV1eZ3Sp"
+    ],
+    "dailyNumber": 4,
+    "duration": 1633,
+    "stats": [],
+    "id": "36ca265b-802c-48ed-be30-32d49c378e01",
+    "endTime": 1782175500710,
+    "timestamp": 1782175500710,
+    "winner": "B",
+    "date": "2026-06-22",
+    "scoreB": 15,
+    "teamA": [
+      "xAu4cy3yJRjRbnF3Nng7",
+      "4XLSTef8902WS81yNfO5",
+      "RbnH4XsBdgaPfUYUiah0",
+      "c09da5e0-c821-4a7d-b0a7-333004a71dc2",
+      "OsohRuSKGB81XWXi7yZ2",
+      "cA7Bi2baoQIpPU3ds2XP"
+    ]
+  },
+  {
+    "scoreB": 14,
+    "dailyNumber": 5,
+    "date": "2026-06-22",
+    "winner": "A",
+    "startTime": 1782175579538,
+    "teamB": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "RbnH4XsBdgaPfUYUiah0",
+      "c09da5e0-c821-4a7d-b0a7-333004a71dc2",
+      "mQ4ivYdcOmxwTV1eZ3Sp"
+    ],
+    "id": "bc0c5a57-8a91-445f-b775-caf815d5561f",
+    "endTime": 1782176896988,
+    "teamA": [
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "4XLSTef8902WS81yNfO5",
+      "eann8eWQgeeyTcFGf1sN",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "OsohRuSKGB81XWXi7yZ2",
+      "cA7Bi2baoQIpPU3ds2XP"
+    ],
+    "duration": 1316,
+    "mode": "QUICK",
+    "scoreA": 15,
+    "stats": [],
+    "timestamp": 1782176896988
+  },
+  {
+    "stats": [],
+    "startTime": 1782429068156,
+    "scoreA": 15,
+    "date": "2026-06-25",
+    "teamA": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "6Hi00e3WYNYKkpGOWGin",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "eann8eWQgeeyTcFGf1sN",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "Tg4CC8JaOeu0gH6rouaF"
+    ],
+    "teamB": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "c09da5e0-c821-4a7d-b0a7-333004a71dc2",
+      "OsohRuSKGB81XWXi7yZ2",
+      "cA7Bi2baoQIpPU3ds2XP"
+    ],
+    "dailyNumber": 1,
+    "mode": "QUICK",
+    "duration": 1205,
+    "timestamp": 1782430274194,
+    "id": "95b9571e-7f40-4b69-8d0d-fe1bcdc6a1b9",
+    "winner": "A",
+    "scoreB": 14,
+    "endTime": 1782430274194
+  },
+  {
+    "stats": [],
+    "scoreA": 14,
+    "mode": "QUICK",
+    "duration": 1086,
+    "teamA": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "OsohRuSKGB81XWXi7yZ2",
+      "Tg4CC8JaOeu0gH6rouaF"
+    ],
+    "endTime": 1782431371531,
+    "startTime": 1782430284697,
+    "teamB": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "6Hi00e3WYNYKkpGOWGin",
+      "eann8eWQgeeyTcFGf1sN",
+      "c09da5e0-c821-4a7d-b0a7-333004a71dc2",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "cA7Bi2baoQIpPU3ds2XP"
+    ],
+    "timestamp": 1782431371531,
+    "winner": "B",
+    "scoreB": 15,
+    "dailyNumber": 2,
+    "id": "5dc9a6d5-332d-474a-9af6-c1c5d7b4eb7f",
+    "date": "2026-06-25"
+  },
+  {
+    "teamA": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "c09da5e0-c821-4a7d-b0a7-333004a71dc2",
+      "OsohRuSKGB81XWXi7yZ2",
+      "6Hi00e3WYNYKkpGOWGin"
+    ],
+    "date": "2026-06-25",
+    "scoreA": 15,
+    "endTime": 1782432374022,
+    "id": "5385a50a-290c-4c76-b520-29af6543376c",
+    "timestamp": 1782432374022,
+    "stats": [],
+    "duration": 971,
+    "mode": "QUICK",
+    "startTime": 1782431401574,
+    "teamB": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "eann8eWQgeeyTcFGf1sN",
+      "tXgucAtHhC6SAmRMjnhN",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "cA7Bi2baoQIpPU3ds2XP"
+    ],
+    "dailyNumber": 3,
+    "scoreB": 10,
+    "winner": "A"
+  },
+  {
+    "teamA": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "eann8eWQgeeyTcFGf1sN",
+      "tXgucAtHhC6SAmRMjnhN",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "6Hi00e3WYNYKkpGOWGin"
+    ],
+    "scoreB": 10,
+    "startTime": 1782432388098,
+    "winner": "A",
+    "mode": "QUICK",
+    "duration": 1015,
+    "stats": [],
+    "timestamp": 1782433404711,
+    "date": "2026-06-25",
+    "id": "a2526441-64c1-40fe-a2d5-7265f9d34e4f",
+    "endTime": 1782433404711,
+    "dailyNumber": 4,
+    "teamB": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "c09da5e0-c821-4a7d-b0a7-333004a71dc2",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "Tg4CC8JaOeu0gH6rouaF"
+    ],
+    "scoreA": 15
+  },
+  {
+    "teamA": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "tXgucAtHhC6SAmRMjnhN",
+      "OsohRuSKGB81XWXi7yZ2",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "6Hi00e3WYNYKkpGOWGin"
+    ],
+    "scoreA": 10,
+    "timestamp": 1782434317451,
+    "stats": [],
+    "mode": "QUICK",
+    "dailyNumber": 5,
+    "date": "2026-06-25",
+    "teamB": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "Tg4CC8JaOeu0gH6rouaF"
+    ],
+    "id": "dbe98ac2-02f8-4443-a450-d1d3fc61365c",
+    "scoreB": 15,
+    "duration": 902,
+    "endTime": 1782434317451,
+    "winner": "B",
+    "startTime": 1782433414466
+  },
+  {
+    "mode": "QUICK",
+    "endTime": 1782434977107,
+    "timestamp": 1782434977107,
+    "teamB": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "eann8eWQgeeyTcFGf1sN",
+      "tXgucAtHhC6SAmRMjnhN",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "sQjjxhPf1RnFxBMwFzQW"
+    ],
+    "scoreA": 15,
+    "scoreB": 9,
+    "dailyNumber": 6,
+    "winner": "A",
+    "teamA": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "c09da5e0-c821-4a7d-b0a7-333004a71dc2",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "OsohRuSKGB81XWXi7yZ2",
+      "6Hi00e3WYNYKkpGOWGin"
+    ],
+    "id": "9896d9e9-5d6d-4ba7-933c-90d5b89a21b2",
+    "date": "2026-06-25",
+    "duration": 632,
+    "stats": [],
+    "startTime": 1782434344234
+  },
+  {
+    "timestamp": 1782436012810,
+    "dailyNumber": 7,
+    "duration": 930,
+    "teamB": [
+      "eann8eWQgeeyTcFGf1sN",
+      "c09da5e0-c821-4a7d-b0a7-333004a71dc2",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "OsohRuSKGB81XWXi7yZ2",
+      "Tg4CC8JaOeu0gH6rouaF"
+    ],
+    "scoreB": 15,
+    "winner": "B",
+    "mode": "QUICK",
+    "id": "741fd1bc-70a0-401a-b592-93da8730361d",
+    "teamA": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "tXgucAtHhC6SAmRMjnhN",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "sQjjxhPf1RnFxBMwFzQW"
+    ],
+    "endTime": 1782436012810,
+    "date": "2026-06-25",
+    "startTime": 1782435082543,
+    "scoreA": 9,
+    "stats": []
+  },
+  {
+    "id": "db7c1afd-f052-4d6e-a4ae-7ec274d67585",
+    "scoreA": 15,
+    "timestamp": 1783034047797,
+    "teamB": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "tVeC06SBJpoxsSfJt7JC",
+      "eann8eWQgeeyTcFGf1sN",
+      "tXgucAtHhC6SAmRMjnhN",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "cA7Bi2baoQIpPU3ds2XP"
+    ],
+    "date": "2026-07-02",
+    "duration": 867,
+    "stats": [],
+    "mode": "QUICK",
+    "startTime": 1783033179662,
+    "endTime": 1783034047797,
+    "winner": "A",
+    "dailyNumber": 1,
+    "scoreB": 9,
+    "teamA": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "RbnH4XsBdgaPfUYUiah0",
+      "G0swJVSs3PZiQICRLl4Q",
+      "dPjVqaSm2IanpFU5mqgB"
+    ]
+  },
+  {
+    "duration": 806,
+    "timestamp": 1783034876374,
+    "id": "4cacd6f0-5507-474b-ac5c-aa94c96f69db",
+    "endTime": 1783034876374,
+    "teamB": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "RbnH4XsBdgaPfUYUiah0",
+      "dPjVqaSm2IanpFU5mqgB",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "tVeC06SBJpoxsSfJt7JC"
+    ],
+    "scoreB": 13,
+    "winner": "A",
+    "mode": "QUICK",
+    "dailyNumber": 2,
+    "teamA": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "tXgucAtHhC6SAmRMjnhN",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "cA7Bi2baoQIpPU3ds2XP"
+    ],
+    "date": "2026-07-02",
+    "startTime": 1783034070216,
+    "scoreA": 15,
+    "stats": []
+  },
+  {
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "eann8eWQgeeyTcFGf1sN",
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "G0swJVSs3PZiQICRLl4Q"
+    ],
+    "startTime": 1783035087923,
+    "scoreA": 15,
+    "mode": "QUICK",
+    "id": "d2f954a6-61c3-4a6c-82ff-976a62f7f2e3",
+    "winner": "A",
+    "timestamp": 1783035779201,
+    "stats": [],
+    "scoreB": 9,
+    "date": "2026-07-02",
+    "endTime": 1783035779201,
+    "dailyNumber": 3,
+    "teamA": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "re6SEokdd71hNgwlFa5r",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "dPjVqaSm2IanpFU5mqgB",
+      "KU0dYRNMb07YcGl9e0D6",
+      "BeOpoqbsbvm7bPHe750z"
+    ],
+    "duration": 690
+  },
+  {
+    "mode": "QUICK",
+    "stats": [],
+    "duration": 705,
+    "winner": "A",
+    "startTime": 1783035787351,
+    "teamA": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "re6SEokdd71hNgwlFa5r",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "KU0dYRNMb07YcGl9e0D6"
+    ],
+    "scoreB": 10,
+    "scoreA": 15,
+    "teamB": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "tVeC06SBJpoxsSfJt7JC",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "RbnH4XsBdgaPfUYUiah0",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "BeOpoqbsbvm7bPHe750z"
+    ],
+    "dailyNumber": 4,
+    "date": "2026-07-02",
+    "id": "79c4eafc-a46d-4a63-842d-f6b0f61a1c4d",
+    "timestamp": 1783036493210,
+    "endTime": 1783036493210
+  },
+  {
+    "scoreA": 11,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "eann8eWQgeeyTcFGf1sN",
+      "dPjVqaSm2IanpFU5mqgB",
+      "BeOpoqbsbvm7bPHe750z",
+      "KU0dYRNMb07YcGl9e0D6"
+    ],
+    "startTime": 1783036501410,
+    "endTime": 1783037415349,
+    "mode": "QUICK",
+    "id": "edd526aa-4fc5-4748-8781-45c51173be37",
+    "teamA": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "G0swJVSs3PZiQICRLl4Q",
+      "re6SEokdd71hNgwlFa5r"
+    ],
+    "date": "2026-07-02",
+    "duration": 913,
+    "dailyNumber": 5,
+    "scoreB": 15,
+    "stats": [],
+    "timestamp": 1783037415349,
+    "winner": "B"
+  },
+  {
+    "stats": [],
+    "scoreA": 13,
+    "mode": "QUICK",
+    "duration": 956,
+    "timestamp": 1783038381536,
+    "teamA": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "KU0dYRNMb07YcGl9e0D6"
+    ],
+    "dailyNumber": 6,
+    "teamB": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "tVeC06SBJpoxsSfJt7JC",
+      "eann8eWQgeeyTcFGf1sN",
+      "RbnH4XsBdgaPfUYUiah0",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "G0swJVSs3PZiQICRLl4Q"
+    ],
+    "winner": "B",
+    "startTime": 1783037424582,
+    "scoreB": 15,
+    "id": "c97fb1df-fc30-4b1a-92fd-18e4ef8d73b1",
+    "date": "2026-07-02",
+    "endTime": 1783038381536
+  },
+  {
+    "stats": [],
+    "startTime": 1783038389540,
+    "winner": "B",
+    "scoreB": 15,
+    "mode": "QUICK",
+    "dailyNumber": 7,
+    "teamA": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "re6SEokdd71hNgwlFa5r",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "RbnH4XsBdgaPfUYUiah0",
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "Tg4CC8JaOeu0gH6rouaF"
+    ],
+    "endTime": 1783039273147,
+    "duration": 883,
+    "id": "2e30fe02-1227-4ad9-9f22-eba3fb58ac46",
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "tVeC06SBJpoxsSfJt7JC",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "dPjVqaSm2IanpFU5mqgB",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "BeOpoqbsbvm7bPHe750z"
+    ],
+    "timestamp": 1783039273147,
+    "scoreA": 12,
+    "date": "2026-07-02"
+  },
+  {
+    "scoreB": 15,
+    "date": "2026-07-02",
+    "winner": "B",
+    "teamB": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "re6SEokdd71hNgwlFa5r",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "G0swJVSs3PZiQICRLl4Q",
+      "KU0dYRNMb07YcGl9e0D6",
+      "dPjVqaSm2IanpFU5mqgB"
+    ],
+    "dailyNumber": 8,
+    "id": "9df75a80-6fef-4707-b1bc-c9bd368fa576",
+    "startTime": 1783039281682,
+    "teamA": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "eann8eWQgeeyTcFGf1sN",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "BeOpoqbsbvm7bPHe750z"
+    ],
+    "mode": "QUICK",
+    "endTime": 1783039945114,
+    "timestamp": 1783039945114,
+    "scoreA": 5,
+    "duration": 663,
+    "stats": []
+  },
+  {
+    "teamA": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "RbnH4XsBdgaPfUYUiah0",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "KU0dYRNMb07YcGl9e0D6"
+    ],
+    "date": "2026-07-02",
+    "startTime": 1783039972467,
+    "scoreB": 6,
+    "id": "14ae4333-df15-419f-a1cd-610116e465a0",
+    "winner": "A",
+    "dailyNumber": 9,
+    "stats": [],
+    "duration": 618,
+    "timestamp": 1783040591558,
+    "endTime": 1783040591558,
+    "mode": "QUICK",
+    "teamB": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "tVeC06SBJpoxsSfJt7JC",
+      "eann8eWQgeeyTcFGf1sN",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "G0swJVSs3PZiQICRLl4Q"
+    ],
+    "scoreA": 15
+  },
+  {
+    "teamA": [
+      "xAu4cy3yJRjRbnF3Nng7",
+      "QcGEmh4rFZnmFKNlpdV4",
+      "tXgucAtHhC6SAmRMjnhN",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "KU0dYRNMb07YcGl9e0D6"
+    ],
+    "id": "d905334e-cf43-4a34-94d6-362cef3ef7b8",
+    "scoreB": 15,
+    "winner": "B",
+    "endTime": 1783641044071,
+    "mode": "QUICK",
+    "stats": [],
+    "startTime": 1783639924094,
+    "date": "2026-07-09",
+    "dailyNumber": 1,
+    "duration": 1119,
+    "timestamp": 1783641044071,
+    "teamB": [
+      "eann8eWQgeeyTcFGf1sN",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "RbnH4XsBdgaPfUYUiah0",
+      "c09da5e0-c821-4a7d-b0a7-333004a71dc2",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "8930e308-2405-420b-971b-43e37f6b7d5b"
+    ],
+    "scoreA": 14
+  },
+  {
+    "winner": "A",
+    "mode": "QUICK",
+    "scoreB": 14,
+    "teamB": [
+      "eann8eWQgeeyTcFGf1sN",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "tXgucAtHhC6SAmRMjnhN",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "KU0dYRNMb07YcGl9e0D6"
+    ],
+    "endTime": 1783642386293,
+    "startTime": 1783641112975,
+    "duration": 1272,
+    "stats": [],
+    "dailyNumber": 2,
+    "timestamp": 1783642386293,
+    "scoreA": 15,
+    "date": "2026-07-09",
+    "teamA": [
+      "xAu4cy3yJRjRbnF3Nng7",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "RbnH4XsBdgaPfUYUiah0",
+      "c09da5e0-c821-4a7d-b0a7-333004a71dc2",
+      "QcGEmh4rFZnmFKNlpdV4",
+      "8930e308-2405-420b-971b-43e37f6b7d5b"
+    ],
+    "id": "a4c43027-b0a1-4cf4-8601-a22fbf312978"
+  },
+  {
+    "id": "d1f34cec-11ec-409d-88ab-5c0160e74d24",
+    "endTime": 1783643762590,
+    "mode": "QUICK",
+    "timestamp": 1783643762590,
+    "scoreB": 15,
+    "dailyNumber": 3,
+    "duration": 1334,
+    "teamB": [
+      "eann8eWQgeeyTcFGf1sN",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "RbnH4XsBdgaPfUYUiah0",
+      "c09da5e0-c821-4a7d-b0a7-333004a71dc2",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "KU0dYRNMb07YcGl9e0D6"
+    ],
+    "winner": "B",
+    "startTime": 1783642427600,
+    "scoreA": 12,
+    "teamA": [
+      "xAu4cy3yJRjRbnF3Nng7",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "tXgucAtHhC6SAmRMjnhN",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "QcGEmh4rFZnmFKNlpdV4"
+    ],
+    "stats": [],
+    "date": "2026-07-09"
+  },
+  {
+    "teamB": [
+      "eann8eWQgeeyTcFGf1sN",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "tXgucAtHhC6SAmRMjnhN",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "QcGEmh4rFZnmFKNlpdV4"
+    ],
+    "scoreA": 15,
+    "duration": 1241,
+    "id": "88c68506-2a9d-4abe-989b-1f5c55af196d",
+    "dailyNumber": 4,
+    "startTime": 1783643772013,
+    "mode": "QUICK",
+    "endTime": 1783645014203,
+    "stats": [],
+    "date": "2026-07-09",
+    "winner": "A",
+    "teamA": [
+      "xAu4cy3yJRjRbnF3Nng7",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "c09da5e0-c821-4a7d-b0a7-333004a71dc2",
+      "RbnH4XsBdgaPfUYUiah0",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "KU0dYRNMb07YcGl9e0D6"
+    ],
+    "timestamp": 1783645014203,
+    "scoreB": 13
+  },
+  {
+    "mode": "QUICK",
+    "teamA": [
+      "c09da5e0-c821-4a7d-b0a7-333004a71dc2",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "e390221e-80ae-4dab-a25d-f9d5920ac52f",
+      "eann8eWQgeeyTcFGf1sN",
+      "tXgucAtHhC6SAmRMjnhN",
+      "dd379ddd-5315-412c-ae4d-5848be76483b"
+    ],
+    "id": "486cae3e-fe33-4f7a-86fd-19dd5c221250",
+    "scoreB": 15,
+    "stats": [],
+    "winner": "B",
+    "timestamp": 1784245519382,
+    "dailyNumber": 1,
+    "duration": 940,
+    "scoreA": 14,
+    "date": "2026-07-16",
+    "startTime": 1784244577791,
+    "endTime": 1784245519382,
+    "teamB": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "cA7Bi2baoQIpPU3ds2XP"
+    ]
+  },
+  {
+    "duration": 874,
+    "dailyNumber": 2,
+    "stats": [],
+    "date": "2026-07-16",
+    "endTime": 1784246405486,
+    "teamA": [
+      "c09da5e0-c821-4a7d-b0a7-333004a71dc2",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "e390221e-80ae-4dab-a25d-f9d5920ac52f",
+      "tXgucAtHhC6SAmRMjnhN",
+      "cA7Bi2baoQIpPU3ds2XP"
+    ],
+    "winner": "B",
+    "timestamp": 1784246405486,
+    "scoreB": 15,
+    "teamB": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "eann8eWQgeeyTcFGf1sN",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "dd379ddd-5315-412c-ae4d-5848be76483b",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7"
+    ],
+    "scoreA": 13,
+    "id": "1357ef0c-4a2f-4142-b94a-3accdfc7d923",
+    "startTime": 1784245531056,
+    "mode": "QUICK"
+  },
+  {
+    "timestamp": 1784247304048,
+    "winner": "A",
+    "id": "b47459f2-c368-4894-9f85-77c4bf0aebc0",
+    "stats": [],
+    "scoreB": 13,
+    "date": "2026-07-16",
+    "teamA": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "eann8eWQgeeyTcFGf1sN",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "tXgucAtHhC6SAmRMjnhN",
+      "dd379ddd-5315-412c-ae4d-5848be76483b"
+    ],
+    "mode": "QUICK",
+    "startTime": 1784246486208,
+    "duration": 817,
+    "teamB": [
+      "c09da5e0-c821-4a7d-b0a7-333004a71dc2",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7"
+    ],
+    "scoreA": 15,
+    "endTime": 1784247304048,
+    "dailyNumber": 3
+  },
+  {
+    "scoreA": 9,
+    "date": "2026-07-16",
+    "stats": [],
+    "teamA": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "tXgucAtHhC6SAmRMjnhN",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7"
+    ],
+    "startTime": 1784247330688,
+    "teamB": [
+      "c09da5e0-c821-4a7d-b0a7-333004a71dc2",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "eann8eWQgeeyTcFGf1sN",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "dd379ddd-5315-412c-ae4d-5848be76483b"
+    ],
+    "endTime": 1784248197756,
+    "dailyNumber": 4,
+    "duration": 866,
+    "timestamp": 1784248197756,
+    "mode": "QUICK",
+    "winner": "B",
+    "id": "1119975b-88eb-42b3-807c-92f2ce294d17",
+    "scoreB": 15
+  },
+  {
+    "winner": "A",
+    "startTime": 1784248246057,
+    "stats": [],
+    "scoreB": 10,
+    "teamA": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "tXgucAtHhC6SAmRMjnhN",
+      "eann8eWQgeeyTcFGf1sN",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "WjRWvo8TEUx6kYvFuxO3"
+    ],
+    "endTime": 1784249060878,
+    "mode": "QUICK",
+    "dailyNumber": 5,
+    "date": "2026-07-16",
+    "timestamp": 1784249060878,
+    "teamB": [
+      "c09da5e0-c821-4a7d-b0a7-333004a71dc2",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "e390221e-80ae-4dab-a25d-f9d5920ac52f",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7"
+    ],
+    "id": "8dfb56a4-cea6-4824-a269-7a575cd7b209",
+    "duration": 814,
+    "scoreA": 15
+  },
+  {
+    "id": "c9275c18-d3dd-46cf-af9e-b5f9949d3dfd",
+    "timestamp": 1784249847456,
+    "scoreA": 15,
+    "duration": 775,
+    "teamB": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "eann8eWQgeeyTcFGf1sN",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "cA7Bi2baoQIpPU3ds2XP"
+    ],
+    "mode": "QUICK",
+    "date": "2026-07-16",
+    "teamA": [
+      "c09da5e0-c821-4a7d-b0a7-333004a71dc2",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "e390221e-80ae-4dab-a25d-f9d5920ac52f",
+      "tXgucAtHhC6SAmRMjnhN",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7"
+    ],
+    "endTime": 1784249847456,
+    "startTime": 1784249071513,
+    "scoreB": 10,
+    "stats": [],
+    "winner": "A",
+    "dailyNumber": 6
+  },
+  {
+    "teamB": [
+      "BeOpoqbsbvm7bPHe750z",
+      "6Hi00e3WYNYKkpGOWGin",
+      "eann8eWQgeeyTcFGf1sN",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "re6SEokdd71hNgwlFa5r",
+      "cA7Bi2baoQIpPU3ds2XP"
+    ],
+    "duration": 772,
+    "scoreA": 12,
+    "endTime": 1784848467258,
+    "mode": "QUICK",
+    "startTime": 1784847694409,
+    "id": "1f03e859-55a3-4602-b101-2fc42490eeb2",
+    "dailyNumber": 1,
+    "winner": "B",
+    "stats": [],
+    "scoreB": 15,
+    "date": "2026-07-23",
+    "timestamp": 1784848467258,
+    "teamA": [
+      "ea05cbf4-1b85-4854-81e0-831a6382a24a",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "KU0dYRNMb07YcGl9e0D6",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "sQjjxhPf1RnFxBMwFzQW"
+    ]
+  },
+  {
+    "winner": "B",
+    "timestamp": 1784849465119,
+    "dailyNumber": 2,
+    "scoreB": 15,
+    "teamB": [
+      "ea05cbf4-1b85-4854-81e0-831a6382a24a",
+      "eann8eWQgeeyTcFGf1sN",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "6Hi00e3WYNYKkpGOWGin"
+    ],
+    "id": "44df0a74-5271-4f1c-9e1b-77c8c8b4b507",
+    "date": "2026-07-23",
+    "endTime": 1784849465119,
+    "mode": "QUICK",
+    "startTime": 1784848560480,
+    "stats": [],
+    "scoreA": 14,
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "4XLSTef8902WS81yNfO5",
+      "tXgucAtHhC6SAmRMjnhN",
+      "G0swJVSs3PZiQICRLl4Q",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7"
+    ],
+    "duration": 904
+  },
+  {
+    "timestamp": 1784850311337,
+    "stats": [],
+    "duration": 797,
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "4XLSTef8902WS81yNfO5",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "KU0dYRNMb07YcGl9e0D6"
+    ],
+    "winner": "A",
+    "mode": "QUICK",
+    "scoreB": 10,
+    "teamB": [
+      "ea05cbf4-1b85-4854-81e0-831a6382a24a",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "G0swJVSs3PZiQICRLl4Q",
+      "re6SEokdd71hNgwlFa5r",
+      "mQ4ivYdcOmxwTV1eZ3Sp"
+    ],
+    "scoreA": 15,
+    "endTime": 1784850311337,
+    "dailyNumber": 3,
+    "date": "2026-07-23",
+    "startTime": 1784849513222,
+    "id": "bd4f11f8-79c7-4712-9da5-5c0a3a05155b"
+  },
+  {
+    "mode": "QUICK",
+    "scoreA": 15,
+    "dailyNumber": 4,
+    "teamB": [
+      "BeOpoqbsbvm7bPHe750z",
+      "6Hi00e3WYNYKkpGOWGin",
+      "eann8eWQgeeyTcFGf1sN",
+      "tXgucAtHhC6SAmRMjnhN",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "cA7Bi2baoQIpPU3ds2XP"
+    ],
+    "timestamp": 1784851318015,
+    "duration": 983,
+    "id": "221fb8a4-97ad-4194-91f6-c4571850e8dc",
+    "teamA": [
+      "ea05cbf4-1b85-4854-81e0-831a6382a24a",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "tVeC06SBJpoxsSfJt7JC",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "sQjjxhPf1RnFxBMwFzQW"
+    ],
+    "endTime": 1784851318015,
+    "date": "2026-07-23",
+    "scoreB": 14,
+    "startTime": 1784850334763,
+    "stats": [],
+    "winner": "A"
+  },
+  {
+    "scoreB": 15,
+    "dailyNumber": 5,
+    "date": "2026-07-23",
+    "teamB": [
+      "BeOpoqbsbvm7bPHe750z",
+      "4XLSTef8902WS81yNfO5",
+      "tXgucAtHhC6SAmRMjnhN",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "G0swJVSs3PZiQICRLl4Q",
+      "tVeC06SBJpoxsSfJt7JC"
+    ],
+    "winner": "B",
+    "timestamp": 1784852055447,
+    "duration": 723,
+    "id": "07ea7569-a77c-44b3-87fc-2263b525725f",
+    "endTime": 1784852055447,
+    "mode": "QUICK",
+    "teamA": [
+      "ea05cbf4-1b85-4854-81e0-831a6382a24a",
+      "re6SEokdd71hNgwlFa5r",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "KU0dYRNMb07YcGl9e0D6",
+      "99nsBpzNKtNXFG8l9Vnx"
+    ],
+    "scoreA": 12,
+    "stats": [],
+    "startTime": 1784851331031
+  },
+  {
+    "duration": 811,
+    "timestamp": 1784852876687,
+    "teamA": [
+      "ea05cbf4-1b85-4854-81e0-831a6382a24a",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "eann8eWQgeeyTcFGf1sN",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "tVeC06SBJpoxsSfJt7JC",
+      "sQjjxhPf1RnFxBMwFzQW"
+    ],
+    "scoreA": 12,
+    "date": "2026-07-23",
+    "stats": [],
+    "id": "17e4c019-88e6-4d17-b257-dfd5ed9b1724",
+    "mode": "QUICK",
+    "dailyNumber": 6,
+    "endTime": 1784852876687,
+    "startTime": 1784852064734,
+    "scoreB": 15,
+    "winner": "B",
+    "teamB": [
+      "BeOpoqbsbvm7bPHe750z",
+      "6Hi00e3WYNYKkpGOWGin",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "re6SEokdd71hNgwlFa5r"
+    ]
+  },
+  {
+    "endTime": 1784853739430,
+    "id": "63c52060-3064-4385-8a6f-4336c34f7074",
+    "stats": [],
+    "scoreA": 15,
+    "teamA": [
+      "ea05cbf4-1b85-4854-81e0-831a6382a24a",
+      "4XLSTef8902WS81yNfO5",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "KU0dYRNMb07YcGl9e0D6"
+    ],
+    "mode": "QUICK",
+    "timestamp": 1784853739430,
+    "date": "2026-07-23",
+    "winner": "A",
+    "duration": 853,
+    "teamB": [
+      "BeOpoqbsbvm7bPHe750z",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "eann8eWQgeeyTcFGf1sN",
+      "tXgucAtHhC6SAmRMjnhN",
+      "tVeC06SBJpoxsSfJt7JC",
+      "G0swJVSs3PZiQICRLl4Q"
+    ],
+    "dailyNumber": 7,
+    "scoreB": 12,
+    "startTime": 1784852885800
+  },
+  {
+    "mode": "QUICK",
+    "teamA": [
+      "ea05cbf4-1b85-4854-81e0-831a6382a24a",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "re6SEokdd71hNgwlFa5r",
+      "sQjjxhPf1RnFxBMwFzQW"
+    ],
+    "endTime": 1784854598856,
+    "startTime": 1784853763455,
+    "scoreA": 15,
+    "duration": 834,
+    "id": "c7f8ce9b-99b5-4a36-84f8-cb8220961b85",
+    "stats": [],
+    "timestamp": 1784854598856,
+    "scoreB": 14,
+    "date": "2026-07-23",
+    "dailyNumber": 8,
+    "winner": "A",
+    "teamB": [
+      "BeOpoqbsbvm7bPHe750z",
+      "6Hi00e3WYNYKkpGOWGin",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "4XLSTef8902WS81yNfO5",
+      "KU0dYRNMb07YcGl9e0D6",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7"
+    ]
+  },
+  {
+    "winner": "A",
+    "mode": "QUICK",
+    "stats": [],
+    "scoreB": 14,
+    "dailyNumber": 1,
+    "timestamp": 1785453482278,
+    "endTime": 1785453482278,
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "eann8eWQgeeyTcFGf1sN",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "8930e308-2405-420b-971b-43e37f6b7d5b",
+      "c09da5e0-c821-4a7d-b0a7-333004a71dc2"
+    ],
+    "id": "8b45c4d3-dbad-45f2-b27f-4ea2cb760102",
+    "teamB": [
+      "ea05cbf4-1b85-4854-81e0-831a6382a24a",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "OsohRuSKGB81XWXi7yZ2",
+      "dPjVqaSm2IanpFU5mqgB",
+      "WjRWvo8TEUx6kYvFuxO3"
+    ],
+    "date": "2026-07-30",
+    "scoreA": 15,
+    "startTime": 1785452512278,
+    "duration": 969
+  },
+  {
+    "winner": "A",
+    "timestamp": 1785454436558,
+    "stats": [],
+    "scoreB": 12,
+    "date": "2026-07-30",
+    "teamA": [
+      "ea05cbf4-1b85-4854-81e0-831a6382a24a",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "8930e308-2405-420b-971b-43e37f6b7d5b",
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d"
+    ],
+    "id": "4f6930b3-d842-4dac-af99-c572401ac2aa",
+    "mode": "QUICK",
+    "dailyNumber": 2,
+    "startTime": 1785453545102,
+    "teamB": [
+      "BeOpoqbsbvm7bPHe750z",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "eann8eWQgeeyTcFGf1sN",
+      "dPjVqaSm2IanpFU5mqgB",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7"
+    ],
+    "duration": 890,
+    "scoreA": 15,
+    "endTime": 1785454436558
+  },
+  {
+    "duration": 800,
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "eann8eWQgeeyTcFGf1sN",
+      "OsohRuSKGB81XWXi7yZ2",
+      "8930e308-2405-420b-971b-43e37f6b7d5b"
+    ],
+    "scoreA": 11,
+    "stats": [],
+    "id": "0a7a045d-7e02-4fe0-b366-f05d2b1fd0a0",
+    "startTime": 1785454447322,
+    "date": "2026-07-30",
+    "dailyNumber": 3,
+    "mode": "QUICK",
+    "scoreB": 15,
+    "timestamp": 1785455248015,
+    "teamB": [
+      "ea05cbf4-1b85-4854-81e0-831a6382a24a",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "dPjVqaSm2IanpFU5mqgB",
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d"
+    ],
+    "winner": "B",
+    "endTime": 1785455248015
+  },
+  {
+    "winner": "A",
+    "mode": "QUICK",
+    "stats": [],
+    "scoreB": 11,
+    "dailyNumber": 4,
+    "timestamp": 1785456161940,
+    "endTime": 1785456161940,
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "cA7Bi2baoQIpPU3ds2XP"
+    ],
+    "id": "69617e75-719f-4052-b2ea-4890ced869b0",
+    "teamB": [
+      "ea05cbf4-1b85-4854-81e0-831a6382a24a",
+      "OsohRuSKGB81XWXi7yZ2",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7"
+    ],
+    "date": "2026-07-30",
+    "scoreA": 15,
+    "startTime": 1785455350085,
+    "duration": 810
+  },
+  {
+    "teamB": [
+      "BeOpoqbsbvm7bPHe750z",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "WjRWvo8TEUx6kYvFuxO3"
+    ],
+    "date": "2026-07-30",
+    "winner": "B",
+    "startTime": 1785456189241,
+    "scoreB": 15,
+    "dailyNumber": 5,
+    "duration": 796,
+    "timestamp": 1785456986369,
+    "stats": [],
+    "scoreA": 12,
+    "teamA": [
+      "ea05cbf4-1b85-4854-81e0-831a6382a24a",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "eann8eWQgeeyTcFGf1sN",
+      "dPjVqaSm2IanpFU5mqgB",
+      "OsohRuSKGB81XWXi7yZ2"
+    ],
+    "mode": "QUICK",
+    "endTime": 1785456986369,
+    "id": "741d7ab3-102f-4c45-afdc-02a25c7bbf12"
+  },
+  {
+    "date": "2026-07-30",
+    "id": "020e44c4-e2f8-4cd0-9648-2ce224d7d8b9",
+    "scoreA": 15,
+    "timestamp": 1785458022800,
+    "duration": 673,
+    "teamB": [
+      "BeOpoqbsbvm7bPHe750z",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "cA7Bi2baoQIpPU3ds2XP"
+    ],
+    "dailyNumber": 6,
+    "startTime": 1785457349049,
+    "teamA": [
+      "c09da5e0-c821-4a7d-b0a7-333004a71dc2",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "eann8eWQgeeyTcFGf1sN",
+      "dPjVqaSm2IanpFU5mqgB",
+      "OsohRuSKGB81XWXi7yZ2",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7"
+    ],
+    "endTime": 1785458022800,
+    "mode": "QUICK",
+    "scoreB": 5,
+    "winner": "A",
+    "stats": []
+  },
+  {
+    "startTime": 1785458035616,
+    "endTime": 1785458800462,
+    "teamB": [
+      "BeOpoqbsbvm7bPHe750z",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "cA7Bi2baoQIpPU3ds2XP"
+    ],
+    "duration": 764,
+    "dailyNumber": 7,
+    "date": "2026-07-30",
+    "scoreA": 15,
+    "scoreB": 6,
+    "timestamp": 1785458800462,
+    "mode": "QUICK",
+    "winner": "A",
+    "teamA": [
+      "c09da5e0-c821-4a7d-b0a7-333004a71dc2",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "eann8eWQgeeyTcFGf1sN",
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "dPjVqaSm2IanpFU5mqgB",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7"
+    ],
+    "stats": [],
+    "id": "22945784-43f0-4b64-b7d3-4b09360a8d4c"
+  },
+  {
+    "stats": [],
+    "timestamp": 1785459596382,
+    "dailyNumber": 8,
+    "winner": "B",
+    "id": "452bcaba-999d-435b-ad03-021b73115332",
+    "scoreB": 15,
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "b1ce41de-b25a-451e-9b82-b4e868698882"
+    ],
+    "date": "2026-07-30",
+    "duration": 743,
+    "scoreA": 10,
+    "teamB": [
+      "c09da5e0-c821-4a7d-b0a7-333004a71dc2",
+      "eann8eWQgeeyTcFGf1sN",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "dPjVqaSm2IanpFU5mqgB",
+      "OsohRuSKGB81XWXi7yZ2",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7"
+    ],
+    "mode": "QUICK",
+    "startTime": 1785458852236,
+    "endTime": 1785459596382
+  },
+  {
+    "stats": [],
+    "duration": 856,
+    "timestamp": 1786662708807,
+    "scoreA": 12,
+    "date": "2026-08-13",
+    "teamA": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "RbnH4XsBdgaPfUYUiah0",
+      "dPjVqaSm2IanpFU5mqgB",
+      "8930e308-2405-420b-971b-43e37f6b7d5b",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7"
+    ],
+    "id": "33f21d0b-2cbd-468a-b2b3-0abceaa25449",
+    "winner": "B",
+    "dailyNumber": 1,
+    "scoreB": 15,
+    "teamB": [
+      "ea05cbf4-1b85-4854-81e0-831a6382a24a",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "eann8eWQgeeyTcFGf1sN",
+      "G0swJVSs3PZiQICRLl4Q",
+      "WjRWvo8TEUx6kYvFuxO3"
+    ],
+    "mode": "QUICK",
+    "endTime": 1786662708807,
+    "startTime": 1786661851129
+  },
+  {
+    "stats": [],
+    "id": "5904f395-451a-4bb4-b275-050a078c37c5",
+    "mode": "QUICK",
+    "timestamp": 1786663535824,
+    "scoreA": 12,
+    "endTime": 1786663535824,
+    "duration": 716,
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "re6SEokdd71hNgwlFa5r",
+      "RbnH4XsBdgaPfUYUiah0",
+      "8930e308-2405-420b-971b-43e37f6b7d5b",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7"
+    ],
+    "winner": "B",
+    "scoreB": 15,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "tVeC06SBJpoxsSfJt7JC",
+      "eann8eWQgeeyTcFGf1sN",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "QZxOlfOoxwj4PWxgxcBj",
+      "G0swJVSs3PZiQICRLl4Q"
+    ],
+    "dailyNumber": 2,
+    "date": "2026-08-13",
+    "startTime": 1786662818857
+  },
+  {
+    "duration": 904,
+    "teamB": [
+      "BeOpoqbsbvm7bPHe750z",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "Tg4CC8JaOeu0gH6rouaF"
+    ],
+    "id": "8a18a020-d311-4ca8-8365-c9e468e2161e",
+    "timestamp": 1786664455546,
+    "date": "2026-08-13",
+    "scoreA": 15,
+    "winner": "A",
+    "mode": "QUICK",
+    "endTime": 1786664455546,
+    "stats": [],
+    "scoreB": 12,
+    "dailyNumber": 3,
+    "teamA": [
+      "ea05cbf4-1b85-4854-81e0-831a6382a24a",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "dPjVqaSm2IanpFU5mqgB",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "QZxOlfOoxwj4PWxgxcBj",
+      "re6SEokdd71hNgwlFa5r"
+    ],
+    "startTime": 1786663550865
+  },
+  {
+    "scoreA": 15,
+    "date": "2026-08-13",
+    "duration": 1005,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "eann8eWQgeeyTcFGf1sN",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "G0swJVSs3PZiQICRLl4Q"
+    ],
+    "endTime": 1786665478357,
+    "timestamp": 1786665478357,
+    "dailyNumber": 4,
+    "id": "d89504ca-e724-4a64-a3b1-04b99c4e5aba",
+    "stats": [],
+    "teamA": [
+      "ea05cbf4-1b85-4854-81e0-831a6382a24a",
+      "tVeC06SBJpoxsSfJt7JC",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "RbnH4XsBdgaPfUYUiah0",
+      "8930e308-2405-420b-971b-43e37f6b7d5b"
+    ],
+    "startTime": 1786664472451,
+    "winner": "A",
+    "mode": "QUICK",
+    "scoreB": 13
+  },
+  {
+    "scoreA": 11,
+    "id": "865484e3-08e8-42cd-88a1-5cb691cee513",
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "dPjVqaSm2IanpFU5mqgB",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "QZxOlfOoxwj4PWxgxcBj"
+    ],
+    "duration": 765,
+    "mode": "QUICK",
+    "dailyNumber": 5,
+    "startTime": 1786665492997,
+    "stats": [],
+    "winner": "B",
+    "scoreB": 15,
+    "date": "2026-08-13",
+    "timestamp": 1786666258863,
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "re6SEokdd71hNgwlFa5r",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "tVeC06SBJpoxsSfJt7JC",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "G0swJVSs3PZiQICRLl4Q"
+    ],
+    "endTime": 1786666258863
+  },
+  {
+    "startTime": 1786666274871,
+    "duration": 789,
+    "dailyNumber": 6,
+    "date": "2026-08-13",
+    "id": "d8ae8704-2b14-4082-b0e8-8e779ef566fa",
+    "teamB": [
+      "BeOpoqbsbvm7bPHe750z",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "eann8eWQgeeyTcFGf1sN",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "dPjVqaSm2IanpFU5mqgB",
+      "RbnH4XsBdgaPfUYUiah0"
+    ],
+    "scoreA": 11,
+    "mode": "QUICK",
+    "scoreB": 15,
+    "endTime": 1786667064649,
+    "teamA": [
+      "ea05cbf4-1b85-4854-81e0-831a6382a24a",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "tXgucAtHhC6SAmRMjnhN",
+      "8930e308-2405-420b-971b-43e37f6b7d5b"
+    ],
+    "winner": "B",
+    "timestamp": 1786667064649,
+    "stats": []
+  },
+  {
+    "scoreA": 15,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "G0swJVSs3PZiQICRLl4Q",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "tVeC06SBJpoxsSfJt7JC"
+    ],
+    "startTime": 1786667081408,
+    "endTime": 1786667826130,
+    "mode": "QUICK",
+    "stats": [],
+    "date": "2026-08-13",
+    "timestamp": 1786667826130,
+    "duration": 744,
+    "id": "e2746fb8-96ce-4806-8ebe-ed748f78f1f1",
+    "dailyNumber": 7,
+    "teamA": [
+      "ea05cbf4-1b85-4854-81e0-831a6382a24a",
+      "re6SEokdd71hNgwlFa5r",
+      "tXgucAtHhC6SAmRMjnhN",
+      "QZxOlfOoxwj4PWxgxcBj",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "mQ4ivYdcOmxwTV1eZ3Sp"
+    ],
+    "winner": "A",
+    "scoreB": 11
+  },
+  {
+    "date": "2026-08-13",
+    "id": "78339f1d-7da7-4579-a536-62af75781b29",
+    "scoreB": 11,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "dPjVqaSm2IanpFU5mqgB",
+      "WjRWvo8TEUx6kYvFuxO3"
+    ],
+    "endTime": 1786668712275,
+    "timestamp": 1786668712275,
+    "winner": "A",
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "eann8eWQgeeyTcFGf1sN",
+      "tXgucAtHhC6SAmRMjnhN",
+      "RbnH4XsBdgaPfUYUiah0",
+      "8930e308-2405-420b-971b-43e37f6b7d5b"
+    ],
+    "duration": 866,
+    "scoreA": 15,
+    "mode": "QUICK",
+    "startTime": 1786667844753,
+    "stats": [],
+    "dailyNumber": 8
+  },
+  {
+    "timestamp": 1786669543298,
+    "scoreB": 15,
+    "date": "2026-08-13",
+    "winner": "B",
+    "teamB": [
+      "ea05cbf4-1b85-4854-81e0-831a6382a24a",
+      "tVeC06SBJpoxsSfJt7JC",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "G0swJVSs3PZiQICRLl4Q",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7"
+    ],
+    "id": "8ae715d3-0844-4442-82f4-cb0823307320",
+    "duration": 813,
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "tXgucAtHhC6SAmRMjnhN",
+      "QZxOlfOoxwj4PWxgxcBj",
+      "re6SEokdd71hNgwlFa5r",
+      "Tg4CC8JaOeu0gH6rouaF"
+    ],
+    "startTime": 1786668728708,
+    "mode": "QUICK",
+    "endTime": 1786669543298,
+    "dailyNumber": 9,
+    "scoreA": 14,
+    "stats": []
+  },
+  {
+    "winner": "B",
+    "timestamp": 1787256021141,
+    "mode": "QUICK",
+    "stats": [],
+    "scoreB": 15,
+    "endTime": 1787256021141,
+    "teamA": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "4XLSTef8902WS81yNfO5",
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "KU0dYRNMb07YcGl9e0D6",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "6Hi00e3WYNYKkpGOWGin"
+    ],
+    "id": "2b978504-7ebd-408f-8367-76635eae9932",
+    "startTime": 1787255942747,
+    "teamB": [
+      "ea05cbf4-1b85-4854-81e0-831a6382a24a",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "OsohRuSKGB81XWXi7yZ2",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "cA7Bi2baoQIpPU3ds2XP"
+    ],
+    "date": "2026-08-20",
+    "dailyNumber": 10,
+    "scoreA": 10,
+    "duration": 77
+  },
+  {
+    "teamB": [
+      {
+        "name": "Bibi",
+        "id": "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9"
+      },
+      {
+        "name": "Juliana",
+        "id": "tVeC06SBJpoxsSfJt7JC"
+      },
+      {
+        "name": "Marcelo",
+        "id": "3d1624dc-44cd-4186-81c2-a88ed2a198da"
+      },
+      {
+        "id": "OsohRuSKGB81XWXi7yZ2",
+        "name": "Flavinha"
+      },
+      {
+        "name": "Anne",
+        "id": "ba31d793-791f-4e25-b0e7-28579cb691e7"
+      },
+      {
+        "name": "Wandinha",
+        "id": "G0swJVSs3PZiQICRLl4Q"
+      }
+    ],
+    "scoreA": 25,
+    "teamA": [
+      {
+        "name": "Marcos Andre",
+        "id": "e62c3a61-58b0-4dc5-9bd2-8af415f27dde"
+      },
+      {
+        "name": "Beth",
+        "id": "cA7Bi2baoQIpPU3ds2XP"
+      },
+      {
+        "name": "Rodney",
+        "id": "eann8eWQgeeyTcFGf1sN"
+      },
+      {
+        "name": "Caluca",
+        "id": "b1ce41de-b25a-451e-9b82-b4e868698882"
+      },
+      {
+        "name": "Leyla",
+        "id": "sQjjxhPf1RnFxBMwFzQW"
+      },
+      {
+        "name": "Paulo Fonseca",
+        "id": "RbnH4XsBdgaPfUYUiah0"
+      }
+    ],
+    "timestamp": 1787263200000,
+    "winner": "A",
+    "dailyNumber": 11,
+    "scoreB": 23,
+    "date": "2026-08-20",
+    "id": "K6qpNR4QRxMZyjm5s4Kv"
+  },
+  {
+    "scoreB": 23,
+    "dailyNumber": 12,
+    "timestamp": 1787263500000,
+    "date": "2026-08-20",
+    "winner": "A",
+    "teamB": [
+      {
+        "name": "Marcelo",
+        "id": "3d1624dc-44cd-4186-81c2-a88ed2a198da"
+      },
+      {
+        "name": "Jô",
+        "id": "Tg4CC8JaOeu0gH6rouaF"
+      },
+      {
+        "name": "Rozi",
+        "id": "BeOpoqbsbvm7bPHe750z"
+      },
+      {
+        "id": "cA7Bi2baoQIpPU3ds2XP",
+        "name": "Beth"
+      },
+      {
+        "name": "Flavinha",
+        "id": "OsohRuSKGB81XWXi7yZ2"
+      },
+      {
+        "name": "Mari",
+        "id": "dd379ddd-5315-412c-ae4d-5848be76483b"
+      }
+    ],
+    "scoreA": 25,
+    "teamA": [
+      {
+        "name": "Leyla",
+        "id": "sQjjxhPf1RnFxBMwFzQW"
+      },
+      {
+        "id": "WjRWvo8TEUx6kYvFuxO3",
+        "name": "Ivana"
+      },
+      {
+        "name": "Geraldinho",
+        "id": "4XLSTef8902WS81yNfO5"
+      },
+      {
+        "name": "Juliana",
+        "id": "tVeC06SBJpoxsSfJt7JC"
+      },
+      {
+        "id": "b1ce41de-b25a-451e-9b82-b4e868698882",
+        "name": "Caluca"
+      },
+      {
+        "id": "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+        "name": "Marcos Andre"
+      }
+    ],
+    "id": "HsXHrIwhSwXdQa9GvWJT"
+  },
+  {
+    "scoreA": 25,
+    "teamB": [
+      {
+        "name": "Leyla",
+        "id": "sQjjxhPf1RnFxBMwFzQW"
+      },
+      {
+        "name": "Anne",
+        "id": "ba31d793-791f-4e25-b0e7-28579cb691e7"
+      },
+      {
+        "name": "Geraldinho",
+        "id": "4XLSTef8902WS81yNfO5"
+      },
+      {
+        "name": "Jô",
+        "id": "Tg4CC8JaOeu0gH6rouaF"
+      },
+      {
+        "name": "Paulo Fonseca",
+        "id": "RbnH4XsBdgaPfUYUiah0"
+      },
+      {
+        "name": "Juliana",
+        "id": "tVeC06SBJpoxsSfJt7JC"
+      }
+    ],
+    "winner": "A",
+    "teamA": [
+      {
+        "name": "Mari",
+        "id": "dd379ddd-5315-412c-ae4d-5848be76483b"
+      },
+      {
+        "id": "QcGEmh4rFZnmFKNlpdV4",
+        "name": "Fatinha"
+      },
+      {
+        "name": "Rodney",
+        "id": "eann8eWQgeeyTcFGf1sN"
+      },
+      {
+        "id": "BeOpoqbsbvm7bPHe750z",
+        "name": "Rozi"
+      },
+      {
+        "name": "Marcos Andre",
+        "id": "e62c3a61-58b0-4dc5-9bd2-8af415f27dde"
+      },
+      {
+        "id": "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+        "name": "Bibi"
+      }
+    ],
+    "date": "2026-08-20",
+    "timestamp": 1787263800000,
+    "dailyNumber": 13,
+    "scoreB": 23,
+    "id": "Ufoi7X5z4eD32726oQ6V"
+  },
+  {
+    "scoreB": 23,
+    "date": "2026-08-20",
+    "winner": "A",
+    "dailyNumber": 14,
+    "teamA": [
+      {
+        "id": "QcGEmh4rFZnmFKNlpdV4",
+        "name": "Fatinha"
+      },
+      {
+        "name": "Mari",
+        "id": "dd379ddd-5315-412c-ae4d-5848be76483b"
+      },
+      {
+        "name": "Bibi",
+        "id": "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9"
+      },
+      {
+        "name": "Rodney",
+        "id": "eann8eWQgeeyTcFGf1sN"
+      },
+      {
+        "id": "ba31d793-791f-4e25-b0e7-28579cb691e7",
+        "name": "Anne"
+      },
+      {
+        "id": "G0swJVSs3PZiQICRLl4Q",
+        "name": "Wandinha"
+      }
+    ],
+    "timestamp": 1787264100000,
+    "scoreA": 25,
+    "teamB": [
+      {
+        "name": "Rozi",
+        "id": "BeOpoqbsbvm7bPHe750z"
+      },
+      {
+        "name": "Marcelo",
+        "id": "3d1624dc-44cd-4186-81c2-a88ed2a198da"
+      },
+      {
+        "name": "Juliana",
+        "id": "tVeC06SBJpoxsSfJt7JC"
+      },
+      {
+        "name": "Paulo Fonseca",
+        "id": "RbnH4XsBdgaPfUYUiah0"
+      },
+      {
+        "id": "sQjjxhPf1RnFxBMwFzQW",
+        "name": "Leyla"
+      },
+      {
+        "id": "WjRWvo8TEUx6kYvFuxO3",
+        "name": "Ivana"
+      }
+    ],
+    "id": "2odkMNM50sABAhibfGaP"
+  },
+  {
+    "dailyNumber": 15,
+    "winner": "A",
+    "scoreA": 25,
+    "date": "2026-08-20",
+    "teamA": [
+      {
+        "name": "Mari",
+        "id": "dd379ddd-5315-412c-ae4d-5848be76483b"
+      },
+      {
+        "id": "eann8eWQgeeyTcFGf1sN",
+        "name": "Rodney"
+      },
+      {
+        "name": "Beth",
+        "id": "cA7Bi2baoQIpPU3ds2XP"
+      },
+      {
+        "id": "QcGEmh4rFZnmFKNlpdV4",
+        "name": "Fatinha"
+      },
+      {
+        "id": "4XLSTef8902WS81yNfO5",
+        "name": "Geraldinho"
+      },
+      {
+        "name": "Juliana",
+        "id": "tVeC06SBJpoxsSfJt7JC"
+      }
+    ],
+    "scoreB": 23,
+    "teamB": [
+      {
+        "name": "Marcelo",
+        "id": "3d1624dc-44cd-4186-81c2-a88ed2a198da"
+      },
+      {
+        "id": "G0swJVSs3PZiQICRLl4Q",
+        "name": "Wandinha"
+      },
+      {
+        "id": "b1ce41de-b25a-451e-9b82-b4e868698882",
+        "name": "Caluca"
+      },
+      {
+        "id": "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+        "name": "Bibi"
+      },
+      {
+        "id": "ba31d793-791f-4e25-b0e7-28579cb691e7",
+        "name": "Anne"
+      },
+      {
+        "id": "Tg4CC8JaOeu0gH6rouaF",
+        "name": "Jô"
+      }
+    ],
+    "timestamp": 1787264400000,
+    "id": "lRW2McB7yVqzMngnTuzR"
+  },
+  {
+    "timestamp": 1787264700000,
+    "teamB": [
+      {
+        "name": "Flavinha",
+        "id": "OsohRuSKGB81XWXi7yZ2"
+      },
+      {
+        "id": "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+        "name": "Marcos Andre"
+      },
+      {
+        "id": "Tg4CC8JaOeu0gH6rouaF",
+        "name": "Jô"
+      },
+      {
+        "name": "Fatinha",
+        "id": "QcGEmh4rFZnmFKNlpdV4"
+      },
+      {
+        "name": "Geraldinho",
+        "id": "4XLSTef8902WS81yNfO5"
+      },
+      {
+        "id": "RbnH4XsBdgaPfUYUiah0",
+        "name": "Paulo Fonseca"
+      }
+    ],
+    "scoreB": 23,
+    "teamA": [
+      {
+        "name": "Juliana",
+        "id": "tVeC06SBJpoxsSfJt7JC"
+      },
+      {
+        "name": "Mari",
+        "id": "dd379ddd-5315-412c-ae4d-5848be76483b"
+      },
+      {
+        "name": "Wandinha",
+        "id": "G0swJVSs3PZiQICRLl4Q"
+      },
+      {
+        "name": "Beth",
+        "id": "cA7Bi2baoQIpPU3ds2XP"
+      },
+      {
+        "name": "Ivana",
+        "id": "WjRWvo8TEUx6kYvFuxO3"
+      },
+      {
+        "name": "Leyla",
+        "id": "sQjjxhPf1RnFxBMwFzQW"
+      }
+    ],
+    "dailyNumber": 16,
+    "scoreA": 25,
+    "date": "2026-08-20",
+    "winner": "A",
+    "id": "pUeRNa9vTWujtE6xhs2j"
+  },
+  {
+    "winner": "A",
+    "scoreA": 25,
+    "timestamp": 1787265000000,
+    "date": "2026-08-20",
+    "scoreB": 23,
+    "teamB": [
+      {
+        "name": "Flavinha",
+        "id": "OsohRuSKGB81XWXi7yZ2"
+      },
+      {
+        "id": "QcGEmh4rFZnmFKNlpdV4",
+        "name": "Fatinha"
+      },
+      {
+        "id": "b1ce41de-b25a-451e-9b82-b4e868698882",
+        "name": "Caluca"
+      },
+      {
+        "name": "Bibi",
+        "id": "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9"
+      },
+      {
+        "name": "Ivana",
+        "id": "WjRWvo8TEUx6kYvFuxO3"
+      },
+      {
+        "name": "Rodney",
+        "id": "eann8eWQgeeyTcFGf1sN"
+      }
+    ],
+    "dailyNumber": 17,
+    "teamA": [
+      {
+        "name": "Marcos Andre",
+        "id": "e62c3a61-58b0-4dc5-9bd2-8af415f27dde"
+      },
+      {
+        "name": "Wandinha",
+        "id": "G0swJVSs3PZiQICRLl4Q"
+      },
+      {
+        "name": "Paulo Fonseca",
+        "id": "RbnH4XsBdgaPfUYUiah0"
+      },
+      {
+        "name": "Leyla",
+        "id": "sQjjxhPf1RnFxBMwFzQW"
+      },
+      {
+        "name": "Mari",
+        "id": "dd379ddd-5315-412c-ae4d-5848be76483b"
+      },
+      {
+        "id": "ba31d793-791f-4e25-b0e7-28579cb691e7",
+        "name": "Anne"
+      }
+    ],
+    "id": "KlJRWIx7y9c07VtoFSVb"
+  },
+  {
+    "scoreB": 23,
+    "timestamp": 1787265300000,
+    "teamB": [
+      {
+        "id": "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+        "name": "Marcos Andre"
+      },
+      {
+        "name": "Flavinha",
+        "id": "OsohRuSKGB81XWXi7yZ2"
+      },
+      {
+        "name": "Paulo Fonseca",
+        "id": "RbnH4XsBdgaPfUYUiah0"
+      },
+      {
+        "id": "cA7Bi2baoQIpPU3ds2XP",
+        "name": "Beth"
+      },
+      {
+        "id": "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+        "name": "Marcelo"
+      },
+      {
+        "id": "BeOpoqbsbvm7bPHe750z",
+        "name": "Rozi"
+      }
+    ],
+    "winner": "A",
+    "teamA": [
+      {
+        "id": "WjRWvo8TEUx6kYvFuxO3",
+        "name": "Ivana"
+      },
+      {
+        "id": "b1ce41de-b25a-451e-9b82-b4e868698882",
+        "name": "Caluca"
+      },
+      {
+        "name": "Bibi",
+        "id": "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9"
+      },
+      {
+        "id": "Tg4CC8JaOeu0gH6rouaF",
+        "name": "Jô"
+      },
+      {
+        "id": "QcGEmh4rFZnmFKNlpdV4",
+        "name": "Fatinha"
+      },
+      {
+        "id": "4XLSTef8902WS81yNfO5",
+        "name": "Geraldinho"
+      }
+    ],
+    "scoreA": 25,
+    "dailyNumber": 18,
+    "date": "2026-08-20",
+    "id": "yB4EPNBsfKhNosaiJvXn"
+  },
+  {
+    "scoreB": 23,
+    "date": "2026-08-20",
+    "dailyNumber": 19,
+    "teamB": [
+      {
+        "id": "eann8eWQgeeyTcFGf1sN",
+        "name": "Rodney"
+      },
+      {
+        "name": "Rozi",
+        "id": "BeOpoqbsbvm7bPHe750z"
+      },
+      {
+        "name": "Paulo Fonseca",
+        "id": "RbnH4XsBdgaPfUYUiah0"
+      },
+      {
+        "id": "Tg4CC8JaOeu0gH6rouaF",
+        "name": "Jô"
+      },
+      {
+        "name": "Wandinha",
+        "id": "G0swJVSs3PZiQICRLl4Q"
+      },
+      {
+        "id": "OsohRuSKGB81XWXi7yZ2",
+        "name": "Flavinha"
+      }
+    ],
+    "winner": "A",
+    "timestamp": 1787265600000,
+    "scoreA": 25,
+    "teamA": [
+      {
+        "id": "ba31d793-791f-4e25-b0e7-28579cb691e7",
+        "name": "Anne"
+      },
+      {
+        "id": "b1ce41de-b25a-451e-9b82-b4e868698882",
+        "name": "Caluca"
+      },
+      {
+        "name": "Ivana",
+        "id": "WjRWvo8TEUx6kYvFuxO3"
+      },
+      {
+        "id": "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+        "name": "Marcelo"
+      },
+      {
+        "id": "cA7Bi2baoQIpPU3ds2XP",
+        "name": "Beth"
+      },
+      {
+        "name": "Geraldinho",
+        "id": "4XLSTef8902WS81yNfO5"
+      }
+    ],
+    "id": "d8qfyBL5V1I98ZSD3hv3"
+  },
+  {
+    "mode": "QUICK",
+    "timestamp": 1787833809000,
+    "teamA": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "8930e308-2405-420b-971b-43e37f6b7d5b",
+      "KU0dYRNMb07YcGl9e0D6",
+      "6Hi00e3WYNYKkpGOWGin",
+      "Tg4CC8JaOeu0gH6rouaF"
+    ],
+    "endTime": 1787833809000,
+    "scoreA": 14,
+    "duration": 11494,
+    "stats": [],
+    "dailyNumber": 20,
+    "startTime": 1787822313986,
+    "scoreB": 15,
+    "date": "2026-08-27",
+    "id": "6e6cb075-b080-4eb7-bf95-89da34560cbe",
+    "winner": "B",
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "4XLSTef8902WS81yNfO5",
+      "RbnH4XsBdgaPfUYUiah0",
+      "OsohRuSKGB81XWXi7yZ2",
+      "QZxOlfOoxwj4PWxgxcBj"
+    ]
+  },
+  {
+    "winner": "A",
+    "date": "2026-08-27",
+    "dailyNumber": 21,
+    "scoreA": 25,
+    "timestamp": 1787868000000,
+    "scoreB": 23,
+    "teamA": [
+      {
+        "id": "OsohRuSKGB81XWXi7yZ2",
+        "name": "Flavinha"
+      },
+      {
+        "name": "Marcos Andre",
+        "id": "e62c3a61-58b0-4dc5-9bd2-8af415f27dde"
+      },
+      {
+        "id": "cA7Bi2baoQIpPU3ds2XP",
+        "name": "Beth"
+      },
+      {
+        "id": "KU0dYRNMb07YcGl9e0D6",
+        "name": "Alê"
+      },
+      {
+        "name": "Thiago",
+        "id": "tXgucAtHhC6SAmRMjnhN"
+      },
+      {
+        "name": "Caluca",
+        "id": "b1ce41de-b25a-451e-9b82-b4e868698882"
+      }
+    ],
+    "teamB": [
+      {
+        "id": "sQjjxhPf1RnFxBMwFzQW",
+        "name": "Leyla"
+      },
+      {
+        "name": "Rodney",
+        "id": "eann8eWQgeeyTcFGf1sN"
+      },
+      {
+        "name": "Betinha",
+        "id": "99nsBpzNKtNXFG8l9Vnx"
+      },
+      {
+        "id": "BeOpoqbsbvm7bPHe750z",
+        "name": "Rozi"
+      },
+      {
+        "id": "QcGEmh4rFZnmFKNlpdV4",
+        "name": "Fatinha"
+      },
+      {
+        "id": "re6SEokdd71hNgwlFa5r",
+        "name": "Marcleíde"
+      }
+    ],
+    "id": "aDN2RuvOCvXRcM4sD3Nd"
+  },
+  {
+    "date": "2026-08-27",
+    "winner": "A",
+    "dailyNumber": 22,
+    "scoreA": 25,
+    "scoreB": 23,
+    "timestamp": 1787868300000,
+    "teamA": [
+      {
+        "id": "QcGEmh4rFZnmFKNlpdV4",
+        "name": "Fatinha"
+      },
+      {
+        "id": "WjRWvo8TEUx6kYvFuxO3",
+        "name": "Ivana"
+      },
+      {
+        "name": "Jô",
+        "id": "Tg4CC8JaOeu0gH6rouaF"
+      },
+      {
+        "id": "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+        "name": "Marcelo"
+      },
+      {
+        "name": "Caluca",
+        "id": "b1ce41de-b25a-451e-9b82-b4e868698882"
+      },
+      {
+        "id": "sQjjxhPf1RnFxBMwFzQW",
+        "name": "Leyla"
+      }
+    ],
+    "teamB": [
+      {
+        "id": "tXgucAtHhC6SAmRMjnhN",
+        "name": "Thiago"
+      },
+      {
+        "name": "Rozi",
+        "id": "BeOpoqbsbvm7bPHe750z"
+      },
+      {
+        "name": "Paulo Henrique",
+        "id": "xAu4cy3yJRjRbnF3Nng7"
+      },
+      {
+        "name": "Marcos Andre",
+        "id": "e62c3a61-58b0-4dc5-9bd2-8af415f27dde"
+      },
+      {
+        "name": "Paulo Fonseca",
+        "id": "RbnH4XsBdgaPfUYUiah0"
+      },
+      {
+        "id": "re6SEokdd71hNgwlFa5r",
+        "name": "Marcleíde"
+      }
+    ],
+    "id": "DXG4tP7x76bkVPPuwz7i"
+  },
+  {
+    "teamA": [
+      {
+        "name": "Rozi",
+        "id": "BeOpoqbsbvm7bPHe750z"
+      },
+      {
+        "name": "Thiago",
+        "id": "tXgucAtHhC6SAmRMjnhN"
+      },
+      {
+        "name": "Anne",
+        "id": "ba31d793-791f-4e25-b0e7-28579cb691e7"
+      },
+      {
+        "name": "Beth",
+        "id": "cA7Bi2baoQIpPU3ds2XP"
+      },
+      {
+        "name": "Ivana",
+        "id": "WjRWvo8TEUx6kYvFuxO3"
+      },
+      {
+        "name": "Marcelo",
+        "id": "3d1624dc-44cd-4186-81c2-a88ed2a198da"
+      }
+    ],
+    "teamB": [
+      {
+        "id": "OsohRuSKGB81XWXi7yZ2",
+        "name": "Flavinha"
+      },
+      {
+        "name": "Karina",
+        "id": "mQ4ivYdcOmxwTV1eZ3Sp"
+      },
+      {
+        "name": "Alê",
+        "id": "KU0dYRNMb07YcGl9e0D6"
+      },
+      {
+        "name": "Fatinha",
+        "id": "QcGEmh4rFZnmFKNlpdV4"
+      },
+      {
+        "name": "Paulo Fonseca",
+        "id": "RbnH4XsBdgaPfUYUiah0"
+      },
+      {
+        "id": "Tg4CC8JaOeu0gH6rouaF",
+        "name": "Jô"
+      }
+    ],
+    "date": "2026-08-27",
+    "scoreB": 23,
+    "scoreA": 25,
+    "timestamp": 1787868600000,
+    "dailyNumber": 23,
+    "winner": "A",
+    "id": "zrHHir45aAfzT1iQFXMA"
+  },
+  {
+    "winner": "A",
+    "date": "2026-08-27",
+    "scoreA": 25,
+    "timestamp": 1787868900000,
+    "scoreB": 23,
+    "teamA": [
+      {
+        "name": "Marcos Andre",
+        "id": "e62c3a61-58b0-4dc5-9bd2-8af415f27dde"
+      },
+      {
+        "name": "Paulo Henrique",
+        "id": "xAu4cy3yJRjRbnF3Nng7"
+      },
+      {
+        "name": "Ivana",
+        "id": "WjRWvo8TEUx6kYvFuxO3"
+      },
+      {
+        "id": "KU0dYRNMb07YcGl9e0D6",
+        "name": "Alê"
+      },
+      {
+        "name": "Betinha",
+        "id": "99nsBpzNKtNXFG8l9Vnx"
+      },
+      {
+        "name": "Anne",
+        "id": "ba31d793-791f-4e25-b0e7-28579cb691e7"
+      }
+    ],
+    "dailyNumber": 24,
+    "teamB": [
+      {
+        "id": "eann8eWQgeeyTcFGf1sN",
+        "name": "Rodney"
+      },
+      {
+        "name": "Rozi",
+        "id": "BeOpoqbsbvm7bPHe750z"
+      },
+      {
+        "name": "Paulo Fonseca",
+        "id": "RbnH4XsBdgaPfUYUiah0"
+      },
+      {
+        "id": "OsohRuSKGB81XWXi7yZ2",
+        "name": "Flavinha"
+      },
+      {
+        "id": "sQjjxhPf1RnFxBMwFzQW",
+        "name": "Leyla"
+      },
+      {
+        "name": "Beth",
+        "id": "cA7Bi2baoQIpPU3ds2XP"
+      }
+    ],
+    "id": "GlyYgpEuoznO8MNYucoJ"
+  },
+  {
+    "scoreB": 23,
+    "dailyNumber": 25,
+    "teamB": [
+      {
+        "name": "Thiago",
+        "id": "tXgucAtHhC6SAmRMjnhN"
+      },
+      {
+        "id": "OsohRuSKGB81XWXi7yZ2",
+        "name": "Flavinha"
+      },
+      {
+        "name": "Paulo Henrique",
+        "id": "xAu4cy3yJRjRbnF3Nng7"
+      },
+      {
+        "name": "Rozi",
+        "id": "BeOpoqbsbvm7bPHe750z"
+      },
+      {
+        "name": "Beth",
+        "id": "cA7Bi2baoQIpPU3ds2XP"
+      },
+      {
+        "name": "Jô",
+        "id": "Tg4CC8JaOeu0gH6rouaF"
+      }
+    ],
+    "timestamp": 1787869200000,
+    "winner": "A",
+    "teamA": [
+      {
+        "name": "Rodney",
+        "id": "eann8eWQgeeyTcFGf1sN"
+      },
+      {
+        "name": "Anne",
+        "id": "ba31d793-791f-4e25-b0e7-28579cb691e7"
+      },
+      {
+        "name": "Geraldinho",
+        "id": "4XLSTef8902WS81yNfO5"
+      },
+      {
+        "id": "mQ4ivYdcOmxwTV1eZ3Sp",
+        "name": "Karina"
+      },
+      {
+        "name": "Betinha",
+        "id": "99nsBpzNKtNXFG8l9Vnx"
+      },
+      {
+        "id": "QcGEmh4rFZnmFKNlpdV4",
+        "name": "Fatinha"
+      }
+    ],
+    "date": "2026-08-27",
+    "scoreA": 25,
+    "id": "ROZ83VJ9bwetVRKouZMI"
+  },
+  {
+    "dailyNumber": 26,
+    "winner": "A",
+    "scoreA": 25,
+    "timestamp": 1787869500000,
+    "scoreB": 23,
+    "teamB": [
+      {
+        "id": "sQjjxhPf1RnFxBMwFzQW",
+        "name": "Leyla"
+      },
+      {
+        "id": "KU0dYRNMb07YcGl9e0D6",
+        "name": "Alê"
+      },
+      {
+        "name": "Rozi",
+        "id": "BeOpoqbsbvm7bPHe750z"
+      },
+      {
+        "name": "Caluca",
+        "id": "b1ce41de-b25a-451e-9b82-b4e868698882"
+      },
+      {
+        "name": "Beth",
+        "id": "cA7Bi2baoQIpPU3ds2XP"
+      },
+      {
+        "name": "Paulo Fonseca",
+        "id": "RbnH4XsBdgaPfUYUiah0"
+      }
+    ],
+    "date": "2026-08-27",
+    "teamA": [
+      {
+        "id": "xAu4cy3yJRjRbnF3Nng7",
+        "name": "Paulo Henrique"
+      },
+      {
+        "id": "4XLSTef8902WS81yNfO5",
+        "name": "Geraldinho"
+      },
+      {
+        "id": "QcGEmh4rFZnmFKNlpdV4",
+        "name": "Fatinha"
+      },
+      {
+        "id": "mQ4ivYdcOmxwTV1eZ3Sp",
+        "name": "Karina"
+      },
+      {
+        "name": "Betinha",
+        "id": "99nsBpzNKtNXFG8l9Vnx"
+      },
+      {
+        "id": "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+        "name": "Marcelo"
+      }
+    ],
+    "id": "Dd0bzskMpUoGE9WTNmoZ"
+  },
+  {
+    "teamB": [
+      {
+        "name": "Anne",
+        "id": "ba31d793-791f-4e25-b0e7-28579cb691e7"
+      },
+      {
+        "name": "Karina",
+        "id": "mQ4ivYdcOmxwTV1eZ3Sp"
+      },
+      {
+        "name": "Marcelo",
+        "id": "3d1624dc-44cd-4186-81c2-a88ed2a198da"
+      },
+      {
+        "name": "Rozi",
+        "id": "BeOpoqbsbvm7bPHe750z"
+      },
+      {
+        "name": "Marcos Andre",
+        "id": "e62c3a61-58b0-4dc5-9bd2-8af415f27dde"
+      },
+      {
+        "name": "Geraldinho",
+        "id": "4XLSTef8902WS81yNfO5"
+      }
+    ],
+    "scoreB": 23,
+    "teamA": [
+      {
+        "name": "Marcleíde",
+        "id": "re6SEokdd71hNgwlFa5r"
+      },
+      {
+        "name": "Fatinha",
+        "id": "QcGEmh4rFZnmFKNlpdV4"
+      },
+      {
+        "id": "xAu4cy3yJRjRbnF3Nng7",
+        "name": "Paulo Henrique"
+      },
+      {
+        "id": "RbnH4XsBdgaPfUYUiah0",
+        "name": "Paulo Fonseca"
+      },
+      {
+        "name": "Ivana",
+        "id": "WjRWvo8TEUx6kYvFuxO3"
+      },
+      {
+        "id": "sQjjxhPf1RnFxBMwFzQW",
+        "name": "Leyla"
+      }
+    ],
+    "timestamp": 1787869800000,
+    "date": "2026-08-27",
+    "dailyNumber": 27,
+    "scoreA": 25,
+    "winner": "A",
+    "id": "n1x0nTDfiqtmyz4UNK2w"
+  },
+  {
+    "teamB": [
+      {
+        "name": "Anne",
+        "id": "ba31d793-791f-4e25-b0e7-28579cb691e7"
+      },
+      {
+        "id": "KU0dYRNMb07YcGl9e0D6",
+        "name": "Alê"
+      },
+      {
+        "id": "Tg4CC8JaOeu0gH6rouaF",
+        "name": "Jô"
+      },
+      {
+        "name": "Ivana",
+        "id": "WjRWvo8TEUx6kYvFuxO3"
+      },
+      {
+        "id": "re6SEokdd71hNgwlFa5r",
+        "name": "Marcleíde"
+      },
+      {
+        "name": "Caluca",
+        "id": "b1ce41de-b25a-451e-9b82-b4e868698882"
+      }
+    ],
+    "dailyNumber": 28,
+    "teamA": [
+      {
+        "id": "99nsBpzNKtNXFG8l9Vnx",
+        "name": "Betinha"
+      },
+      {
+        "id": "xAu4cy3yJRjRbnF3Nng7",
+        "name": "Paulo Henrique"
+      },
+      {
+        "name": "Rozi",
+        "id": "BeOpoqbsbvm7bPHe750z"
+      },
+      {
+        "name": "Karina",
+        "id": "mQ4ivYdcOmxwTV1eZ3Sp"
+      },
+      {
+        "name": "Rodney",
+        "id": "eann8eWQgeeyTcFGf1sN"
+      },
+      {
+        "name": "Fatinha",
+        "id": "QcGEmh4rFZnmFKNlpdV4"
+      }
+    ],
+    "scoreB": 23,
+    "timestamp": 1787870100000,
+    "scoreA": 25,
+    "date": "2026-08-27",
+    "winner": "A",
+    "id": "GaTuBpEtA7C3UJ0LimEn"
+  },
+  {
+    "timestamp": 1787870400000,
+    "winner": "A",
+    "dailyNumber": 29,
+    "scoreA": 25,
+    "scoreB": 23,
+    "teamB": [
+      {
+        "name": "Marcos Andre",
+        "id": "e62c3a61-58b0-4dc5-9bd2-8af415f27dde"
+      },
+      {
+        "name": "Jô",
+        "id": "Tg4CC8JaOeu0gH6rouaF"
+      },
+      {
+        "name": "Caluca",
+        "id": "b1ce41de-b25a-451e-9b82-b4e868698882"
+      },
+      {
+        "id": "tXgucAtHhC6SAmRMjnhN",
+        "name": "Thiago"
+      },
+      {
+        "id": "re6SEokdd71hNgwlFa5r",
+        "name": "Marcleíde"
+      },
+      {
+        "name": "Marcelo",
+        "id": "3d1624dc-44cd-4186-81c2-a88ed2a198da"
+      }
+    ],
+    "teamA": [
+      {
+        "name": "Paulo Fonseca",
+        "id": "RbnH4XsBdgaPfUYUiah0"
+      },
+      {
+        "name": "Fatinha",
+        "id": "QcGEmh4rFZnmFKNlpdV4"
+      },
+      {
+        "name": "Flavinha",
+        "id": "OsohRuSKGB81XWXi7yZ2"
+      },
+      {
+        "id": "eann8eWQgeeyTcFGf1sN",
+        "name": "Rodney"
+      },
+      {
+        "name": "Geraldinho",
+        "id": "4XLSTef8902WS81yNfO5"
+      },
+      {
+        "id": "BeOpoqbsbvm7bPHe750z",
+        "name": "Rozi"
+      }
+    ],
+    "date": "2026-08-27",
+    "id": "VVoRbD8RkjQNlaWNwpCM"
+  },
+  {
+    "scoreB": 15,
+    "winner": "A",
+    "id": "real-2026-09-03-1-1788529906926",
+    "teamA": [
+      "RbnH4XsBdgaPfUYUiah0",
+      "XHVBCuWkIoSjA44TWLYN",
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "tXgucAtHhC6SAmRMjnhN",
+      "eann8eWQgeeyTcFGf1sN",
+      "tVeC06SBJpoxsSfJt7JC"
+    ],
+    "timestamp": 1788472800000,
+    "date": "2026-09-03",
+    "endTime": 1788473400000,
+    "duration": 600,
+    "dailyNumber": 30,
+    "mode": "QUICK",
+    "scoreA": 15,
+    "startTime": 1788472800000,
+    "teamB": [
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "QcGEmh4rFZnmFKNlpdV4",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "BeOpoqbsbvm7bPHe750z"
+    ]
+  },
+  {
+    "mode": "QUICK",
+    "timestamp": 1788473400000,
+    "winner": "A",
+    "teamA": [
+      "RbnH4XsBdgaPfUYUiah0",
+      "XHVBCuWkIoSjA44TWLYN",
+      "tXgucAtHhC6SAmRMjnhN",
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "KU0dYRNMb07YcGl9e0D6",
+      "b1ce41de-b25a-451e-9b82-b4e868698882"
+    ],
+    "scoreB": 8,
+    "dailyNumber": 31,
+    "scoreA": 15,
+    "startTime": 1788473400000,
+    "duration": 600,
+    "teamB": [
+      "Tg4CC8JaOeu0gH6rouaF",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "eann8eWQgeeyTcFGf1sN",
+      "tVeC06SBJpoxsSfJt7JC"
+    ],
+    "date": "2026-09-03",
+    "id": "real-2026-09-03-2-1788529907006",
+    "endTime": 1788474000000
+  },
+  {
+    "timestamp": 1788474000000,
+    "duration": 600,
+    "teamB": [
+      "tVeC06SBJpoxsSfJt7JC",
+      "QcGEmh4rFZnmFKNlpdV4",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "eann8eWQgeeyTcFGf1sN",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da"
+    ],
+    "scoreB": 13,
+    "winner": "A",
+    "mode": "QUICK",
+    "id": "real-2026-09-03-3-1788529907097",
+    "teamA": [
+      "RbnH4XsBdgaPfUYUiah0",
+      "tXgucAtHhC6SAmRMjnhN",
+      "KU0dYRNMb07YcGl9e0D6",
+      "XHVBCuWkIoSjA44TWLYN",
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "b1ce41de-b25a-451e-9b82-b4e868698882"
+    ],
+    "date": "2026-09-03",
+    "endTime": 1788474600000,
+    "startTime": 1788474000000,
+    "scoreA": 15,
+    "dailyNumber": 32
+  },
+  {
+    "startTime": 1788474600000,
+    "winner": "A",
+    "date": "2026-09-03",
+    "teamA": [
+      "Tg4CC8JaOeu0gH6rouaF",
+      "RbnH4XsBdgaPfUYUiah0",
+      "QcGEmh4rFZnmFKNlpdV4",
+      "eann8eWQgeeyTcFGf1sN",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "XHVBCuWkIoSjA44TWLYN"
+    ],
+    "scoreB": 11,
+    "mode": "QUICK",
+    "scoreA": 15,
+    "dailyNumber": 33,
+    "timestamp": 1788474600000,
+    "duration": 600,
+    "teamB": [
+      "tVeC06SBJpoxsSfJt7JC",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "tXgucAtHhC6SAmRMjnhN",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "BeOpoqbsbvm7bPHe750z",
+      "b1ce41de-b25a-451e-9b82-b4e868698882"
+    ],
+    "id": "real-2026-09-03-4-1788529907190",
+    "updatedAt": "2026-09-09T01:17:40.624Z",
+    "endTime": 1788475200000
+  },
+  {
+    "scoreB": 15,
+    "endTime": 1788475800000,
+    "winner": "A",
+    "dailyNumber": 34,
+    "teamA": [
+      "tXgucAtHhC6SAmRMjnhN",
+      "KU0dYRNMb07YcGl9e0D6",
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "RbnH4XsBdgaPfUYUiah0",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "tVeC06SBJpoxsSfJt7JC"
+    ],
+    "mode": "QUICK",
+    "timestamp": 1788475200000,
+    "id": "real-2026-09-03-5-1788529907244",
+    "startTime": 1788475200000,
+    "duration": 600,
+    "date": "2026-09-03",
+    "teamB": [
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "eann8eWQgeeyTcFGf1sN",
+      "XHVBCuWkIoSjA44TWLYN",
+      "QcGEmh4rFZnmFKNlpdV4",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "BeOpoqbsbvm7bPHe750z"
+    ],
+    "scoreA": 15
+  },
+  {
+    "id": "real-2026-09-03-6-1788529907302",
+    "endTime": 1788476400000,
+    "timestamp": 1788475800000,
+    "teamB": [
+      "BeOpoqbsbvm7bPHe750z",
+      "XHVBCuWkIoSjA44TWLYN",
+      "RbnH4XsBdgaPfUYUiah0",
+      "eann8eWQgeeyTcFGf1sN",
+      "tVeC06SBJpoxsSfJt7JC",
+      "b1ce41de-b25a-451e-9b82-b4e868698882"
+    ],
+    "scoreB": 15,
+    "dailyNumber": 35,
+    "mode": "QUICK",
+    "winner": "B",
+    "duration": 600,
+    "startTime": 1788475800000,
+    "teamA": [
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "QcGEmh4rFZnmFKNlpdV4",
+      "KU0dYRNMb07YcGl9e0D6",
+      "Tg4CC8JaOeu0gH6rouaF"
+    ],
+    "date": "2026-09-03",
+    "scoreA": 8
+  },
+  {
+    "duration": 600,
+    "startTime": 1788476400000,
+    "teamB": [
+      "tXgucAtHhC6SAmRMjnhN",
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "RbnH4XsBdgaPfUYUiah0",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "QcGEmh4rFZnmFKNlpdV4"
+    ],
+    "id": "real-2026-09-03-7-1788529907354",
+    "scoreA": 15,
+    "date": "2026-09-03",
+    "scoreB": 11,
+    "timestamp": 1788476400000,
+    "mode": "QUICK",
+    "winner": "A",
+    "teamA": [
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "eann8eWQgeeyTcFGf1sN",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "XHVBCuWkIoSjA44TWLYN",
+      "cA7Bi2baoQIpPU3ds2XP"
+    ],
+    "dailyNumber": 36,
+    "endTime": 1788477000000,
+    "updatedAt": "2026-09-09T01:16:35.045Z"
+  },
+  {
+    "scoreB": 15,
+    "endTime": 1788477600000,
+    "timestamp": 1788477000000,
+    "winner": "B",
+    "mode": "QUICK",
+    "teamA": [
+      "tXgucAtHhC6SAmRMjnhN",
+      "BeOpoqbsbvm7bPHe750z",
+      "RbnH4XsBdgaPfUYUiah0",
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "tVeC06SBJpoxsSfJt7JC",
+      "eann8eWQgeeyTcFGf1sN"
+    ],
+    "updatedAt": "2026-09-09T01:15:39.015Z",
+    "duration": 600,
+    "id": "real-2026-09-03-8-1788529907410",
+    "dailyNumber": 37,
+    "startTime": 1788477000000,
+    "date": "2026-09-03",
+    "teamB": [
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "XHVBCuWkIoSjA44TWLYN",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "KU0dYRNMb07YcGl9e0D6",
+      "b1ce41de-b25a-451e-9b82-b4e868698882"
+    ],
+    "scoreA": 14
+  },
+  {
+    "stats": [],
+    "dailyNumber": 1,
+    "endTime": 1789082328476,
+    "scoreA": 15,
+    "date": "2026-09-10",
+    "startTime": 1789082306517,
+    "duration": 21,
+    "teamA": [
+      "eann8eWQgeeyTcFGf1sN",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "OsohRuSKGB81XWXi7yZ2",
+      "KU0dYRNMb07YcGl9e0D6",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "re6SEokdd71hNgwlFa5r"
+    ],
+    "winner": "A",
+    "id": "a0476201-d57e-4abc-b9c7-cf3161f786c9",
+    "scoreB": 13,
+    "teamB": [
+      "WjRWvo8TEUx6kYvFuxO3",
+      "4XLSTef8902WS81yNfO5",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "RbnH4XsBdgaPfUYUiah0",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "G0swJVSs3PZiQICRLl4Q"
+    ],
+    "mode": "QUICK",
+    "timestamp": 1789082328476
+  },
+  {
+    "mode": "QUICK",
+    "teamB": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "4XLSTef8902WS81yNfO5",
+      "RbnH4XsBdgaPfUYUiah0",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da"
+    ],
+    "startTime": 1789082413895,
+    "scoreA": 4,
+    "endTime": 1789082962611,
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "G0swJVSs3PZiQICRLl4Q",
+      "tXgucAtHhC6SAmRMjnhN",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "99nsBpzNKtNXFG8l9Vnx"
+    ],
+    "date": "2026-09-10",
+    "scoreB": 15,
+    "winner": "B",
+    "dailyNumber": 2,
+    "timestamp": 1789082962611,
+    "duration": 548,
+    "id": "d55bddd3-1a38-49dd-a50e-a637391b1cba",
+    "stats": []
+  },
+  {
+    "endTime": 1789083765085,
+    "dailyNumber": 3,
+    "teamA": [
+      "eann8eWQgeeyTcFGf1sN",
+      "KU0dYRNMb07YcGl9e0D6",
+      "OsohRuSKGB81XWXi7yZ2",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "tVeC06SBJpoxsSfJt7JC"
+    ],
+    "startTime": 1789083748528,
+    "mode": "QUICK",
+    "scoreA": 9,
+    "stats": [],
+    "date": "2026-09-10",
+    "id": "f0ce4e63-be34-48ce-9d7a-a7b45da9181a",
+    "duration": 16,
+    "scoreB": 15,
+    "winner": "B",
+    "teamB": [
+      "WjRWvo8TEUx6kYvFuxO3",
+      "RbnH4XsBdgaPfUYUiah0",
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "re6SEokdd71hNgwlFa5r"
+    ],
+    "timestamp": 1789083765085
+  },
+  {
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "G0swJVSs3PZiQICRLl4Q",
+      "6Hi00e3WYNYKkpGOWGin",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "tVeC06SBJpoxsSfJt7JC",
+      "99nsBpzNKtNXFG8l9Vnx"
+    ],
+    "date": "2026-09-10",
+    "id": "6a140a11-3667-4b2f-b010-b0ddef02694b",
+    "stats": [],
+    "scoreA": 15,
+    "startTime": 1789083992309,
+    "scoreB": 13,
+    "dailyNumber": 4,
+    "winner": "A",
+    "timestamp": 1789084823571,
+    "endTime": 1789084823571,
+    "teamB": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "tXgucAtHhC6SAmRMjnhN",
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da"
+    ],
+    "duration": 830,
+    "mode": "QUICK"
+  },
+  {
+    "scoreA": 15,
+    "stats": [],
+    "id": "89009a08-3b9c-46da-9d0a-13a40f5cb8c0",
+    "dailyNumber": 5,
+    "date": "2026-09-10",
+    "teamA": [
+      "eann8eWQgeeyTcFGf1sN",
+      "4XLSTef8902WS81yNfO5",
+      "6Hi00e3WYNYKkpGOWGin",
+      "KU0dYRNMb07YcGl9e0D6",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "Tg4CC8JaOeu0gH6rouaF"
+    ],
+    "timestamp": 1789085731535,
+    "mode": "QUICK",
+    "duration": 899,
+    "teamB": [
+      "WjRWvo8TEUx6kYvFuxO3",
+      "OsohRuSKGB81XWXi7yZ2",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "RbnH4XsBdgaPfUYUiah0",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "re6SEokdd71hNgwlFa5r"
+    ],
+    "endTime": 1789085731535,
+    "winner": "A",
+    "startTime": 1789084831649,
+    "scoreB": 12
+  },
+  {
+    "timestamp": 1789086598563,
+    "teamB": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "G0swJVSs3PZiQICRLl4Q",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da"
+    ],
+    "id": "ab31b079-31fa-431b-8c9c-699d2f4b1a95",
+    "mode": "QUICK",
+    "scoreA": 14,
+    "dailyNumber": 6,
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "tVeC06SBJpoxsSfJt7JC",
+      "tXgucAtHhC6SAmRMjnhN",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "99nsBpzNKtNXFG8l9Vnx"
+    ],
+    "scoreB": 15,
+    "date": "2026-09-10",
+    "winner": "B",
+    "endTime": 1789086598563,
+    "stats": [],
+    "duration": 837,
+    "startTime": 1789085760838
+  },
+  {
+    "endTime": 1789087281006,
+    "mode": "QUICK",
+    "teamA": [
+      "eann8eWQgeeyTcFGf1sN",
+      "RbnH4XsBdgaPfUYUiah0",
+      "OsohRuSKGB81XWXi7yZ2",
+      "6Hi00e3WYNYKkpGOWGin",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "re6SEokdd71hNgwlFa5r"
+    ],
+    "stats": [],
+    "timestamp": 1789087281006,
+    "dailyNumber": 7,
+    "scoreA": 15,
+    "scoreB": 8,
+    "id": "3f572cc9-5db3-4a2b-8432-ebab781cb153",
+    "winner": "A",
+    "date": "2026-09-10",
+    "duration": 674,
+    "startTime": 1789086606534,
+    "teamB": [
+      "WjRWvo8TEUx6kYvFuxO3",
+      "KU0dYRNMb07YcGl9e0D6",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "4XLSTef8902WS81yNfO5",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "G0swJVSs3PZiQICRLl4Q"
+    ]
+  },
+  {
+    "teamB": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "tXgucAtHhC6SAmRMjnhN",
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da"
+    ],
+    "duration": 842,
+    "scoreA": 10,
+    "endTime": 1789088129714,
+    "dailyNumber": 8,
+    "timestamp": 1789088129714,
+    "mode": "QUICK",
+    "winner": "B",
+    "stats": [],
+    "scoreB": 15,
+    "date": "2026-09-10",
+    "startTime": 1789087287023,
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "6Hi00e3WYNYKkpGOWGin",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "tVeC06SBJpoxsSfJt7JC",
+      "99nsBpzNKtNXFG8l9Vnx"
+    ],
+    "id": "628c4c4d-b252-4c1c-addb-c3ea7e19957a"
+  },
+  {
+    "mode": "QUICK",
+    "scoreA": 13,
+    "stats": [],
+    "endTime": 1789088876360,
+    "timestamp": 1789088876360,
+    "teamA": [
+      "eann8eWQgeeyTcFGf1sN",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "OsohRuSKGB81XWXi7yZ2",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "re6SEokdd71hNgwlFa5r"
+    ],
+    "startTime": 1789088136849,
+    "teamB": [
+      "WjRWvo8TEUx6kYvFuxO3",
+      "xAu4cy3yJRjRbnF3Nng7",
+      "RbnH4XsBdgaPfUYUiah0",
+      "4XLSTef8902WS81yNfO5",
+      "KU0dYRNMb07YcGl9e0D6",
+      "G0swJVSs3PZiQICRLl4Q"
+    ],
+    "winner": "B",
+    "dailyNumber": 9,
+    "duration": 738,
+    "date": "2026-09-10",
+    "scoreB": 15,
+    "id": "63ede944-e25d-4e51-b5fa-c4d4c162a0b3"
+  },
+  {
+    "date": "2026-09-17",
+    "startTime": 1789686230550,
+    "scoreB": 15,
+    "teamB": [
+      "BeOpoqbsbvm7bPHe750z",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "eann8eWQgeeyTcFGf1sN",
+      "tXgucAtHhC6SAmRMjnhN",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "sQjjxhPf1RnFxBMwFzQW"
+    ],
+    "winner": "B",
+    "teamA": [
+      "WjRWvo8TEUx6kYvFuxO3",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "RbnH4XsBdgaPfUYUiah0",
+      "KU0dYRNMb07YcGl9e0D6",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "99nsBpzNKtNXFG8l9Vnx"
+    ],
+    "timestamp": 1789687177008,
+    "scoreA": 13,
+    "id": "cb354577-84ce-429d-ad52-05ca6e9e8bf8",
+    "mode": "QUICK",
+    "dailyNumber": 1,
+    "duration": 945,
+    "endTime": 1789687177008,
+    "stats": []
+  },
+  {
+    "teamB": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "6Hi00e3WYNYKkpGOWGin",
+      "G0swJVSs3PZiQICRLl4Q",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "sQjjxhPf1RnFxBMwFzQW"
+    ],
+    "timestamp": 1789688086886,
+    "date": "2026-09-17",
+    "winner": "A",
+    "scoreB": 10,
+    "id": "0cb659f7-8004-494a-8dcb-0d3c23c393f0",
+    "scoreA": 15,
+    "stats": [],
+    "startTime": 1789687252343,
+    "endTime": 1789688086886,
+    "duration": 834,
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "OsohRuSKGB81XWXi7yZ2",
+      "4XLSTef8902WS81yNfO5",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da"
+    ],
+    "dailyNumber": 2,
+    "mode": "QUICK"
+  },
+  {
+    "teamA": [
+      "WjRWvo8TEUx6kYvFuxO3",
+      "eann8eWQgeeyTcFGf1sN",
+      "G0swJVSs3PZiQICRLl4Q",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "tXgucAtHhC6SAmRMjnhN"
+    ],
+    "endTime": 1789688864989,
+    "scoreA": 15,
+    "timestamp": 1789688864989,
+    "stats": [],
+    "date": "2026-09-17",
+    "dailyNumber": 3,
+    "mode": "QUICK",
+    "duration": 766,
+    "scoreB": 12,
+    "winner": "A",
+    "id": "57f6387a-6d77-4d42-9382-745ee5a1fbce",
+    "startTime": 1789688097161,
+    "teamB": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "6Hi00e3WYNYKkpGOWGin",
+      "4XLSTef8902WS81yNfO5",
+      "RbnH4XsBdgaPfUYUiah0",
+      "OsohRuSKGB81XWXi7yZ2",
+      "KU0dYRNMb07YcGl9e0D6"
+    ]
+  },
+  {
+    "stats": [],
+    "startTime": 1789689577128,
+    "date": "2026-09-17",
+    "teamA": [
+      "WjRWvo8TEUx6kYvFuxO3",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "eann8eWQgeeyTcFGf1sN",
+      "KU0dYRNMb07YcGl9e0D6",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "99nsBpzNKtNXFG8l9Vnx"
+    ],
+    "id": "6aebdc1a-cbe3-4ea5-aa1f-8091e32b3678",
+    "winner": "B",
+    "scoreB": 15,
+    "teamB": [
+      "BeOpoqbsbvm7bPHe750z",
+      "RbnH4XsBdgaPfUYUiah0",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "sQjjxhPf1RnFxBMwFzQW"
+    ],
+    "scoreA": 12,
+    "timestamp": 1789689601233,
+    "endTime": 1789689601233,
+    "duration": 23,
+    "dailyNumber": 4,
+    "mode": "QUICK"
+  },
+  {
+    "duration": 837,
+    "startTime": 1789689609390,
+    "mode": "QUICK",
+    "scoreB": 15,
+    "teamB": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "4XLSTef8902WS81yNfO5",
+      "6Hi00e3WYNYKkpGOWGin",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "tXgucAtHhC6SAmRMjnhN"
+    ],
+    "winner": "B",
+    "id": "36fe6c81-da71-4e5a-9782-487258f08850",
+    "endTime": 1789690448073,
+    "scoreA": 14,
+    "timestamp": 1789690448073,
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "G0swJVSs3PZiQICRLl4Q",
+      "OsohRuSKGB81XWXi7yZ2",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7"
+    ],
+    "stats": [],
+    "dailyNumber": 5,
+    "date": "2026-09-17"
+  },
+  {
+    "dailyNumber": 6,
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "tXgucAtHhC6SAmRMjnhN",
+      "99nsBpzNKtNXFG8l9Vnx"
+    ],
+    "id": "37a8cfbd-8ea9-4406-bf99-590e7ad2089b",
+    "mode": "QUICK",
+    "scoreB": 12,
+    "startTime": 1789690616378,
+    "endTime": 1789691687269,
+    "winner": "A",
+    "stats": [],
+    "date": "2026-09-17",
+    "duration": 1070,
+    "scoreA": 15,
+    "teamB": [
+      "WjRWvo8TEUx6kYvFuxO3",
+      "eann8eWQgeeyTcFGf1sN",
+      "RbnH4XsBdgaPfUYUiah0",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "KU0dYRNMb07YcGl9e0D6",
+      "sQjjxhPf1RnFxBMwFzQW"
+    ],
+    "timestamp": 1789691687269
+  },
+  {
+    "mode": "QUICK",
+    "teamB": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "OsohRuSKGB81XWXi7yZ2",
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "tXgucAtHhC6SAmRMjnhN",
+      "G0swJVSs3PZiQICRLl4Q",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde"
+    ],
+    "duration": 856,
+    "timestamp": 1789692561100,
+    "scoreA": 12,
+    "id": "6c7172f9-44a9-4d26-bb85-811d28ae599c",
+    "stats": [],
+    "winner": "B",
+    "scoreB": 15,
+    "endTime": 1789692561100,
+    "dailyNumber": 7,
+    "teamA": [
+      "WjRWvo8TEUx6kYvFuxO3",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "4XLSTef8902WS81yNfO5",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "6Hi00e3WYNYKkpGOWGin",
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d"
+    ],
+    "startTime": 1789691704103,
+    "date": "2026-09-17"
+  },
+  {
+    "mode": "QUICK",
+    "scoreA": 15,
+    "stats": [],
+    "endTime": 1789693433614,
+    "dailyNumber": 8,
+    "duration": 849,
+    "timestamp": 1789693433614,
+    "id": "b6d0f679-f983-460b-b9bf-93a2fc6f8ad4",
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "eann8eWQgeeyTcFGf1sN",
+      "RbnH4XsBdgaPfUYUiah0",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "G0swJVSs3PZiQICRLl4Q",
+      "sQjjxhPf1RnFxBMwFzQW"
+    ],
+    "teamB": [
+      "QcGEmh4rFZnmFKNlpdV4",
+      "OsohRuSKGB81XWXi7yZ2",
+      "4XLSTef8902WS81yNfO5",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "KU0dYRNMb07YcGl9e0D6",
+      "99nsBpzNKtNXFG8l9Vnx"
+    ],
+    "winner": "A",
+    "date": "2026-09-17",
+    "startTime": 1789692582816,
+    "scoreB": 12
+  },
+  {
+    "scoreB": 15,
+    "winner": "B",
+    "timestamp": 1790291676463,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "OsohRuSKGB81XWXi7yZ2",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "RbnH4XsBdgaPfUYUiah0",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da"
+    ],
+    "duration": 858,
+    "id": "af357d17-39c7-4c55-80a2-187ace8705da",
+    "mode": "QUICK",
+    "endTime": 1790291676463,
+    "dailyNumber": 1,
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "eann8eWQgeeyTcFGf1sN",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "4XLSTef8902WS81yNfO5",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "re6SEokdd71hNgwlFa5r"
+    ],
+    "date": "2026-09-24",
+    "scoreA": 13,
+    "stats": [],
+    "startTime": 1790290817849
+  },
+  {
+    "dailyNumber": 2,
+    "endTime": 1790292375815,
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "eann8eWQgeeyTcFGf1sN",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "tXgucAtHhC6SAmRMjnhN",
+      "re6SEokdd71hNgwlFa5r",
+      "sQjjxhPf1RnFxBMwFzQW"
+    ],
+    "scoreB": 15,
+    "stats": [],
+    "timestamp": 1790292375815,
+    "winner": "B",
+    "date": "2026-09-24",
+    "mode": "QUICK",
+    "scoreA": 8,
+    "duration": 21,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "RbnH4XsBdgaPfUYUiah0",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "99nsBpzNKtNXFG8l9Vnx"
+    ],
+    "startTime": 1790292353395,
+    "id": "b8979c43-a466-46f3-b878-871e1f8cd67d"
+  },
+  {
+    "date": "2026-09-24",
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "tXgucAtHhC6SAmRMjnhN",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "eann8eWQgeeyTcFGf1sN",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "99nsBpzNKtNXFG8l9Vnx"
+    ],
+    "winner": "A",
+    "duration": 19,
+    "timestamp": 1790293128992,
+    "dailyNumber": 3,
+    "scoreB": 10,
+    "scoreA": 15,
+    "id": "b8693a9a-ac07-466a-a1cc-12b918ce5e67",
+    "stats": [],
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "OsohRuSKGB81XWXi7yZ2",
+      "4XLSTef8902WS81yNfO5",
+      "re6SEokdd71hNgwlFa5r",
+      "sQjjxhPf1RnFxBMwFzQW"
+    ],
+    "startTime": 1790293109028,
+    "mode": "QUICK",
+    "endTime": 1790293128992
+  },
+  {
+    "id": "026f97db-825c-4e48-9585-8f54cbe2c695",
+    "mode": "QUICK",
+    "scoreA": 9,
+    "timestamp": 1790293921131,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "RbnH4XsBdgaPfUYUiah0",
+      "OsohRuSKGB81XWXi7yZ2",
+      "sQjjxhPf1RnFxBMwFzQW"
+    ],
+    "duration": 730,
+    "dailyNumber": 4,
+    "endTime": 1790293921131,
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "re6SEokdd71hNgwlFa5r",
+      "4XLSTef8902WS81yNfO5",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da"
+    ],
+    "date": "2026-09-24",
+    "scoreB": 15,
+    "stats": [],
+    "winner": "B",
+    "startTime": 1790293190966
+  },
+  {
+    "stats": [],
+    "updatedAt": "2026-09-25T03:27:39.967Z",
+    "id": "5afb003a-c5da-4806-bbc4-d26d0f421d2b",
+    "mode": "QUICK",
+    "timestamp": 1790294611149,
+    "scoreA": 15,
+    "endTime": 1790294611149,
+    "duration": 11,
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "re6SEokdd71hNgwlFa5r",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da"
+    ],
+    "winner": "A",
+    "scoreB": 8,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "eann8eWQgeeyTcFGf1sN",
+      "RbnH4XsBdgaPfUYUiah0",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "tXgucAtHhC6SAmRMjnhN"
+    ],
+    "dailyNumber": 5,
+    "date": "2026-09-24",
+    "startTime": 1790294599786
+  },
+  {
+    "stats": [],
+    "startTime": 1790294618000,
+    "endTime": 1790295305587,
+    "scoreA": 15,
+    "date": "2026-09-24",
+    "dailyNumber": 6,
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "sQjjxhPf1RnFxBMwFzQW"
+    ],
+    "timestamp": 1790295305587,
+    "winner": "A",
+    "id": "3f46fed1-9c4a-4736-b565-6ba4f42ad7b2",
+    "scoreB": 9,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "OsohRuSKGB81XWXi7yZ2",
+      "4XLSTef8902WS81yNfO5",
+      "tXgucAtHhC6SAmRMjnhN",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "re6SEokdd71hNgwlFa5r"
+    ],
+    "mode": "QUICK",
+    "duration": 687
+  },
+  {
+    "startTime": 1790295314348,
+    "id": "ddba91bd-dddb-463a-b642-8e8fc07d8924",
+    "scoreA": 15,
+    "duration": 658,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "eann8eWQgeeyTcFGf1sN",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da"
+    ],
+    "endTime": 1790295973276,
+    "date": "2026-09-24",
+    "mode": "QUICK",
+    "timestamp": 1790295973276,
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "re6SEokdd71hNgwlFa5r",
+      "RbnH4XsBdgaPfUYUiah0",
+      "99nsBpzNKtNXFG8l9Vnx"
+    ],
+    "scoreB": 10,
+    "stats": [],
+    "dailyNumber": 7,
+    "updatedAt": "2026-09-25T03:09:30.173Z",
+    "winner": "A"
+  },
+  {
+    "dailyNumber": 8,
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "OsohRuSKGB81XWXi7yZ2",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "re6SEokdd71hNgwlFa5r",
+      "tXgucAtHhC6SAmRMjnhN",
+      "99nsBpzNKtNXFG8l9Vnx"
+    ],
+    "scoreB": 15,
+    "stats": [],
+    "startTime": 1790296698826,
+    "winner": "B",
+    "date": "2026-09-24",
+    "duration": 22,
+    "mode": "QUICK",
+    "endTime": 1790296721870,
+    "scoreA": 7,
+    "timestamp": 1790296721870,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "4XLSTef8902WS81yNfO5",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "sQjjxhPf1RnFxBMwFzQW"
+    ],
+    "id": "ce8623c6-6a9d-426d-a64e-3fb8f53d74dd"
+  },
+  {
+    "winner": "A",
+    "stats": [],
+    "scoreB": 10,
+    "timestamp": 1790297703722,
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "eann8eWQgeeyTcFGf1sN",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "re6SEokdd71hNgwlFa5r"
+    ],
+    "dailyNumber": 9,
+    "mode": "QUICK",
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "OsohRuSKGB81XWXi7yZ2",
+      "RbnH4XsBdgaPfUYUiah0",
+      "4XLSTef8902WS81yNfO5",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da"
+    ],
+    "endTime": 1790297703722,
+    "id": "13130667-c1db-43da-9896-b388720370cd",
+    "date": "2026-09-24",
+    "scoreA": 15,
+    "duration": 34,
+    "startTime": 1790297668896
+  },
+  {
+    "date": "2026-10-01",
+    "startTime": 1790895269304,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "re6SEokdd71hNgwlFa5r",
+      "eann8eWQgeeyTcFGf1sN",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da"
+    ],
+    "scoreB": 15,
+    "endTime": 1790896460944,
+    "dailyNumber": 1,
+    "winner": "B",
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "RbnH4XsBdgaPfUYUiah0",
+      "OsohRuSKGB81XWXi7yZ2",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "tXgucAtHhC6SAmRMjnhN",
+      "99nsBpzNKtNXFG8l9Vnx"
+    ],
+    "scoreA": 13,
+    "duration": 1190,
+    "id": "94eb756b-e6d8-48a7-8fd7-fc4123969d94",
+    "mode": "QUICK",
+    "timestamp": 1790896460944,
+    "stats": []
+  },
+  {
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "eann8eWQgeeyTcFGf1sN",
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "KU0dYRNMb07YcGl9e0D6",
+      "G0swJVSs3PZiQICRLl4Q"
+    ],
+    "startTime": 1790896516818,
+    "scoreA": 13,
+    "mode": "QUICK",
+    "id": "e7d748b6-6770-4e07-8073-0a64dd3f012f",
+    "dailyNumber": 2,
+    "winner": "B",
+    "timestamp": 1790897475325,
+    "stats": [],
+    "scoreB": 15,
+    "date": "2026-10-01",
+    "endTime": 1790897475325,
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "QcGEmh4rFZnmFKNlpdV4"
+    ],
+    "duration": 958
+  },
+  {
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "RbnH4XsBdgaPfUYUiah0",
+      "tXgucAtHhC6SAmRMjnhN",
+      "re6SEokdd71hNgwlFa5r",
+      "99nsBpzNKtNXFG8l9Vnx"
+    ],
+    "date": "2026-10-01",
+    "timestamp": 1790898127564,
+    "dailyNumber": 3,
+    "scoreB": 15,
+    "endTime": 1790898127564,
+    "winner": "B",
+    "id": "b4c7f8bb-e3ec-4344-833d-b025b88ba050",
+    "stats": [],
+    "scoreA": 6,
+    "duration": 570,
+    "mode": "QUICK",
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "G0swJVSs3PZiQICRLl4Q",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "OsohRuSKGB81XWXi7yZ2",
+      "QcGEmh4rFZnmFKNlpdV4",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da"
+    ],
+    "startTime": 1790897556719
+  },
+  {
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "eann8eWQgeeyTcFGf1sN",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "KU0dYRNMb07YcGl9e0D6",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "sQjjxhPf1RnFxBMwFzQW"
+    ],
+    "winner": "B",
+    "duration": 10,
+    "scoreB": 15,
+    "dailyNumber": 4,
+    "mode": "QUICK",
+    "endTime": 1790898928102,
+    "timestamp": 1790898928102,
+    "id": "61c70efc-1915-4150-8640-75700b69a695",
+    "date": "2026-10-01",
+    "stats": [],
+    "scoreA": 10,
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "RbnH4XsBdgaPfUYUiah0",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da"
+    ],
+    "startTime": 1790898917064
+  },
+  {
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "tXgucAtHhC6SAmRMjnhN",
+      "QcGEmh4rFZnmFKNlpdV4",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "WjRWvo8TEUx6kYvFuxO3"
+    ],
+    "mode": "QUICK",
+    "duration": 697,
+    "timestamp": 1790899802931,
+    "scoreA": 12,
+    "id": "3a211b06-4c9b-4079-bd62-ced7bd32d792",
+    "stats": [],
+    "winner": "B",
+    "scoreB": 15,
+    "endTime": 1790899802931,
+    "dailyNumber": 5,
+    "startTime": 1790899104852,
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "re6SEokdd71hNgwlFa5r",
+      "OsohRuSKGB81XWXi7yZ2",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "G0swJVSs3PZiQICRLl4Q"
+    ],
+    "date": "2026-10-01"
+  },
+  {
+    "scoreB": 15,
+    "dailyNumber": 6,
+    "winner": "B",
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "OsohRuSKGB81XWXi7yZ2",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "RbnH4XsBdgaPfUYUiah0",
+      "re6SEokdd71hNgwlFa5r"
+    ],
+    "date": "2026-10-01",
+    "endTime": 1790900662611,
+    "startTime": 1790899819517,
+    "stats": [],
+    "mode": "QUICK",
+    "id": "75d98fd3-7335-4a1f-8368-47029dcd0f39",
+    "timestamp": 1790900662611,
+    "scoreA": 14,
+    "duration": 842,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "eann8eWQgeeyTcFGf1sN",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "KU0dYRNMb07YcGl9e0D6",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da"
+    ]
+  },
+  {
+    "scoreB": 13,
+    "mode": "QUICK",
+    "winner": "A",
+    "duration": 980,
+    "id": "22f7ed2b-9e23-4372-83a5-8a1bbec30fd4",
+    "timestamp": 1790901658263,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "G0swJVSs3PZiQICRLl4Q",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "tXgucAtHhC6SAmRMjnhN",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "mQ4ivYdcOmxwTV1eZ3Sp"
+    ],
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "QcGEmh4rFZnmFKNlpdV4",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "99nsBpzNKtNXFG8l9Vnx"
+    ],
+    "startTime": 1790900676863,
+    "endTime": 1790901658263,
+    "dailyNumber": 7,
+    "date": "2026-10-01",
+    "stats": [],
+    "scoreA": 15
+  },
+  {
+    "id": "3d2bf7c3-a5e4-458e-8c08-5211b1d36106",
+    "scoreA": 15,
+    "timestamp": 1790902484478,
+    "mode": "QUICK",
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "G0swJVSs3PZiQICRLl4Q",
+      "eann8eWQgeeyTcFGf1sN",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "99nsBpzNKtNXFG8l9Vnx"
+    ],
+    "dailyNumber": 8,
+    "date": "2026-10-01",
+    "teamA": [
+      "BeOpoqbsbvm7bPHe750z",
+      "RbnH4XsBdgaPfUYUiah0",
+      "OsohRuSKGB81XWXi7yZ2",
+      "KU0dYRNMb07YcGl9e0D6",
+      "tXgucAtHhC6SAmRMjnhN",
+      "re6SEokdd71hNgwlFa5r"
+    ],
+    "endTime": 1790902484478,
+    "duration": 20,
+    "scoreB": 12,
+    "startTime": 1790902463360,
+    "winner": "A",
+    "stats": []
+  },
+  {
+    "scoreB": 15,
+    "winner": "B",
+    "teamB": [
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "eann8eWQgeeyTcFGf1sN",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "tXgucAtHhC6SAmRMjnhN",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "99nsBpzNKtNXFG8l9Vnx"
+    ],
+    "startTime": 1792106625702,
+    "mode": "QUICK",
+    "endTime": 1792107547751,
+    "teamA": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "RbnH4XsBdgaPfUYUiah0",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "6Hi00e3WYNYKkpGOWGin",
+      "re6SEokdd71hNgwlFa5r"
+    ],
+    "dailyNumber": 1,
+    "date": "2026-10-15",
+    "id": "c1360358-f0dd-4158-a192-0ba860073f4d",
+    "timestamp": 1792107547751,
+    "duration": 921,
+    "scoreA": 13,
+    "stats": []
+  },
+  {
+    "winner": "B",
+    "mode": "QUICK",
+    "stats": [],
+    "id": "63ddfa91-fc73-4b59-8cea-fd2d21355d42",
+    "scoreB": 15,
+    "startTime": 1792107826369,
+    "dailyNumber": 2,
+    "endTime": 1792108523068,
+    "teamA": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "tVeC06SBJpoxsSfJt7JC",
+      "4XLSTef8902WS81yNfO5",
+      "RbnH4XsBdgaPfUYUiah0",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "99nsBpzNKtNXFG8l9Vnx"
+    ],
+    "timestamp": 1792108523068,
+    "teamB": [
+      "f2a82402-bc00-4ed3-9d7b-207e29f84adc",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "tXgucAtHhC6SAmRMjnhN",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "QcGEmh4rFZnmFKNlpdV4"
+    ],
+    "date": "2026-10-15",
+    "scoreA": 10,
+    "duration": 696
+  },
+  {
+    "id": "86fa26f4-044b-4f5b-bc27-67e98ce35daf",
+    "scoreB": 15,
+    "mode": "QUICK",
+    "winner": "B",
+    "teamA": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "OsohRuSKGB81XWXi7yZ2",
+      "4XLSTef8902WS81yNfO5",
+      "6Hi00e3WYNYKkpGOWGin",
+      "QcGEmh4rFZnmFKNlpdV4"
+    ],
+    "timestamp": 1792109911300,
+    "endTime": 1792109911300,
+    "stats": [],
+    "date": "2026-10-15",
+    "scoreA": 9,
+    "dailyNumber": 3,
+    "startTime": 1792109476688,
+    "duration": 433,
+    "teamB": [
+      "f2a82402-bc00-4ed3-9d7b-207e29f84adc",
+      "eann8eWQgeeyTcFGf1sN",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "re6SEokdd71hNgwlFa5r",
+      "tVeC06SBJpoxsSfJt7JC"
+    ]
+  },
+  {
+    "scoreB": 11,
+    "winner": "A",
+    "timestamp": 1792110653903,
+    "date": "2026-10-15",
+    "id": "42764fee-353d-4c26-be47-76850d4bb1f2",
+    "teamB": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "OsohRuSKGB81XWXi7yZ2",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "tXgucAtHhC6SAmRMjnhN",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7"
+    ],
+    "mode": "QUICK",
+    "dailyNumber": 4,
+    "teamA": [
+      "f2a82402-bc00-4ed3-9d7b-207e29f84adc",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "RbnH4XsBdgaPfUYUiah0",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "99nsBpzNKtNXFG8l9Vnx"
+    ],
+    "duration": 645,
+    "endTime": 1792110653903,
+    "stats": [],
+    "scoreA": 15,
+    "startTime": 1792110008067
+  },
+  {
+    "mode": "QUICK",
+    "stats": [],
+    "duration": 16,
+    "dailyNumber": 5,
+    "winner": "B",
+    "startTime": 1792111353842,
+    "teamA": [
+      "f2a82402-bc00-4ed3-9d7b-207e29f84adc",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "OsohRuSKGB81XWXi7yZ2",
+      "RbnH4XsBdgaPfUYUiah0",
+      "4XLSTef8902WS81yNfO5",
+      "tVeC06SBJpoxsSfJt7JC"
+    ],
+    "scoreB": 15,
+    "scoreA": 7,
+    "teamB": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "eann8eWQgeeyTcFGf1sN",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "re6SEokdd71hNgwlFa5r",
+      "6Hi00e3WYNYKkpGOWGin"
+    ],
+    "date": "2026-10-15",
+    "id": "9b5a1920-e0b6-42a3-a04a-a6400a48fc42",
+    "timestamp": 1792111370031,
+    "endTime": 1792111370031
+  },
+  {
+    "teamB": [
+      "f2a82402-bc00-4ed3-9d7b-207e29f84adc",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "eann8eWQgeeyTcFGf1sN",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "tXgucAtHhC6SAmRMjnhN"
+    ],
+    "startTime": 1792111399850,
+    "date": "2026-10-15",
+    "scoreA": 10,
+    "id": "6649b91c-1b67-4539-8905-0569e8f719e5",
+    "timestamp": 1792112216949,
+    "winner": "B",
+    "stats": [],
+    "scoreB": 15,
+    "dailyNumber": 6,
+    "teamA": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "6Hi00e3WYNYKkpGOWGin",
+      "re6SEokdd71hNgwlFa5r",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde"
+    ],
+    "endTime": 1792112216949,
+    "mode": "QUICK",
+    "duration": 816
+  },
+  {
+    "startTime": 1793919764021,
+    "id": "7a10e728-29f2-4dff-b570-115c64d898cd",
+    "scoreA": 10,
+    "duration": 708,
+    "date": "2026-11-05",
+    "endTime": 1793920473063,
+    "teamB": [
+      "RbnH4XsBdgaPfUYUiah0",
+      "OsohRuSKGB81XWXi7yZ2",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "eann8eWQgeeyTcFGf1sN",
+      "BeOpoqbsbvm7bPHe750z",
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9"
+    ],
+    "timestamp": 1793920473063,
+    "mode": "QUICK",
+    "teamA": [
+      "f4cce9b3-53cf-4165-aaf1-15c6946c702d",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "4XLSTef8902WS81yNfO5",
+      "G0swJVSs3PZiQICRLl4Q",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7"
+    ],
+    "stats": [],
+    "scoreB": 15,
+    "dailyNumber": 1,
+    "winner": "B"
+  },
+  {
+    "timestamp": 1793921473816,
+    "teamB": [
+      "RbnH4XsBdgaPfUYUiah0",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "BeOpoqbsbvm7bPHe750z",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "eann8eWQgeeyTcFGf1sN",
+      "b1ce41de-b25a-451e-9b82-b4e868698882"
+    ],
+    "id": "e224ad6c-0379-47df-89b7-72d0a0a85680",
+    "scoreA": 15,
+    "mode": "QUICK",
+    "dailyNumber": 2,
+    "teamA": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "tXgucAtHhC6SAmRMjnhN",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "re6SEokdd71hNgwlFa5r"
+    ],
+    "scoreB": 11,
+    "date": "2026-11-05",
+    "winner": "A",
+    "endTime": 1793921473816,
+    "stats": [],
+    "duration": 830,
+    "startTime": 1793920642258
+  },
+  {
+    "id": "867594f8-96d6-4ec3-9d09-38327f6533a2",
+    "teamA": [
+      "f4cce9b3-53cf-4165-aaf1-15c6946c702d",
+      "4XLSTef8902WS81yNfO5",
+      "OsohRuSKGB81XWXi7yZ2",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "re6SEokdd71hNgwlFa5r"
+    ],
+    "stats": [],
+    "scoreA": 15,
+    "dailyNumber": 3,
+    "startTime": 1793922272428,
+    "mode": "QUICK",
+    "scoreB": 12,
+    "date": "2026-11-05",
+    "winner": "A",
+    "timestamp": 1793922335010,
+    "endTime": 1793922335010,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "G0swJVSs3PZiQICRLl4Q",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "tVeC06SBJpoxsSfJt7JC"
+    ],
+    "duration": 61
+  },
+  {
+    "teamB": [
+      "RbnH4XsBdgaPfUYUiah0",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "eann8eWQgeeyTcFGf1sN",
+      "OsohRuSKGB81XWXi7yZ2",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "BeOpoqbsbvm7bPHe750z"
+    ],
+    "winner": "B",
+    "duration": 27,
+    "scoreB": 15,
+    "mode": "QUICK",
+    "dailyNumber": 4,
+    "endTime": 1793923120492,
+    "id": "456bc115-7ccd-4ccc-8a98-e5dcc6306312",
+    "timestamp": 1793923120492,
+    "date": "2026-11-05",
+    "stats": [],
+    "teamA": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "tXgucAtHhC6SAmRMjnhN",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "tVeC06SBJpoxsSfJt7JC"
+    ],
+    "scoreA": 9,
+    "startTime": 1793923093218
+  },
+  {
+    "endTime": 1793923696456,
+    "date": "2026-11-05",
+    "startTime": 1793923160612,
+    "id": "2c522c64-3b87-4b55-9b67-c225cf5c5f21",
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "4XLSTef8902WS81yNfO5",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "G0swJVSs3PZiQICRLl4Q",
+      "sQjjxhPf1RnFxBMwFzQW"
+    ],
+    "scoreA": 15,
+    "mode": "QUICK",
+    "scoreB": 4,
+    "winner": "A",
+    "teamA": [
+      "f4cce9b3-53cf-4165-aaf1-15c6946c702d",
+      "tXgucAtHhC6SAmRMjnhN",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "re6SEokdd71hNgwlFa5r",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "99nsBpzNKtNXFG8l9Vnx"
+    ],
+    "duration": 535,
+    "timestamp": 1793923696456,
+    "stats": [],
+    "dailyNumber": 5
+  },
+  {
+    "scoreB": 15,
+    "winner": "B",
+    "startTime": 1793924520818,
+    "teamA": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "4XLSTef8902WS81yNfO5",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "G0swJVSs3PZiQICRLl4Q"
+    ],
+    "date": "2026-11-05",
+    "endTime": 1793924554963,
+    "stats": [],
+    "timestamp": 1793924554963,
+    "mode": "QUICK",
+    "id": "b348204b-f768-40f3-aa1f-abb0869c56b7",
+    "duration": 33,
+    "dailyNumber": 6,
+    "scoreA": 12,
+    "teamB": [
+      "RbnH4XsBdgaPfUYUiah0",
+      "OsohRuSKGB81XWXi7yZ2",
+      "eann8eWQgeeyTcFGf1sN",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "BeOpoqbsbvm7bPHe750z",
+      "tVeC06SBJpoxsSfJt7JC"
+    ]
+  },
+  {
+    "endTime": 1793925538581,
+    "scoreB": 15,
+    "dailyNumber": 7,
+    "winner": "B",
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "BeOpoqbsbvm7bPHe750z",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "re6SEokdd71hNgwlFa5r",
+      "tVeC06SBJpoxsSfJt7JC"
+    ],
+    "id": "d564f5cc-10ae-47ca-9431-9310f9c5a40d",
+    "mode": "QUICK",
+    "timestamp": 1793925538581,
+    "teamA": [
+      "f4cce9b3-53cf-4165-aaf1-15c6946c702d",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "tXgucAtHhC6SAmRMjnhN",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "sQjjxhPf1RnFxBMwFzQW"
+    ],
+    "duration": 859,
+    "date": "2026-11-05",
+    "startTime": 1793924678556,
+    "stats": [],
+    "scoreA": 11
+  },
+  {
+    "id": "9e7ca5da-b4be-4851-a824-c823bd1a202e",
+    "scoreB": 10,
+    "mode": "QUICK",
+    "winner": "A",
+    "teamA": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "4XLSTef8902WS81yNfO5",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7"
+    ],
+    "dailyNumber": 8,
+    "stats": [],
+    "startTime": 1793926234439,
+    "duration": 25,
+    "date": "2026-11-05",
+    "endTime": 1793926260258,
+    "timestamp": 1793926260258,
+    "scoreA": 15,
+    "teamB": [
+      "RbnH4XsBdgaPfUYUiah0",
+      "OsohRuSKGB81XWXi7yZ2",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "eann8eWQgeeyTcFGf1sN",
+      "G0swJVSs3PZiQICRLl4Q",
+      "re6SEokdd71hNgwlFa5r"
+    ]
+  },
+  {
+    "duration": 24,
+    "id": "eeca4ef2-ed65-4dbe-8d69-e96fd19b740f",
+    "scoreB": 12,
+    "timestamp": 1793927170593,
+    "date": "2026-11-05",
+    "winner": "A",
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "eann8eWQgeeyTcFGf1sN",
+      "BeOpoqbsbvm7bPHe750z",
+      "cA7Bi2baoQIpPU3ds2XP",
+      "99nsBpzNKtNXFG8l9Vnx"
+    ],
+    "endTime": 1793927170593,
+    "mode": "QUICK",
+    "teamA": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "OsohRuSKGB81XWXi7yZ2",
+      "tVeC06SBJpoxsSfJt7JC",
+      "tXgucAtHhC6SAmRMjnhN",
+      "sQjjxhPf1RnFxBMwFzQW"
+    ],
+    "scoreA": 15,
+    "stats": [],
+    "dailyNumber": 9,
+    "startTime": 1793927144886
+  },
+  {
+    "date": "2026-11-12",
+    "timestamp": 1794525270560,
+    "stats": [],
+    "scoreA": 6,
+    "teamA": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "XHVBCuWkIoSjA44TWLYN",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7"
+    ],
+    "dailyNumber": 1,
+    "id": "62d32cae-abcd-4890-9095-f035146c1e78",
+    "winner": "B",
+    "endTime": 1794525270560,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "BeOpoqbsbvm7bPHe750z",
+      "eann8eWQgeeyTcFGf1sN",
+      "RbnH4XsBdgaPfUYUiah0",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "mQ4ivYdcOmxwTV1eZ3Sp"
+    ],
+    "startTime": 1794524560947,
+    "scoreB": 15,
+    "duration": 708,
+    "mode": "QUICK"
+  },
+  {
+    "startTime": 1794525279052,
+    "mode": "QUICK",
+    "teamA": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "6Hi00e3WYNYKkpGOWGin",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "OsohRuSKGB81XWXi7yZ2",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7"
+    ],
+    "scoreA": 15,
+    "stats": [],
+    "duration": 786,
+    "timestamp": 1794526066630,
+    "scoreB": 12,
+    "id": "ef93fb53-ab57-4d87-b88f-f7cba40e5d84",
+    "dailyNumber": 2,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "eann8eWQgeeyTcFGf1sN",
+      "XHVBCuWkIoSjA44TWLYN",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "BeOpoqbsbvm7bPHe750z",
+      "mQ4ivYdcOmxwTV1eZ3Sp"
+    ],
+    "endTime": 1794526066630,
+    "winner": "A",
+    "date": "2026-11-12"
+  },
+  {
+    "id": "5a4e65aa-f3ec-4ba6-a386-fd5826767beb",
+    "stats": [],
+    "scoreA": 15,
+    "teamA": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "OsohRuSKGB81XWXi7yZ2",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "tXgucAtHhC6SAmRMjnhN",
+      "sQjjxhPf1RnFxBMwFzQW"
+    ],
+    "mode": "QUICK",
+    "duration": 652,
+    "startTime": 1794526219572,
+    "date": "2026-11-12",
+    "winner": "A",
+    "endTime": 1794526872912,
+    "teamB": [
+      "f2a82402-bc00-4ed3-9d7b-207e29f84adc",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "RbnH4XsBdgaPfUYUiah0",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "6Hi00e3WYNYKkpGOWGin",
+      "99nsBpzNKtNXFG8l9Vnx"
+    ],
+    "dailyNumber": 3,
+    "scoreB": 7,
+    "timestamp": 1794526872912
+  },
+  {
+    "scoreA": 15,
+    "startTime": 1794527667699,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "eann8eWQgeeyTcFGf1sN",
+      "RbnH4XsBdgaPfUYUiah0",
+      "BeOpoqbsbvm7bPHe750z",
+      "XHVBCuWkIoSjA44TWLYN",
+      "99nsBpzNKtNXFG8l9Vnx"
+    ],
+    "date": "2026-11-12",
+    "endTime": 1794527685039,
+    "stats": [],
+    "id": "f861f301-42bd-4a10-9a2d-06d557127ea3",
+    "timestamp": 1794527685039,
+    "mode": "QUICK",
+    "winner": "A",
+    "scoreB": 10,
+    "duration": 16,
+    "dailyNumber": 4,
+    "teamA": [
+      "f2a82402-bc00-4ed3-9d7b-207e29f84adc",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "tXgucAtHhC6SAmRMjnhN",
+      "sQjjxhPf1RnFxBMwFzQW"
+    ]
+  },
+  {
+    "timestamp": 1794528366517,
+    "teamA": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "OsohRuSKGB81XWXi7yZ2",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "BeOpoqbsbvm7bPHe750z",
+      "6Hi00e3WYNYKkpGOWGin"
+    ],
+    "stats": [],
+    "endTime": 1794528366517,
+    "date": "2026-11-12",
+    "duration": 16,
+    "scoreA": 15,
+    "scoreB": 7,
+    "startTime": 1794528349886,
+    "winner": "A",
+    "mode": "QUICK",
+    "id": "3f4bfb07-96ce-492f-8683-eb54eeaf136a",
+    "dailyNumber": 5,
+    "teamB": [
+      "f2a82402-bc00-4ed3-9d7b-207e29f84adc",
+      "eann8eWQgeeyTcFGf1sN",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "tXgucAtHhC6SAmRMjnhN",
+      "99nsBpzNKtNXFG8l9Vnx"
+    ]
+  },
+  {
+    "id": "1cbe1d4b-5725-45cc-b4a0-4082f28360f7",
+    "scoreA": 9,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "OsohRuSKGB81XWXi7yZ2",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "XHVBCuWkIoSjA44TWLYN"
+    ],
+    "timestamp": 1794529081458,
+    "dailyNumber": 6,
+    "date": "2026-11-12",
+    "stats": [],
+    "startTime": 1794528375179,
+    "duration": 705,
+    "mode": "QUICK",
+    "winner": "B",
+    "scoreB": 15,
+    "endTime": 1794529081458,
+    "teamA": [
+      "f2a82402-bc00-4ed3-9d7b-207e29f84adc",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "RbnH4XsBdgaPfUYUiah0",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7"
+    ]
+  },
+  {
+    "id": "f5972f4d-1747-4578-87f9-9c2d4ac4832d",
+    "date": "2026-11-12",
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "BeOpoqbsbvm7bPHe750z",
+      "XHVBCuWkIoSjA44TWLYN",
+      "6Hi00e3WYNYKkpGOWGin"
+    ],
+    "scoreB": 10,
+    "startTime": 1794529089536,
+    "winner": "A",
+    "teamA": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "eann8eWQgeeyTcFGf1sN",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "tXgucAtHhC6SAmRMjnhN",
+      "99nsBpzNKtNXFG8l9Vnx"
+    ],
+    "endTime": 1794529901238,
+    "scoreA": 15,
+    "duration": 811,
+    "timestamp": 1794529901238,
+    "dailyNumber": 7,
+    "stats": [],
+    "mode": "QUICK"
+  },
+  {
+    "teamB": [
+      "f2a82402-bc00-4ed3-9d7b-207e29f84adc",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "RbnH4XsBdgaPfUYUiah0",
+      "6Hi00e3WYNYKkpGOWGin",
+      "99nsBpzNKtNXFG8l9Vnx"
+    ],
+    "timestamp": 1794530728466,
+    "scoreA": 14,
+    "mode": "QUICK",
+    "dailyNumber": 8,
+    "startTime": 1794529911332,
+    "winner": "B",
+    "stats": [],
+    "scoreB": 15,
+    "date": "2026-11-12",
+    "teamA": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "OsohRuSKGB81XWXi7yZ2",
+      "Tg4CC8JaOeu0gH6rouaF",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "tXgucAtHhC6SAmRMjnhN",
+      "sQjjxhPf1RnFxBMwFzQW"
+    ],
+    "endTime": 1794530728466,
+    "id": "8f412d2a-9be4-4b7d-8ae1-a7a93b5b9546",
+    "duration": 816
+  },
+  {
+    "id": "2be9aeef-a6e1-4353-9c8b-08ea027c9ed6",
+    "stats": [],
+    "endTime": 1794531513052,
+    "startTime": 1794530743454,
+    "date": "2026-11-12",
+    "scoreA": 15,
+    "duration": 768,
+    "teamA": [
+      "f2a82402-bc00-4ed3-9d7b-207e29f84adc",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "eann8eWQgeeyTcFGf1sN",
+      "sQjjxhPf1RnFxBMwFzQW",
+      "RbnH4XsBdgaPfUYUiah0",
+      "BeOpoqbsbvm7bPHe750z"
+    ],
+    "timestamp": 1794531513052,
+    "winner": "A",
+    "mode": "QUICK",
+    "scoreB": 12,
+    "dailyNumber": 9,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "XHVBCuWkIoSjA44TWLYN",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "mQ4ivYdcOmxwTV1eZ3Sp",
+      "ba31d793-791f-4e25-b0e7-28579cb691e7"
+    ]
+  },
+  {
+    "endTime": 1795131932420,
+    "teamB": [
+      "RbnH4XsBdgaPfUYUiah0",
+      "eann8eWQgeeyTcFGf1sN",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "KU0dYRNMb07YcGl9e0D6",
+      "4XLSTef8902WS81yNfO5",
+      "BeOpoqbsbvm7bPHe750z"
+    ],
+    "scoreB": 15,
+    "winner": "B",
+    "mode": "QUICK",
+    "timestamp": 1795131932420,
+    "duration": 4,
+    "id": "f8ab3c95-5596-44c6-9e30-941c21e42acc",
+    "teamA": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "XHVBCuWkIoSjA44TWLYN",
+      "G0swJVSs3PZiQICRLl4Q",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "OsohRuSKGB81XWXi7yZ2"
+    ],
+    "date": "2026-11-19",
+    "scoreA": 11,
+    "startTime": 1795131922964,
+    "dailyNumber": 1,
+    "stats": []
+  },
+  {
+    "mode": "QUICK",
+    "scoreA": 15,
+    "timestamp": 1795132701279,
+    "endTime": 1795132701279,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "re6SEokdd71hNgwlFa5r",
+      "tXgucAtHhC6SAmRMjnhN",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "XHVBCuWkIoSjA44TWLYN"
+    ],
+    "stats": [],
+    "id": "416f25a5-08ac-47ed-801c-ca0d55c04583",
+    "startTime": 1795132692341,
+    "dailyNumber": 2,
+    "winner": "A",
+    "duration": 5,
+    "date": "2026-11-19",
+    "scoreB": 8,
+    "teamA": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "eann8eWQgeeyTcFGf1sN",
+      "KU0dYRNMb07YcGl9e0D6",
+      "G0swJVSs3PZiQICRLl4Q",
+      "4XLSTef8902WS81yNfO5"
+    ]
+  },
+  {
+    "teamA": [
+      "RbnH4XsBdgaPfUYUiah0",
+      "BeOpoqbsbvm7bPHe750z",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "re6SEokdd71hNgwlFa5r",
+      "WjRWvo8TEUx6kYvFuxO3"
+    ],
+    "date": "2026-11-19",
+    "timestamp": 1795133576222,
+    "scoreA": 15,
+    "duration": 4,
+    "stats": [],
+    "endTime": 1795133576222,
+    "startTime": 1795133567795,
+    "mode": "QUICK",
+    "teamB": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "OsohRuSKGB81XWXi7yZ2",
+      "tXgucAtHhC6SAmRMjnhN",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "eann8eWQgeeyTcFGf1sN"
+    ],
+    "scoreB": 10,
+    "dailyNumber": 3,
+    "winner": "A",
+    "id": "7047aae4-2f16-45f8-a32a-2f56309e1a46"
+  },
+  {
+    "teamA": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "XHVBCuWkIoSjA44TWLYN",
+      "BeOpoqbsbvm7bPHe750z",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "re6SEokdd71hNgwlFa5r"
+    ],
+    "dailyNumber": 4,
+    "scoreA": 15,
+    "timestamp": 1795134386043,
+    "date": "2026-11-19",
+    "duration": 4,
+    "stats": [],
+    "id": "1ebf1ca1-e065-4aa0-b660-01a1a6ba5453",
+    "startTime": 1795134378416,
+    "teamB": [
+      "RbnH4XsBdgaPfUYUiah0",
+      "KU0dYRNMb07YcGl9e0D6",
+      "G0swJVSs3PZiQICRLl4Q",
+      "4XLSTef8902WS81yNfO5",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "OsohRuSKGB81XWXi7yZ2"
+    ],
+    "scoreB": 11,
+    "endTime": 1795134386043,
+    "mode": "QUICK",
+    "winner": "A"
+  },
+  {
+    "mode": "QUICK",
+    "scoreA": 15,
+    "dailyNumber": 5,
+    "stats": [],
+    "timestamp": 1795135024227,
+    "id": "752bd826-1f84-46b2-a250-3272ea526b42",
+    "teamA": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "KU0dYRNMb07YcGl9e0D6",
+      "4XLSTef8902WS81yNfO5",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da"
+    ],
+    "duration": 533,
+    "startTime": 1795134487829,
+    "teamB": [
+      "cf006ebe-e3e4-4b63-98f1-975e8fcd2fc9",
+      "tXgucAtHhC6SAmRMjnhN",
+      "XHVBCuWkIoSjA44TWLYN",
+      "G0swJVSs3PZiQICRLl4Q",
+      "BeOpoqbsbvm7bPHe750z",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde"
+    ],
+    "endTime": 1795135024227,
+    "winner": "A",
+    "date": "2026-11-19",
+    "scoreB": 11
+  },
+  {
+    "endTime": 1795135843549,
+    "scoreA": 11,
+    "date": "2026-11-19",
+    "teamB": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "OsohRuSKGB81XWXi7yZ2",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "tXgucAtHhC6SAmRMjnhN",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "KU0dYRNMb07YcGl9e0D6"
+    ],
+    "timestamp": 1795135843549,
+    "dailyNumber": 6,
+    "mode": "QUICK",
+    "id": "e3f8dd4a-3fcb-44a7-bf17-4b770e41bbdb",
+    "teamA": [
+      "RbnH4XsBdgaPfUYUiah0",
+      "re6SEokdd71hNgwlFa5r",
+      "WjRWvo8TEUx6kYvFuxO3",
+      "XHVBCuWkIoSjA44TWLYN",
+      "G0swJVSs3PZiQICRLl4Q",
+      "4XLSTef8902WS81yNfO5"
+    ],
+    "duration": 716,
+    "startTime": 1795135124989,
+    "scoreB": 15,
+    "stats": [],
+    "winner": "B"
+  },
+  {
+    "mode": "QUICK",
+    "id": "2a68d369-1611-44e6-904c-815f2db64968",
+    "endTime": 1795136564503,
+    "timestamp": 1795136564503,
+    "teamB": [
+      "ac45d7ad-29c1-42d5-aa0c-17b2d7157e5d",
+      "BeOpoqbsbvm7bPHe750z",
+      "e62c3a61-58b0-4dc5-9bd2-8af415f27dde",
+      "3d1624dc-44cd-4186-81c2-a88ed2a198da",
+      "99nsBpzNKtNXFG8l9Vnx",
+      "G0swJVSs3PZiQICRLl4Q"
+    ],
+    "scoreA": 8,
+    "scoreB": 15,
+    "winner": "B",
+    "teamA": [
+      "RbnH4XsBdgaPfUYUiah0",
+      "OsohRuSKGB81XWXi7yZ2",
+      "b1ce41de-b25a-451e-9b82-b4e868698882",
+      "re6SEokdd71hNgwlFa5r",
+      "tXgucAtHhC6SAmRMjnhN",
+      "WjRWvo8TEUx6kYvFuxO3"
+    ],
+    "stats": [],
+    "startTime": 1795135915614,
+    "date": "2026-11-19",
+    "dailyNumber": 7,
+    "duration": 647
+  }
+]

@@ -40,8 +40,16 @@ export const playerSchema = z.object({
   }).nullish(),
   isExempt: z.boolean().nullish(),
   isDM: z.boolean().nullish(),
-  phone: z.string().regex(/^\d{10,14}$/, "Telefone deve conter apenas números (DDD + Número, 10 a 14 dígitos)").nullish().or(z.literal(''))
-    .transform(val => val === '' || val === null || val === undefined ? undefined : val),
+  phone: z.preprocess(
+    val => {
+      if (val === null || val === undefined || val === '') return undefined;
+      const digits = String(val).replace(/\D/g, '');
+      if (!digits) return undefined;
+      if (digits.length === 10 || digits.length === 11) return `55${digits}`;
+      return digits;
+    },
+    z.string().regex(/^\d{10,15}$/, "Telefone deve conter DDD + Número (10 a 15 dígitos)").optional()
+  ),
   uid: z.string().nullish(),
   fcmToken: z.string().nullish(),
   hasSeenWelcome: z.boolean().nullish(),

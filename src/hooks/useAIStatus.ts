@@ -31,8 +31,11 @@ export function useAIStatus() {
 
   useEffect(() => {
     fetchStatus();
-    // Poll every minute
-    const interval = setInterval(fetchStatus, 60000);
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        fetchStatus();
+      }
+    }, 300000);
     return () => clearInterval(interval);
   }, []);
 

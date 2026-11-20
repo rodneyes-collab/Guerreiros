@@ -20,7 +20,11 @@ export interface Player {
   name: string;
   email?: string;
   phone?: string;
+  whatsappLid?: string;
+  autoLinkedAt?: number;
   photoUrl?: string;
+  whatsappPhotoUrl?: string;
+  photoUpdatedAt?: number;
   gender: Gender;
   isOfficialSetter: boolean;
   setterStartDate?: string; // Data a partir da qual o atleta atua como levantador (YYYY-MM-DD)
@@ -92,6 +96,10 @@ export interface Player {
   lastFidelityDate?: string;
   isPresent?: boolean;
   checkInMethod?: 'NFC' | 'QR' | 'MANUAL';
+  lastBirthdaySentYear?: string;
+  lastBirthdaySentDate?: string;
+  lastBirthdaySentAt?: number;
+  lastBirthdayMessage?: string;
 }
 
 export interface AppNotification {

@@ -7,9 +7,6 @@ import {
   getDocFromServer,
   onSnapshot,
   setDoc,
-  writeBatch,
-  collection,
-  serverTimestamp,
   handleFirestoreError,
   OperationType,
   getFirestoreDateKey,
@@ -143,6 +140,7 @@ export const useIntentions = () => {
   const preConfirmations = useStore(state => state.preConfirmations);
 
   const recentlyModifiedIdsRef = useRef<Record<string, number>>({});
+  const lastOptimisticRef = useRef<{ data: IntentionsData; at: number } | null>(null);
   const lastRefreshTimeRef = useRef<number>(0);
 
   const isRecentlyReset = useCallback((idOrAlias: string) => {
@@ -157,9 +155,40 @@ export const useIntentions = () => {
 
   useEffect(() => {
     purgeStaleLocalStorageIntentions(getNextThursday());
+    // Auto-recuperação imediata caso o navegador esteja com cache/store zerado
+    const st = useStore.getState();
+    if (!st.players || st.players.length < 5) {
+      fetch(`/api/bootstrap?t=${Date.now()}`, {
+        headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
+      })
+        .then(r => (r.ok ? r.json() : null))
+        .then(json => {
+          if (!json || !json.success) return;
+          const cur = useStore.getState();
+          if (
+            (!cur.players || cur.players.length < 5) &&
+            Array.isArray(json.players) &&
+            json.players.length >= 15 &&
+            json.players.some((p: any) => Boolean(p?.birthDate))
+          ) {
+            cur.setPlayers(json.players);
+          }
+          if (
+            (!cur.matches || cur.matches.length === 0) &&
+            Array.isArray(json.matches) &&
+            json.matches.length >= 5
+          ) {
+            cur.setMatches(json.matches);
+          }
+          if (json.intentions) {
+            setRawIntentions(normalizeIntentionsData(json.intentions));
+            setIsLoaded(true);
+          }
+        })
+        .catch(() => {});
+    }
   }, []);
 
-  // Fonte Única da Verdade: unifica metadata/intentions + preConfirmations
   const intentions = useMemo(() => {
     const todayStr = getFirestoreDateKey();
     const nextThu = getNextThursday();
@@ -200,26 +229,21 @@ export const useIntentions = () => {
       }
     });
 
-    // Cruza também com preConfirmations sincronizados pelo FirestoreSync
-    if (Array.isArray(preConfirmations) && preConfirmations.length > 0) {
-      preConfirmations.forEach(pc => {
-        if (!pc || !pc.id) return;
-        const canonical = idToCanonicalId?.[pc.id] || pc.id;
-        if (isRecentlyReset(pc.id) || isRecentlyReset(canonical)) return;
-        if (!filteredResponses[canonical]) {
-          const pcTs = Number((pc as any).timestamp || Date.now());
-          if (pcTs >= cutoffTimestamp) {
-            filteredResponses[canonical] = 'GOING';
-            filteredTimestamps[canonical] = pcTs;
-          }
-        }
-      });
-    }
+    const normText = (s?: string) =>
+      String(s || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim();
 
     if (players && players.length > 0) {
       players.forEach(p => {
         const uidKey = p.uid;
         const emailKey = p.email ? p.email.trim().toLowerCase() : undefined;
+        const nameKey = normText(p.name);
+        const cleanPhone = String(p.phone || '').replace(/\D/g, '');
+        const phoneAlias = cleanPhone.length >= 8 ? `wa_${cleanPhone}` : undefined;
+        const phoneAlias55 = cleanPhone.length >= 10 && !cleanPhone.startsWith('55') ? `wa_55${cleanPhone}` : undefined;
 
         if (
           isRecentlyReset(p.id) ||
@@ -239,47 +263,87 @@ export const useIntentions = () => {
           return;
         }
 
-        const candidateKeys = [p.id, uidKey, emailKey].filter(Boolean) as string[];
+        const firstToken = nameKey.split(/[^a-z0-9]+/)[0];
+        const compactName = nameKey.replace(/[^a-z0-9]+/g, '');
+        const seedKey = firstToken ? `seed_${firstToken}` : undefined;
+        const seedCompactKey = compactName ? `seed_${compactName}` : undefined;
+        const candidateKeys = [
+          p.id,
+          uidKey,
+          emailKey,
+          nameKey,
+          compactName || undefined,
+          firstToken || undefined,
+          seedKey,
+          seedCompactKey,
+          phoneAlias,
+          phoneAlias55
+        ].filter(Boolean) as string[];
+        if (cleanPhone.length >= 8) {
+          const last8 = cleanPhone.slice(-8);
+          Object.keys(responses).forEach(rk => {
+            if (rk.startsWith('wa_') && rk.slice(-8) === last8 && !candidateKeys.includes(rk)) {
+              candidateKeys.push(rk);
+            }
+          });
+        }
+
         let bestStatus: 'GOING' | 'NOT_GOING' | null = null;
-        let bestTs = 0;
+        let latestDecisionTs = 0;
+        let earliestGoingTs = Infinity;
 
         candidateKeys.forEach(k => {
           const st = filteredResponses[k] || responses[k];
           const kTs = Number(filteredTimestamps[k] || timestamps[k] || 0);
-          if ((st === 'GOING' || st === 'NOT_GOING') && kTs >= bestTs) {
-            bestStatus = st;
-            bestTs = kTs;
+          if ((st === 'GOING' || st === 'NOT_GOING') && kTs >= cutoffTimestamp) {
+            if (st === 'GOING' && kTs < earliestGoingTs) {
+              earliestGoingTs = kTs;
+            }
+            if (!bestStatus || kTs > latestDecisionTs) {
+              bestStatus = st;
+              latestDecisionTs = kTs;
+            }
           }
         });
 
-        const ts =
-          bestTs ||
-          filteredTimestamps[p.id] ||
-          (uidKey ? filteredTimestamps[uidKey] : 0) ||
-          (emailKey ? filteredTimestamps[emailKey] : 0) ||
-          timestamps[p.id] ||
-          (uidKey ? timestamps[uidKey] : 0) ||
-          (emailKey ? timestamps[emailKey] : 0) ||
-          0;
+        // Remove chaves de alias redundantes para evitar duplicidade ou falsos convidados
+        candidateKeys.forEach(k => {
+          if (k !== p.id) {
+            delete filteredResponses[k];
+            delete filteredTimestamps[k];
+          }
+        });
 
-        if (bestStatus === 'GOING' && ts >= cutoffTimestamp) {
+        const resolvedTs =
+          bestStatus === 'GOING' && earliestGoingTs < Infinity
+            ? earliestGoingTs
+            : latestDecisionTs;
+
+        if (bestStatus === 'GOING' && resolvedTs >= cutoffTimestamp) {
           filteredResponses[p.id] = 'GOING';
-          filteredTimestamps[p.id] = ts;
-        } else if (bestStatus === 'NOT_GOING' && ts >= cutoffTimestamp) {
+          filteredTimestamps[p.id] = resolvedTs;
+        } else if (bestStatus === 'NOT_GOING' && resolvedTs >= cutoffTimestamp) {
           filteredResponses[p.id] = 'NOT_GOING';
-          filteredTimestamps[p.id] = ts;
+          filteredTimestamps[p.id] = resolvedTs;
         } else {
           delete filteredResponses[p.id];
           delete filteredTimestamps[p.id];
         }
+      });
+    }
 
-        if (uidKey && uidKey !== p.id) {
-          delete filteredResponses[uidKey];
-          delete filteredTimestamps[uidKey];
-        }
-        if (emailKey && emailKey !== p.id) {
-          delete filteredResponses[emailKey];
-          delete filteredTimestamps[emailKey];
+    // Espelhamento de preConfirmations somente se o sócio ainda não tiver resposta explícita (GOING ou NOT_GOING)
+    if (Array.isArray(preConfirmations) && preConfirmations.length > 0) {
+      preConfirmations.forEach(pc => {
+        if (!pc || !pc.id) return;
+        const canonical = idToCanonicalId?.[pc.id] || pc.id;
+        if (isRecentlyReset(pc.id) || isRecentlyReset(canonical)) return;
+        if (!filteredResponses[canonical]) {
+          const pcTs = Number((pc as any).timestamp || 0);
+          if (pcTs >= cutoffTimestamp) {
+            filteredResponses[canonical] = 'GOING';
+            filteredTimestamps[canonical] = pcTs;
+          }
         }
       });
     }
@@ -291,6 +355,21 @@ export const useIntentions = () => {
       confirmationTimestamps: filteredTimestamps
     };
   }, [rawIntentions, players, idToCanonicalId, preConfirmations, isRecentlyReset]);
+
+  useEffect(() => {
+    const st = useStore.getState();
+    if (st.players && st.players.length >= 10) {
+      fetch('/api/cache/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          players: st.players,
+          matches: st.matches || [],
+          intentions
+        })
+      }).catch(() => {});
+    }
+  }, [intentions]);
 
   const getPlayerConfirmationTime = useCallback(
     (p: Player) => {
@@ -322,78 +401,122 @@ export const useIntentions = () => {
   }, []);
 
   const _refreshIntentions = useCallback(async (force = false) => {
-    if (isQuotaExceeded) return DEFAULT_INTENTIONS;
     const now = Date.now();
-    if (!force && now - lastRefreshTimeRef.current < 60000) {
-      return DEFAULT_INTENTIONS;
+    if (!force && now - lastRefreshTimeRef.current < 15000) {
+      return rawIntentions;
     }
     lastRefreshTimeRef.current = now;
 
-    try {
-      const snap = await getDocFromServer(doc(db, 'metadata', 'intentions'));
-      if (snap.exists()) {
-        const normalized = normalizeIntentionsData(snap.data());
-        updateIntentionsLock(normalized.targetDate);
-        setRawIntentions(normalized);
-        setIsLoaded(true);
-        return normalized;
-      }
-    } catch (err) {
-      if (isFirestoreQuotaError(err)) {
-        markQuotaExceeded();
-        return DEFAULT_INTENTIONS;
-      }
-      try {
-        const snap = await getDoc(doc(db, 'metadata', 'intentions'));
-        if (snap.exists()) {
-          const normalized = normalizeIntentionsData(snap.data());
-          updateIntentionsLock(normalized.targetDate);
-          setRawIntentions(normalized);
-          setIsLoaded(true);
-          return normalized;
-        }
-      } catch (fallbackErr) {
-        if (isFirestoreQuotaError(fallbackErr)) {
-          markQuotaExceeded();
-          return DEFAULT_INTENTIONS;
-        }
-      }
-    }
+    let serverState: IntentionsData | null = null;
+    let firestoreState: IntentionsData | null = null;
 
     try {
-      const resp = await fetch(`/api/presence/state?t=${Date.now()}`, {
-        headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
-      });
+      const storeState = useStore.getState();
+      const needsFullBootstrap =
+        !storeState.players || storeState.players.length < 5 || !storeState.matches || storeState.matches.length === 0;
+      const endpoint = needsFullBootstrap ? '/api/presence/state?includeFull=1' : '/api/presence/state';
+      const resp = await fetch(endpoint);
       if (resp.ok) {
         const json = await resp.json();
         if (json.success && json.data) {
-          const normalized = normalizeIntentionsData(json.data);
-          if (Object.keys(normalized.responses || {}).length > 0) {
-            updateIntentionsLock(normalized.targetDate);
-            setRawIntentions(normalized);
-            setIsLoaded(true);
-            return normalized;
+          serverState = normalizeIntentionsData(json.data);
+          // TRAVA DE REDUNDÂNCIA E INTEGRIDADE:
+          // Só hidrata players/matches via servidor se a store local estiver zerada (< 5 sócios)
+          // E o payload do servidor estiver 100% íntegro (>= 15 sócios com birthDate e matchesPlayed).
+          if (
+            (!storeState.players || storeState.players.length < 5) &&
+            Array.isArray(json.players) &&
+            json.players.length >= 15 &&
+            json.players.some((p: any) => Boolean(p?.birthDate))
+          ) {
+            storeState.setPlayers(json.players);
+          }
+          if (
+            (!storeState.matches || storeState.matches.length === 0) &&
+            Array.isArray(json.matches) &&
+            json.matches.length >= 5
+          ) {
+            storeState.setMatches(json.matches);
           }
         }
       }
     } catch (e) {}
 
-    return DEFAULT_INTENTIONS;
+    if (!isQuotaExceeded) {
+      try {
+        const snap = await getDocFromServer(doc(db, 'metadata', 'intentions'));
+        if (snap.exists()) {
+          firestoreState = normalizeIntentionsData(snap.data());
+        }
+      } catch (err) {
+        if (isFirestoreQuotaError(err)) {
+          markQuotaExceeded();
+        } else {
+          try {
+            const snap = await getDoc(doc(db, 'metadata', 'intentions'));
+            if (snap.exists()) {
+              firestoreState = normalizeIntentionsData(snap.data());
+            }
+          } catch {}
+        }
+      }
+    }
+
+    const recentOpt =
+      lastOptimisticRef.current && Date.now() - lastOptimisticRef.current.at < 45000
+        ? lastOptimisticRef.current.data
+        : null;
+
+    if (serverState || firestoreState || recentOpt) {
+      // Escolhe a fonte mais recente por lastUpdated para não ressuscitar sócios resetados/removidos
+      const candidates = [serverState, firestoreState].filter(Boolean) as IntentionsData[];
+      candidates.sort((a, b) => Number(b.lastUpdated || 0) - Number(a.lastUpdated || 0));
+      const authoritative = candidates[0] || recentOpt!;
+
+      const merged: IntentionsData =
+        recentOpt && Number(recentOpt.lastUpdated || 0) > Number(authoritative.lastUpdated || 0)
+          ? {
+              ...recentOpt,
+              targetDate: recentOpt.targetDate || authoritative.targetDate || getNextThursday()
+            }
+          : {
+              ...authoritative,
+              targetDate: authoritative.targetDate || getNextThursday()
+            };
+
+      updateIntentionsLock(merged.targetDate);
+      setRawIntentions(merged);
+      setIsLoaded(true);
+      return merged;
+    }
+
+    setIsLoaded(true);
+    return recentOpt || serverState || firestoreState || DEFAULT_INTENTIONS;
   }, []);
 
   const refreshIntentions = useCallback(() => _refreshIntentions(true), [_refreshIntentions]);
 
-  // Atualiza ao montar, ao mudar para a aba 'intentions', ao disparar syncTrigger ou focar o app
   useEffect(() => {
     if (viewMode === 'intentions' || syncTrigger > 0) {
-      _refreshIntentions(syncTrigger > 0).catch(() => {});
+      _refreshIntentions(true).catch(() => {});
     }
   }, [_refreshIntentions, viewMode, syncTrigger]);
 
   useEffect(() => {
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible' && !isQuotaExceeded) {
+    // Firestore onSnapshot já mantém a lista sincronizada em tempo real.
+    // Mantém apenas um fallback leve a cada 2 minutos quando a aba está visível e na tela de intenções.
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible' && viewMode === 'intentions') {
         _refreshIntentions(false).catch(() => {});
+      }
+    }, 120000);
+    return () => clearInterval(interval);
+  }, [_refreshIntentions, viewMode]);
+
+    useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        _refreshIntentions(true).catch(() => {});
       }
     };
     window.addEventListener('visibilitychange', handleVisibility);
@@ -431,32 +554,29 @@ export const useIntentions = () => {
             updateIntentionsLock(normalized.targetDate);
           }
 
-          const cutoffTimestamp = getCycleFridayCutoffTimestamp(normalized.targetDate || nextThu);
+          const recentOpt =
+            lastOptimisticRef.current && Date.now() - lastOptimisticRef.current.at < 8000
+              ? lastOptimisticRef.current.data
+              : null;
 
-          Object.keys(normalized.responses || {}).forEach(k => {
-            const ts = Number(normalized.confirmationTimestamps?.[k] || normalized.lastUpdated || 0);
-            if (isRecentlyReset(k) || ts < cutoffTimestamp) {
-              delete normalized.responses[k];
-              delete normalized.confirmationTimestamps?.[k];
-            }
-          });
-
-          setRawIntentions(normalized);
+          if (!recentOpt || Number(normalized.lastUpdated || 0) >= Number(recentOpt.lastUpdated || 0)) {
+            setRawIntentions(normalized);
+          }
+          setIsLoaded(true);
+        } else {
+          setIsLoaded(true);
         }
-        setIsLoaded(true);
       },
       err => {
         if (isFirestoreQuotaError(err)) {
           markQuotaExceeded();
-          setIsLoaded(true);
-          return;
         }
-        console.error('useIntentions: Error in intentions snapshot:', err);
+        _refreshIntentions(true).catch(() => {});
         setIsLoaded(true);
       }
     );
     return () => unsub();
-  }, [isRecentlyReset]);
+  }, [_refreshIntentions]);
 
   const setIntent = async (playerId: string, status: 'GOING' | 'NOT_GOING' | 'RESET') => {
     const today = getFirestoreDateKey();
@@ -537,6 +657,7 @@ export const useIntentions = () => {
       lastUpdated: now
     };
 
+    lastOptimisticRef.current = { data: optimisticNext, at: now };
     setRawIntentions(optimisticNext);
     updateIntentionsLock(targetDate);
 
@@ -565,7 +686,21 @@ export const useIntentions = () => {
       if (apiResp.ok) {
         const json = await apiResp.json();
         if (json.data) {
-          setRawIntentions(normalizeIntentionsData(json.data));
+          const normalizedServer = normalizeIntentionsData(json.data);
+          const mergedWithOpt: IntentionsData = {
+            ...normalizedServer,
+            responses: {
+              ...(normalizedServer.responses || {}),
+              ...(optimisticNext.responses || {})
+            },
+            confirmationTimestamps: {
+              ...(normalizedServer.confirmationTimestamps || {}),
+              ...(optimisticNext.confirmationTimestamps || {})
+            },
+            lastUpdated: Math.max(normalizedServer.lastUpdated || 0, now)
+          };
+          lastOptimisticRef.current = { data: mergedWithOpt, at: Date.now() };
+          setRawIntentions(mergedWithOpt);
         }
         return;
       }
@@ -574,7 +709,6 @@ export const useIntentions = () => {
     }
 
     try {
-      // Escreve mapas aninhados limpos (sem usar updateDoc com chaves ponto que quebram e-mails)
       const intentionsRef = doc(db, 'metadata', 'intentions');
       await setDoc(intentionsRef, {
         targetDate,
@@ -638,86 +772,27 @@ export const useIntentions = () => {
   const sendReminders = useCallback(
     async (customMessage?: string) => {
       try {
-        const batch = writeBatch(db);
-        let count = 0;
-
-        const currentStore = useStore.getState();
-        const currentAttendance = currentStore.attendance;
-        const currentIntentions = intentions;
-
-        const intentionsDocRef = doc(db, 'metadata', 'intentions');
-        const updatedRemindersSent: Record<string, boolean> = { ...(rawIntentions.remindersSent || {}) };
-
-        players.forEach(player => {
-          const isAlreadyInAttendance = currentAttendance.some(a => a.id === player.id);
-          const hasResponded =
-            currentIntentions.responses[player.id] === 'GOING' ||
-            currentIntentions.responses[player.id] === 'NOT_GOING';
-
-          if (player.status === 'active' && !player.isDM && !hasResponded && !isAlreadyInAttendance) {
-            const appLink = `${getAppUrl()}?tab=intentions`;
-            updatedRemindersSent[player.id] = true;
-
-            const appNotifRef = doc(collection(db, 'notifications'));
-            const tDate = currentIntentions.targetDate;
-            let dateStr = 'xx/xx';
-            if (tDate) {
-              const [, m, d] = tDate.split('-').map(Number);
-              dateStr = `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}`;
-            }
-
-            batch.set(appNotifRef, {
-              playerId: player.id,
-              playerUid: player.uid || null,
-              title: 'Aviso de Presença',
-              message:
-                customMessage ||
-                `Bora pra lista mais esperada da semana !!!\n\nGuerreiro(a) vamos jogar quinta-feira dia ${dateStr} ? Não perca vai ser massa...\n\n[Clique aqui para confirmar](${appLink}) ou no grupo de WhatsApp.`,
-              createdAt: Date.now(),
-              read: false,
-              type: 'reminder'
-            });
-
-            if (player.fcmToken) {
-              const notifRef = doc(collection(db, 'fcm_messages'));
-              batch.set(notifRef, {
-                token: player.fcmToken,
-                notification: {
-                  title: 'Aviso de Presença',
-                  body:
-                    customMessage ||
-                    `Bora pra lista mais esperada da semana !!! Guerreiro(a) vamos jogar quinta-feira dia ${dateStr} ? Não perca vai ser massa... Confirme no app: ${appLink}`,
-                  sound: 'default'
-                },
-                data: {
-                  unreadCount: '1',
-                  type: 'reminder'
-                },
-                createdAt: serverTimestamp()
-              });
-            }
-            count++;
-          }
+        const headers = await getAuthHeaders();
+        const resp = await fetch('/api/whatsapp/remind-undecided', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ customMessage })
         });
-
-        if (count > 0) {
-          batch.set(intentionsDocRef, { remindersSent: updatedRemindersSent }, { merge: true });
-          await batch.commit();
-          setRawIntentions(prev => ({
-            ...prev,
-            remindersSent: updatedRemindersSent
-          }));
+        if (resp.ok) {
+          const data = await resp.json();
+          await _refreshIntentions(true);
+          return Number(data.count || data.totalUndecided || 0);
         }
-        return count;
+        return 0;
       } catch (err) {
-        console.error('Erro ao enviar lembretes:', err);
+        console.error('Erro ao enviar lembretes via WhatsApp:', err);
         return 0;
       }
     },
-    [players, intentions, rawIntentions.remindersSent, getAppUrl]
+    [_refreshIntentions]
   );
 
-  const copyToWhatsApp = (customGoingPlayers?: Player[]) => {
+  const buildWhatsAppListText = (customGoingPlayers?: Player[]) => {
     let goingPlayers: Player[] = [];
 
     if (customGoingPlayers && customGoingPlayers.length > 0) {
@@ -728,6 +803,7 @@ export const useIntentions = () => {
         .sort((a, b) => getPlayerConfirmationTime(a) - getPlayerConfirmationTime(b));
     }
 
+    const totalActiveClub = (players || []).filter(p => p.status === 'active' && !p.isDM).length;
     const tDate = intentions.targetDate;
     let dateStr = 'xx/xx';
     if (tDate) {
@@ -735,23 +811,57 @@ export const useIntentions = () => {
       dateStr = `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}`;
     }
 
-    let text = `Bora pra lista mais esperada da semana !!!\n\n`;
-    text += `Guerreiro(a) vamos jogar quinta-feira dia ${dateStr} ? Não perca vai ser massa...\n\n`;
-    text += `*Guerreiros confirmados*\n\n`;
+    let text = `Bora pra lista mais esperada da semana !!! 🏐🔥\n\n`;
+    text += `Guerreiro(a), vamos jogar quinta-feira dia ${dateStr}? Não perca, vai ser massa...\n\n`;
+    text += `*Guerreiros confirmados:*\n\n`;
 
     if (goingPlayers.length === 0) {
       text += 'Nenhum sócio confirmado ainda.';
     } else {
       goingPlayers.forEach((p, index) => {
         const isGuest = p.status === 'guest';
-        text += `${index + 1} . ${p.name}${isGuest ? ' ( Convidado)' : ''}\n`;
+        const isSetter = p.isOfficialSetter ? ' *(L)*' : '';
+        text += `${index + 1}. ${p.name}${isSetter}${isGuest ? ' (Convidado)' : ''}\n`;
       });
-      text += `\nTotal: ${goingPlayers.length} confirmados`;
+      text += `\n✅ *Total:* ${goingPlayers.length}/${totalActiveClub} confirmados`;
     }
 
-    text += `\n\nConfirme sua presença no app: ${getAppUrl()}?tab=intentions ou no grupo do WhatsApp!`;
+    text +=
+      `\n\n───────────────────\n` +
+      `📱 *Confirme pelo App:*\n${getAppUrl()}?tab=intentions\n\n` +
+      `🤖 *Ou confirme em 1 clique com o Guerreirinho no WhatsApp:*\n` +
+      `🟢 *Confirmar (Vou):* https://wa.me/558197330924?text=gv%20vou\n` +
+      `🔴 *Informar Ausência:* https://wa.me/558197330924?text=gv%20naovou`;
+
+    return text;
+  };
+
+  const copyToWhatsApp = (customGoingPlayers?: Player[]) => {
+    const text = buildWhatsAppListText(customGoingPlayers);
     navigator.clipboard.writeText(text);
     return true;
+  };
+
+  const sendListToWhatsAppGroup = async (customGoingPlayers?: Player[]): Promise<boolean> => {
+    try {
+      const text = buildWhatsAppListText(customGoingPlayers);
+      const headers = await getAuthHeaders();
+      const resp = await fetch('/api/whatsapp/broadcast-intentions', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          text,
+          targetDate: intentions.targetDate || getNextThursday(),
+          goingCount: customGoingPlayers?.length ?? Object.values(intentions.responses || {}).filter(v => v === 'GOING').length
+        })
+      });
+      if (!resp.ok) return false;
+      const data = await resp.json().catch(() => ({}));
+      return Boolean(data?.success !== false);
+    } catch (err) {
+      console.error('Erro ao enviar lista para o grupo do WhatsApp:', err);
+      return false;
+    }
   };
 
   const copyReminder = () => {
@@ -762,7 +872,13 @@ export const useIntentions = () => {
       const [, m, d] = tDate.split('-').map(Number);
       dateStr = `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}`;
     }
-    const text = `Bora pra lista mais esperada da semana !!!\n\nGuerreiro(a) vamos jogar quinta-feira dia ${dateStr} ? Não perca vai ser massa...\n\nConfirme a sua presença direto no app: ${appLink} ou no grupo do WhatsApp.`;
+    const text =
+      `Bora pra lista mais esperada da semana !!! 🏐🔥\n\n` +
+      `Guerreiro(a), vamos jogar quinta-feira dia ${dateStr}? Não perca, vai ser massa...\n\n` +
+      `📱 *Confirme direto no App:*\n${appLink}\n\n` +
+      `🤖 *Ou confirme em 1 clique com o Guerreirinho no WhatsApp:*\n` +
+      `🟢 *Confirmar (Vou):* https://wa.me/558197330924?text=gv%20vou\n` +
+      `🔴 *Informar Ausência:* https://wa.me/558197330924?text=gv%20naovou`;
     navigator.clipboard.writeText(text);
     return true;
   };
@@ -776,9 +892,29 @@ export const useIntentions = () => {
     toggleAutomation,
     sendReminders,
     copyToWhatsApp,
+    sendListToWhatsAppGroup,
     copyReminder,
     getPlayerConfirmationTime,
     refreshIntentions,
-    forceSyncIntentions: refreshIntentions
+    forceSyncIntentions: refreshIntentions,
+    stabilizeIntentions: async () => {
+      try {
+        const headers = await getAuthHeaders();
+        const resp = await fetch('/api/intentions/stabilize', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ targetDate: intentions.targetDate || getNextThursday() })
+        });
+        if (resp.ok) {
+          const json = await resp.json();
+          if (json?.success && json?.data) {
+            const norm = normalizeIntentionsData(json.data);
+            lastOptimisticRef.current = { data: norm, at: Date.now() };
+            setRawIntentions(norm);
+          }
+        }
+      } catch {}
+      return _refreshIntentions(true);
+    }
   };
 };

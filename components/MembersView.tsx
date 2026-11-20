@@ -26,16 +26,32 @@ import {
   AlertTriangle,
   Clock,
   Phone,
+  MessageCircle,
+  Camera,
   X,
-  History
+  History,
+  Link2,
+  Upload,
+  Send
 } from 'lucide-react';
 import { EvasionIcon } from './EvasionIcon';
 import { calculateEvasionLevel } from '../utils/evasion';
 import { calculateTrueSkillUpdate } from '../src/utils/trueSkill';
 import { calculateCompositePerformanceRating } from '../utils/teamLogic';
-import { getFirestoreDateKey } from '../firebase';
+import { getFirestoreDateKey, db, doc, setDoc } from '../firebase';
 import { useIntentions } from '../src/hooks/useIntentions';
 import { useBirthdays } from '../src/hooks/useBirthdays';
+import {
+  autoNormalizeBrazilianPhone,
+  WhatsAppPhotoDirectory,
+  loadLocalWhatsAppPhotoDirectory,
+  syncWhatsAppPhotoDirectory,
+  resolveEffectivePlayerPhoto,
+  enrichPlayersWithWhatsAppPhotos,
+  compressImageFileToDataUri,
+  associatePhotoWithWhatsAppPhone,
+  findPhotoBindingByPhone
+} from '../src/services/whatsappPhotoIntegration';
 
 interface MembersViewProps {
   clearAllPlayers: () => void;
@@ -58,6 +74,473 @@ export const MembersView: React.FC<MembersViewProps> = ({
 }) => {
   const { players, userRole, currentPlayer, isSyncing, showConfirmModal, matches, attendance, systemMetadata } = useStore(useShallow(state => ({players: state.players, userRole: state.userRole, currentPlayer: state.currentPlayer, isSyncing: state.isSyncing, showConfirmModal: state.showConfirmModal, matches: state.matches, attendance: state.attendance, systemMetadata: state.systemMetadata})));
   const { intentions } = useIntentions();
+  const showNotification = useStore(state => state.showNotification);
+  const [sendingWelcomeId, setSendingWelcomeId] = React.useState<string | null>(null);
+  const [isSyncingPhotos, setIsSyncingPhotos] = React.useState(false);
+  const [waPhotoDir, setWaPhotoDir] = React.useState<WhatsAppPhotoDirectory>(() =>
+    loadLocalWhatsAppPhotoDirectory()
+  );
+  const [photoLinkModalPlayer, setPhotoLinkModalPlayer] = React.useState<Player | null>(null);
+  const [linkPhoneInput, setLinkPhoneInput] = React.useState('');
+  const [linkPhotoPreview, setLinkPhotoPreview] = React.useState<string | null>(null);
+  const [isSavingPhotoLink, setIsSavingPhotoLink] = React.useState(false);
+  const [showBatchPhotoModal, setShowBatchPhotoModal] = React.useState(false);
+  const [batchPhotoItems, setBatchPhotoItems] = React.useState<
+    Array<{ id: string; fileName: string; dataUri: string; matchedPlayerId: string }>
+  >([]);
+  const [isSavingBatchPhotos, setIsSavingBatchPhotos] = React.useState(false);
+
+  const matchFilenameToPlayerId = (fileName: string): string => {
+    const base = fileName.replace(/\.[^/.]+$/, '');
+    const norm = (s: string) =>
+      String(s || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+    const cleanBase = norm(base);
+    const digits = base.replace(/\D/g, '');
+
+    if (digits.length >= 8) {
+      const byPhone = players.find((p) => {
+        const pDigits = String(p.phone || '').replace(/\D/g, '');
+        return pDigits.length >= 8 && pDigits.slice(-8) === digits.slice(-8);
+      });
+      if (byPhone) return byPhone.id;
+    }
+
+    if (!cleanBase) return '';
+    const exact = players.find((p) => norm(p.name) === cleanBase);
+    if (exact) return exact.id;
+
+    const firstToken = cleanBase.split(' ')[0];
+    if (firstToken && firstToken.length >= 2) {
+      const byFirst = players.find((p) => norm(p.name).split(' ')[0] === firstToken);
+      if (byFirst) return byFirst.id;
+    }
+
+    const partial = players.find(
+      (p) => norm(p.name).includes(cleanBase) || cleanBase.includes(norm(p.name))
+    );
+    return partial ? partial.id : '';
+  };
+
+  const handleBatchFilesSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files: File[] = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    const processed: Array<{ id: string; fileName: string; dataUri: string; matchedPlayerId: string }> = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      try {
+        const dataUri = await compressImageFileToDataUri(file, 300, 0.8);
+        processed.push({
+          id: `${Date.now()}_${i}`,
+          fileName: file.name,
+          dataUri,
+          matchedPlayerId: matchFilenameToPlayerId(file.name)
+        });
+      } catch {}
+    }
+    setBatchPhotoItems((prev) => [...prev, ...processed]);
+    e.target.value = '';
+  };
+
+  const handleSaveAllBatchPhotos = async () => {
+    const validItems = batchPhotoItems.filter((item) => item.matchedPlayerId && item.dataUri);
+    if (validItems.length === 0) {
+      showNotification?.('Associe pelo menos uma foto a um sócio antes de salvar.', 'info');
+      return;
+    }
+    setIsSavingBatchPhotos(true);
+    let savedCount = 0;
+    try {
+      const updatedPlayersList = [...(useStore.getState().players || players)];
+      for (const item of validItems) {
+        const target = updatedPlayersList.find((p) => p.id === item.matchedPlayerId);
+        if (!target) continue;
+        const cleanPhone = autoNormalizeBrazilianPhone(target.phone || '');
+        if (cleanPhone) {
+          await associatePhotoWithWhatsAppPhone({
+            playerId: target.id,
+            playerName: target.name,
+            phone: cleanPhone,
+            photoUrl: item.dataUri,
+            source: 'manual_upload'
+          });
+        } else {
+          await fetch('/api/whatsapp/push-member-photo', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              playerId: target.id,
+              playerName: target.name,
+              photoUrl: item.dataUri,
+              source: 'batch_upload'
+            })
+          }).catch(() => {});
+        }
+        await setDoc(
+          doc(db, 'players', target.id),
+          {
+            photoUrl: item.dataUri,
+            whatsappPhotoUrl: item.dataUri,
+            photoUpdatedAt: Date.now()
+          },
+          { merge: true }
+        ).catch(() => {});
+
+        const idx = updatedPlayersList.findIndex((p) => p.id === target.id);
+        if (idx !== -1) {
+          updatedPlayersList[idx] = {
+            ...updatedPlayersList[idx],
+            photoUrl: item.dataUri,
+            whatsappPhotoUrl: item.dataUri
+          };
+        }
+        savedCount++;
+      }
+      useStore.setState({ players: updatedPlayersList });
+      const freshDir = await syncWhatsAppPhotoDirectory().catch(() => loadLocalWhatsAppPhotoDirectory());
+      setWaPhotoDir(freshDir);
+      showNotification?.(`${savedCount} foto(s) salva(s) permanentemente no cadastro!`, 'success');
+      setBatchPhotoItems([]);
+      setShowBatchPhotoModal(false);
+    } catch (err: any) {
+      showNotification?.('Erro ao salvar lote de fotos: ' + (err?.message || ''), 'error');
+    } finally {
+      setIsSavingBatchPhotos(false);
+    }
+  };
+  const [waBotEnabled, setWaBotEnabled] = React.useState<boolean>(true);
+  const [isTogglingWaBot, setIsTogglingWaBot] = React.useState(false);
+
+  React.useEffect(() => {
+    fetch(`/api/whatsapp/bot-status?t=${Date.now()}`, {
+      headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
+    })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        if (d && typeof (d.enabled ?? d.botActive) === 'boolean') {
+          setWaBotEnabled(Boolean(d.enabled ?? d.botActive));
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleToggleWaBot = async () => {
+    if (isTogglingWaBot) return;
+    setIsTogglingWaBot(true);
+    const nextEnabled = !waBotEnabled;
+    try {
+      const resp = await fetch('/api/whatsapp/bot-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: nextEnabled })
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        const actual = typeof (data.enabled ?? data.botActive) === 'boolean' ? Boolean(data.enabled ?? data.botActive) : nextEnabled;
+        setWaBotEnabled(actual);
+        showNotification?.(
+          actual ? 'Robô Guerreirinho (WhatsApp) HABILITADO!' : 'Robô Guerreirinho (WhatsApp) DESABILITADO!',
+          actual ? 'success' : 'info'
+        );
+      } else {
+        setWaBotEnabled(nextEnabled);
+        showNotification?.(
+          nextEnabled ? 'Robô WhatsApp habilitado.' : 'Robô WhatsApp desabilitado.',
+          'success'
+        );
+      }
+    } catch {
+      setWaBotEnabled(nextEnabled);
+    } finally {
+      setIsTogglingWaBot(false);
+    }
+  };
+  const [isSendingBirthday, setIsSendingBirthday] = React.useState(false);
+  const autoBirthdayCheckedRef = React.useRef<string>('');
+
+  // Carrega e sincroniza o diretório Foto <-> Telefone WhatsApp ao abrir a tela
+  React.useEffect(() => {
+    syncWhatsAppPhotoDirectory()
+      .then((dir) => {
+        setWaPhotoDir(dir);
+        const current = useStore.getState().players || [];
+        if (current.length > 0) {
+          const enriched = enrichPlayersWithWhatsAppPhotos(current, dir);
+          const changed = enriched.some((ep, idx) => ep.photoUrl !== current[idx]?.photoUrl);
+          if (changed) {
+            useStore.setState({ players: enriched });
+          }
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const openPhotoLinkModal = (targetPlayer: Player) => {
+    setPhotoLinkModalPlayer(targetPlayer);
+    setLinkPhoneInput(targetPlayer.phone || '');
+    const existingResolved = resolveEffectivePlayerPhoto(targetPlayer as any, waPhotoDir);
+    setLinkPhotoPreview(existingResolved || null);
+  };
+
+  const handlePhotoFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const compressedDataUri = await compressImageFileToDataUri(file, 256, 0.84);
+      setLinkPhotoPreview(compressedDataUri);
+    } catch (err) {
+      showNotification?.('Não foi possível processar esta imagem. Tente outra foto.', 'error');
+    }
+  };
+
+  const handleSaveWhatsAppPhotoBinding = async () => {
+    if (!photoLinkModalPlayer || isSavingPhotoLink) return;
+    if (!linkPhoneInput.trim()) {
+      showNotification?.('Informe o número de telefone do WhatsApp do sócio.', 'error');
+      return;
+    }
+    setIsSavingPhotoLink(true);
+    try {
+      const result = await associatePhotoWithWhatsAppPhone({
+        playerId: photoLinkModalPlayer.id,
+        playerName: photoLinkModalPlayer.name,
+        phone: linkPhoneInput,
+        photoUrl: linkPhotoPreview,
+        source: 'manual_upload'
+      });
+      setWaPhotoDir(result.directory);
+      await refreshPlayers();
+      showNotification?.(
+        result.photoUrl
+          ? `Foto associada ao WhatsApp (${formatPhoneNumber(result.normalizedPhone)}) de ${capitalizeName(photoLinkModalPlayer.name)}!`
+          : `WhatsApp (${formatPhoneNumber(result.normalizedPhone)}) vinculado ao cadastro de ${capitalizeName(photoLinkModalPlayer.name)}!`,
+        'success'
+      );
+      setPhotoLinkModalPlayer(null);
+    } catch (err: any) {
+      showNotification?.(err?.message || 'Erro ao vincular foto ao WhatsApp.', 'error');
+    } finally {
+      setIsSavingPhotoLink(false);
+    }
+  };
+
+  // Disparo automático de aniversário a partir das 08:00 da manhã (grupo + privado do sócio)
+  React.useEffect(() => {
+    if (!players || players.length === 0) return;
+    const todayKey = getFirestoreDateKey();
+    const [currentYearStr, currentMonthStr, currentDayStr] = todayKey.split('-');
+    const brHourStr = new Date().toLocaleTimeString('pt-BR', {
+      timeZone: 'America/Sao_Paulo',
+      hour: '2-digit',
+      hour12: false
+    });
+    const brHour = Number(brHourStr) % 24;
+    if (brHour < 8) return; // Aguarda até as 08:00 da manhã
+
+    const todayUnsent = players.filter((p) => {
+      if (!p || (p.status && p.status !== 'active') || !p.birthDate) return false;
+      const parts = p.birthDate.trim().split('T')[0].split(/[-/]/);
+      if (parts.length < 3) return false;
+      const d = (parts[0].length === 4 ? parts[2] : parts[0]).padStart(2, '0');
+      const m = parts[1].padStart(2, '0');
+      const isToday = d === currentDayStr && m === currentMonthStr;
+      const alreadySent = String(p.lastBirthdaySentYear || '') === currentYearStr;
+      return isToday && !alreadySent;
+    });
+
+    if (todayUnsent.length === 0) return;
+    const guardKey = `${todayKey}_${todayUnsent.map((p) => p.id).join(',')}`;
+    if (autoBirthdayCheckedRef.current === guardKey) return;
+    autoBirthdayCheckedRef.current = guardKey;
+
+    (async () => {
+      for (const bPlayer of todayUnsent) {
+        try {
+          const resp = await fetch('/api/whatsapp/send-birthday', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ playerId: bPlayer.id, player: bPlayer })
+          });
+          if (resp.ok) {
+            await setDoc(
+              doc(db, 'players', bPlayer.id),
+              {
+                lastBirthdaySentYear: currentYearStr,
+                lastBirthdaySentDate: todayKey,
+                lastBirthdaySentAt: Date.now()
+              },
+              { merge: true }
+            ).catch(() => {});
+          }
+        } catch {}
+      }
+      await refreshPlayers();
+    })();
+  }, [players, refreshPlayers]);
+
+  const handleSendTodayBirthday = async (bPlayer: Player, forceResend = false) => {
+    if (isSendingBirthday) return;
+    setIsSendingBirthday(true);
+    try {
+      const todayKey = getFirestoreDateKey();
+      const currentYearStr = todayKey.split('-')[0];
+      const resp = await fetch('/api/whatsapp/send-birthday', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          playerId: bPlayer.id,
+          player: bPlayer,
+          forceResend
+        })
+      });
+      if (resp.ok) {
+        await setDoc(
+          doc(db, 'players', bPlayer.id),
+          {
+            lastBirthdaySentYear: currentYearStr,
+            lastBirthdaySentDate: todayKey,
+            lastBirthdaySentAt: Date.now()
+          },
+          { merge: true }
+        ).catch(() => {});
+        await refreshPlayers();
+        showNotification?.(
+          `Mensagem de aniversário com IA enviada para o grupo e privado de ${capitalizeName(bPlayer.name)}!`,
+          'success'
+        );
+      } else {
+        showNotification?.('Não foi possível enviar a mensagem de aniversário agora.', 'error');
+      }
+    } catch {
+      showNotification?.('Erro ao disparar mensagem de aniversário.', 'error');
+    } finally {
+      setIsSendingBirthday(false);
+    }
+  };
+
+  // Sincroniza automaticamente Sócios, Partidas e Lista de Intenção do navegador autenticado com o Guerreirinho no servidor
+  React.useEffect(() => {
+    if (!players || players.length < 10) return;
+    fetch('/api/cache/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        players,
+        matches: matches || [],
+        intentions,
+        systemMetadata
+      })
+    }).catch(() => {});
+  }, [players.length, matches?.length, intentions?.lastUpdated]);
+
+  const handleSyncWhatsAppPhotos = async (forceAll = true) => {
+    if (isSyncingPhotos) return;
+    setIsSyncingPhotos(true);
+    try {
+      const resp = await fetch('/api/whatsapp/sync-photos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          forceAll,
+          players,
+          matches: matches || [],
+          intentions
+        })
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        let firestoreSavedCount = 0;
+        if (Array.isArray(data.players) && data.players.length >= 5) {
+          useStore.setState({ players: data.players });
+          // Grava diretamente no Firestore via sessão autenticada de Admin do navegador
+          for (const updated of data.players) {
+            const orig = players.find(p => p.id === updated.id);
+            if (!orig) continue;
+            const cleanUpdatedPhone = autoNormalizeBrazilianPhone(updated.phone) || updated.phone;
+            if (cleanUpdatedPhone) updated.phone = cleanUpdatedPhone;
+            const fieldsToSave: Record<string, any> = {};
+            if (cleanUpdatedPhone && orig.phone !== cleanUpdatedPhone) {
+              fieldsToSave.phone = cleanUpdatedPhone;
+            }
+            if (updated.photoUrl && orig.photoUrl !== updated.photoUrl) {
+              fieldsToSave.photoUrl = updated.photoUrl;
+            }
+            if (updated.whatsappLid && orig.whatsappLid !== updated.whatsappLid) {
+              fieldsToSave.whatsappLid = updated.whatsappLid;
+            }
+            if (Object.keys(fieldsToSave).length > 0) {
+              try {
+                await setDoc(doc(db, 'players', updated.id), fieldsToSave, { merge: true });
+                firestoreSavedCount++;
+              } catch (err) {
+                await savePlayer({ ...orig, ...fieldsToSave }).catch(() => {});
+              }
+            }
+          }
+        }
+        await refreshPlayers();
+        const phonesMsg = data.phonesUpdated > 0 ? `${data.phonesUpdated} telefone(s), ` : '';
+        const savedMsg = firestoreSavedCount > 0 ? ` (${firestoreSavedCount} cadastros gravados no banco)` : '';
+        showNotification?.(
+          data.updatedCount > 0 || data.phonesUpdated > 0 || firestoreSavedCount > 0
+            ? `${phonesMsg}${data.updatedCount} foto(s) sincronizados do WhatsApp${savedMsg}!`
+            : 'Dados sincronizados! Verifique se a instância WhatsApp está conectada para puxar novas fotos.',
+          'success'
+        );
+      } else {
+        showNotification?.('Não foi possível sincronizar as fotos agora.', 'error');
+      }
+    } catch (e) {
+      showNotification?.('Erro ao conectar com o servidor de fotos.', 'error');
+    } finally {
+      setIsSyncingPhotos(false);
+    }
+  };
+
+  const handleSendWelcomeWhatsApp = async (player: Player) => {
+    const firstName = capitalizeName(player.name || 'Guerreiro').split(' ')[0];
+    const hour = new Date().getHours();
+    const greeting = hour < 12 ? 'bom dia' : hour < 18 ? 'boa tarde' : 'boa noite';
+    const cadastradaWord = player.gender === 'FEMALE' ? 'Cadastrada!' : 'Cadastrado!';
+    const welcomeText =
+      `Olá, ${firstName}, ${greeting}!\n\n` +
+      `${cadastradaWord} ${firstName}, acesse o app, procure a lista no menu principal e depois procure o botão "vou jogar" ou "não vou". Qualquer dúvida, sugestão ou crítica, pode falar...\n\n` +
+      `https://guerreiros-volleyball-club-238897290870.us-west1.run.app?tab=intentions`;
+
+    setSendingWelcomeId(player.id);
+    try {
+      const resp = await fetch('/api/whatsapp/send-welcome', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          playerId: player.id,
+          playerName: firstName,
+          phone: player.phone || '',
+          gender: player.gender
+        })
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.sentByBot) {
+          showNotification?.(`Boas-vindas enviada pelo Guerreirinho para ${firstName}!`, 'success');
+          setSendingWelcomeId(null);
+          return;
+        }
+      }
+    } catch (e) {}
+    setSendingWelcomeId(null);
+
+    const cleanPhone = String(player.phone || '').replace(/\D/g, '');
+    const waPhone = cleanPhone.length >= 10 ? (cleanPhone.startsWith('55') ? cleanPhone : `55${cleanPhone}`) : '';
+    const waUrl = waPhone
+      ? `https://wa.me/${waPhone}?text=${encodeURIComponent(welcomeText)}`
+      : `https://wa.me/?text=${encodeURIComponent(welcomeText)}`;
+    window.open(waUrl, '_blank');
+  };
   const { monthBirthdays, getBirthdaysByMonth } = useBirthdays(players);
   const [selectedMonth, setSelectedMonth] = React.useState<string>((new Date().getMonth() + 1).toString().padStart(2, '0'));
 
@@ -444,7 +927,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
                 <tr key={player.id} className="hover:bg-white/5 transition-colors group">
                   <td className="px-2 py-1.5">
                     <div className="flex items-center gap-2">
-                      <PlayerAvatar player={player} size="sm" />
+                      <PlayerAvatar player={{ ...player, photoUrl: resolveEffectivePlayerPhoto(player, waPhotoDir) }} size="sm" />
                       <div className="flex items-center gap-1 min-w-0">
                         {userRole === 'ADMIN' && <div className="shrink-0">{getImpactIcon(player.impactLevel)}</div>}
                         <div className={`font-bold text-xs break-words whitespace-normal ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
@@ -638,6 +1121,23 @@ export const MembersView: React.FC<MembersViewProps> = ({
                             {(player.status === 'inactive' || player.status === 'dm' || player.isDM) ? <UserCheck className="w-3.5 h-3.5" /> : <UserX className="w-3.5 h-3.5" />}
                           </button>
                         </Tooltip>
+                        <Tooltip content="Enviar Boas-Vindas no WhatsApp">
+                          <button 
+                            onClick={() => handleSendWelcomeWhatsApp(player)}
+                            disabled={sendingWelcomeId === player.id}
+                            className="p-1.5 text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500 hover:text-black rounded-lg transition-all font-bold border border-emerald-500/20 disabled:opacity-50"
+                          >
+                            <MessageCircle className="w-3.5 h-3.5" />
+                          </button>
+                        </Tooltip>
+                        <Tooltip content="Associar Foto ao WhatsApp">
+                          <button
+                            onClick={() => openPhotoLinkModal(player)}
+                            className="p-1.5 text-sky-400 bg-sky-500/10 hover:bg-sky-500 hover:text-black rounded-lg transition-all font-bold border border-sky-500/20"
+                          >
+                            <Camera className="w-3.5 h-3.5" />
+                          </button>
+                        </Tooltip>
                         <Tooltip content="Editar Sócio">
                           <button 
                             onClick={() => { setEditingPlayer(player); setIsFormOpen(true); }} 
@@ -656,14 +1156,24 @@ export const MembersView: React.FC<MembersViewProps> = ({
                         </Tooltip>
                       </>
                     ) : currentPlayer && player.id === currentPlayer.id ? (
-                      <Tooltip content="Configurações do Jogador" position="left">
-                        <button
-                          onClick={() => { setEditingPlayer(player); setIsFormOpen(true); }}
-                          className="p-1.5 text-brand-primary bg-brand-primary/10 hover:bg-brand-primary hover:text-brand-secondary rounded-lg transition-all font-bold border border-brand-primary/20"
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
-                      </Tooltip>
+                      <div className="flex items-center gap-1">
+                        <Tooltip content="Vincular Foto ao WhatsApp" position="left">
+                          <button
+                            onClick={() => openPhotoLinkModal(player)}
+                            className="p-1.5 text-sky-400 bg-sky-500/10 hover:bg-sky-500 hover:text-black rounded-lg transition-all font-bold border border-sky-500/20"
+                          >
+                            <Camera className="w-3.5 h-3.5" />
+                          </button>
+                        </Tooltip>
+                        <Tooltip content="Configurações do Jogador" position="left">
+                          <button
+                            onClick={() => { setEditingPlayer(player); setIsFormOpen(true); }}
+                            className="p-1.5 text-brand-primary bg-brand-primary/10 hover:bg-brand-primary hover:text-brand-secondary rounded-lg transition-all font-bold border border-brand-primary/20"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                        </Tooltip>
+                      </div>
                     ) : '-'}
                   </td>
                 </tr>
@@ -689,7 +1199,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
           <div key={player.id} className={`bg-brand-secondary/30 backdrop-blur-xl p-6 rounded-[2.5rem] border border-white/5 border-l-[6px] ${color.replace('bg-', 'border-l-')} shadow-xl space-y-4 relative overflow-hidden group`}>
             <div className="flex justify-between items-start">
               <div className="flex items-center gap-4 flex-1 min-w-0 pr-2">
-                <PlayerAvatar player={player} size="lg" />
+                <PlayerAvatar player={{ ...player, photoUrl: resolveEffectivePlayerPhoto(player, waPhotoDir) }} size="lg" />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <h4 className={`text-sm font-bold tracking-tight break-words whitespace-normal leading-tight ${player.status === 'inactive' ? 'text-white/40' : 'text-white'}`}>
@@ -804,18 +1314,27 @@ export const MembersView: React.FC<MembersViewProps> = ({
               </div>
             </div>
             {userRole === 'ADMIN' ? (
-              <div className="flex gap-2 pt-2 border-t border-white/5">
-                <button onClick={() => { setEditingPlayer(player); setIsFormOpen(true); }} className="flex-1 py-3 bg-brand-primary/10 text-brand-primary border border-brand-primary/20 rounded-2xl font-black text-[9px] uppercase hover:bg-brand-primary hover:text-brand-secondary transition-all flex items-center justify-center gap-2">
+              <div className="flex flex-wrap gap-2 pt-2 border-t border-white/5">
+                <button onClick={() => openPhotoLinkModal(player)} className="flex-1 py-3 bg-sky-500/10 text-sky-400 border border-sky-500/20 rounded-2xl font-black text-[9px] uppercase hover:bg-sky-500 hover:text-black transition-all flex items-center justify-center gap-1.5">
+                  <Camera className="w-3 h-3" /> Foto WA
+                </button>
+                <button onClick={() => handleSendWelcomeWhatsApp(player)} disabled={sendingWelcomeId === player.id} className="flex-1 py-3 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-2xl font-black text-[9px] uppercase hover:bg-emerald-500 hover:text-black transition-all flex items-center justify-center gap-1.5 disabled:opacity-50">
+                  <MessageCircle className="w-3 h-3" /> Boas-Vindas
+                </button>
+                <button onClick={() => { setEditingPlayer(player); setIsFormOpen(true); }} className="flex-1 py-3 bg-brand-primary/10 text-brand-primary border border-brand-primary/20 rounded-2xl font-black text-[9px] uppercase hover:bg-brand-primary hover:text-brand-secondary transition-all flex items-center justify-center gap-1.5">
                   <Edit2 className="w-3 h-3" /> Editar
                 </button>
-                <button onClick={() => deletePlayer(player.id)} className="flex-1 py-3 bg-rose-500/10 text-rose-500 rounded-2xl font-black text-[9px] uppercase hover:bg-rose-500/20 transition-all flex items-center justify-center gap-2">
-                  <Trash2 className="w-3 h-3" /> Excluir
+                <button onClick={() => deletePlayer(player.id)} className="py-3 px-3 bg-rose-500/10 text-rose-500 rounded-2xl font-black text-[9px] uppercase hover:bg-rose-500/20 transition-all flex items-center justify-center gap-1">
+                  <Trash2 className="w-3 h-3" />
                 </button>
               </div>
             ) : currentPlayer && player.id === currentPlayer.id ? (
               <div className="flex gap-2 pt-2 border-t border-white/5">
+                <button onClick={() => openPhotoLinkModal(player)} className="flex-1 py-3 bg-sky-500/10 text-sky-400 border border-sky-500/20 rounded-2xl font-black text-[9px] uppercase hover:bg-sky-500 hover:text-black transition-all flex items-center justify-center gap-2">
+                  <Camera className="w-3 h-3" /> Vincular Foto ao WhatsApp
+                </button>
                 <button onClick={() => { setEditingPlayer(player); setIsFormOpen(true); }} className="flex-1 py-3 bg-brand-primary/10 text-brand-primary border border-brand-primary/20 rounded-2xl font-black text-[9px] uppercase hover:bg-brand-primary hover:text-brand-secondary transition-all flex items-center justify-center gap-2">
-                  <Edit2 className="w-3 h-3" /> Configurações do Jogador
+                  <Edit2 className="w-3 h-3" /> Editar Perfil
                 </button>
               </div>
             ) : null}
@@ -901,6 +1420,57 @@ export const MembersView: React.FC<MembersViewProps> = ({
               Reparar
             </button>
           )}
+          {(userRole === 'ADMIN' || currentPlayer) && (
+            <button
+              onClick={() => {
+                const defaultTarget = currentPlayer || activePlayers[0] || players[0];
+                if (defaultTarget) openPhotoLinkModal(defaultTarget);
+              }}
+              title="Associar foto de perfil diretamente ao número de telefone do WhatsApp"
+              className="md:flex-none bg-sky-500/10 text-sky-400 px-4 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-sky-500 hover:text-black transition-all border border-sky-500/30"
+            >
+              <Link2 className="w-4 h-4" />
+              Foto ↔ WhatsApp
+            </button>
+          )}
+          {userRole === 'ADMIN' && (
+            <button
+              onClick={() => {
+                setBatchPhotoItems([]);
+                setShowBatchPhotoModal(true);
+              }}
+              title="Importar várias fotos de sócios de uma vez da galeria ou computador"
+              className="md:flex-none bg-amber-500/10 text-amber-400 px-4 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-amber-500 hover:text-black transition-all border border-amber-500/30"
+            >
+              <Upload className="w-4 h-4" />
+              Importar Fotos (Lote)
+            </button>
+          )}
+          {userRole === 'ADMIN' && (
+            <button
+              onClick={handleToggleWaBot}
+              disabled={isTogglingWaBot}
+              title="Habilitar ou desabilitar o robô Guerreirinho no WhatsApp"
+              className={`md:flex-none px-4 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 transition-all border disabled:opacity-50 ${
+                waBotEnabled
+                  ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40 hover:bg-emerald-500 hover:text-black'
+                  : 'bg-rose-500/15 text-rose-400 border-rose-500/40 hover:bg-rose-500 hover:text-white'
+              }`}
+            >
+              <span>{waBotEnabled ? '🤖 Robô WA: ON' : '🤖 Robô WA: OFF'}</span>
+            </button>
+          )}
+                    {userRole === 'ADMIN' && (
+            <button 
+              onClick={() => handleSyncWhatsAppPhotos(true)}
+              disabled={isSyncingPhotos}
+              title="Sincronizar telefones e fotos vinculadas do WhatsApp"
+              className="md:flex-none bg-emerald-500/10 text-emerald-400 px-4 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-emerald-500 hover:text-black transition-all border border-emerald-500/30 disabled:opacity-50"
+            >
+              <Camera className={`w-4 h-4 ${isSyncingPhotos ? 'animate-pulse' : ''}`} />
+              {isSyncingPhotos ? 'Sincronizando...' : 'Sync WhatsApp'}
+            </button>
+          )}
           {userRole === 'ADMIN' && (
             <button 
               onClick={() => setShowBirthdayModal(true)} 
@@ -956,20 +1526,53 @@ export const MembersView: React.FC<MembersViewProps> = ({
 
         {monthBirthdaysList.length > 0 ? (
           <div className="relative z-10 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-4">
-            {monthBirthdaysList.map(player => (
-              <div key={player.id} className="group relative bg-black/40 border border-white/5 rounded-3xl p-4 flex flex-col items-center text-center transition-all hover:border-brand-primary/40 hover:bg-brand-primary/[0.03]">
-                <div className="absolute -top-2 -right-1 z-10 bg-brand-primary text-black px-2.5 py-1 rounded-xl text-[9px] font-black shadow-lg">
-                  {player.birthDate ? (player.birthDate.split(/[-/]/)[0].length === 4 ? player.birthDate.split(/[-/]/)[2] : player.birthDate.split(/[-/]/)[0]) : '??'} / {selectedMonth}
-                </div>
-                <div className="relative mb-3">
-                  <PlayerAvatar player={player} size="md" />
-                  <div className="absolute -bottom-1 -right-1 bg-black rounded-full p-1 shadow-lg border border-white/10">
-                    <div className="w-4 h-4 bg-brand-primary rounded-full flex items-center justify-center text-[8px] text-black">🎂</div>
+            {monthBirthdaysList.map(player => {
+              const todayKey = getFirestoreDateKey();
+              const [currentYearStr, currentMonthStr, currentDayStr] = todayKey.split('-');
+              const bParts = player.birthDate ? player.birthDate.trim().split('T')[0].split(/[-/]/) : [];
+              const bDay = bParts.length >= 3 ? (bParts[0].length === 4 ? bParts[2] : bParts[0]).padStart(2, '0') : '??';
+              const bMonth = bParts.length >= 2 ? bParts[1].padStart(2, '0') : selectedMonth;
+              const isBirthdayToday = bDay === currentDayStr && bMonth === currentMonthStr;
+              const isSentThisYear = String(player.lastBirthdaySentYear || '') === currentYearStr;
+              const sentDateFormatted = player.lastBirthdaySentDate
+                ? player.lastBirthdaySentDate.split('-').reverse().join('/')
+                : '';
+
+              return (
+                <div key={player.id} className="group relative bg-black/40 border border-white/5 rounded-3xl p-4 flex flex-col items-center text-center transition-all hover:border-brand-primary/40 hover:bg-brand-primary/[0.03]">
+                  <div className="absolute -top-2 -right-1 z-10 bg-brand-primary text-black px-2.5 py-1 rounded-xl text-[9px] font-black shadow-lg">
+                    {bDay} / {selectedMonth}
                   </div>
+                  <div className="relative mb-3">
+                    <PlayerAvatar player={{ ...player, photoUrl: resolveEffectivePlayerPhoto(player, waPhotoDir) }} size="md" />
+                    <div className="absolute -bottom-1 -right-1 bg-black rounded-full p-1 shadow-lg border border-white/10">
+                      <div className="w-4 h-4 bg-brand-primary rounded-full flex items-center justify-center text-[8px] text-black">🎂</div>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-black text-white uppercase truncate w-full group-hover:text-brand-primary transition-colors">
+                    {player.name.split(' ')[0]}
+                  </span>
+                  {isSentThisYear ? (
+                    <span
+                      title={sentDateFormatted ? `Enviado em ${sentDateFormatted}` : 'Parabéns enviado neste ano'}
+                      className="mt-1.5 px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 text-[8px] font-black uppercase tracking-wider cursor-help"
+                    >
+                      ✓ Parabéns Enviado
+                    </span>
+                  ) : isBirthdayToday ? (
+                    <button
+                      onClick={() => handleSendTodayBirthday(player, false)}
+                      disabled={isSendingBirthday}
+                      title="Disparar mensagem de aniversário personalizada por IA no grupo e no privado"
+                      className="mt-1.5 px-2.5 py-1 rounded-full bg-brand-primary text-black text-[8px] font-black uppercase tracking-wider animate-pulse hover:scale-105 transition-transform flex items-center gap-1 disabled:opacity-50"
+                    >
+                      <Send className="w-2.5 h-2.5" />
+                      {isSendingBirthday ? 'Enviando...' : 'Enviar Parabéns'}
+                    </button>
+                  ) : null}
                 </div>
-                <span className="text-[10px] font-black text-white uppercase truncate w-full group-hover:text-brand-primary transition-colors">{player.name.split(' ')[0]}</span>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ) : (
           <div className="relative z-10 py-10 flex flex-col items-center justify-center bg-black/20 rounded-3xl border border-dashed border-white/5">
@@ -1050,6 +1653,251 @@ export const MembersView: React.FC<MembersViewProps> = ({
                   Copiar Lista
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Módulo de Integração: Associar Foto de Perfil ao Número de WhatsApp */}
+      {photoLinkModalPlayer && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-[120] flex items-center justify-center p-4">
+          <div className="bg-brand-secondary border border-sky-500/40 rounded-[2.2rem] w-full max-w-md p-6 relative shadow-2xl space-y-5">
+            <div className="flex items-center justify-between border-b border-white/10 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-sky-500/15 border border-sky-500/30 flex items-center justify-center">
+                  <Link2 className="w-5 h-5 text-sky-400" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white uppercase tracking-tight">
+                    Foto ↔ WhatsApp
+                  </h3>
+                  <p className="text-[10px] font-bold text-sky-400 uppercase tracking-widest">
+                    Integração Direta por Telefone
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setPhotoLinkModalPlayer(null)}
+                className="p-2 text-white/40 hover:text-white hover:bg-white/5 rounded-full transition-all"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {userRole === 'ADMIN' && (
+              <div>
+                <label className="block text-[10px] font-black text-white/60 uppercase tracking-widest mb-1.5">
+                  Selecionar Sócio
+                </label>
+                <select
+                  value={photoLinkModalPlayer.id}
+                  onChange={(e) => {
+                    const chosen = players.find((p) => p.id === e.target.value);
+                    if (chosen) openPhotoLinkModal(chosen);
+                  }}
+                  className="w-full bg-black/60 border border-white/15 rounded-xl px-3.5 py-2.5 text-white font-bold text-xs focus:border-sky-400 focus:outline-none"
+                >
+                  {[...players]
+                    .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+                    .map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {capitalizeName(p.name)} {p.phone ? `(${formatPhoneNumber(p.phone)})` : '(Sem telefone)'}
+                      </option>
+                    ))}
+                </select>
+              </div>
+            )}
+
+            <div className="flex flex-col items-center gap-3 bg-black/40 border border-white/10 rounded-2xl p-4">
+              <PlayerAvatar
+                player={{
+                  ...photoLinkModalPlayer,
+                  photoUrl: linkPhotoPreview || resolveEffectivePlayerPhoto(photoLinkModalPlayer as any, waPhotoDir)
+                }}
+                size="lg"
+              />
+              <p className="text-xs font-black text-white uppercase">
+                {capitalizeName(photoLinkModalPlayer.name)}
+              </p>
+              <label className="cursor-pointer bg-sky-500/15 hover:bg-sky-500 text-sky-400 hover:text-black border border-sky-500/30 px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 transition-all">
+                <Upload className="w-3.5 h-3.5" />
+                Escolher / Tirar Foto
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handlePhotoFileChange}
+                  className="hidden"
+                />
+              </label>
+            </div>
+
+            <div>
+              <label className="block text-[10px] font-black text-white/60 uppercase tracking-widest mb-1.5">
+                Número do WhatsApp (com DDD)
+              </label>
+              <input
+                type="tel"
+                placeholder="Ex: 81 99999-9999"
+                value={linkPhoneInput}
+                onChange={(e) => setLinkPhoneInput(e.target.value)}
+                className="w-full bg-black/60 border border-white/15 rounded-xl px-4 py-3 text-white font-mono font-bold text-sm focus:border-sky-400 focus:outline-none"
+              />
+              <p className="text-[10px] text-white/40 mt-1.5 leading-relaxed">
+                A foto ficará indexada diretamente ao número do WhatsApp para exibição imediata nos contatos e automações do Guerreirinho.
+              </p>
+            </div>
+
+            {userRole === 'ADMIN' && (
+              <div className="pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const cleanDigits = autoNormalizeBrazilianPhone(linkPhoneInput || photoLinkModalPlayer.phone || '');
+                    const firstName = String(photoLinkModalPlayer.name || 'Guerreiro').split(' ')[0];
+                    const baseUrl = window.location.origin.includes('guerreiros-volleyball-club')
+                      ? window.location.origin
+                      : 'https://guerreiros-volleyball-club-238897290870.us-west1.run.app';
+                    const fotoLink = `${baseUrl}/foto?pid=${encodeURIComponent(photoLinkModalPlayer.id)}&phone=${encodeURIComponent(cleanDigits)}&name=${encodeURIComponent(firstName)}`;
+                    const msg = `Fala, *${firstName}*! 🏐📸\nToque no link abaixo para enviar ou tirar sua foto oficial para o cadastro dos *Guerreiros VC*:\n👉 ${fotoLink}`;
+                    const waUrl = cleanDigits
+                      ? `https://wa.me/${cleanDigits}?text=${encodeURIComponent(msg)}`
+                      : `https://wa.me/?text=${encodeURIComponent(msg)}`;
+                    window.open(waUrl, '_blank');
+                  }}
+                  className="w-full py-2.5 px-4 rounded-xl bg-emerald-500/15 hover:bg-emerald-500 text-emerald-400 hover:text-black border border-emerald-500/30 font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 transition-all"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  Pedir Foto ao Sócio via WhatsApp (1 Clique)
+                </button>
+              </div>
+            )}
+
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={() => setPhotoLinkModalPlayer(null)}
+                className="flex-1 py-3 px-4 rounded-xl border border-white/10 text-white font-bold hover:bg-white/5 transition-all text-xs uppercase"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSaveWhatsAppPhotoBinding}
+                disabled={isSavingPhotoLink}
+                className="flex-1 py-3 px-4 rounded-xl bg-sky-400 text-black font-black uppercase hover:opacity-90 transition-all text-xs disabled:opacity-50"
+              >
+                {isSavingPhotoLink ? 'Salvando...' : 'Salvar Vínculo'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Importação em Lote de Fotos dos Sócios */}
+      {showBatchPhotoModal && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-[125] flex items-center justify-center p-4">
+          <div className="bg-brand-secondary border border-amber-500/40 rounded-[2.2rem] w-full max-w-2xl p-6 relative shadow-2xl space-y-5 max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-white/10 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center">
+                  <Upload className="w-5 h-5 text-amber-400" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white uppercase tracking-tight">
+                    Importar Fotos em Lote
+                  </h3>
+                  <p className="text-[10px] font-bold text-amber-400 uppercase tracking-widest">
+                    Associação Automática por Nome ou Telefone
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowBatchPhotoModal(false)}
+                className="p-2 text-white/40 hover:text-white hover:bg-white/5 rounded-full transition-all"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="bg-black/40 border border-dashed border-amber-500/40 rounded-2xl p-5 text-center space-y-3">
+              <p className="text-xs text-white/75 font-medium">
+                Selecione várias fotos da sua galeria ou computador. Se o arquivo tiver o nome ou telefone do sócio (ex: <span className="text-amber-400 font-bold">Bibi.jpg</span>, <span className="text-amber-400 font-bold">Caluca.png</span>), o vínculo é feito automaticamente!
+              </p>
+              <label className="inline-flex cursor-pointer bg-amber-400 hover:bg-amber-300 text-black px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest items-center gap-2 transition-all">
+                <Camera className="w-4 h-4" />
+                Selecionar Fotos (Múltiplas)
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={handleBatchFilesSelected}
+                  className="hidden"
+                />
+              </label>
+            </div>
+
+            {batchPhotoItems.length > 0 && (
+              <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
+                {batchPhotoItems.map((item) => (
+                  <div
+                    key={item.id}
+                    className="flex items-center gap-3 bg-black/50 border border-white/10 rounded-xl p-2.5"
+                  >
+                    <img
+                      src={item.dataUri}
+                      alt={item.fileName}
+                      className="w-12 h-12 rounded-full object-cover border border-amber-400/50 shrink-0"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[11px] font-bold text-white/60 truncate">{item.fileName}</p>
+                      <select
+                        value={item.matchedPlayerId}
+                        onChange={(e) => {
+                          const newPid = e.target.value;
+                          setBatchPhotoItems((prev) =>
+                            prev.map((x) => (x.id === item.id ? { ...x, matchedPlayerId: newPid } : x))
+                          );
+                        }}
+                        className="mt-1 w-full bg-zinc-900 border border-white/15 rounded-lg px-2.5 py-1.5 text-white font-bold text-xs focus:border-amber-400 focus:outline-none"
+                      >
+                        <option value="">-- Selecione o Sócio --</option>
+                        {[...players]
+                          .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+                          .map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {capitalizeName(p.name)}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                    <button
+                      onClick={() =>
+                        setBatchPhotoItems((prev) => prev.filter((x) => x.id !== item.id))
+                      }
+                      className="p-2 text-white/40 hover:text-rose-400"
+                      title="Remover"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex gap-3 pt-2 border-t border-white/10">
+              <button
+                onClick={() => setShowBatchPhotoModal(false)}
+                className="flex-1 py-3 px-4 rounded-xl border border-white/10 text-white font-bold hover:bg-white/5 transition-all text-xs uppercase"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSaveAllBatchPhotos}
+                disabled={isSavingBatchPhotos || batchPhotoItems.length === 0}
+                className="flex-1 py-3 px-4 rounded-xl bg-amber-400 text-black font-black uppercase hover:opacity-90 transition-all text-xs disabled:opacity-50"
+              >
+                {isSavingBatchPhotos
+                  ? 'Salvando Fotos...'
+                  : `Salvar ${batchPhotoItems.filter((x) => x.matchedPlayerId).length} Foto(s) no App`}
+              </button>
             </div>
           </div>
         </div>

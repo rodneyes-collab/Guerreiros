@@ -377,6 +377,14 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       const maxDailyNumber = todayCompletedMatches.reduce((max, m) => Math.max(max, m.dailyNumber || 0), 0);
       const finalCount = Math.max(todayCompletedMatches.length + 1, maxDailyNumber + 1);
       
+      const wallClockDurationSec = systemMetadata.matchStartTime
+        ? Math.max(0, Math.round((timestamp - systemMetadata.matchStartTime) / 1000))
+        : 0;
+      const reliableDurationSec =
+        wallClockDurationSec >= 120 && wallClockDurationSec <= 5400 && wallClockDurationSec > elapsedTime
+          ? wallClockDurationSec
+          : elapsedTime;
+
       const match: Match = {
         id: matchId,
         timestamp,
@@ -386,8 +394,8 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
         winner,
         scoreA: finalScoreA,
         scoreB: finalScoreB,
-        duration: elapsedTime,
-        startTime: systemMetadata.matchStartTime || (timestamp - elapsedTime * 1000),
+        duration: reliableDurationSec,
+        startTime: systemMetadata.matchStartTime || (timestamp - reliableDurationSec * 1000),
         endTime: timestamp,
         mode: scoreMode,
         dailyNumber: finalCount,
@@ -1296,9 +1304,16 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
         }
       }
       
+      const rawPhoneDigits = String(playerData.phone ?? '').replace(/\D/g, '');
+      const normalizedPhone =
+        rawPhoneDigits.length === 10 || rawPhoneDigits.length === 11
+          ? `55${rawPhoneDigits}`
+          : rawPhoneDigits;
+
       const finalData: any = {
         ...playerData,
         id,
+        phone: normalizedPhone || undefined,
         elo: playerData.elo || 1200,
         matchesPlayed: playerData.matchesPlayed || 0,
         wins: playerData.wins || 0,
@@ -1318,8 +1333,13 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
         (validatedData as any).setterStartDate = RODNEY_SETTER_START_DATE;
       }
 
+      const cleanedToSave = cleanObject(validatedData);
+      if (!normalizedPhone && playerData.phone === '') {
+        cleanedToSave.phone = '';
+      }
+
       const batch = writeBatch(db);
-      batch.set(doc(db, 'players', id), cleanObject(validatedData), { merge: true });
+      batch.set(doc(db, 'players', id), cleanedToSave, { merge: true });
 
       const today = getFirestoreDateKey();
       const attendanceRef = doc(db, 'attendance', today, 'players', id);
@@ -1334,6 +1354,24 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       }
 
       await batch.commit();
+
+      const updatedPlayerObj = { ...cleanedToSave, phone: normalizedPhone || '' } as Player;
+      setPlayers(prev => {
+        const exists = prev.some(p => p.id === id);
+        const nextList = exists
+          ? prev.map(p => (p.id === id ? { ...p, ...updatedPlayerObj } : p))
+          : [...prev, updatedPlayerObj];
+        return [...nextList].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+      });
+
+      fetch('/api/cache/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          players: useStore.getState().players
+        })
+      }).catch(() => {});
+
       showNotification(playerData.id ? 'Sócio atualizado!' : 'Sócio cadastrado!', 'success');
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'players-save');

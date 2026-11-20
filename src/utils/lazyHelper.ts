@@ -10,34 +10,36 @@ export function safeLazy<T extends React.ComponentType<any>>(
   factory: () => Promise<{ default: T }>
 ) {
   return lazy(async () => {
-    try {
-      const result = await factory();
-      return result;
-    } catch (error) {
-      console.error('[safeLazy] Error loading module:', error);
-      
-      const isDynamicImportError = 
-        error instanceof Error && 
-        (error.message.includes('Failed to fetch dynamically imported module') ||
-         error.message.includes('Importing a shadowed module') ||
-         error.message.includes('error loading dynamically imported module') ||
-         error.message.includes('chunk') ||
-         error.name === 'ChunkLoadError');
-
-      if (isDynamicImportError) {
-        console.warn('[safeLazy] Dynamic import failed. Forcing immediate recovery...');
-        
-        // Return a component that forces the update on mount as a fallback
-        return {
-          default: (() => {
-            // Use the statically imported function to trigger the update
-            forceAppUpdate();
-            return null; // Render nothing while reloading
-          }) as unknown as T
-        };
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        if (attempt > 0) {
+          await new Promise(resolve => setTimeout(resolve, 400 * attempt));
+        }
+        return await factory();
+      } catch (error) {
+        lastError = error;
       }
-      
-      throw error;
     }
+
+    const isDynamicImportError =
+      lastError instanceof Error &&
+      (lastError.message.includes('Failed to fetch dynamically imported module') ||
+        lastError.message.includes('Importing a shadowed module') ||
+        lastError.message.includes('error loading dynamically imported module') ||
+        lastError.message.includes('chunk') ||
+        lastError.name === 'ChunkLoadError');
+
+    if (isDynamicImportError) {
+      console.warn('[safeLazy] Dynamic import failed after retries. Recovering...');
+      return {
+        default: (() => {
+          forceAppUpdate();
+          return null;
+        }) as unknown as T
+      };
+    }
+
+    throw lastError;
   });
 }

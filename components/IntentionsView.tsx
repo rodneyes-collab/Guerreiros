@@ -11,6 +11,7 @@ import { ConfirmedPlayerItem, UndecidedPlayerItem, NotGoingPlayerItem } from '..
 import {
   CalendarCheck,
   Copy,
+  Send,
   BellRing,
   Settings,
   UserCheck,
@@ -20,7 +21,9 @@ import {
   Star,
   Trash2,
   Flame,
-  RefreshCw
+  RefreshCw,
+  MessageSquare,
+  X
 } from 'lucide-react';
 import { Player } from '../types';
 import { getFirestoreDateKey, getBrazilDay } from '../firebase';
@@ -53,6 +56,7 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({
     toggleAutomation,
     sendReminders,
     copyToWhatsApp,
+    sendListToWhatsAppGroup,
     copyReminder,
     getPlayerConfirmationTime,
     refreshIntentions
@@ -80,8 +84,38 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({
   const { monthBirthdays, getBirthdaysByMonth } = useBirthdays(players);
   const [selectedMonth, setSelectedMonth] = React.useState<number>(() => new Date().getMonth() + 1);
   const [isRefreshing, setIsRefreshing] = React.useState(false);
+  const [isSendingGroupList, setIsSendingGroupList] = React.useState(false);
+  const [showCommLogsModal, setShowCommLogsModal] = React.useState(false);
+  const [commLogs, setCommLogs] = React.useState<Array<{
+    id: string;
+    timestamp: number;
+    type: string;
+    recipient: string;
+    status: string;
+    summary: string;
+    messagePreview: string;
+    errorDetail?: string;
+  }>>([]);
+  const [isLoadingCommLogs, setIsLoadingCommLogs] = React.useState(false);
   const [pullStartY, setPullStartY] = React.useState(0);
   const [pullDist, setPullDist] = React.useState(0);
+
+  const fetchCommLogs = React.useCallback(async () => {
+    setIsLoadingCommLogs(true);
+    try {
+      const resp = await fetch(`/api/whatsapp/logs?t=${Date.now()}`);
+      if (resp.ok) {
+        const data = await resp.json();
+        if (Array.isArray(data.logs)) {
+          setCommLogs(data.logs);
+        }
+      }
+    } catch {
+      // ignore
+    } finally {
+      setIsLoadingCommLogs(false);
+    }
+  }, []);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -698,19 +732,59 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({
             </div>
 
             <div className="bg-brand-primary/5 p-4 rounded-2xl border border-brand-primary/40 flex flex-col justify-between gap-3">
-              <div>
-                <p className="text-xs font-bold text-slate-300 uppercase">Exportar WhatsApp</p>
-                <p className="text-[10px] text-slate-500">Copia a lista numerada para o grupo.</p>
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="text-xs font-bold text-slate-300 uppercase">WhatsApp do Clube</p>
+                  <p className="text-[10px] text-slate-500">Copia, envia ao grupo ou vê logs.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowCommLogsModal(true);
+                    fetchCommLogs();
+                  }}
+                  className="px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[9px] font-black uppercase flex items-center gap-1 border border-white/10 transition-all shrink-0"
+                  title="Abrir Central de Comunicações do WhatsApp"
+                >
+                  <MessageSquare className="w-3 h-3 text-emerald-400" />
+                  Central
+                </button>
               </div>
-              <button
-                onClick={() => {
-                  copyToWhatsApp(goingPlayers);
-                  showNotification('Lista copiada para o WhatsApp!', 'success');
-                }}
-                className="w-full py-2.5 rounded-xl font-black uppercase text-[10px] bg-emerald-500 text-black flex items-center justify-center gap-2"
-              >
-                <Copy className="w-3.5 h-3.5" /> Copiar Lista ({goingPlayers.length})
-              </button>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => {
+                    copyToWhatsApp(goingPlayers);
+                    showNotification('Lista copiada para o WhatsApp!', 'success');
+                  }}
+                  className="py-2.5 px-2 rounded-xl font-black uppercase text-[9px] bg-emerald-500 text-black flex items-center justify-center gap-1.5 hover:bg-emerald-400 transition-all active:scale-95"
+                  title="Copiar Lista para área de transferência"
+                >
+                  <Copy className="w-3.5 h-3.5 shrink-0" /> Copiar ({goingPlayers.length})
+                </button>
+                <button
+                  disabled={isSendingGroupList}
+                  onClick={async () => {
+                    setIsSendingGroupList(true);
+                    try {
+                      const ok = await sendListToWhatsAppGroup(goingPlayers);
+                      if (ok) {
+                        showNotification('Lista enviada para o grupo do WhatsApp!', 'success');
+                      } else {
+                        showNotification('Falha ao enviar para o grupo do WhatsApp.', 'error');
+                      }
+                    } catch {
+                      showNotification('Erro ao enviar lista para o grupo.', 'error');
+                    } finally {
+                      setIsSendingGroupList(false);
+                    }
+                  }}
+                  className="py-2.5 px-2 rounded-xl font-black uppercase text-[9px] bg-brand-primary text-black flex items-center justify-center gap-1.5 hover:bg-brand-primary/90 transition-all active:scale-95 disabled:opacity-50"
+                  title="Enviar Lista de Intenção agora para o grupo do WhatsApp do clube"
+                >
+                  <Send className={`w-3.5 h-3.5 shrink-0 ${isSendingGroupList ? 'animate-pulse' : ''}`} />
+                  {isSendingGroupList ? 'Enviando...' : 'Enviar Grupo'}
+                </button>
+              </div>
             </div>
 
             <div className="bg-brand-primary/5 p-4 rounded-2xl border border-brand-primary/40 flex flex-col justify-between gap-3">
@@ -912,6 +986,148 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({
                 <span className="text-[9px] font-bold text-amber-500/70 uppercase">Em Espera</span>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Modal da Central de Comunicações do WhatsApp */}
+      {showCommLogsModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-zinc-950 border border-white/10 rounded-3xl w-full max-w-3xl max-h-[85vh] flex flex-col overflow-hidden shadow-2xl">
+            <div className="p-5 sm:p-6 border-b border-white/10 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center">
+                  <MessageSquare className="w-5 h-5 text-emerald-400" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-black text-white uppercase tracking-tight">
+                    Central de Comunicações WhatsApp
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    Registros de envios da lista ao grupo, boas-vindas, lembretes e webhook do Guerreirinho
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={fetchCommLogs}
+                  disabled={isLoadingCommLogs}
+                  className="px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-white text-[10px] font-black uppercase flex items-center gap-1.5 border border-white/10"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isLoadingCommLogs ? 'animate-spin' : ''}`} />
+                  Atualizar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowCommLogsModal(false)}
+                  className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="p-4 sm:p-6 overflow-y-auto space-y-3 flex-1 custom-scrollbar">
+              {isLoadingCommLogs && commLogs.length === 0 ? (
+                <div className="py-12 text-center text-slate-400 text-xs font-bold uppercase">
+                  Carregando registros de comunicação...
+                </div>
+              ) : commLogs.length === 0 ? (
+                <div className="py-12 text-center bg-white/5 rounded-2xl border border-dashed border-white/10">
+                  <p className="text-slate-400 text-xs font-black uppercase">
+                    Nenhum registro de comunicação encontrado
+                  </p>
+                  <p className="text-slate-500 text-[11px] mt-1">
+                    Os envios de lista para o grupo, boas-vindas e confirmações via bot aparecerão aqui.
+                  </p>
+                </div>
+              ) : (
+                commLogs.map(log => {
+                  const isSuccess = log.status === 'SUCCESS';
+                  const dateFormatted = new Date(log.timestamp).toLocaleString('pt-BR', {
+                    day: '2-digit',
+                    month: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit'
+                  });
+                  return (
+                    <div
+                      key={log.id}
+                      className="p-4 rounded-2xl bg-white/5 border border-white/10 flex flex-col gap-2"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`px-2.5 py-0.5 rounded-md text-[9px] font-black uppercase ${
+                              isSuccess
+                                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                : 'bg-red-500/20 text-red-400 border border-red-500/30'
+                            }`}
+                          >
+                            {isSuccess ? 'Enviado / Recebido' : 'Falha'}
+                          </span>
+                          <span className="px-2.5 py-0.5 rounded-md text-[9px] font-black uppercase bg-brand-primary/20 text-brand-primary border border-brand-primary/30">
+                            {log.type}
+                          </span>
+                          <span className="text-xs font-black text-white">{log.recipient}</span>
+                        </div>
+                        <span className="text-[11px] font-bold text-slate-400">{dateFormatted}</span>
+                      </div>
+                      <p className="text-xs font-bold text-slate-200">{log.summary}</p>
+                      {log.errorDetail && (
+                        <p className="text-[11px] text-red-400 bg-red-500/10 px-3 py-1.5 rounded-lg border border-red-500/20">
+                          Detalhe: {log.errorDetail}
+                        </p>
+                      )}
+                      {log.messagePreview && (
+                        <pre className="text-[11px] text-slate-400 bg-black/60 p-3 rounded-xl border border-white/5 whitespace-pre-wrap font-sans max-h-36 overflow-y-auto">
+                          {log.messagePreview}
+                        </pre>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="p-4 sm:p-5 border-t border-white/10 bg-black/60 flex items-center justify-between gap-3">
+              <span className="text-[11px] text-slate-400">
+                Total de registros: <strong className="text-white">{commLogs.length}</strong>
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={isSendingGroupList}
+                  onClick={async () => {
+                    setIsSendingGroupList(true);
+                    try {
+                      const ok = await sendListToWhatsAppGroup(goingPlayers);
+                      await fetchCommLogs();
+                      if (ok) {
+                        showNotification('Lista enviada para o grupo do WhatsApp!', 'success');
+                      } else {
+                        showNotification('Falha ao enviar para o grupo do WhatsApp.', 'error');
+                      }
+                    } finally {
+                      setIsSendingGroupList(false);
+                    }
+                  }}
+                  className="px-4 py-2 rounded-xl bg-brand-primary text-black font-black text-[10px] uppercase flex items-center gap-1.5 hover:bg-brand-primary/90 disabled:opacity-50"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  {isSendingGroupList ? 'Enviando...' : 'Enviar Lista Agora ao Grupo'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowCommLogsModal(false)}
+                  className="px-4 py-2 rounded-xl bg-white/10 text-white font-black text-[10px] uppercase hover:bg-white/20"
+                >
+                  Fechar
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

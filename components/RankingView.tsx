@@ -58,6 +58,7 @@ import ReactMarkdown from 'react-markdown';
 import { WinLossChart } from '../src/components/WinLossChart';
 import { IcEvolutionChart } from '../src/components/IcEvolutionChart';
 import { PlayerAvatar } from '../src/components/PlayerAvatar';
+import { LiquidGlassCardsStudio } from '../src/components/LiquidGlassCardsStudio';
 import { translateGender, capitalizeName } from '../utils/helpers';
 import { detectAnomalies } from '../services/geminiService';
 import { calculateCompositePerformanceRating } from '../utils/teamLogic';
@@ -128,7 +129,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
   ), [allPlayers]);
 
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'daily' | 'individual' | 'global' | 'synergy' | 'coach'>('daily');
+  const [activeTab, setActiveTab] = useState<'daily' | 'individual' | 'global' | 'synergy' | 'coach' | 'cards'>('daily');
   const [rankingPeriod, setRankingPeriod] = useState<'session' | 'career'>('session');
   const [rankingSortMetric, setRankingSortMetric] = useState<'elo' | 'efficiency' | 'fidelity' | 'efficiency_mvp'>('elo');
   
@@ -1630,9 +1631,21 @@ export const RankingView: React.FC<RankingViewProps> = ({
           <Sparkles className="w-4 h-4 hidden sm:block" />
           IA Coach
         </button>
+        <button
+          onClick={() => setActiveTab('cards')}
+          className={`flex-1 py-3 px-4 rounded-xl font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${
+            activeTab === 'cards'
+              ? 'bg-gradient-to-r from-cyan-400 to-emerald-400 text-slate-950 shadow-lg shadow-cyan-500/20'
+              : 'text-cyan-300/75 hover:text-cyan-200'
+          }`}
+        >
+          <Share2 className="w-4 h-4 hidden sm:block" />
+          Cards Glass
+        </button>
       </div>
 
       {/* Ranking Period Switcher */}
+      {activeTab !== 'cards' && (
       <div className="bg-white/5 p-1 rounded-2xl flex gap-1 border border-brand-primary/40">
         <button
           onClick={() => setRankingPeriod('session')}
@@ -1653,9 +1666,10 @@ export const RankingView: React.FC<RankingViewProps> = ({
           Acumulado
         </button>
       </div>
+      )}
 
       {/* Session Date Selector */}
-      {rankingPeriod === 'session' && (
+      {activeTab !== 'cards' && rankingPeriod === 'session' && (
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white/5 p-4 rounded-3xl border border-brand-primary/20">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-brand-primary/10 rounded-xl">
@@ -1696,7 +1710,18 @@ export const RankingView: React.FC<RankingViewProps> = ({
       )}
 
       <AnimatePresence mode="wait">
-        {activeTab === 'global' ? (
+        {activeTab === 'cards' ? (
+          <motion.div key="cards" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+            <LiquidGlassCardsStudio
+              players={players}
+              availableDates={availableDates}
+              initialDate={selectedDailyDate}
+              initialPlayerId={selectedPlayer?.id || currentPlayer?.id || null}
+              userRole={userRole}
+              showNotification={showNotification}
+            />
+          </motion.div>
+        ) : activeTab === 'global' ? (
           <motion.div key="global" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
             <GlobalStats 
               players={globalStatsPlayers} 

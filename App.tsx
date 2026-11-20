@@ -465,6 +465,15 @@ const App: React.FC = () => {
     }
   }, [editingPlayer]);
 
+  // Se o sócio em edição receber foto importada em segundo plano enquanto o modal está aberto, atualiza a prévia sem sobrescrever edições manuais
+  useEffect(() => {
+    if (!editingPlayer?.id) return;
+    const latest = players.find(p => p.id === editingPlayer.id);
+    if (latest?.photoUrl && !formData.photoUrl) {
+      setFormData((prev: any) => ({ ...prev, photoUrl: latest.photoUrl }));
+    }
+  }, [players, editingPlayer?.id]);
+
   const handlePlayerSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (userRole !== 'ADMIN') {

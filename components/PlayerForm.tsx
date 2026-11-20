@@ -138,12 +138,21 @@ export const PlayerForm: React.FC<PlayerFormProps> = ({
                   </button>
                 )}
               </div>
+              {String(formData.photoUrl || '').trim().startsWith('data:') && (
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[10px] font-bold uppercase tracking-wider">
+                  <span>Foto importada/salva pronta para exibição</span>
+                </div>
+              )}
               <input
-                type="url"
-                placeholder="Ou cole o link da foto (URL)"
-                value={formData.photoUrl || ''}
+                type="text"
+                placeholder={
+                  String(formData.photoUrl || '').trim().startsWith('data:')
+                    ? 'Foto salva! Cole outro link (URL) apenas se quiser substituir'
+                    : 'Ou cole o link da foto (URL)'
+                }
+                value={String(formData.photoUrl || '').trim().startsWith('data:') ? '' : (formData.photoUrl || '')}
                 onChange={(e) => setFormData({ ...formData, photoUrl: e.target.value })}
-                className="w-full px-3 py-2 bg-black/40 border border-white/10 rounded-xl text-xs font-mono text-white/80 placeholder:text-white/20 outline-none focus:border-brand-primary"
+                className="w-full px-3 py-2 bg-black/40 border border-white/10 rounded-xl text-xs font-mono text-white/80 placeholder:text-white/25 outline-none focus:border-brand-primary"
               />
             </div>
           </div>

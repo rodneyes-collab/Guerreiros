@@ -182,6 +182,32 @@ export const BirthdayList: React.FC<BirthdayListProps> = ({
                         {formatDayMonth(player.birthDate)}
                       </span>
                     </div>
+                    {(() => {
+                      const currentYearStr = String(new Date().getFullYear());
+                      const isSentThisYear = String(player.lastBirthdaySentYear || '') === currentYearStr;
+                      const isTodayPlayer = todayBirthdays?.some(tb => tb.id === player.id);
+                      const sentDateFormatted = player.lastBirthdaySentDate
+                        ? player.lastBirthdaySentDate.split('-').reverse().join('/')
+                        : '';
+                      if (isSentThisYear) {
+                        return (
+                          <span
+                            title={sentDateFormatted ? `Enviado em ${sentDateFormatted}` : 'Parabéns enviado neste ano'}
+                            className="inline-block mt-1 px-1.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 text-[8px] font-black uppercase tracking-wider"
+                          >
+                            ✓ Parabéns Enviado
+                          </span>
+                        );
+                      }
+                      if (isTodayPlayer) {
+                        return (
+                          <span className="inline-block mt-1 px-1.5 py-0.5 rounded-full bg-brand-primary/20 border border-brand-primary/40 text-brand-primary text-[8px] font-black uppercase tracking-wider animate-pulse">
+                            🎉 Hoje!
+                          </span>
+                        );
+                      }
+                      return null;
+                    })()}
                   </div>
                 </div>
               ))}

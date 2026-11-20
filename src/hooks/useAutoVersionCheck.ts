@@ -111,7 +111,11 @@ export function useAutoVersionCheck() {
   }, [firestoreAppVersion, checkVersion]);
 
   useEffect(() => {
-    const interval = setInterval(checkVersion, 60000); // Checa a cada 60s sem sobrecarregar
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        checkVersion();
+      }
+    }, 300000); // Checa a cada 5 min apenas quando a aba está visível
 
     const onVisibilityChange = () => {
       if (document.visibilityState === 'visible') {

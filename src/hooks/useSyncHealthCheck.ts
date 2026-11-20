@@ -69,8 +69,12 @@ export const useSyncHealthCheck = () => {
       }
     };
 
-    // Intervalo periódico de 3 minutos
-    const interval = setInterval(performHealthCheck, 180000);
+    // Intervalo periódico de 5 minutos (apenas com aba visível)
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        performHealthCheck();
+      }
+    }, 300000);
 
     // Eventos de foco e reconexão (respeitando o cooldown de 3 minutos)
     const handleVisibilityOrOnline = () => {

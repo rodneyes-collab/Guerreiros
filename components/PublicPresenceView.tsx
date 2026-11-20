@@ -23,6 +23,7 @@ import { useStore } from '../store';
 import { useIntentions } from '../src/hooks/useIntentions';
 import { useBirthdays } from '../src/hooks/useBirthdays';
 import { Logo } from '../src/components/Logo';
+import { PlayerAvatar } from '../src/components/PlayerAvatar';
 import { capitalizeName } from '../utils/helpers';
 
 import { playFeedbackSound, triggerHaptic } from '../src/utils/feedback';
@@ -340,15 +341,8 @@ export const PublicPresenceView: React.FC<PublicPresenceViewProps> = ({ onBackTo
                 </div>
 
                 <div className="relative mb-3 flex justify-center">
-                  {/* Using a simple circle if PlayerAvatar is not imported correctly or to be fast */}
-                  <div className="w-16 h-16 rounded-full bg-brand-primary/10 border-2 border-amber-500/20 flex items-center justify-center text-amber-500 font-black text-xl uppercase overflow-hidden">
-                    {player.photoUrl ? (
-                      <img src={player.photoUrl} alt={player.name} className="w-full h-full object-cover" />
-                    ) : (
-                      player.name[0]
-                    )}
-                  </div>
-                  <div className="absolute -bottom-1 -right-1 bg-black rounded-full p-1.5 shadow-xl">
+                  <PlayerAvatar player={player} size="xl" className="border-amber-500/30" />
+                  <div className="absolute -bottom-1 -right-1 z-20 bg-black rounded-full p-1.5 shadow-xl">
                     <div className="w-5 h-5 bg-amber-500 rounded-full flex items-center justify-center text-[10px] text-black">
                       🎂
                     </div>
@@ -450,9 +444,7 @@ export const PublicPresenceView: React.FC<PublicPresenceViewProps> = ({ onBackTo
                               className="w-full p-4 text-left flex items-center justify-between hover:bg-brand-primary/10 transition-colors group"
                             >
                               <div className="flex items-center gap-3">
-                                <div className="w-8 h-8 rounded-full bg-brand-primary/10 border border-brand-primary/30 flex items-center justify-center text-brand-primary font-black text-xs uppercase">
-                                  {player.name[0]}
-                                </div>
+                                <PlayerAvatar player={player} size="sm" />
                                 <span className="font-bold text-base group-hover:text-brand-primary transition-colors">
                                   {capitalizeName(player.name)}
                                 </span>
@@ -505,9 +497,11 @@ export const PublicPresenceView: React.FC<PublicPresenceViewProps> = ({ onBackTo
                 <div className="p-6 bg-brand-primary/10 rounded-[2.5rem] border-2 border-brand-primary shadow-2xl shadow-brand-primary/10 flex flex-col sm:flex-row items-center gap-6 text-center sm:text-left relative overflow-hidden group">
                   <div className="absolute top-0 right-0 w-32 h-32 bg-brand-primary/10 rounded-full blur-3xl -mr-16 -mt-16 group-hover:bg-brand-primary/20 transition-all duration-700"></div>
                   
-                  <div className="w-20 h-20 rounded-3xl bg-brand-primary text-brand-secondary font-black text-3xl uppercase flex items-center justify-center shadow-2xl shadow-brand-primary/30 transform -rotate-3 group-hover:rotate-0 transition-transform duration-500 border-4 border-black/20">
-                    {selectedPlayer.name[0]}
-                  </div>
+                  <PlayerAvatar
+                    player={selectedPlayer}
+                    size="xl"
+                    className="w-20 h-20 rounded-3xl shadow-2xl shadow-brand-primary/30 transform -rotate-3 group-hover:rotate-0 transition-transform duration-500 border-4 border-black/20"
+                  />
                   <div className="space-y-2 relative z-10">
                     <div className="flex items-center justify-center sm:justify-start gap-2">
                       <p className="text-[10px] font-black uppercase tracking-[0.3em] text-brand-primary">Atleta Identificado</p>

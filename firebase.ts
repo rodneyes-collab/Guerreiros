@@ -63,12 +63,10 @@ try {
   app = getApp();
 }
 
-// Silencia logs internos verbosos do Firestore SDK
-if (typeof window !== 'undefined') {
-  try {
-    setLogLevel('silent');
-  } catch (e) {}
-}
+// Silencia logs internos verbosos do Firestore SDK (inclusive reconexões de stream ocioso gRPC/WebChannel)
+try {
+  setLogLevel('silent');
+} catch (e) {}
 
 export type FirestorePersistenceMode = 'bounded' | 'memory' | 'unlimited';
 
@@ -120,9 +118,12 @@ let dbInstance;
 export let isMemoryFallbackActive = true;
 
 // TRAVA UNIFICADA DE BANCO DE DADOS (Idêntica ao server.ts):
-// Garante que Frontend e Backend sempre se conectem exatamente ao mesmo firestoreDatabaseId
-export const ACTIVE_FIRESTORE_DB_ID =
-  (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)')
+// Conecta Frontend, Backend e Cloud Run ao banco (default) do projeto volleyclub-manager,
+// evitando o teto rígido de 50.000 leituras diárias do banco 'ai-studio-*' (free tier database).
+export const ACTIVE_FIRESTORE_DB_ID: string | undefined =
+  (firebaseConfig.firestoreDatabaseId &&
+    firebaseConfig.firestoreDatabaseId !== '(default)' &&
+    !firebaseConfig.firestoreDatabaseId.startsWith('ai-studio-'))
     ? firebaseConfig.firestoreDatabaseId
     : undefined;
 

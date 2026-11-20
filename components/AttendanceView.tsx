@@ -23,7 +23,10 @@ import {
   QrCode,
   UserCheck,
   Search,
-  Sparkles
+  Sparkles,
+  MapPin,
+  Navigation,
+  ShieldAlert
 } from 'lucide-react';
 
 import {
@@ -157,6 +160,23 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
   const [pullDistance, setPullDistance] = useState(0);
   const [isPulling, setIsPulling] = useState(false);
 
+  // Estados para Check-in e Teste de Sinal GPS
+  const [selectedGpsTestPlayerId, setSelectedGpsTestPlayerId] = useState<string>('');
+  const [gpsDryRunMode, setGpsDryRunMode] = useState<boolean>(false);
+  const [isTestingGps, setIsTestingGps] = useState<boolean>(false);
+  const [gpsTestResult, setGpsTestResult] = useState<{
+    allowed: boolean;
+    reason?: string;
+    message: string;
+    distanceMeters?: number;
+    maxRadius?: number;
+    arrivalOrder?: number;
+    alreadyPresent?: boolean;
+    playerName?: string;
+    coordsLabel?: string;
+    dryRun?: boolean;
+  } | null>(null);
+
   const handleRegisterPlayer = async (player: Player) => {
     if (addingPlayerId === player.id) return;
     setAddingPlayerId(player.id);
@@ -167,6 +187,110 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
     } finally {
       setTimeout(() => setAddingPlayerId(null), 350);
     }
+  };
+
+  const executeGpsValidationCall = async (payload: {
+    playerId: string;
+    lat: number;
+    lng: number;
+    name?: string;
+    address?: string;
+    isLive?: boolean;
+    dryRun?: boolean;
+    coordsLabel: string;
+  }) => {
+    setIsTestingGps(true);
+    try {
+      const resp = await fetch('/api/presence/gps-checkin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          playerId: payload.playerId,
+          lat: payload.lat,
+          lng: payload.lng,
+          name: payload.name,
+          address: payload.address,
+          isLive: payload.isLive,
+          bypassTimeWindow: true,
+          dryRun: payload.dryRun,
+          source: 'APP_GPS'
+        })
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.success) {
+        setGpsTestResult({
+          allowed: false,
+          reason: 'ERROR',
+          message: data.error || 'Falha ao validar sinal de GPS.',
+          coordsLabel: payload.coordsLabel,
+          dryRun: payload.dryRun
+        });
+        return;
+      }
+      setGpsTestResult({
+        allowed: Boolean(data.allowed),
+        reason: data.reason,
+        message: data.message,
+        distanceMeters: data.distanceMeters,
+        maxRadius: data.maxRadius,
+        arrivalOrder: data.arrivalOrder,
+        alreadyPresent: data.alreadyPresent,
+        playerName: data.player?.name,
+        coordsLabel: payload.coordsLabel,
+        dryRun: Boolean(data.dryRun)
+      });
+      if (data.allowed && !payload.dryRun && refreshPlayers) {
+        await refreshPlayers();
+      }
+    } catch (err: any) {
+      setGpsTestResult({
+        allowed: false,
+        reason: 'NETWORK_ERROR',
+        message: err?.message || 'Erro de conexão ao validar GPS.',
+        coordsLabel: payload.coordsLabel,
+        dryRun: payload.dryRun
+      });
+    } finally {
+      setIsTestingGps(false);
+    }
+  };
+
+  const handleRealDeviceGpsCheckIn = (targetPlayerId: string, dryRun = false) => {
+    if (!navigator.geolocation) {
+      setGpsTestResult({
+        allowed: false,
+        reason: 'NO_GEOLOCATION',
+        message: 'Este navegador/dispositivo não suporta leitura de GPS (navigator.geolocation).',
+        coordsLabel: 'Sem suporte GPS'
+      });
+      return;
+    }
+    setIsTestingGps(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = Number(pos.coords.latitude.toFixed(6));
+        const lng = Number(pos.coords.longitude.toFixed(6));
+        const accuracy = Math.round(pos.coords.accuracy || 0);
+        executeGpsValidationCall({
+          playerId: targetPlayerId,
+          lat,
+          lng,
+          isLive: true,
+          dryRun,
+          coordsLabel: `GPS Real (${lat}, ${lng} • ±${accuracy}m)`
+        });
+      },
+      (err) => {
+        setIsTestingGps(false);
+        setGpsTestResult({
+          allowed: false,
+          reason: 'GPS_PERMISSION_DENIED',
+          message: `⚠️ Não foi possível obter o GPS real do aparelho (${err.message || 'Permissão negada ou sinal indisponível'}). Permita o acesso à localização no navegador ou use os botões de simulação ao lado.`,
+          coordsLabel: 'Permissão de GPS pendente'
+        });
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
   };
 
   // Sócios ativos disponíveis que ainda não estão na lista de presença
@@ -542,10 +666,22 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                                       <SmartphoneNfc className="w-3 h-3 text-emerald-400" />
                                     </span>
                                   )}
-                                  {player.checkInMethod === 'QR' && (
-                                    <span title="QR Code" className="inline-flex">
-                                      <QrCode className="w-3 h-3 text-blue-400" />
+                                  {((player as any).checkInSource === 'WHATSAPP_GPS' ||
+                                    (player as any).checkInSource === 'APP_GPS' ||
+                                    typeof (player as any).distanceFromCourtMeters === 'number') ? (
+                                    <span
+                                      title={`Presença validada por GPS (${(player as any).distanceFromCourtMeters ?? 0}m da quadra)`}
+                                      className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[7px] font-black uppercase"
+                                    >
+                                      <MapPin className="w-2.5 h-2.5 text-emerald-400" />
+                                      {(player as any).distanceFromCourtMeters ?? 0}m
                                     </span>
+                                  ) : (
+                                    player.checkInMethod === 'QR' && (
+                                      <span title="QR Code" className="inline-flex">
+                                        <QrCode className="w-3 h-3 text-blue-400" />
+                                      </span>
+                                    )
                                   )}
                                 </div>
                               </div>
@@ -560,8 +696,245 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
             </section>
           </div>
 
-          {/* COLUNA DIREITA: PONTE 1-TOQUE DOS CONFIRMADOS + DISPONÍVEIS */}
+          {/* COLUNA DIREITA: VALIDAÇÃO GPS + PONTE 1-TOQUE DOS CONFIRMADOS + DISPONÍVEIS */}
           <div className="lg:col-span-7 space-y-6">
+            {/* PAINEL DE CHECK-IN E VALIDAÇÃO DE SINAL DE GPS DA QUADRA */}
+            <div className="bg-zinc-900/95 p-6 rounded-[2.5rem] border-2 border-brand-primary/40 shadow-2xl space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-brand-primary/20 rounded-2xl border border-brand-primary/40 text-brand-primary">
+                    <MapPin className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base sm:text-lg font-black text-white uppercase tracking-tight flex items-center gap-2 flex-wrap">
+                      Check-in Presencial via Sinal de GPS
+                      <span className="px-2 py-0.5 rounded-full bg-brand-primary/20 border border-brand-primary/40 text-brand-primary text-[9px] font-black uppercase">
+                        Cerca Virtual: 300m
+                      </span>
+                    </h3>
+                    <p className="text-[10px] font-bold text-white/50 uppercase tracking-widest">
+                      Quadra Oficial (-8.131531, -34.907323) • Validação antifraude de distância em tempo real
+                    </p>
+                  </div>
+                </div>
+
+                {currentPlayer && !isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => handleRealDeviceGpsCheckIn(currentPlayer.id, false)}
+                    disabled={isTestingGps}
+                    className="px-4 py-2.5 bg-brand-primary hover:bg-brand-primary/90 text-black font-black text-[10px] uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-lg shrink-0 disabled:opacity-50 cursor-pointer"
+                  >
+                    <Navigation className="w-4 h-4" />
+                    {isTestingGps ? 'Validando GPS...' : 'Confirmar Minha Presença via GPS'}
+                  </button>
+                )}
+              </div>
+
+              {isAdmin && (
+                <div className="space-y-3 pt-2 border-t border-white/10">
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
+                    <div className="flex-1">
+                      <label className="block text-[9px] font-black text-white/50 uppercase tracking-widest mb-1">
+                        Sócio para Testar / Validar Presença GPS:
+                      </label>
+                      <select
+                        value={selectedGpsTestPlayerId || currentPlayer?.id || activeAvailablePlayers[0]?.id || ''}
+                        onChange={(e) => setSelectedGpsTestPlayerId(e.target.value)}
+                        className="w-full bg-black/70 border border-brand-primary/40 rounded-xl px-3 py-2 text-xs font-black text-white uppercase outline-none focus:border-brand-primary"
+                      >
+                        {activeAvailablePlayers.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {capitalizeName(p.name)} {attendance.some((a) => a.id === p.id) ? '(Já em Quadra)' : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="flex flex-col justify-end">
+                      <label className="block text-[9px] font-black text-white/50 uppercase tracking-widest mb-1">
+                        Modo do Teste:
+                      </label>
+                      <div className="flex items-center bg-black/70 p-1 rounded-xl border border-white/10">
+                        <button
+                          type="button"
+                          onClick={() => setGpsDryRunMode(false)}
+                          className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer ${
+                            !gpsDryRunMode
+                              ? 'bg-emerald-500 text-black'
+                              : 'text-white/50 hover:text-white'
+                          }`}
+                        >
+                          Gravar na Lista
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setGpsDryRunMode(true)}
+                          className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer ${
+                            gpsDryRunMode
+                              ? 'bg-brand-primary text-black'
+                              : 'text-white/50 hover:text-white'
+                          }`}
+                        >
+                          Só Simular
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                    <button
+                      type="button"
+                      disabled={isTestingGps}
+                      onClick={() => {
+                        const pid = selectedGpsTestPlayerId || currentPlayer?.id || activeAvailablePlayers[0]?.id;
+                        if (pid) handleRealDeviceGpsCheckIn(pid, gpsDryRunMode);
+                      }}
+                      className="p-2.5 rounded-xl bg-brand-primary/15 hover:bg-brand-primary/25 border border-brand-primary/40 text-left transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      <div className="flex items-center gap-1.5 text-brand-primary font-black text-[10px] uppercase">
+                        <Navigation className="w-3.5 h-3.5 shrink-0" />
+                        1. Meu GPS Real
+                      </div>
+                      <p className="text-[9px] text-white/60 font-bold mt-0.5">
+                        Lê o sensor GPS atual do seu aparelho
+                      </p>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isTestingGps}
+                      onClick={() => {
+                        const pid = selectedGpsTestPlayerId || currentPlayer?.id || activeAvailablePlayers[0]?.id;
+                        if (!pid) return;
+                        executeGpsValidationCall({
+                          playerId: pid,
+                          lat: -8.13145,
+                          lng: -34.90725,
+                          isLive: true,
+                          dryRun: gpsDryRunMode,
+                          coordsLabel: 'Quadra Oficial (-8.13145, -34.90725)'
+                        });
+                      }}
+                      className="p-2.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-left transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      <div className="flex items-center gap-1.5 text-emerald-400 font-black text-[10px] uppercase">
+                        <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                        2. Na Quadra (12m)
+                      </div>
+                      <p className="text-[9px] text-white/60 font-bold mt-0.5">
+                        Dentro do raio ≤300m (Aprova e escala)
+                      </p>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isTestingGps}
+                      onClick={() => {
+                        const pid = selectedGpsTestPlayerId || currentPlayer?.id || activeAvailablePlayers[0]?.id;
+                        if (!pid) return;
+                        executeGpsValidationCall({
+                          playerId: pid,
+                          lat: -8.1195,
+                          lng: -34.9021,
+                          isLive: true,
+                          dryRun: gpsDryRunMode,
+                          coordsLabel: 'Fora da Quadra (-8.11950, -34.90210)'
+                        });
+                      }}
+                      className="p-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-left transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      <div className="flex items-center gap-1.5 text-amber-400 font-black text-[10px] uppercase">
+                        <MapPin className="w-3.5 h-3.5 shrink-0" />
+                        3. Longe (~1.456m)
+                      </div>
+                      <p className="text-[9px] text-white/60 font-bold mt-0.5">
+                        Fora do raio de 300m (Recusa check-in)
+                      </p>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isTestingGps}
+                      onClick={() => {
+                        const pid = selectedGpsTestPlayerId || currentPlayer?.id || activeAvailablePlayers[0]?.id;
+                        if (!pid) return;
+                        executeGpsValidationCall({
+                          playerId: pid,
+                          lat: -8.131531,
+                          lng: -34.907323,
+                          name: 'Quadra de Vôlei Boa Viagem',
+                          address: 'Av. Boa Viagem, Recife - PE',
+                          isLive: false,
+                          dryRun: gpsDryRunMode,
+                          coordsLabel: 'Busca no Mapa (Anti-Fraude)'
+                        });
+                      }}
+                      className="p-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-left transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      <div className="flex items-center gap-1.5 text-rose-400 font-black text-[10px] uppercase">
+                        <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
+                        4. Local Pesquisado
+                      </div>
+                      <p className="text-[9px] text-white/60 font-bold mt-0.5">
+                        Endereço digitado na busca (Bloqueia)
+                      </p>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {gpsTestResult && (
+                <div
+                  className={`p-4 rounded-2xl border ${
+                    gpsTestResult.allowed
+                      ? 'bg-emerald-950/40 border-emerald-500/50'
+                      : 'bg-rose-950/40 border-rose-500/50'
+                  } space-y-2`}
+                >
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
+                          gpsTestResult.allowed
+                            ? 'bg-emerald-500 text-black'
+                            : 'bg-rose-500 text-white'
+                        }`}
+                      >
+                        {gpsTestResult.allowed ? '✅ SINAL GPS APROVADO' : '🚫 SINAL GPS RECUSADO'}
+                      </span>
+                      {gpsTestResult.dryRun && (
+                        <span className="px-2 py-0.5 rounded-full bg-brand-primary/20 text-brand-primary border border-brand-primary/40 text-[9px] font-black uppercase">
+                          Modo Simulação (Não gravou)
+                        </span>
+                      )}
+                      {typeof gpsTestResult.distanceMeters === 'number' && (
+                        <span className="text-[10px] font-mono font-black text-white/80">
+                          📏 Distância: {gpsTestResult.distanceMeters}m / Limite: {gpsTestResult.maxRadius || 300}m
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setGpsTestResult(null)}
+                      className="text-white/40 hover:text-white text-xs font-black uppercase"
+                    >
+                      Fechar
+                    </button>
+                  </div>
+
+                  {gpsTestResult.coordsLabel && (
+                    <p className="text-[10px] font-mono text-white/50">
+                      Origem testada: {gpsTestResult.coordsLabel}
+                    </p>
+                  )}
+
+                  <pre className="whitespace-pre-wrap font-sans text-xs text-white/90 bg-black/50 p-3 rounded-xl border border-white/10 leading-relaxed">
+                    {gpsTestResult.message}
+                  </pre>
+                </div>
+              )}
+            </div>
             {/* FAIXA DESTACADA: CONFIRMADOS NA LISTA DE QUINTA (FALTAM CHEGAR) */}
             {isAdmin && confirmedPendingCheckIn.length > 0 && (
               <div className="bg-zinc-900/95 p-6 rounded-[2.5rem] border-2 border-emerald-500/40 shadow-2xl space-y-4">

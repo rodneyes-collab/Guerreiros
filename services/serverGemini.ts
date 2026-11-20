@@ -1,5 +1,5 @@
 import { GoogleGenAI, ThinkingLevel } from "@google/genai";
-import type { GenerationResult, Player, Match, Team } from "../types.ts";
+import type { GenerationResult, Player, Match } from "../types.ts";
 import { calculateCompositePerformanceRating } from "../utils/teamLogic.ts";
 
 let serverAiHealth = {
@@ -338,13 +338,54 @@ export const serverAnalyzeBillingCosts = async (billingData: {
   }
 };
 
-export const serverGenerateBirthdayMessage = async (playerName: string): Promise<string> => {
+export interface BirthdayPlayerContext {
+  id?: string;
+  name: string;
+  isOfficialSetter?: boolean;
+  matchesPlayed?: number;
+  wins?: number;
+  elo?: number;
+  recentBirthdayGreetings?: string[];
+}
+
+export const serverGenerateBirthdayMessage = async (
+  playerOrName: string | BirthdayPlayerContext
+): Promise<string> => {
   const ai = getAI();
-  const prompt = `Gere uma mensagem de aniversário curta, criativa e animada para um sócio de um clube de vôlei. 
-    O nome do sócio é "${playerName}". 
-    A mensagem deve ser em português, usar emojis de vôlei e festa, e ter um tom de união e celebração. 
-    Evite usar palavras com gênero específico como "guerreiro" ou "guerreira", use termos neutros ou apenas o nome.
-    Não use aspas na resposta. Max 50 palavras.`;
+  const ctx: BirthdayPlayerContext =
+    typeof playerOrName === "string" ? { name: playerOrName } : playerOrName;
+
+  const playerName = String(ctx.name || "Sócio").trim();
+  const roleDesc = ctx.isOfficialSetter
+    ? "Levantador(a) Oficial (maestro/maestrina da quadra, distribuição de jogo e bolas na mão)"
+    : "Linha de passe, defesa, bloqueio e ataque decisivo";
+  const matches = Number(ctx.matchesPlayed || 0);
+  const wins = Number(ctx.wins || 0);
+  const elo = Math.round(Number(ctx.elo || 1200));
+  const recentList = Array.isArray(ctx.recentBirthdayGreetings)
+    ? ctx.recentBirthdayGreetings.slice(-15)
+    : [];
+
+  const statsDesc =
+    matches > 0
+      ? `Histórico no clube: ${matches} partidas disputadas, ${wins} vitórias e pontuação atual de ${elo} ELO.`
+      : `Pontuação atual no clube: ${elo} ELO.`;
+
+  const prompt = `Gere uma mensagem de aniversário exclusiva, criativa, calorosa e personalizada para um sócio do clube de vôlei "Guerreiros VC".
+
+DADOS REAIS DO ANIVERSARIANTE:
+- Nome: "${playerName}"
+- Posição/Função em quadra: ${roleDesc}
+- ${statsDesc}
+
+MENSAGENS ENVIADAS RECENTEMENTE PARA OUTROS SÓCIOS (PROIBIDO REPETIR FRASES, ABERTURAS OU ESTRUTURAS):
+${recentList.length > 0 ? recentList.map((m, i) => `${i + 1}. ${m}`).join("\n") : "Nenhuma mensagem recente."}
+
+REGRAS OBRIGATÓRIAS:
+1. Escreva em português do Brasil, usando emojis de vôlei e comemoração.
+2. Personalize mencionando sutilmente a função em quadra (${ctx.isOfficialSetter ? "levantamentos precisos/visão de jogo" : "defesas, ataques e presença em quadra"}) e a trajetória no clube (${matches > 0 ? `${matches} jogos / ${wins} vitórias / ${elo} ELO` : "energia no grupo"}).
+3. Seja totalmente original em relação às mensagens recentes listadas acima.
+4. Não use aspas envolvendo a resposta e não inclua cabeçalho ou assinatura (apenas o corpo da felicitação, máx. 65 palavras).`;
 
   try {
     const response = await ai.models.generateContent({
@@ -353,7 +394,10 @@ export const serverGenerateBirthdayMessage = async (playerName: string): Promise
       config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
     });
 
-    return response.text || `Parabéns, ${playerName}! Que seu dia seja repleto de aces e vitórias dentro e fora de quadra! 🏐🎉`;
+    return (
+      response.text?.trim() ||
+      `Parabéns, ${playerName}! Que seu novo ciclo seja repleto de saúde, alegria, grandes jogos e muitas vitórias dentro e fora de quadra com a família Guerreiros! 🏐🎉`
+    );
   } catch (err) {
     recordServerAIError(err);
     throw err;
