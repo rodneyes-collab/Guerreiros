@@ -39,11 +39,23 @@ export const calculatePlayerCompositeIndex = (
 };
 
 /**
- * Calcula o Score Oficial de MVP (Fórmula B-1: Desempenho Técnico + Pilar Volume).
- * Score B-1 = Pilar Desempenho + Pilar Volume
- * - Pilar Desempenho = IC + (Saldo Médio de Pontos * 1.5)
- * - Pilar Volume (Diário): +2.0 pontos por partida disputada no dia
- * - Pilar Volume (Carreira): min(15, (Partidas / 45) * 15)
+ * Calcula o Saldo Médio de Pontos por partida (Pontos Pró - Pontos Contra) / Partidas.
+ */
+export const calculateDailyAvgPointDiff = (
+  pointsFor: number,
+  pointsAgainst: number,
+  matches: number
+): number => {
+  if (matches <= 0) return 0;
+  return Number(((pointsFor - pointsAgainst) / matches).toFixed(2));
+};
+
+/**
+ * Calcula o Score Oficial de MVP:
+ * - Diário (isDaily = true — 100% Mérito da Noite, sem peso de skills cadastrais):
+ *   Score Dia = max(0, %Vitórias + (Saldo Médio * 1.5)) + (Partidas * 2.0)
+ * - Carreira / Acumulado (isDaily = false — Fórmula B-1):
+ *   Score B-1 = IC (80% Skills + 20% WinRate) + (Saldo Médio * 1.5) + min(15, (Partidas / 45) * 15)
  */
 export const calculateMvpEfficiencyScore = (
   player: Player | null,
@@ -57,28 +69,30 @@ export const calculateMvpEfficiencyScore = (
   if (!player || matches <= 0) return 0;
 
   const normalizedWr = winRate > 1.0 ? winRate / 100 : winRate;
+  const wrPercent = normalizedWr * 100;
 
-  // 1. Índice Composto (IC)
-  const ic = calculatePlayerCompositeIndex(player, normalizedWr, isDaily);
-
-  // 2. Saldo Médio de Pontos por Partida (Multiplicador 1.5 de domínio de quadra)
+  // Saldo Médio de Pontos por Partida (Multiplicador 1.5 de domínio de quadra)
   const saldoMedio = (pointsFor - pointsAgainst) / matches;
-  let pilarDesempenho = ic + (saldoMedio * 1.5);
 
-  // 3. Salvaguarda na Sessão Diária contra MVP sem vitórias no dia
   if (isDaily) {
+    // 100% Mérito da Noite: sem peso fixo de skills cadastrais
+    let pilarDesempenho = Math.max(0, wrPercent + (saldoMedio * 1.5));
+
+    // Salvaguarda na Sessão Diária contra MVP sem vitórias no dia
     if (normalizedWr === 0) {
       pilarDesempenho = Math.max(0, pilarDesempenho * 0.45);
-    } else if (normalizedWr < 0.35) {
-      pilarDesempenho = pilarDesempenho * (0.55 + normalizedWr);
     }
+
+    const pilarVolume = matches * 2.0;
+    return Number(Math.max(0, pilarDesempenho + pilarVolume).toFixed(2));
   }
 
-  // 4. Pilar de Volume (Participação e Compromisso)
-  const pilarVolume = isDaily
-    ? matches * 2.0
-    : Math.min(15, (matches / 45) * 15);
+  // Carreira / Acumulado — Fórmula Oficial B-1 preservada
+  const ic = calculatePlayerCompositeIndex(player, normalizedWr, false);
+  const pilarDesempenho = ic + (saldoMedio * 1.5);
+  const pilarVolume = Math.min(15, (matches / 45) * 15);
 
   return Number(Math.max(0, pilarDesempenho + pilarVolume).toFixed(2));
 };
+
 

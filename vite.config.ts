@@ -38,6 +38,9 @@ export default defineConfig(() => {
             cleanupOutdatedCaches: true,
             clientsClaim: true,
             skipWaiting: true,
+            globPatterns: ['**/*.{js,css,html,png,ico,webmanifest}'],
+            globIgnores: ['**/fonts/**', '**/assets/aistudio/**'],
+            maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
             navigateFallbackDenylist: [/^\/api/],
             runtimeCaching: [
               {
@@ -59,20 +62,18 @@ export default defineConfig(() => {
         })
       ],
       build: {
-        target: 'chrome64',
+        target: 'es2020',
         outDir: 'dist',
         emptyOutDir: true,
         sourcemap: false,
+        minify: 'esbuild' as const,
+        cssMinify: 'lightningcss' as const,
+        reportCompressedSize: false,
         rollupOptions: {
           output: {
-            manualChunks(id) {
-              if (id.includes('node_modules')) {
-                if (id.includes('firebase')) return 'vendor-firebase';
-                if (id.includes('lucide-react')) return 'vendor-icons';
-                if (id.includes('d3') || id.includes('recharts')) return 'vendor-charts';
-                if (id.includes('motion') || id.includes('framer-motion')) return 'vendor-motion';
-                return 'vendor';
-              }
+            manualChunks: {
+              'vendor-react': ['react', 'react-dom'],
+              'vendor-firebase': ['firebase/app', 'firebase/auth', 'firebase/firestore']
             }
           }
         },

@@ -7,5 +7,6 @@
   "lastListSent": 1780317836827,
   "lastConfirmedPlayers": [],
   "botActive": true,
-  "webhookUrl": "https://ais-dev-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app/api/whatsapp/webhook"
+  "webhookUrl": "https://ais-dev-5sizycyxq2623fkika3pd6-172372482323.us-east1.run.app/api/whatsapp/webhook",
+  "cardDeliveryMode": "vm_image_only"
 }

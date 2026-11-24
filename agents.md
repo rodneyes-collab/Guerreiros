@@ -101,27 +101,56 @@ O gerenciamento da lista de intenção (quem "VAI" ou "NÃO VAI" jogar) deve seg
 
 ---
 
-## 🤖 Protocolo Operacional do Bot de WhatsApp e Inteligência Natural (NLP)
+## 🤖 Protocolo Operacional do Bot de WhatsApp, VM Google (Baileys) e Inteligência Natural (NLP)
 
-O Bot Oficial do Guerreiros VC (`/api/whatsapp/webhook` e `/api/whatsapp/cron-tasks` em `server.ts`) deve operar sob as seguintes regras:
+O Bot Oficial do Guerreiros VC (`/api/whatsapp/webhook` e `/api/whatsapp/cron-tasks` em `server.ts`) opera integrado a uma **Máquina Virtual Google Cloud (VM `bot-guerreiros-vm`) rodando `@whiskeysockets/baileys` via PM2 (`bot.mjs`)** e deve obedecer às seguintes regras:
 
-1. **Proteção de Privacidade e Anti-Intromissão:**
+1. **Arquitetura Oficial — VM Google com Baileys (Proibição de Evolution API) e Blindagem JSON:**
+   - O clube **NÃO** utiliza Evolution API. Toda entrega de mensagens, mídias (PNG) e captura de fotos de perfil ocorre exclusivamente através do script `bot.mjs` (`v4.1+`) rodando na VM Google (`pm2`), que consome `/api/whatsapp/webhook` (mensagens recebidas) e `/api/whatsapp/cron-tasks` (fila de envios, agendamentos e tarefas de sincronização).
+   - É proibido adicionar dependências ou bloqueios que exijam conexão HTTP com instâncias Evolution API.
+   - **Blindagem contra JSON Malformado / `upstream r...`:** Toda comunicação HTTP/Firestore entre a VM e o backend utiliza validação prévia de formato JSON dentro de blocos `try/catch` (`validateIncomingJsonPayload`, `safeReadResponseJson` e `sanitizeFirestorePayload`), impedindo que respostas HTML/texto de timeout ou erro de proxy (`upstream request timeout`) derrubem a thread principal do bot ou corrompam o Firestore.
+
+2. **Proteção de Privacidade, Anti-Intromissão e Entrega Automática no Privado:**
    - O bot **JAMAIS** deve responder a mensagens curtas soltas (`"1"`, `"2"`, `"sim"`, `"não"`, `"vou"`) enviadas em conversas normais com outros contatos.
    - A ativação exige obrigatoriamente os prefixos explícitos (`gv`, `bot`, `botgv`, `!`, `/`, `@guerreiros`) ou resposta rápida (`1` ou `2`) exclusivamente dentro do chat privado direto com o próprio bot.
+   - **Limitação Nativa do WhatsApp (Chat "Você / Para si mesmo"):** Como a VM Baileys opera conectada ao número pareado do bot, mensagens enviadas por outro sócio para o *próprio número dele* são criptografadas apenas entre os aparelhos desse sócio e nunca chegam ao bot. Para receber no privado, o sócio deve enviar o comando diretamente ao contato do bot **ou** digitar o comando no grupo oficial.
+   - **Comandos Individuais Solicitados no Grupo → Entrega Automática no Privado:** Quando qualquer sócio digitar comandos individuais (`gv dia`, `gv minhanoite`, `gv meusjogos`, `gv estatisticas`, `gv raiox`, `gv cheguei`, atualização de foto ou consultas pessoais via IA) dentro do **grupo oficial**, o servidor enfileira automaticamente a resposta completa (Card HD PNG ou texto) na fila `whatsapp_outbox` para entrega direta no **privado do sócio** (com resolução de `@s.whatsapp.net` e `@lid` + `fallbackTargets`), devolvendo no grupo apenas uma confirmação discreta de 1 linha (`📩 *<Nome>*, enviei seu *<Tipo>* no seu privado! 🔒🏐`, protegida por trava antiloop em `isBotGeneratedOutput`). Comandos coletivos (`gv ranking`, `gv resumo`, `gv lista`, `gv aniversarios`, `gv pix`, `gv vou`) permanecem no grupo.
 
-2. **Roteamento de Intenção por Linguagem Natural (Gemini NLP):**
-   - Toda mensagem acionada com prefixo deve ser classificada pelo Gemini (`gemini-2.5-flash`) nas intenções: `CONFIRM_ATTENDANCE`, `DECLINE_ATTENDANCE`, `VIEW_LIST`, `VIEW_RANKING`, `CHECK_PIX`, `RAW_STATS_LIST` ou `DEEP_ANALYTICS_CHAT` (`serverDeepAnalysis.ts`).
+3. **Roteamento de Intenção por Linguagem Natural e IA 100% Server-Side (`services/aiRouter.ts`):**
+   - Todas as chamadas Gemini (geração de texto, transcrição de áudio, TTS, streaming SSE `/api/gemini/stream` e Live API WebSocket `/api/gemini/live`) executam **exclusivamente no servidor**, roteadas por tier determinístico (`gemini-3.1-flash-lite`, `gemini-4-hydrogen`, `gemini-3.5-transcribe`, `gemini-3.8-flash-lite-tts` e `gemini-3.8-live`) com `process.env.GEMINI_API_KEY`.
+   - Toda mensagem acionada com prefixo ou no chat privado é classificada nas intenções: `CONFIRM_ATTENDANCE`, `DECLINE_ATTENDANCE`, `VIEW_LIST`, `VIEW_RANKING`, `CHECK_PIX`, `RAW_STATS_LIST` ou `DEEP_ANALYTICS_CHAT` (`serverDeepAnalysis.ts`), incluindo gatilhos em linguagem natural para o Card Individual da Noite (ex.: *"me manda meu card"*, *"como fui na quinta"*, *"resumo individual"*).
+   - **Base de Conhecimento Oficial do Clube + Memória Curta no Privado:** o `runDeepAnalyticsChat` recebe dinamicamente as configurações oficiais (`systemConfig`: mensalidade, chave PIX, quadra, capacidade) junto ao regulamento oficial do Guerreiros VC (quinta à noite, cerca GPS 300m, sorteio por IC 80% skills + 20% win rate sem ELO, fila com rodagem justa, premiação Ordem B com 4 vencedores distintos sem peso de skills no MVP e entrega automática no privado). A memória conversacional por sócio retém até 8 turnos por **20 minutos** e é encerrada imediatamente em despedidas naturais (*"obrigado"*, *"valeu"*, *"tchau"*, *"encerrar"*, *"sair"*).
 
-3. **Exibição Completa de Rankings (Diário vs. Acumulado):**
-   - Na intenção `VIEW_RANKING`, é proibido limitar a listagem a apenas 10 sócios. O bot deve exibir **todos os sócios ativos** do clube e separar claramente entre o **Ranking Geral Acumulado** (carreira/ELO) e o **Ranking Diário** (partidas da rodada/dia).
+4. **Exibição Completa de Rankings (Diário vs. Acumulado — Todos os Sócios Ativos):**
+   - Na intenção `VIEW_RANKING` e na geração do **Card Visual HD de Ranking (PNG)**, é estritamente proibido limitar a listagem aos 10 primeiros. O sistema deve renderizar **todos os sócios ativos** do clube (28+ atletas) em layout vertical **mobile-first** (`1080px` em coluna única com tipografia ampliada e alto contraste), separando claramente o **Ranking Geral Acumulado** (carreira/ELO) e o **Ranking Diário** (rodada/dia).
 
-4. **Engajamento e Giro Diário de Voleibol Nacional (12:00 BRT):**
-   - O agendador (`cron-tasks`) dispara 1 pílula diária às 12h no grupo oficial abordando: Superliga Masculina/Feminina (segunda), Dica Técnica de Fundamentos (terça), Seleção Brasileira (quarta), Aquecimento da Rodada de Quinta (quinta) e Curiosidades Históricas/Regras do Vôlei (sexta).
+5. **Envio Nativo de Cards Visual HD (PNG) via VM Google (Sem Links no WhatsApp):**
+   - **Proibição de Fallback por Link:** Se não for possível enviar o arquivo de imagem PNG diretamente no WhatsApp para o sócio visualizar nativamente, o recurso de Card HD deve permanecer desabilitado (`cardDeliveryMode: "disabled"`). É proibido enviar links para o sócio abrir o aplicativo apenas para ver o card.
+   - **Modos Permitidos (`metadata/system.whatsappCardDeliveryMode`):**
+     - `vm_image_only`: entrega exclusivamente o arquivo PNG nativo (`mediaBase64` / `mediaFetchUrl`, `imageOnly: true`) quando a VM anuncia `supportsMedia: true`.
+     - `disabled`: desativa completamente o envio de Cards HD pelo WhatsApp (comandos retornam ranking em texto limpo).
+   - **Otimização Mobile-First dos PNGs (`services/liquidGlassCards.ts`):**
+     - Todos os 3 cards HD (`renderIndividualNightCardSvg`, `renderDailyRankingCardSvg` e `renderAccumulatedRankingCardSvg`) usam largura portrait `1080px`, margens compactas (`28px`), tipografia ampliada (+25% a +35%) e contraste reforçado para leitura imediata em telas de celular no WhatsApp sem necessidade de zoom.
+   - **Estrutura do Card Individual da Noite (`gv dia` / `renderIndividualNightCardSvg`):**
+     - **Separação sem Duplicidade:** **Linha do Tempo da Noite • Horizontal** exibe exclusivamente cronologia, resultado (`Vitória`/`Derrota`/`Rodízio`), placar, saldo e duração em quadra; **Resumo dos Times • Parceiros em Quadra** exibe exclusivamente `J01..Jn` + nomes dos parceiros + contador de parceiros distintos e parceiro mais frequente.
+     - **Gráfico Liquid Glass — Variação dos Pontos do Dia (Saldo das Partidas × Média do Grupo):** renderiza curva acumulada de saldo do atleta + mini-colunas do saldo individual por partida comparados à linha tracejada da média do grupo e à margem média das partidas da noite (`±X.X/J`), em escala limpa ancorada no zero.
+     - **Resenha do Guerreirinho • Análise IA (Rodapé do Card):** bloco Liquid Glass no rodapé do PNG com uma análise curta, leve e bem-humorada gerada server-side via Gemini (`ULTRA_LIGHT` / `gemini-3.1-flash-lite` com cache de 24h por atleta+sessão) baseada exclusivamente nos resultados reais da noite.
+   - **Comando Direto e Automação Pós-Jogo de Quinta-feira:**
+     - Comando `gv ranking img` (e variações) envia exclusivamente o PNG do ranking completo quando em modo `vm_image_only` + `supportsMedia: true`.
+     - Às quintas-feiras pós-jogo (janela automática controlada por `cron-tasks`), o motor enfileira: (a) **PNG de resumo individual do dia** no privado de cada sócio que jogou na rodada; e (b) **PNG do ranking do dia + PNG do ranking acumulado** no grupo oficial do clube.
+
+6. **Importação e Sincronização de Fotos de Perfil do WhatsApp (Sem Evolution API):**
+   - **Diretório `Foto ↔ WhatsApp` (`metadata/whatsapp_photo_directory`):** indexa fotos em Base64 permanente diretamente pelo número normalizado do WhatsApp (`55` + DDD + número).
+   - **Sincronização em Massa via VM Baileys:** o botão **"Sync WhatsApp"** (`POST /api/whatsapp/sync-photos`) restaura imediatamente fotos do diretório local/Firestore e enfileira uma tarefa `photoSyncTask` (`metadata/whatsapp_photo_sync_job`, com targets persistidos no Firestore priorizando IDs reais sobre `seed_*`). A VM Google registra heartbeat persistido (`metadata/whatsapp_vm_status`) quando anuncia `supportsPhotoSync: true` em `/api/whatsapp/cron-tasks`, busca as fotos públicas via `sock.profilePictureUrl(jid, 'image')` (com resolução de `@lid` e participantes do grupo), envia cada foto para `POST /api/whatsapp/push-member-photo` (aceitando `photoBase64`, `base64`, `dataUri`, `imageBase64` e `photoUrl`) e sinaliza conclusão em `POST /api/whatsapp/sync-photos/complete`, com atualização automática na tela de Sócios.
+   - **Alternativas para Privacidade de Foto:** sócios com foto restrita no WhatsApp podem enviar uma imagem direto no chat do Guerreirinho (ou no grupo com legenda `foto` / `perfil`) ou usar o link mobile de auto-upload (`/foto`), acionável em 1 clique na tela de Sócios.
+
+7. **Engajamento e Giro Diário de Voleibol Nacional (12:00 BRT):**
+   - O agendador (`cron-tasks`) dispara 1 pílula diária no grupo oficial abordando preparação física, dicas técnicas, nutrição, aquecimento da rodada de quinta, recuperação pós-jogo e história do vôlei.
    - Consultas abertas sobre Superliga, Seleções, técnicas, rivais e estatísticas históricas são processadas via `runDeepAnalyticsChat`.
 
-5. **Automação Financeira e Recebimento de Comprovantes PIX:**
+8. **Automação Financeira e Recebimento de Comprovantes PIX:**
    - A chave PIX oficial e o valor da mensalidade são lidos de `metadata/system` (favorecida oficial: Elizabeth de Souza Santos - Nubank).
-   - Quando integrado ao fluxo de comprovantes (via envio para o contato da Administradora Beth ou grupo/bot com imagem/PDF), o sistema valida destinatário, valor e data via Gemini Vision para dar baixa automática na coleção `payments` (`status: 'PAID'`).
+   - Quando integrado ao fluxo de comprovantes (imagem/PDF), o sistema valida destinatário, valor e data via Gemini para dar baixa automática na coleção `payments` (`status: 'PAID'`).
 
 ---
 
@@ -235,31 +264,29 @@ Para garantir que todos os usuários operem na mesma versão e evitar corrupçã
 
 ---
 
-## 🏆 Sistema Oficial de MVP e Eficiência (Fórmula B-1: Desempenho Técnico + Volume)
+## 🏆 Sistema Oficial de MVP, Destaques Diários (Ordem B) e Eficiência
 
-O cálculo do sócio Mais Valioso (**MVP - Most Valuable Player**) tanto no âmbito diário (**MVP da Rodada / Sessão**) quanto acumulado (**MVP Geral / Carreira**) utiliza a metodologia calibrada **Opção B-1**:
+O cálculo dos destaques separa estritamente o **mérito exclusivo da noite** (no Ranking Diário) da **consistência técnica histórica** (no Ranking Acumulado / Carreira):
 
-1. **Objetivo e Princípios:**
-   - Premiar quem alia técnica apurada, alta taxa de vitórias e saldo expressivo de pontos (domínio de quadra), com bonificação por assiduidade e volume de jogos disputados.
-   - Evita distorções de atletas com pouquíssimas partidas e 100% de aproveitamento superarem atletas consistentes e ativos que jogaram a rodada inteira.
+1. **Ranking Diário — Exclusividade de 4 Vencedores Distintos (Ordem B):**
+   - Para ampliar o reconhecimento entre os sócios, cada um dos 4 destaques da rodada **DEVE** premiar um atleta diferente (sempre que houver $\ge 4$ atletas na sessão), selecionados na seguinte ordem de precedência:
+     1. **Levantador(a) do Dia (`dailyBestSetter`):** escolhido(a) primeiro entre os sócios ativos que atuaram na posição no dia (via *Setter Score Diário*).
+     2. **MVP do Dia (`dailyMvp`):** escolhido(a) em segundo lugar (excluindo o Levantador do Dia), usando **100% Mérito da Noite** (sem peso fixo das `skills` cadastrais):
+        $$\text{Score Dia} = \max\left(0,\; \text{Win Rate \%} + (\text{Saldo Médio} \times 1.5)\right) + (\text{Partidas} \times 2.0)$$
+        *(Mantém salvaguarda contra MVP sem vitórias na sessão.)*
+     3. **Rei / Rainha do Dia (`dailyKing`):** maior ganho de **ELO de Quadra** na rodada (excluindo Levantador e MVP do Dia).
+     4. **Mais Eficiente do Dia (`dailyEfficientTechnical`):** melhor **Saldo Médio de Pontos por Jogo** ($\frac{\text{Pontos Pró} - \text{Pontos Contra}}{\text{Partidas}}$), com desempate em % de Vitórias e volume (excluindo os 3 premiados anteriores), exibindo `Saldo +X.X pts/j • Y% V`.
 
-2. **Composição da Fórmula (Score B-1):**
+2. **Ranking Acumulado / Carreira — Fórmula Oficial B-1 (Preservada):**
    $$\text{Score B-1} = \text{Pilar Desempenho} + \text{Pilar Volume}$$
-   - **Índice Composto (IC):** Combina 80% das habilidades práticas declaradas (Ataque, Defesa, Levantamento, Saque na escala de 4 a 20 convertida para base 0-100) + 20% da taxa de vitórias real do atleta no período:
+   - **Índice Composto (IC):** Combina 80% das habilidades práticas declaradas (escala 4–20 convertida para 0–100) + 20% da taxa de vitórias real no período:
      $$\text{IC} = (\text{Skills} / 20 \times 100 \times 0.8) + (\text{Win Rate \%} \times 0.2)$$
-   - **Saldo Médio de Pontos:** Saldo de pontos pró menos pontos contra, dividido pelas partidas disputadas:
-     $$\text{Saldo Médio} = \frac{\text{Pontos Pró} - \text{Pontos Contra}}{\text{Partidas}}$$
-   - **Pilar Desempenho:**
-     $$\text{Pilar Desempenho} = \text{IC} + (\text{Saldo Médio} \times 1.5)$$
-   - **Pilar Volume (Participação e Compromisso):**
-     - **Na Sessão Diária:** $+2.0\text{ pontos}$ por cada partida disputada no dia.
-     - **Na Carreira / Geral:** Escala progressiva de até 15 pontos adicionais com teto de 45 partidas: $\min\left(15, \frac{\text{Partidas}}{45} \times 15\right)$.
+   - **Pilar Desempenho:** $\text{IC} + (\text{Saldo Médio} \times 1.5)$
+   - **Pilar Volume (Carreira):** $\min\left(15, \frac{\text{Partidas}}{45} \times 15\right)$
 
 3. **Integração no Sistema e Visualização:**
-   - **Destaques no Ranking (`RankingView`):** O cartão de MVP exibe o `Score B-1` com 1 casa decimal e a taxa de vitórias do atleta líder.
-   - **Filtro de Ordenação:** O seletor de métricas do ranking inclui a opção dedicada **MVP (B-1)** ao lado de ELO, Vitórias e % Vitórias.
-   - **Tabela do Ranking:** Ao ordenar por `MVP (B-1)`, a coluna de eficiência exibe o valor numérico do Score B-1 formatado para cada atleta.
-   - **Módulo de Cálculo:** Centralizado em `utils/statsLogic.ts` através das funções `calculateMvpEfficiencyScore` e `calculatePlayerCompositeIndex`.
+   - **Destaques no Ranking (`RankingView`):** No modo Dia, o card de MVP exibe `Score Dia` (100% quadra) e o card Mais Eficiente exibe `Saldo ±X.X pts/j • Y% V`; no modo Acumulado, mantêm-se os indicadores `Score B-1`.
+   - **Módulo de Cálculo:** Centralizado em `utils/statsLogic.ts` através de `calculateMvpEfficiencyScore`, `calculateDailyAvgPointDiff` e `calculatePlayerCompositeIndex`.
 
 ---
 
@@ -350,7 +377,9 @@ Para garantir a transparência histórica e a exatidão estatística de todos os
 - **`utils/teamLogic.ts`:** O cérebro do app. Contém toda a lógica de `generateTeams`, `runAutoCorrectionAgent` e simuladores de sinergia.
 - **`src/hooks/useAppLogic.ts`:** Gerencia o estado global, persistência no Firestore e integra os dados dos sócios com as partidas.
 - **`src/components/TeamBalancingSimulatorCard.tsx`:** Ferramenta administrativa para auditar a eficácia do algoritmo de balanceamento.
-- **`server.ts` & `serverDeepAnalysis.ts`:** Motor backend, agendador Cron, Webhook WhatsApp NLP e analítica profunda com Gemini.
+- **`server.ts` & `serverDeepAnalysis.ts`:** Motor backend, agendador Cron, Webhook WhatsApp (VM Google Baileys), fila de Cards Visual HD (PNG), sincronização de fotos de perfil e analítica profunda com Gemini.
+- **`services/aiRouter.ts`, `services/serverGemini.ts` & `services/serverLiveApi.ts`:** Roteador determinístico de modelos Gemini 100% server-side (geração, streaming SSE, transcrição de áudio, TTS e Live API WebSocket).
+- **`services/liquidGlassCards.ts` & `src/components/LiquidGlassCardsStudio.tsx`:** Motor de renderização PNG HD dos Cards (Ranking Completo com todos os sócios ativos, Resumo Diário e Cards Individuais) e painel administrativo de controle de entrega (`vm_image_only` / `disabled`).
 
 ---
 

@@ -170,6 +170,7 @@ export interface SystemMetadata {
   useTrueSkill?: boolean;
   courtLocation?: { lat: number; lng: number };
   geofenceRadius?: number;
+  autoGeoCheckInEnabled?: boolean;
   monthlyFee?: number;
   isTournamentEnabled?: boolean;
   showEliteQueue?: boolean;

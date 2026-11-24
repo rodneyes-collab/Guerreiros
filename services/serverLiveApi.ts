@@ -1,6 +1,7 @@
-import { GoogleGenAI, type LiveServerMessage, Modality } from "@google/genai";
+import { type LiveServerMessage, Modality } from "@google/genai";
 import { WebSocketServer, WebSocket } from "ws";
 import type http from "http";
+import { createRouterAI } from "./aiRouter.ts";
 
 export const setupGeminiLiveWebSocket = (server: http.Server) => {
   const wss = new WebSocketServer({ noServer: true });
@@ -13,29 +14,24 @@ export const setupGeminiLiveWebSocket = (server: http.Server) => {
           wss.emit("connection", ws, request);
         });
       }
-    } catch (e) {
+    } catch {
       // Ignore URL parsing errors for non-matching requests
     }
   });
 
   wss.on("connection", (clientWs: WebSocket) => {
-    const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
-    if (!apiKey) {
-      clientWs.send(JSON.stringify({ error: "GEMINI_API_KEY is not configured on the server. Please verify your API key in the Settings > Secrets panel." }));
-      clientWs.close();
+    let ai;
+    try {
+      ai = createRouterAI();
+    } catch (err: any) {
+      if (clientWs.readyState === WebSocket.OPEN) {
+        clientWs.send(JSON.stringify({ error: err?.message || "GEMINI_API_KEY is not configured on the server. Please verify your API key in the Settings > Secrets panel." }));
+        clientWs.close();
+      }
       return;
     }
 
     let isClosed = false;
-
-    const ai = new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        }
-      }
-    });
 
     const sessionPromise = ai.live.connect({
       model: "gemini-3.8-live",
@@ -48,8 +44,10 @@ export const setupGeminiLiveWebSocket = (server: http.Server) => {
       },
       callbacks: {
         onmessage: (message: LiveServerMessage) => {
-          const parts = message.serverContent?.modelTurn?.parts;
-          if (parts && clientWs.readyState === WebSocket.OPEN) {
+          if (clientWs.readyState !== WebSocket.OPEN) return;
+          const content = message.serverContent;
+          const parts = content?.modelTurn?.parts;
+          if (parts) {
             for (const part of parts) {
               if (part.text) {
                 clientWs.send(JSON.stringify({ text: part.text }));
@@ -59,8 +57,17 @@ export const setupGeminiLiveWebSocket = (server: http.Server) => {
               }
             }
           }
-          if (message.serverContent?.interrupted && clientWs.readyState === WebSocket.OPEN) {
+          if (content?.inputTranscription?.text) {
+            clientWs.send(JSON.stringify({ inputTranscript: content.inputTranscription.text }));
+          }
+          if (content?.outputTranscription?.text) {
+            clientWs.send(JSON.stringify({ outputTranscript: content.outputTranscription.text }));
+          }
+          if (content?.interrupted) {
             clientWs.send(JSON.stringify({ interrupted: true }));
+          }
+          if (content?.turnComplete) {
+            clientWs.send(JSON.stringify({ turnComplete: true }));
           }
         },
         onerror: (err: any) => {
@@ -118,12 +125,16 @@ export const setupGeminiLiveWebSocket = (server: http.Server) => {
       }
     });
 
-    clientWs.on("close", async () => {
+    const cleanup = async () => {
+      if (isClosed) return;
       isClosed = true;
       try {
         const session = await sessionPromise;
         session?.close();
       } catch {}
-    });
+    };
+
+    clientWs.on("close", cleanup);
+    clientWs.on("error", cleanup);
   });
 };

@@ -134,8 +134,10 @@ ${statusColor} **SISTEMA EM MODO MONITORADO: ${status}**
 };
 
 export const runSentinelDeepScan = async (_apiKey: string, data: SentinelSystemData): Promise<string> => {
-  const { getAI, recordServerAIError } = await import("./serverGemini.ts");
-  const ai = getAI();
+  const [{ recordServerAIError }, { routedGenerateContent }] = await Promise.all([
+    import("./serverGemini.ts"),
+    import("./aiRouter.ts")
+  ]);
 
   const prompt = `Você é o "Agente Sentinela IA" do Guerreiros Volleyball Club. 
     Seu objetivo é garantir a estabilidade máxima do sistema, a integridade dos dados e o sucesso no login dos sócios.
@@ -170,11 +172,11 @@ export const runSentinelDeepScan = async (_apiKey: string, data: SentinelSystemD
     Mantenha um tom de autoridade técnica mas prestativa.`;
 
   try {
-    const result = await ai.models.generateContent({
-      model: "gemini-4-hydrogen",
-      contents: prompt,
+    const { text } = await routedGenerateContent({
+      task: "sentinel_scan",
+      contents: prompt
     });
-    return result.text || "Sem resposta do Sentinela.";
+    return text || "Sem resposta do Sentinela.";
   } catch (error: any) {
     recordServerAIError(error);
     const errorMsg = error?.message || "";

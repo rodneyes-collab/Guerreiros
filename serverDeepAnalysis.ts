@@ -1,4 +1,4 @@
-import { GoogleGenAI } from "@google/genai";
+import { routedGenerateContent, classifyChatTier } from "./services/aiRouter.ts";
 
 export interface AgentToolsCallbacks {
   confirmAttendance: () => Promise<string>;
@@ -6,6 +6,16 @@ export interface AgentToolsCallbacks {
   getAttendanceList: () => Promise<string>;
   getRanking: (limit?: number) => Promise<string>;
   getPixInfo: () => Promise<string>;
+}
+
+export interface ClubKnowledgeContext {
+  monthlyFee?: number;
+  pixKey?: string;
+  pixReceiverName?: string;
+  courtName?: string;
+  courtAddress?: string;
+  maxPlayersPerSession?: number;
+  activePlayersCount?: number;
 }
 
 interface ChatTurn {
@@ -16,13 +26,26 @@ interface ChatTurn {
 }
 
 const sessionMemory = new Map<string, ChatTurn[]>();
-const MEMORY_TTL_MS = 2 * 60 * 60 * 1000;
+const MEMORY_TTL_MS = 20 * 60 * 1000; // 20 minutos de memória ativa por sócio
+const MAX_MEMORY_TURNS = 8;
+
+export function hasActiveConversationSession(playerId: string): boolean {
+  return getSessionHistory(playerId).length > 0;
+}
+
+export function clearConversationSession(playerId: string): void {
+  sessionMemory.delete(playerId);
+}
 
 function getSessionHistory(playerId: string): ChatTurn[] {
   const now = Date.now();
   const history = sessionMemory.get(playerId) || [];
   const valid = history.filter((h) => now - h.timestamp < MEMORY_TTL_MS);
-  sessionMemory.set(playerId, valid);
+  if (valid.length === 0) {
+    sessionMemory.delete(playerId);
+  } else {
+    sessionMemory.set(playerId, valid);
+  }
   return valid;
 }
 
@@ -34,7 +57,18 @@ function appendSessionHistory(
 ) {
   const history = getSessionHistory(playerId);
   history.push({ role, text, referencedPlayerIds, timestamp: Date.now() });
-  sessionMemory.set(playerId, history.slice(-6));
+  sessionMemory.set(playerId, history.slice(-MAX_MEMORY_TURNS));
+}
+
+function isConversationExitPhrase(msgNorm: string): boolean {
+  const cleaned = msgNorm
+    .replace(/^@?(gv|bot|botgv|guerreirinho)[\s,!?:]+/i, "")
+    .replace(/[.!?]+$/g, "")
+    .trim();
+  if (!cleaned || cleaned.length > 48) return false;
+  return /^(obrigad[oa]|muito obrigad[oa]|valeu+|vlw+|tmj+|tchau+|ate mais|ate quinta|encerrar|encerrar conversa|sair|parar|era so isso|so isso mesmo|blz valeu|beleza valeu|show valeu|top valeu|brigad[ao]o?)(\s+(guerreirinho|bot|gv|irmao|amigo|pela ajuda|por tudo))?$/i.test(
+    cleaned
+  );
 }
 
 function normStr(s: string): string {
@@ -282,7 +316,6 @@ interface SemanticExtractionResult {
 }
 
 async function extractSemanticIntentWithAI(
-  ai: GoogleGenAI,
   userMessage: string,
   senderPlayer: any,
   allPlayers: any[],
@@ -317,17 +350,26 @@ REGRAS DE EXTRAÇÃO:
 4. Responda APENAS com um objeto JSON válido no formato:
 {"intent":"PLAYER_STATS","targetPlayerNames":["Nome Oficial"],"includeSenderInComparison":false,"period":"geral"}`;
 
-    const resp = await ai.models.generateContent({
-      model: "gemini-4-hydrogen",
+    const resp = await routedGenerateContent({
+      task: "intent_extraction",
       contents: prompt,
-      config: {
-        responseMimeType: "application/json"
-      }
+      responseMimeType: "application/json"
     });
 
-    const rawJson = (resp.text || "").trim();
-    if (!rawJson) return null;
-    return JSON.parse(rawJson) as SemanticExtractionResult;
+    const rawJson = (resp.text || "").trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+    if (!rawJson || !rawJson.startsWith("{") || !rawJson.endsWith("}")) {
+      if (rawJson) {
+        console.warn(`[Guerreirinho NLU] Resposta não-JSON ignorada com segurança: "${rawJson.slice(0, 80)}"`);
+      }
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(rawJson);
+      return parsed && typeof parsed === "object" ? (parsed as SemanticExtractionResult) : null;
+    } catch (parseErr: any) {
+      console.warn("[Guerreirinho NLU] Falha ao validar JSON semântico:", parseErr?.message);
+      return null;
+    }
   } catch {
     return null;
   }
@@ -649,19 +691,19 @@ export async function runDeepAnalyticsChat(
   senderPlayer: any,
   allPlayers: any[],
   allMatches: any[],
-  callbacks?: AgentToolsCallbacks
+  callbacks?: AgentToolsCallbacks,
+  clubContext?: ClubKnowledgeContext
 ): Promise<string> {
-  const ai = new GoogleGenAI({
-    apiKey,
-    httpOptions: {
-      headers: {
-        "User-Agent": "aistudio-build"
-      }
-    }
-  });
   const playerId = senderPlayer?.id || "anon";
   const msgNorm = normStr(userMessage);
   const pastTurns = getSessionHistory(playerId);
+
+  // Encerramento explícito de diálogo: limpa a memória curta para não interferir em conversas posteriores
+  if (isConversationExitPhrase(msgNorm)) {
+    clearConversationSession(playerId);
+    const firstName = String(senderPlayer?.name || "Guerreiro(a)").trim().split(/\s+/)[0] || "Guerreiro(a)";
+    return `🏐 Por nada, *${firstName}*! Qualquer dúvida sobre o Guerreiros VC, lista de quinta ou suas estatísticas, é só chamar de novo. Até a quadra! 🔥`;
+  }
 
   // 1. Executa primeiro o detector local (Fuzzy + Pronomes + Comparação) como base ultra-rápida
   let referencedPlayers = detectReferencedPlayers(userMessage, senderPlayer, allPlayers, pastTurns);
@@ -671,7 +713,6 @@ export async function runDeepAnalyticsChat(
 
   // 2. Estágio 1 NLU com IA: Refina a interpretação semântica olhando a lista oficial de sócios
   const semanticNLU = await extractSemanticIntentWithAI(
-    ai,
     userMessage,
     senderPlayer,
     allPlayers,
@@ -783,43 +824,68 @@ export async function runDeepAnalyticsChat(
       ? pastTurns.map((t) => `${t.role === "user" ? "Sócio" : "Guerreirinho"}: ${t.text}`).join("\n")
       : "Início da conversa.";
 
+  const feeFormatted = Number(clubContext?.monthlyFee || 50)
+    .toFixed(2)
+    .replace(".", ",");
+  const pixKeyInfo = clubContext?.pixKey
+    ? `Chave PIX: ${clubContext.pixKey}${clubContext.pixReceiverName ? ` (${clubContext.pixReceiverName})` : ""}`
+    : "Chave PIX disponível pelo comando *gv pix*";
+  const activeCount =
+    clubContext?.activePlayersCount || allPlayers.filter((p) => p.status === "active").length;
+  const maxSlots = clubContext?.maxPlayersPerSession || 29;
+  const courtLabel = clubContext?.courtName || "Quadra oficial do Guerreiros VC em Recife/PE";
+
   const systemInstruction = `
 Você é o *Guerreirinho*, o Agente de IA oficial e mascote digital do clube de vôlei "Guerreiros VC" de Recife/PE.
-Você é carismático, inteligente, resenheiro, prestativo e conhece cada estatística do clube.
+Você conversa em linguagem natural, é carismático, inteligente, resenheiro, objetivo e conhece tanto as regras oficiais do clube quanto cada estatística real do banco de dados.
 
-REGRAS E CULTURA DO CLUBE:
-1. Jogos toda quinta-feira à noite. Limite de 29 sócios ativos na lista.
-2. A única posição fixa em quadra é a de Levantador Oficial *(L)*. Todos os outros jogadores são polivalentes e rodam em todas as posições.
-3. O equilíbrio dos times é feito pelo sistema de pontuação ELO e distribuição justa de levantadores.
+BASE DE CONHECIMENTO OFICIAL DO CLUBE GUERREIROS VC:
+1. *Horário & Lista de Quinta:* Os jogos acontecem toda quinta-feira à noite. Capacidade de até ${maxSlots} sócios ativos (${activeCount} ativos cadastrados). A lista de intenção abre durante a semana para confirmar presença (*gv vou*) ou ausência (*gv nao vou*).
+2. *Check-in na Quadra (GPS / QR / NFC):* Na quinta-feira, a presença real na quadra (${courtLabel}) é confirmada via QR Code, NFC, aplicativo ou enviando a localização no WhatsApp (*gv cheguei*) dentro da cerca virtual de 300 metros da quadra.
+3. *Financeiro & Mensalidade:* Mensalidade oficial de *R$ ${feeFormatted}*. ${pixKeyInfo}. Para receber os dados completos para copiar e colar, basta pedir *gv pix*.
+4. *Posições & Sorteio Equilibrado dos Times:* A única posição fixa em quadra é a de *Levantador Oficial (L)*; todos os outros atletas são polivalentes e rodam nas demais posições. O sorteio dos times é feito pelo *Índice Composto (IC)* — combinando *80% das habilidades técnicas + 20% do aproveitamento histórico (Win Rate)* — respeitando paridade de gênero e distribuição justa de levantadores oficiais (o ELO não entra na fórmula do sorteio, apenas no ranking geral).
+5. *Fila Inteligente & Rodagem Justa:* Quem está no banco ganha prioridade automática para entrar na próxima partida, com controle de sequência para evitar que alguém fique muito tempo fora ou jogue muitas partidas seguidas sem rodar. Quem tem horário especial de chegada ou saída pode avisar no app.
+6. *Premiação Oficial do Dia (Ordem B — 4 Premiados Distintos por Noite):*
+   - 1º *Levantador do Dia*: melhor desempenho entre os levantadores oficiais na noite.
+   - 2º *MVP da Noite*: maior pontuação de desempenho em quadra na noite (*sem peso de skills* — avalia vitórias, saldo e impacto real na noite).
+   - 3º *Rei do Dia*: maior destaque de vitórias e consistência entre os demais atletas.
+   - 4º *Mais Eficiente*: melhor saldo médio de pontos por partida jogada.
+   Cada prêmio vai para um atleta diferente na mesma noite para valorizar o grupo inteiro.
+7. *Ranking Acumulado (ELO):* O ranking geral da temporada usa sistema *ELO* com histórico de vitórias, aproveitamento e sequência recente.
+8. *Privacidade & Comandos Úteis:* Quando um sócio pede dados individuais no grupo (como *gv dia*, *gv meusjogos* ou *gv raiox*), o Guerreirinho envia o card ou análise no *privado* do sócio e deixa apenas um aviso curto no grupo. Comandos coletivos (*gv ranking*, *gv resumo*, *gv lista*, *gv aniversarios*, *gv pix*, *gv vou*, *gv nao vou*) são respondidos direto no grupo.
+9. *Foto de Perfil:* O sócio pode atualizar a foto dele no app enviando uma foto no WhatsApp com a legenda *gv foto*.
 
 DIRETRIZES DE RESPOSTA:
 1. Quem enviou a mensagem foi *${senderPlayer?.name || "Sócio"}*.
-2. Use ESTRITAMENTE os números oficiais fornecidos no bloco "DADOS OFICIAIS DO BANCO DE DADOS" abaixo. Nunca invente números.
-3. Se houver um bloco *COMPARATIVO OFICIAL* abaixo, apresente-o de forma completa (mostrando o cartel de cada um, quantos jogos fizeram juntos no mesmo time e o placar do confronto direto em lados opostos) e comente a parceria/rivalidade com entusiasmo!
-4. Se o sócio perguntar apenas um dado específico de alguém (ex: "quantas vitórias tem a Mari?"), destaque a resposta logo na primeira frase e apresente o Raio-X dela logo abaixo.
-5. Se o sócio perguntar sobre assuntos fora do vôlei (ex: comida, tempo, dores musculares), responda com bom humor e dê uma dica prática ligando ao aquecimento, preparo físico ou ao jogo de quinta-feira.
-6. Finalize sempre com uma pergunta curta e amigável para manter a conversa ativa. Não coloque assinatura no final, pois o servidor já assina.
+2. Use ESTRITAMENTE os dados oficiais do bloco "DADOS OFICIAIS DO BANCO DE DADOS" e da "BASE DE CONHECIMENTO OFICIAL" acima. Nunca invente números, placares ou regras que não existam.
+3. Para dúvidas sobre regras do clube (mensalidade, sorteio, MVP, fila, check-in, comandos), responda de forma clara, direta e amigável em parágrafos curtos (ideal para leitura no celular).
+4. Se houver um bloco *COMPARATIVO OFICIAL* abaixo e a pergunta for sobre comparação, apresente o cartel de cada um, jogos juntos e confronto direto com entusiasmo.
+5. Se o sócio perguntar apenas um dado específico (ex: "quantas vitórias tem a Mari?" ou "como funciona o MVP?"), dê a resposta objetiva logo na primeira frase sem despejar textão desnecessário.
+6. Se o sócio perguntar sobre assuntos fora do vôlei (ex: comida, tempo, dores musculares), responda com bom humor e dê uma dica prática ligando ao aquecimento, preparo físico ou ao jogo de quinta-feira.
+7. Mantenha o diálogo vivo de forma natural: se fizer sentido continuar a conversa, finalize com UMA pergunta curta e útil (ex: se quer confirmar presença, ver o card da última quinta ou comparar com alguém). Não coloque assinatura no final, pois o servidor já assina.
 
 ${actionOutputs.length > 0 ? `AÇÕES EXECUTADAS AGORA NO SISTEMA:\n${actionOutputs.join("\n\n")}\n` : ""}
 DADOS OFICIAIS DO BANCO DE DADOS PARA ESTA PERGUNTA:
 ${contextDataBlock}
 
-MEMÓRIA RECENTE DESTA CONVERSA:
+MEMÓRIA RECENTE DESTA CONVERSA (ÚLTIMOS 20 MIN):
 ${memoryTranscript}
 `;
 
   try {
     appendSessionHistory(playerId, "user", userMessage, referencedIds);
 
-    const response = await ai.models.generateContent({
-      model: "gemini-4-hydrogen",
+    const replyTier = classifyChatTier(userMessage, 0);
+    const response = await routedGenerateContent({
+      task: replyTier === "BALANCED" ? "whatsapp_deep" : "simple_chat",
+      overrideTier: replyTier,
       contents: `Mensagem do sócio ${senderPlayer?.name}: "${userMessage}"`,
-      config: {
-        systemInstruction
-      }
+      systemInstruction
     });
 
-    const replyText = (response.text || "").trim();
+    const replyText = (response.text || "")
+      .replace(/\*\*(.+?)\*\*/g, "*$1*")
+      .trim();
     if (replyText) {
       appendSessionHistory(playerId, "model", replyText, referencedIds);
       return replyText;

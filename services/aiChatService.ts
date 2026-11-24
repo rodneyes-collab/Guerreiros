@@ -1,9 +1,10 @@
-
 import type { Player, Match } from "../types.ts";
-import { getAI, recordServerAIError } from "./serverGemini.ts";
+import { recordServerAIError } from "./serverGemini.ts";
+import { classifyChatTier, routedGenerateContent } from "./aiRouter.ts";
 
 /**
  * AI Chat Service to answer member questions with club context.
+ * Uses zero-cost deterministic complexity routing (ULTRA_LIGHT vs BALANCED).
  */
 export const runAIChat = async (
   _apiKey: string, 
@@ -11,8 +12,6 @@ export const runAIChat = async (
   history: { role: 'user' | 'model', parts: string }[],
   context: { players: Player[], matches: Match[], rules?: string }
 ): Promise<string> => {
-  const ai = getAI();
-
   const clubContext = `
     CONTEXTO DO CLUBE:
     Nome: Guerreiros Volleyball Club
@@ -38,17 +37,19 @@ export const runAIChat = async (
     ${clubContext}
   `;
 
-  // Re-construct history into the prompt for simplicity and compatibility with generateContent
   const historyText = history.map(h => `${h.role === 'user' ? 'Usuário' : 'Assistente'}: ${h.parts}`).join('\n');
-  const fullPrompt = `${systemInstruction}\n\nHistórico da Conversa:\n${historyText}\n\nUsuário: ${message}`;
+  const fullPrompt = `${historyText ? `Histórico da Conversa:\n${historyText}\n\n` : ''}Usuário: ${message}`;
+  const selectedTier = classifyChatTier(message, history.length);
 
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-4-hydrogen",
+    const { text } = await routedGenerateContent({
+      task: selectedTier === "BALANCED" ? "complex_chat" : "simple_chat",
+      overrideTier: selectedTier,
       contents: fullPrompt,
+      systemInstruction
     });
 
-    return response.text || "Ops! Não consegui gerar uma resposta agora.";
+    return text || "Ops! Não consegui gerar uma resposta agora.";
   } catch (error: any) {
     console.error("[AI Chat] Error:", error);
     recordServerAIError(error);

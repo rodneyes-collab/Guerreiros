@@ -724,18 +724,21 @@ export const PublicPresenceView: React.FC<PublicPresenceViewProps> = ({ onBackTo
                       const isSetter = player.isOfficialSetter;
                       const timeStr = formatConfirmationTime(intentions.confirmationTimestamps?.[player.id]);
                       return (
-                        <div key={player.id} className="flex items-center justify-between bg-brand-primary/5 border border-brand-primary/15 px-4 py-2.5 rounded-xl text-xs gap-2">
-                          <div className="flex flex-col min-w-0">
-                            <span className="font-bold text-slate-300 flex items-center gap-1.5 capitalize truncate">
-                              <span className="text-brand-primary text-[10px] font-black">{idx + 1}.</span>
-                              {capitalizeName(player.name)}
-                            </span>
-                            {timeStr && (
-                              <span className="flex items-center gap-1 text-[9.5px] font-mono text-zinc-400 mt-0.5 ml-4">
-                                <Clock className="w-2.5 h-2.5 text-brand-primary shrink-0" />
-                                <span>{timeStr}</span>
+                        <div key={player.id} className="flex items-center justify-between bg-brand-primary/5 border border-brand-primary/15 px-3.5 py-2 rounded-xl text-xs gap-2">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <span className="text-brand-primary text-[10px] font-black w-4 shrink-0">{idx + 1}.</span>
+                            <PlayerAvatar player={player} size="xs" />
+                            <div className="flex flex-col min-w-0">
+                              <span className="font-bold text-slate-200 capitalize truncate">
+                                {capitalizeName(player.name)}
                               </span>
-                            )}
+                              {timeStr && (
+                                <span className="flex items-center gap-1 text-[9.5px] font-mono text-zinc-400 mt-0.5">
+                                  <Clock className="w-2.5 h-2.5 text-brand-primary shrink-0" />
+                                  <span>{timeStr}</span>
+                                </span>
+                              )}
+                            </div>
                           </div>
                           {isSetter ? (
                             <span className="text-[8px] font-black uppercase text-black bg-brand-primary px-2 py-0.5 rounded-md tracking-wider shrink-0">Levantador</span>
@@ -755,11 +758,15 @@ export const PublicPresenceView: React.FC<PublicPresenceViewProps> = ({ onBackTo
                   <span className="text-[10px] font-black text-red-400 uppercase tracking-[0.15em]">Ausências Registradas ({absentPlayers.length})</span>
                   <div className="space-y-1.5 max-h-[140px] overflow-y-auto pr-1">
                     {absentPlayers.map((player, idx) => (
-                      <div key={player.id} className="flex items-center justify-between bg-white/5 opacity-55 px-4 py-2 rounded-xl text-xs">
-                        <span className="font-bold text-slate-400 capitalize line-through">
-                          {idx + 1}. {capitalizeName(player.name)}
-                        </span>
-                        <span className="text-[8px] font-black uppercase text-red-500 bg-red-500/10 px-2 py-0.5 rounded-md tracking-wider border border-red-500/15">Ausente</span>
+                      <div key={player.id} className="flex items-center justify-between bg-white/5 opacity-60 px-3.5 py-2 rounded-xl text-xs gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-slate-500 text-[10px] font-black w-4 shrink-0">{idx + 1}.</span>
+                          <PlayerAvatar player={player} size="xs" className="grayscale" />
+                          <span className="font-bold text-slate-400 capitalize line-through truncate">
+                            {capitalizeName(player.name)}
+                          </span>
+                        </div>
+                        <span className="text-[8px] font-black uppercase text-red-500 bg-red-500/10 px-2 py-0.5 rounded-md tracking-wider border border-red-500/15 shrink-0">Ausente</span>
                       </div>
                     ))}
                   </div>

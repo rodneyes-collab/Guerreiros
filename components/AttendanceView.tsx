@@ -1,10 +1,11 @@
 import { useShallow } from 'zustand/react/shallow';
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useStore } from '../store';
 import { Player } from '../types';
 import { capitalizeName } from '../utils/helpers';
-import { getFirestoreDateKey } from '../firebase';
+import { doc, setDoc } from 'firebase/firestore';
+import { auth, db, getFirestoreDateKey } from '../firebase';
 import { useIntentions } from '../src/hooks/useIntentions';
 import { 
   ClipboardCheck, 
@@ -26,7 +27,11 @@ import {
   Sparkles,
   MapPin,
   Navigation,
-  ShieldAlert
+  ShieldAlert,
+  ChevronDown,
+  Power,
+  Crosshair,
+  Save
 } from 'lucide-react';
 
 import {
@@ -37,6 +42,9 @@ import {
 import { SESSION_START_TIME, SESSION_END_TIME, AVG_MATCH_DURATION_MINS } from '../constants';
 import { HelpTooltip } from '../src/components/HelpTooltip';
 import { Tooltip } from '../src/components/Tooltip';
+import { PlayerAvatar } from '../src/components/PlayerAvatar';
+import { ActiveMemberMapMarker, CourtGeofenceMap, GeofenceTestPoint } from '../src/components/CourtGeofenceMap';
+import { GeoJourneySimulator } from '../src/components/GeoJourneySimulator';
 
 interface AttendanceViewProps {
   clearAttendance: () => void;
@@ -76,7 +84,10 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
     matches,
     players: allPlayers,
     idToCanonicalId,
-    user
+    user,
+    systemMetadata,
+    setSystemMetadata,
+    showNotification
   } = useStore(
     useShallow(state => ({
       attendance: state.attendance,
@@ -84,7 +95,10 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
       matches: state.matches,
       players: state.players,
       idToCanonicalId: state.idToCanonicalId,
-      user: state.user
+      user: state.user,
+      systemMetadata: state.systemMetadata,
+      setSystemMetadata: state.setSystemMetadata,
+      showNotification: state.showNotification
     }))
   );
 
@@ -161,21 +175,339 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
   const [isPulling, setIsPulling] = useState(false);
 
   // Estados para Check-in e Teste de Sinal GPS
+  const DEFAULT_OFFICIAL_COURT_LAT = -8.131531;
+  const DEFAULT_OFFICIAL_COURT_LNG = -34.907323;
+  const DEFAULT_OFFICIAL_RADIUS = 150;
+
+  const savedCourtLat = Number(systemMetadata?.courtLocation?.lat ?? DEFAULT_OFFICIAL_COURT_LAT);
+  const savedCourtLng = Number(systemMetadata?.courtLocation?.lng ?? DEFAULT_OFFICIAL_COURT_LNG);
+  const savedGeofenceRadius = Number(systemMetadata?.geofenceRadius || DEFAULT_OFFICIAL_RADIUS);
+  const isAutoGeoEnabled = systemMetadata?.autoGeoCheckInEnabled === true;
+
+  const [isGpsPanelOpen, setIsGpsPanelOpen] = useState<boolean>(false);
   const [selectedGpsTestPlayerId, setSelectedGpsTestPlayerId] = useState<string>('');
-  const [gpsDryRunMode, setGpsDryRunMode] = useState<boolean>(false);
+  const [gpsDryRunMode, setGpsDryRunMode] = useState<boolean>(true);
   const [isTestingGps, setIsTestingGps] = useState<boolean>(false);
+  const [courtLatInput, setCourtLatInput] = useState<string>(String(savedCourtLat));
+  const [courtLngInput, setCourtLngInput] = useState<string>(String(savedCourtLng));
+  const [geofenceRadiusInput, setGeofenceRadiusInput] = useState<string>(String(savedGeofenceRadius));
+  const [isSavingGeoConfig, setIsSavingGeoConfig] = useState<boolean>(false);
+  const [isCapturingMyCoords, setIsCapturingMyCoords] = useState<boolean>(false);
   const [gpsTestResult, setGpsTestResult] = useState<{
     allowed: boolean;
     reason?: string;
     message: string;
     distanceMeters?: number;
     maxRadius?: number;
+    courtLocation?: { lat: number; lng: number };
+    testedLat?: number;
+    testedLng?: number;
+    accuracyMeters?: number;
     arrivalOrder?: number;
     alreadyPresent?: boolean;
     playerName?: string;
     coordsLabel?: string;
     dryRun?: boolean;
   } | null>(null);
+  const [journeyMapPoint, setJourneyMapPoint] = useState<GeofenceTestPoint | null>(null);
+  const [journeyTrailPoints, setJourneyTrailPoints] = useState<Array<{ lat: number; lng: number }>>([]);
+  const [liveGeoWatchers, setLiveGeoWatchers] = useState<ActiveMemberMapMarker[]>([]);
+  const [simulatedGeoWatchers, setSimulatedGeoWatchers] = useState<ActiveMemberMapMarker[]>([]);
+
+  const parsedDraftLat = Number(courtLatInput.trim().replace(',', '.'));
+  const parsedDraftLng = Number(courtLngInput.trim().replace(',', '.'));
+  const parsedDraftRadius = Math.round(Number(geofenceRadiusInput.trim()));
+
+  const previewCourtLat =
+    Number.isFinite(parsedDraftLat) && parsedDraftLat >= -90 && parsedDraftLat <= 90
+      ? parsedDraftLat
+      : savedCourtLat;
+  const previewCourtLng =
+    Number.isFinite(parsedDraftLng) && parsedDraftLng >= -180 && parsedDraftLng <= 180
+      ? parsedDraftLng
+      : savedCourtLng;
+  const previewGeofenceRadius =
+    Number.isFinite(parsedDraftRadius) && parsedDraftRadius >= 20 && parsedDraftRadius <= 2000
+      ? parsedDraftRadius
+      : savedGeofenceRadius;
+  const hasUnsavedGeoDraft =
+    Math.abs(previewCourtLat - savedCourtLat) > 0.000001 ||
+    Math.abs(previewCourtLng - savedCourtLng) > 0.000001 ||
+    previewGeofenceRadius !== savedGeofenceRadius;
+
+  useEffect(() => {
+    setCourtLatInput(String(savedCourtLat));
+    setCourtLngInput(String(savedCourtLng));
+    setGeofenceRadiusInput(String(savedGeofenceRadius));
+  }, [savedCourtLat, savedCourtLng, savedGeofenceRadius]);
+
+  useEffect(() => {
+    if (!isGpsPanelOpen || !isAdmin) return;
+    let cancelled = false;
+    fetch('/api/presence/geo-config', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (cancelled || !data?.success || !data?.config) return;
+        setSystemMetadata({
+          autoGeoCheckInEnabled: data.config.autoGeoCheckInEnabled,
+          courtLocation: data.config.courtLocation,
+          geofenceRadius: data.config.geofenceRadius
+        });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isGpsPanelOpen, isAdmin, setSystemMetadata]);
+
+  useEffect(() => {
+    if (!isGpsPanelOpen || !isAdmin) return;
+    let cancelled = false;
+    const pollWatchers = () => {
+      fetch('/api/presence/active-geo-watchers', { cache: 'no-store' })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (cancelled || !data?.success || !Array.isArray(data.watchers)) return;
+          const mapped: ActiveMemberMapMarker[] = data.watchers
+            .filter(
+              (w: any) =>
+                w &&
+                Number.isFinite(Number(w.lastLat)) &&
+                Number.isFinite(Number(w.lastLng))
+            )
+            .map((w: any) => ({
+              playerId: String(w.playerId || ''),
+              name: String(w.name || 'Sócio'),
+              lat: Number(w.lastLat),
+              lng: Number(w.lastLng),
+              distanceMeters: Number(w.lastDistanceMeters || 0),
+              arrived: Boolean(w.arrived),
+              arrivalOrder: typeof w.arrivalOrder === 'number' ? w.arrivalOrder : undefined,
+              lastUpdatedAt: Number(w.lastUpdatedAt || 0)
+            }));
+          setLiveGeoWatchers(mapped);
+        })
+        .catch(() => {});
+    };
+    pollWatchers();
+    const interval = window.setInterval(pollWatchers, 8000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [isGpsPanelOpen, isAdmin]);
+
+  const persistGeoConfig = async (payload: {
+    autoGeoCheckInEnabled?: boolean;
+    courtLocation?: { lat: number; lng: number };
+    geofenceRadius?: number;
+  }, successMsg: string) => {
+    setIsSavingGeoConfig(true);
+    try {
+      const cleanPatch: Record<string, any> = {};
+      if (typeof payload.autoGeoCheckInEnabled === 'boolean') {
+        cleanPatch.autoGeoCheckInEnabled = payload.autoGeoCheckInEnabled;
+      }
+      if (payload.courtLocation) {
+        cleanPatch.courtLocation = {
+          lat: Number(payload.courtLocation.lat.toFixed(6)),
+          lng: Number(payload.courtLocation.lng.toFixed(6))
+        };
+      }
+      if (typeof payload.geofenceRadius === 'number') {
+        cleanPatch.geofenceRadius = Math.round(payload.geofenceRadius);
+      }
+
+      let firestoreSaved = false;
+      let firestoreErrMsg = '';
+      try {
+        await setDoc(doc(db, 'metadata', 'system'), cleanPatch, { merge: true });
+        firestoreSaved = true;
+      } catch (fsErr: any) {
+        firestoreErrMsg = fsErr?.message || '';
+        console.warn('[AttendanceView] Falha ao gravar geo-config direto no Firestore:', fsErr);
+      }
+
+      let apiSaved = false;
+      let apiErrMsg = '';
+      let apiConfig: any = null;
+      try {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        try {
+          const idToken = await auth.currentUser?.getIdToken?.();
+          if (idToken) headers.Authorization = `Bearer ${idToken}`;
+        } catch {}
+
+        const requestBody = JSON.stringify({
+          ...cleanPatch,
+          userEmail: user?.email || currentPlayer?.email || '',
+          uid: user?.uid || currentPlayer?.uid || '',
+          playerId: currentPlayer?.id || ''
+        });
+
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const controller = new AbortController();
+          const timer = window.setTimeout(() => controller.abort(), 12000);
+          try {
+            const resp = await fetch('/api/presence/geo-config', {
+              method: 'POST',
+              headers,
+              body: requestBody,
+              signal: controller.signal
+            });
+            window.clearTimeout(timer);
+
+            const rawText = await resp.text();
+            let data: any = null;
+            try {
+              data = rawText ? JSON.parse(rawText) : null;
+            } catch {}
+
+            if (resp.ok && data?.success) {
+              apiSaved = true;
+              apiConfig = data.config;
+              break;
+            }
+
+            const isTransient = resp.status === 502 || resp.status === 503 || resp.status === 504 || !data;
+            apiErrMsg =
+              data?.error ||
+              (resp.status === 503
+                ? 'Servidor reiniciando ou em aquecimento (HTTP 503)'
+                : `HTTP ${resp.status}`);
+
+            if (isTransient && attempt < 2) {
+              await new Promise((r) => setTimeout(r, 900 * (attempt + 1)));
+              continue;
+            }
+            break;
+          } catch (attemptErr: any) {
+            window.clearTimeout(timer);
+            apiErrMsg =
+              attemptErr?.name === 'AbortError'
+                ? 'Tempo limite excedido ao salvar no servidor'
+                : attemptErr?.message || 'Erro de rede';
+            if (attempt < 2) {
+              await new Promise((r) => setTimeout(r, 900 * (attempt + 1)));
+              continue;
+            }
+          }
+        }
+      } catch (netErr: any) {
+        apiErrMsg = netErr?.message || 'Erro de rede';
+      }
+
+      if (!firestoreSaved && !apiSaved) {
+        showNotification(
+          `Erro ao salvar configuração de GPS (${apiErrMsg || firestoreErrMsg || 'tente novamente'}).`,
+          'error'
+        );
+        return;
+      }
+
+      setSystemMetadata({
+        autoGeoCheckInEnabled:
+          apiConfig?.autoGeoCheckInEnabled ??
+          (typeof cleanPatch.autoGeoCheckInEnabled === 'boolean'
+            ? cleanPatch.autoGeoCheckInEnabled
+            : isAutoGeoEnabled),
+        courtLocation:
+          apiConfig?.courtLocation ??
+          cleanPatch.courtLocation ?? { lat: savedCourtLat, lng: savedCourtLng },
+        geofenceRadius:
+          apiConfig?.geofenceRadius ??
+          cleanPatch.geofenceRadius ??
+          savedGeofenceRadius
+      });
+      showNotification(successMsg, 'success');
+    } catch (err: any) {
+      showNotification(err?.message || 'Erro de conexão ao salvar configuração de GPS.', 'error');
+    } finally {
+      setIsSavingGeoConfig(false);
+    }
+  };
+
+  const handleToggleAutoGeoEnabled = async () => {
+    const nextEnabled = !isAutoGeoEnabled;
+    await persistGeoConfig(
+      { autoGeoCheckInEnabled: nextEnabled },
+      nextEnabled
+        ? 'Monitoramento automático por GPS HABILITADO para o clube!'
+        : 'Monitoramento automático por GPS DESATIVADO (Modo Teste Admin).'
+    );
+  };
+
+  const handleSaveCourtCoords = async () => {
+    const lat = Number(courtLatInput.trim().replace(',', '.'));
+    const lng = Number(courtLngInput.trim().replace(',', '.'));
+    const radius = Math.round(Number(geofenceRadiusInput.trim()));
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      showNotification('Informe coordenadas válidas (Latitude entre -90 e 90, Longitude entre -180 e 180).', 'error');
+      return;
+    }
+    if (!Number.isFinite(radius) || radius < 20 || radius > 2000) {
+      showNotification('Informe um raio válido entre 20m e 2000m.', 'error');
+      return;
+    }
+    await persistGeoConfig(
+      { courtLocation: { lat, lng }, geofenceRadius: radius },
+      `Coordenadas (${lat.toFixed(6)}, ${lng.toFixed(6)}) e raio (${radius}m) salvos com sucesso!`
+    );
+  };
+
+  const handleCaptureCurrentPositionAsCourt = () => {
+    if (!('geolocation' in navigator)) {
+      showNotification('Geolocalização não suportada neste navegador.', 'error');
+      return;
+    }
+    setIsCapturingMyCoords(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        setIsCapturingMyCoords(false);
+        const lat = Number(pos.coords.latitude.toFixed(6));
+        const lng = Number(pos.coords.longitude.toFixed(6));
+        const acc = Math.round(pos.coords.accuracy || 0);
+        const parsedRadius = Math.round(Number(geofenceRadiusInput.trim()));
+        const effectiveRadius =
+          Number.isFinite(parsedRadius) && parsedRadius >= 20 && parsedRadius <= 2000
+            ? parsedRadius
+            : savedGeofenceRadius;
+
+        setCourtLatInput(String(lat));
+        setCourtLngInput(String(lng));
+
+        await persistGeoConfig(
+          { courtLocation: { lat, lng }, geofenceRadius: effectiveRadius },
+          acc > 150
+            ? `Posição salva (${lat}, ${lng}), mas seu aparelho informou precisão baixa (±${acc}m). Prefira testar no celular com GPS ativo.`
+            : `Sua posição atual (${lat}, ${lng} • ±${acc}m) foi salva como quadra de teste!`
+        );
+      },
+      (err) => {
+        setIsCapturingMyCoords(false);
+        showNotification(
+          err.code === 1
+            ? 'Permissão de GPS negada no navegador.'
+            : 'Não foi possível ler seu GPS agora. Tente novamente.',
+          'error'
+        );
+      },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
+    );
+  };
+
+  const handleRestoreOfficialCourtCoords = async () => {
+    setCourtLatInput(String(DEFAULT_OFFICIAL_COURT_LAT));
+    setCourtLngInput(String(DEFAULT_OFFICIAL_COURT_LNG));
+    setGeofenceRadiusInput(String(DEFAULT_OFFICIAL_RADIUS));
+    await persistGeoConfig(
+      {
+        courtLocation: { lat: DEFAULT_OFFICIAL_COURT_LAT, lng: DEFAULT_OFFICIAL_COURT_LNG },
+        geofenceRadius: DEFAULT_OFFICIAL_RADIUS
+      },
+      'Coordenadas oficiais da quadra (-8.131531, -34.907323 • 150m) restauradas!'
+    );
+  };
 
   const handleRegisterPlayer = async (player: Player) => {
     if (addingPlayerId === player.id) return;
@@ -193,6 +525,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
     playerId: string;
     lat: number;
     lng: number;
+    accuracy?: number;
     name?: string;
     address?: string;
     isLive?: boolean;
@@ -200,29 +533,84 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
     coordsLabel: string;
   }) => {
     setIsTestingGps(true);
+    setJourneyMapPoint(null);
+    setJourneyTrailPoints([]);
     try {
-      const resp = await fetch('/api/presence/gps-checkin', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          playerId: payload.playerId,
-          lat: payload.lat,
-          lng: payload.lng,
-          name: payload.name,
-          address: payload.address,
-          isLive: payload.isLive,
-          bypassTimeWindow: true,
-          dryRun: payload.dryRun,
-          source: 'APP_GPS'
-        })
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      try {
+        const idToken = await auth.currentUser?.getIdToken?.();
+        if (idToken) headers.Authorization = `Bearer ${idToken}`;
+      } catch {}
+
+      const requestPayload = JSON.stringify({
+        playerId: payload.playerId,
+        userEmail: user?.email || '',
+        lat: payload.lat,
+        lng: payload.lng,
+        accuracy: payload.accuracy,
+        name: payload.name,
+        address: payload.address,
+        isLive: payload.isLive,
+        bypassTimeWindow: true,
+        dryRun: payload.dryRun,
+        source: 'APP_GPS'
       });
-      const data = await resp.json();
-      if (!resp.ok || !data.success) {
+
+      let resp: Response | null = null;
+      let data: any = null;
+      let lastStatus = 0;
+
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const controller = new AbortController();
+        const timer = window.setTimeout(() => controller.abort(), 14000);
+        try {
+          resp = await fetch('/api/presence/gps-checkin', {
+            method: 'POST',
+            headers,
+            body: requestPayload,
+            signal: controller.signal
+          });
+          window.clearTimeout(timer);
+          lastStatus = resp.status;
+          const rawText = await resp.text();
+          try {
+            data = rawText ? JSON.parse(rawText) : null;
+          } catch {
+            data = null;
+          }
+
+          if (resp.ok && data && data.success) {
+            break;
+          }
+
+          const isTransient =
+            resp.status === 502 || resp.status === 503 || resp.status === 504 || (!resp.ok && !data);
+          if (isTransient && attempt < 2) {
+            await new Promise((r) => setTimeout(r, 900 * (attempt + 1)));
+            continue;
+          }
+          break;
+        } catch (attemptErr: any) {
+          window.clearTimeout(timer);
+          if (attempt < 2) {
+            await new Promise((r) => setTimeout(r, 900 * (attempt + 1)));
+            continue;
+          }
+          throw attemptErr;
+        }
+      }
+
+      if (!resp || !resp.ok || !data || !data.success) {
+        const fallbackMsg =
+          lastStatus === 502 || lastStatus === 503 || lastStatus === 504
+            ? `Servidor temporariamente indisponível ou reiniciando (HTTP ${lastStatus}). Aguarde 3 segundos e toque no botão novamente.`
+            : `Servidor respondeu em formato inesperado (HTTP ${lastStatus || resp?.status || 0}). Recarregue o app e tente novamente.`;
         setGpsTestResult({
           allowed: false,
           reason: 'ERROR',
-          message: data.error || 'Falha ao validar sinal de GPS.',
+          message: data?.error || data?.message || fallbackMsg,
           coordsLabel: payload.coordsLabel,
+          accuracyMeters: payload.accuracy,
           dryRun: payload.dryRun
         });
         return;
@@ -233,6 +621,10 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
         message: data.message,
         distanceMeters: data.distanceMeters,
         maxRadius: data.maxRadius,
+        courtLocation: data.courtLocation,
+        testedLat: payload.lat,
+        testedLng: payload.lng,
+        accuracyMeters: payload.accuracy,
         arrivalOrder: data.arrivalOrder,
         alreadyPresent: data.alreadyPresent,
         playerName: data.player?.name,
@@ -248,6 +640,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
         reason: 'NETWORK_ERROR',
         message: err?.message || 'Erro de conexão ao validar GPS.',
         coordsLabel: payload.coordsLabel,
+        accuracyMeters: payload.accuracy,
         dryRun: payload.dryRun
       });
     } finally {
@@ -275,6 +668,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
           playerId: targetPlayerId,
           lat,
           lng,
+          accuracy,
           isLive: true,
           dryRun,
           coordsLabel: `GPS Real (${lat}, ${lng} • ±${accuracy}m)`
@@ -297,6 +691,21 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
   const activeAvailablePlayers = useMemo(() => {
     return (availablePlayers || []).filter(p => p.status === 'active' && !p.isDM);
   }, [availablePlayers]);
+
+  const selectedTestPlayerObj = useMemo(() => {
+    const pid = selectedGpsTestPlayerId || currentPlayer?.id || activeAvailablePlayers[0]?.id;
+    const found =
+      activeAvailablePlayers.find((p) => p.id === pid) ||
+      (allPlayers || []).find((p) => p.id === pid) ||
+      currentPlayer ||
+      null;
+    if (!found) return null;
+    return {
+      id: found.id,
+      name: found.name,
+      phone: found.phone
+    };
+  }, [selectedGpsTestPlayerId, currentPlayer, activeAvailablePlayers, allPlayers]);
 
   const notYetPresentPlayers = useMemo(() => {
     const presentIds = new Set(attendance.map(a => a.id));
@@ -519,7 +928,10 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                 ) : (
                   <AnimatePresence mode="popLayout">
                     {displayedAttendance.map((player, idx) => {
-                      const fullPlayer = availablePlayers.find(p => p.id === player.id) || player;
+                      const fullPlayer =
+                        allPlayers.find(p => p.id === player.id) ||
+                        availablePlayers.find(p => p.id === player.id) ||
+                        player;
                       const displayName = player.name || fullPlayer?.name || "Sócio";
                       const realIC = Math.round(calculateCompositePerformanceRating(fullPlayer));
                       const generationResult = useStore.getState().generationResult;
@@ -598,16 +1010,19 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                           </div>
                           
                           <div className="min-w-0">
-                            <div className={`text-xs font-black uppercase leading-tight flex items-center flex-wrap gap-1 ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
-                              <span className="truncate">{capitalizeName(displayName)}</span>
-                              {attendanceStats.icMap[player.id] && (
-                                <span className={`w-2 h-2 rounded-full shrink-0 ${attendanceStats.icMap[player.id].color}`} title={attendanceStats.icMap[player.id].title} />
-                              )}
-                              {attendanceStats.techTierMap[player.id] && (
-                                <span className="px-1 py-0.2 rounded bg-white/10 text-brand-primary text-[7px] font-black uppercase">
-                                  {attendanceStats.techTierMap[player.id]}
-                                </span>
-                              )}
+                            <div className={`text-xs font-black uppercase leading-tight flex items-center gap-1.5 ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
+                              <PlayerAvatar player={fullPlayer} size="xs" />
+                              <div className="min-w-0 flex items-center flex-wrap gap-1 flex-1">
+                                <span className="truncate">{capitalizeName(displayName)}</span>
+                                {attendanceStats.icMap[player.id] && (
+                                  <span className={`w-2 h-2 rounded-full shrink-0 ${attendanceStats.icMap[player.id].color}`} title={attendanceStats.icMap[player.id].title} />
+                                )}
+                                {attendanceStats.techTierMap[player.id] && (
+                                  <span className="px-1 py-0.2 rounded bg-white/10 text-brand-primary text-[7px] font-black uppercase">
+                                    {attendanceStats.techTierMap[player.id]}
+                                  </span>
+                                )}
+                              </div>
                             </div>
                             
                             {editingDeparture === player.id || editingArrival === player.id ? (
@@ -698,243 +1113,498 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
 
           {/* COLUNA DIREITA: VALIDAÇÃO GPS + PONTE 1-TOQUE DOS CONFIRMADOS + DISPONÍVEIS */}
           <div className="lg:col-span-7 space-y-6">
-            {/* PAINEL DE CHECK-IN E VALIDAÇÃO DE SINAL DE GPS DA QUADRA */}
-            <div className="bg-zinc-900/95 p-6 rounded-[2.5rem] border-2 border-brand-primary/40 shadow-2xl space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="p-2.5 bg-brand-primary/20 rounded-2xl border border-brand-primary/40 text-brand-primary">
-                    <MapPin className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h3 className="text-base sm:text-lg font-black text-white uppercase tracking-tight flex items-center gap-2 flex-wrap">
-                      Check-in Presencial via Sinal de GPS
-                      <span className="px-2 py-0.5 rounded-full bg-brand-primary/20 border border-brand-primary/40 text-brand-primary text-[9px] font-black uppercase">
-                        Cerca Virtual: 300m
-                      </span>
-                    </h3>
-                    <p className="text-[10px] font-bold text-white/50 uppercase tracking-widest">
-                      Quadra Oficial (-8.131531, -34.907323) • Validação antifraude de distância em tempo real
-                    </p>
-                  </div>
-                </div>
-
-                {currentPlayer && !isAdmin && (
-                  <button
-                    type="button"
-                    onClick={() => handleRealDeviceGpsCheckIn(currentPlayer.id, false)}
-                    disabled={isTestingGps}
-                    className="px-4 py-2.5 bg-brand-primary hover:bg-brand-primary/90 text-black font-black text-[10px] uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-lg shrink-0 disabled:opacity-50 cursor-pointer"
-                  >
-                    <Navigation className="w-4 h-4" />
-                    {isTestingGps ? 'Validando GPS...' : 'Confirmar Minha Presença via GPS'}
-                  </button>
-                )}
-              </div>
-
-              {isAdmin && (
-                <div className="space-y-3 pt-2 border-t border-white/10">
-                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
-                    <div className="flex-1">
-                      <label className="block text-[9px] font-black text-white/50 uppercase tracking-widest mb-1">
-                        Sócio para Testar / Validar Presença GPS:
-                      </label>
-                      <select
-                        value={selectedGpsTestPlayerId || currentPlayer?.id || activeAvailablePlayers[0]?.id || ''}
-                        onChange={(e) => setSelectedGpsTestPlayerId(e.target.value)}
-                        className="w-full bg-black/70 border border-brand-primary/40 rounded-xl px-3 py-2 text-xs font-black text-white uppercase outline-none focus:border-brand-primary"
-                      >
-                        {activeAvailablePlayers.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {capitalizeName(p.name)} {attendance.some((a) => a.id === p.id) ? '(Já em Quadra)' : ''}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className="flex flex-col justify-end">
-                      <label className="block text-[9px] font-black text-white/50 uppercase tracking-widest mb-1">
-                        Modo do Teste:
-                      </label>
-                      <div className="flex items-center bg-black/70 p-1 rounded-xl border border-white/10">
-                        <button
-                          type="button"
-                          onClick={() => setGpsDryRunMode(false)}
-                          className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer ${
-                            !gpsDryRunMode
-                              ? 'bg-emerald-500 text-black'
-                              : 'text-white/50 hover:text-white'
-                          }`}
-                        >
-                          Gravar na Lista
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setGpsDryRunMode(true)}
-                          className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer ${
-                            gpsDryRunMode
-                              ? 'bg-brand-primary text-black'
-                              : 'text-white/50 hover:text-white'
-                          }`}
-                        >
-                          Só Simular
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
-                    <button
-                      type="button"
-                      disabled={isTestingGps}
-                      onClick={() => {
-                        const pid = selectedGpsTestPlayerId || currentPlayer?.id || activeAvailablePlayers[0]?.id;
-                        if (pid) handleRealDeviceGpsCheckIn(pid, gpsDryRunMode);
-                      }}
-                      className="p-2.5 rounded-xl bg-brand-primary/15 hover:bg-brand-primary/25 border border-brand-primary/40 text-left transition-all cursor-pointer disabled:opacity-50"
-                    >
-                      <div className="flex items-center gap-1.5 text-brand-primary font-black text-[10px] uppercase">
-                        <Navigation className="w-3.5 h-3.5 shrink-0" />
-                        1. Meu GPS Real
-                      </div>
-                      <p className="text-[9px] text-white/60 font-bold mt-0.5">
-                        Lê o sensor GPS atual do seu aparelho
-                      </p>
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={isTestingGps}
-                      onClick={() => {
-                        const pid = selectedGpsTestPlayerId || currentPlayer?.id || activeAvailablePlayers[0]?.id;
-                        if (!pid) return;
-                        executeGpsValidationCall({
-                          playerId: pid,
-                          lat: -8.13145,
-                          lng: -34.90725,
-                          isLive: true,
-                          dryRun: gpsDryRunMode,
-                          coordsLabel: 'Quadra Oficial (-8.13145, -34.90725)'
-                        });
-                      }}
-                      className="p-2.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-left transition-all cursor-pointer disabled:opacity-50"
-                    >
-                      <div className="flex items-center gap-1.5 text-emerald-400 font-black text-[10px] uppercase">
-                        <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-                        2. Na Quadra (12m)
-                      </div>
-                      <p className="text-[9px] text-white/60 font-bold mt-0.5">
-                        Dentro do raio ≤300m (Aprova e escala)
-                      </p>
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={isTestingGps}
-                      onClick={() => {
-                        const pid = selectedGpsTestPlayerId || currentPlayer?.id || activeAvailablePlayers[0]?.id;
-                        if (!pid) return;
-                        executeGpsValidationCall({
-                          playerId: pid,
-                          lat: -8.1195,
-                          lng: -34.9021,
-                          isLive: true,
-                          dryRun: gpsDryRunMode,
-                          coordsLabel: 'Fora da Quadra (-8.11950, -34.90210)'
-                        });
-                      }}
-                      className="p-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-left transition-all cursor-pointer disabled:opacity-50"
-                    >
-                      <div className="flex items-center gap-1.5 text-amber-400 font-black text-[10px] uppercase">
-                        <MapPin className="w-3.5 h-3.5 shrink-0" />
-                        3. Longe (~1.456m)
-                      </div>
-                      <p className="text-[9px] text-white/60 font-bold mt-0.5">
-                        Fora do raio de 300m (Recusa check-in)
-                      </p>
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={isTestingGps}
-                      onClick={() => {
-                        const pid = selectedGpsTestPlayerId || currentPlayer?.id || activeAvailablePlayers[0]?.id;
-                        if (!pid) return;
-                        executeGpsValidationCall({
-                          playerId: pid,
-                          lat: -8.131531,
-                          lng: -34.907323,
-                          name: 'Quadra de Vôlei Boa Viagem',
-                          address: 'Av. Boa Viagem, Recife - PE',
-                          isLive: false,
-                          dryRun: gpsDryRunMode,
-                          coordsLabel: 'Busca no Mapa (Anti-Fraude)'
-                        });
-                      }}
-                      className="p-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-left transition-all cursor-pointer disabled:opacity-50"
-                    >
-                      <div className="flex items-center gap-1.5 text-rose-400 font-black text-[10px] uppercase">
-                        <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
-                        4. Local Pesquisado
-                      </div>
-                      <p className="text-[9px] text-white/60 font-bold mt-0.5">
-                        Endereço digitado na busca (Bloqueia)
-                      </p>
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {gpsTestResult && (
-                <div
-                  className={`p-4 rounded-2xl border ${
-                    gpsTestResult.allowed
-                      ? 'bg-emerald-950/40 border-emerald-500/50'
-                      : 'bg-rose-950/40 border-rose-500/50'
-                  } space-y-2`}
+            {/* PAINEL RETRÁTIL DE CHECK-IN E VALIDAÇÃO DE SINAL DE GPS DA QUADRA */}
+            {(isAdmin || isAutoGeoEnabled) && (
+              <div className="bg-zinc-900/95 rounded-[2rem] border-2 border-brand-primary/40 shadow-2xl overflow-hidden transition-all">
+                <button
+                  type="button"
+                  onClick={() => setIsGpsPanelOpen((prev) => !prev)}
+                  aria-expanded={isGpsPanelOpen}
+                  className="w-full p-4 sm:p-5 flex items-center justify-between gap-3 text-left hover:bg-white/[0.03] transition-colors cursor-pointer"
                 >
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
-                          gpsTestResult.allowed
-                            ? 'bg-emerald-500 text-black'
-                            : 'bg-rose-500 text-white'
-                        }`}
-                      >
-                        {gpsTestResult.allowed ? '✅ SINAL GPS APROVADO' : '🚫 SINAL GPS RECUSADO'}
-                      </span>
-                      {gpsTestResult.dryRun && (
-                        <span className="px-2 py-0.5 rounded-full bg-brand-primary/20 text-brand-primary border border-brand-primary/40 text-[9px] font-black uppercase">
-                          Modo Simulação (Não gravou)
-                        </span>
-                      )}
-                      {typeof gpsTestResult.distanceMeters === 'number' && (
-                        <span className="text-[10px] font-mono font-black text-white/80">
-                          📏 Distância: {gpsTestResult.distanceMeters}m / Limite: {gpsTestResult.maxRadius || 300}m
-                        </span>
-                      )}
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="p-2.5 bg-brand-primary/20 rounded-2xl border border-brand-primary/40 text-brand-primary shrink-0">
+                      <MapPin className="w-5 h-5" />
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setGpsTestResult(null)}
-                      className="text-white/40 hover:text-white text-xs font-black uppercase"
-                    >
-                      Fechar
-                    </button>
+                    <div className="min-w-0">
+                      <h3 className="text-sm sm:text-base font-black text-white uppercase tracking-tight flex items-center gap-2 flex-wrap">
+                        Check-in Presencial via Sinal de GPS
+                        <span className="px-2 py-0.5 rounded-full bg-brand-primary/20 border border-brand-primary/40 text-brand-primary text-[9px] font-black uppercase">
+                          Cerca Virtual: {savedGeofenceRadius}m
+                        </span>
+                        {isAdmin && (
+                          <span
+                            className={`px-2 py-0.5 rounded-full border text-[9px] font-black uppercase ${
+                              isAutoGeoEnabled
+                                ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
+                                : 'bg-amber-500/20 border-amber-500/40 text-amber-400'
+                            }`}
+                          >
+                            {isAutoGeoEnabled ? 'Ativo para o Clube' : 'Modo Teste Admin'}
+                          </span>
+                        )}
+                      </h3>
+                      <p className="text-[10px] font-bold text-white/50 uppercase tracking-widest truncate">
+                        {Math.abs(savedCourtLat - DEFAULT_OFFICIAL_COURT_LAT) > 0.00001 ||
+                        Math.abs(savedCourtLng - DEFAULT_OFFICIAL_COURT_LNG) > 0.00001
+                          ? 'Coordenadas de Teste'
+                          : 'Quadra Oficial'}{' '}
+                        ({savedCourtLat.toFixed(6)}, {savedCourtLng.toFixed(6)}) • Toque para{' '}
+                        {isGpsPanelOpen ? 'recolher' : 'abrir check-in GPS'}
+                      </p>
+                    </div>
                   </div>
 
-                  {gpsTestResult.coordsLabel && (
-                    <p className="text-[10px] font-mono text-white/50">
-                      Origem testada: {gpsTestResult.coordsLabel}
-                    </p>
-                  )}
+                  <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-white/5 border border-white/10 text-brand-primary text-[10px] font-black uppercase tracking-wider shrink-0">
+                    <span className="hidden sm:inline">{isGpsPanelOpen ? 'Recolher' : 'Abrir'}</span>
+                    <ChevronDown
+                      className={`w-4 h-4 transition-transform duration-300 ${isGpsPanelOpen ? 'rotate-180' : ''}`}
+                    />
+                  </div>
+                </button>
 
-                  <pre className="whitespace-pre-wrap font-sans text-xs text-white/90 bg-black/50 p-3 rounded-xl border border-white/10 leading-relaxed">
-                    {gpsTestResult.message}
-                  </pre>
-                </div>
-              )}
-            </div>
+                <AnimatePresence initial={false}>
+                  {isGpsPanelOpen && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.25, ease: 'easeInOut' }}
+                      className="overflow-hidden"
+                    >
+                      <div className="px-4 sm:px-6 pb-5 sm:pb-6 pt-2 border-t border-white/10 space-y-4">
+                        {currentPlayer && !isAdmin && (
+                          <button
+                            type="button"
+                            onClick={() => handleRealDeviceGpsCheckIn(currentPlayer.id, false)}
+                            disabled={isTestingGps}
+                            className="w-full px-4 py-3 bg-brand-primary hover:bg-brand-primary/90 text-black font-black text-[11px] uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg disabled:opacity-50 cursor-pointer"
+                          >
+                            <Navigation className="w-4 h-4" />
+                            {isTestingGps ? 'Validando GPS...' : 'Confirmar Minha Presença via GPS'}
+                          </button>
+                        )}
+
+                        {isAdmin && (
+                          <div className="space-y-4">
+                            {/* CONTROLE ADMIN: HABILITAR / DESABILITAR FUNÇÃO PARA O CLUBE */}
+                            <div
+                              className={`p-3.5 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                                isAutoGeoEnabled
+                                  ? 'bg-emerald-950/35 border-emerald-500/40'
+                                  : 'bg-amber-950/30 border-amber-500/40'
+                              }`}
+                            >
+                              <div className="space-y-0.5">
+                                <div className="flex items-center gap-2">
+                                  <Power
+                                    className={`w-4 h-4 shrink-0 ${
+                                      isAutoGeoEnabled ? 'text-emerald-400' : 'text-amber-400'
+                                    }`}
+                                  />
+                                  <span className="text-xs font-black text-white uppercase tracking-tight">
+                                    Check-in Automático GPS para Sócios
+                                  </span>
+                                </div>
+                                <p className="text-[10px] font-bold text-white/65 leading-snug">
+                                  {isAutoGeoEnabled
+                                    ? 'HABILITADO: Monitoramento de quinta (19h–22h), avisos no WhatsApp e painel GPS visíveis para os sócios.'
+                                    : 'DESATIVADO (Modo Teste): Apenas administradores veem este painel; envios de quinta 19h/20h45 e GPS automático dos sócios ficam pausados.'}
+                                </p>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={handleToggleAutoGeoEnabled}
+                                disabled={isSavingGeoConfig}
+                                className={`px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-1.5 shrink-0 cursor-pointer disabled:opacity-50 ${
+                                  isAutoGeoEnabled
+                                    ? 'bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/50 text-rose-300'
+                                    : 'bg-emerald-500 hover:bg-emerald-400 text-black shadow-lg'
+                                }`}
+                              >
+                                <Power className="w-3.5 h-3.5" />
+                                {isSavingGeoConfig
+                                  ? 'Salvando...'
+                                  : isAutoGeoEnabled
+                                  ? 'Desativar Função'
+                                  : 'Habilitar para o Grupo'}
+                              </button>
+                            </div>
+
+                            {/* CONTROLE ADMIN: COORDENADAS DA QUADRA E RAIO (TESTE OU OFICIAL) */}
+                            <div className="p-3.5 rounded-2xl bg-black/50 border border-white/10 space-y-3">
+                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                <div>
+                                  <h4 className="text-[11px] font-black text-white uppercase tracking-wider flex items-center gap-1.5">
+                                    <Crosshair className="w-3.5 h-3.5 text-brand-primary" />
+                                    Coordenadas da Quadra e Raio (Teste / Oficial)
+                                  </h4>
+                                  <p className="text-[9px] font-bold text-white/50 mt-0.5">
+                                    Cole &quot;lat, lng&quot; do Google Maps no campo Latitude ou capture sua posição atual para testar de casa.
+                                  </p>
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                                <div>
+                                  <label className="block text-[9px] font-black text-white/50 uppercase tracking-widest mb-1">
+                                    Latitude
+                                  </label>
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    value={courtLatInput}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      const pairMatch = val.match(/^\s*(-?\d+(?:\.\d+)?)\s*[,;\s]+\s*(-?\d+(?:\.\d+)?)\s*$/);
+                                      if (pairMatch) {
+                                        setCourtLatInput(pairMatch[1]);
+                                        setCourtLngInput(pairMatch[2]);
+                                      } else {
+                                        setCourtLatInput(val);
+                                      }
+                                    }}
+                                    placeholder="-8.131531"
+                                    className="w-full bg-zinc-950 border border-white/15 focus:border-brand-primary rounded-xl px-3 py-2 text-xs font-mono font-bold text-white outline-none"
+                                  />
+                                </div>
+
+                                <div>
+                                  <label className="block text-[9px] font-black text-white/50 uppercase tracking-widest mb-1">
+                                    Longitude
+                                  </label>
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    value={courtLngInput}
+                                    onChange={(e) => setCourtLngInput(e.target.value)}
+                                    placeholder="-34.907323"
+                                    className="w-full bg-zinc-950 border border-white/15 focus:border-brand-primary rounded-xl px-3 py-2 text-xs font-mono font-bold text-white outline-none"
+                                  />
+                                </div>
+
+                                <div>
+                                  <label className="block text-[9px] font-black text-white/50 uppercase tracking-widest mb-1">
+                                    Raio Permitido (m)
+                                  </label>
+                                  <input
+                                    type="number"
+                                    min={20}
+                                    max={2000}
+                                    value={geofenceRadiusInput}
+                                    onChange={(e) => setGeofenceRadiusInput(e.target.value)}
+                                    placeholder="150"
+                                    className="w-full bg-zinc-950 border border-white/15 focus:border-brand-primary rounded-xl px-3 py-2 text-xs font-mono font-bold text-white outline-none"
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={handleSaveCourtCoords}
+                                  disabled={isSavingGeoConfig}
+                                  className="px-3.5 py-2 rounded-xl bg-brand-primary hover:bg-brand-primary/90 text-black font-black text-[10px] uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+                                >
+                                  <Save className="w-3.5 h-3.5" />
+                                  {isSavingGeoConfig ? 'Salvando...' : 'Salvar Coordenadas'}
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={handleCaptureCurrentPositionAsCourt}
+                                  disabled={isCapturingMyCoords || isSavingGeoConfig}
+                                  className="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-white font-black text-[10px] uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+                                >
+                                  <Crosshair className="w-3.5 h-3.5 text-brand-primary" />
+                                  {isCapturingMyCoords ? 'Capturando GPS...' : 'Usar Minha Posição Atual (Teste)'}
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={handleRestoreOfficialCourtCoords}
+                                  disabled={isSavingGeoConfig}
+                                  className="px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-white/10 text-white/80 font-black text-[10px] uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+                                >
+                                  <RotateCcw className="w-3.5 h-3.5" />
+                                  Restaurar Quadra Oficial
+                                </button>
+                              </div>
+
+                              <CourtGeofenceMap
+                                lat={previewCourtLat}
+                                lng={previewCourtLng}
+                                radiusMeters={previewGeofenceRadius}
+                                isUnsavedDraft={hasUnsavedGeoDraft}
+                                onSelectCoords={(newLat, newLng) => {
+                                  setCourtLatInput(String(newLat));
+                                  setCourtLngInput(String(newLng));
+                                }}
+                                onChangeRadius={(newRadius) => {
+                                  setGeofenceRadiusInput(String(newRadius));
+                                }}
+                                testPoint={
+                                  journeyMapPoint ||
+                                  (gpsTestResult &&
+                                  typeof gpsTestResult.testedLat === 'number' &&
+                                  typeof gpsTestResult.testedLng === 'number'
+                                    ? {
+                                        lat: gpsTestResult.testedLat,
+                                        lng: gpsTestResult.testedLng,
+                                        allowed: gpsTestResult.allowed,
+                                        distanceMeters: gpsTestResult.distanceMeters,
+                                        label: gpsTestResult.coordsLabel
+                                      }
+                                    : null)
+                                }
+                                trailPoints={journeyTrailPoints}
+                                activeWatchers={
+                                  simulatedGeoWatchers.length > 0 ? simulatedGeoWatchers : liveGeoWatchers
+                                }
+                              />
+                            </div>
+
+                            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
+                              <div className="flex-1">
+                                <label className="block text-[9px] font-black text-white/50 uppercase tracking-widest mb-1">
+                                  Sócio para Testar / Validar Presença GPS:
+                                </label>
+                                <select
+                                  value={selectedGpsTestPlayerId || currentPlayer?.id || activeAvailablePlayers[0]?.id || ''}
+                                  onChange={(e) => setSelectedGpsTestPlayerId(e.target.value)}
+                                  className="w-full bg-black/70 border border-brand-primary/40 rounded-xl px-3 py-2 text-xs font-black text-white uppercase outline-none focus:border-brand-primary"
+                                >
+                                  {activeAvailablePlayers.map((p) => (
+                                    <option key={p.id} value={p.id}>
+                                      {capitalizeName(p.name)} {attendance.some((a) => a.id === p.id) ? '(Já em Quadra)' : ''}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              <div className="flex flex-col justify-end">
+                                <label className="block text-[9px] font-black text-white/50 uppercase tracking-widest mb-1">
+                                  Modo do Teste:
+                                </label>
+                                <div className="flex items-center bg-black/70 p-1 rounded-xl border border-white/10">
+                                  <button
+                                    type="button"
+                                    onClick={() => setGpsDryRunMode(false)}
+                                    className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer ${
+                                      !gpsDryRunMode
+                                        ? 'bg-emerald-500 text-black'
+                                        : 'text-white/50 hover:text-white'
+                                    }`}
+                                  >
+                                    Gravar na Lista
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setGpsDryRunMode(true)}
+                                    className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer ${
+                                      gpsDryRunMode
+                                        ? 'bg-brand-primary text-black'
+                                        : 'text-white/50 hover:text-white'
+                                    }`}
+                                  >
+                                    Só Simular
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                              <button
+                                type="button"
+                                disabled={isTestingGps}
+                                onClick={() => {
+                                  const pid = selectedGpsTestPlayerId || currentPlayer?.id || activeAvailablePlayers[0]?.id;
+                                  if (pid) handleRealDeviceGpsCheckIn(pid, gpsDryRunMode);
+                                }}
+                                className="p-2.5 rounded-xl bg-brand-primary/15 hover:bg-brand-primary/25 border border-brand-primary/40 text-left transition-all cursor-pointer disabled:opacity-50"
+                              >
+                                <div className="flex items-center gap-1.5 text-brand-primary font-black text-[10px] uppercase">
+                                  <Navigation className="w-3.5 h-3.5 shrink-0" />
+                                  1. Meu GPS Real Agora
+                                </div>
+                                <p className="text-[9px] text-white/60 font-bold mt-0.5">
+                                  Compara seu GPS atual com a quadra salva acima
+                                </p>
+                              </button>
+
+                              <button
+                                type="button"
+                                disabled={isTestingGps}
+                                onClick={() => {
+                                  const pid = selectedGpsTestPlayerId || currentPlayer?.id || activeAvailablePlayers[0]?.id;
+                                  if (!pid) return;
+                                  const nearLat = Number((savedCourtLat + 0.00008).toFixed(6));
+                                  const nearLng = Number((savedCourtLng + 0.00007).toFixed(6));
+                                  executeGpsValidationCall({
+                                    playerId: pid,
+                                    lat: nearLat,
+                                    lng: nearLng,
+                                    isLive: true,
+                                    dryRun: gpsDryRunMode,
+                                    coordsLabel: `Simulação Na Quadra (${nearLat}, ${nearLng})`
+                                  });
+                                }}
+                                className="p-2.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-left transition-all cursor-pointer disabled:opacity-50"
+                              >
+                                <div className="flex items-center gap-1.5 text-emerald-400 font-black text-[10px] uppercase">
+                                  <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                                  2. Simular: Na Quadra (~12m)
+                                </div>
+                                <p className="text-[9px] text-white/60 font-bold mt-0.5">
+                                  Ponto simulado a 12m da quadra salva (Aprova)
+                                </p>
+                              </button>
+
+                              <button
+                                type="button"
+                                disabled={isTestingGps}
+                                onClick={() => {
+                                  const pid = selectedGpsTestPlayerId || currentPlayer?.id || activeAvailablePlayers[0]?.id;
+                                  if (!pid) return;
+                                  const farLat = Number((savedCourtLat + 0.012031).toFixed(6));
+                                  const farLng = Number((savedCourtLng + 0.005223).toFixed(6));
+                                  executeGpsValidationCall({
+                                    playerId: pid,
+                                    lat: farLat,
+                                    lng: farLng,
+                                    isLive: true,
+                                    dryRun: gpsDryRunMode,
+                                    coordsLabel: `Simulação Fora da Quadra (${farLat}, ${farLng})`
+                                  });
+                                }}
+                                className="p-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-left transition-all cursor-pointer disabled:opacity-50"
+                              >
+                                <div className="flex items-center gap-1.5 text-amber-400 font-black text-[10px] uppercase">
+                                  <MapPin className="w-3.5 h-3.5 shrink-0" />
+                                  3. Simular: Longe (+1.450m)
+                                </div>
+                                <p className="text-[9px] text-white/60 font-bold mt-0.5">
+                                  Ponto simulado a 1.450m fora da quadra salva
+                                </p>
+                              </button>
+
+                              <button
+                                type="button"
+                                disabled={isTestingGps}
+                                onClick={() => {
+                                  const pid = selectedGpsTestPlayerId || currentPlayer?.id || activeAvailablePlayers[0]?.id;
+                                  if (!pid) return;
+                                  executeGpsValidationCall({
+                                    playerId: pid,
+                                    lat: savedCourtLat,
+                                    lng: savedCourtLng,
+                                    name: 'Quadra de Vôlei Boa Viagem',
+                                    address: 'Av. Boa Viagem, Recife - PE',
+                                    isLive: false,
+                                    dryRun: gpsDryRunMode,
+                                    coordsLabel: 'Simulação Busca no Mapa (Anti-Fraude)'
+                                  });
+                                }}
+                                className="p-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-left transition-all cursor-pointer disabled:opacity-50"
+                              >
+                                <div className="flex items-center gap-1.5 text-rose-400 font-black text-[10px] uppercase">
+                                  <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
+                                  4. Simular: Local Pesquisado
+                                </div>
+                                <p className="text-[9px] text-white/60 font-bold mt-0.5">
+                                  Endereço digitado na busca (Bloqueia)
+                                </p>
+                              </button>
+                            </div>
+
+                            <GeoJourneySimulator
+                              player={selectedTestPlayerObj}
+                              userEmail={user?.email || currentPlayer?.email || ''}
+                              courtLat={savedCourtLat}
+                              courtLng={savedCourtLng}
+                              geofenceRadius={savedGeofenceRadius}
+                              dryRun={gpsDryRunMode}
+                              onUpdateMapState={(pt, trail) => {
+                                setJourneyMapPoint(pt);
+                                setJourneyTrailPoints(trail);
+                              }}
+                              onUpdateActiveWatchers={(watchers) => {
+                                setSimulatedGeoWatchers(watchers);
+                              }}
+                              onAttendanceMutated={refreshPlayers}
+                            />
+                          </div>
+                        )}
+
+                        {gpsTestResult && (
+                          <div
+                            className={`p-4 rounded-2xl border ${
+                              gpsTestResult.allowed
+                                ? 'bg-emerald-950/40 border-emerald-500/50'
+                                : 'bg-rose-950/40 border-rose-500/50'
+                            } space-y-2`}
+                          >
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
+                                    gpsTestResult.allowed
+                                      ? 'bg-emerald-500 text-black'
+                                      : 'bg-rose-500 text-white'
+                                  }`}
+                                >
+                                  {gpsTestResult.allowed ? '✅ SINAL GPS APROVADO' : '🚫 SINAL GPS RECUSADO'}
+                                </span>
+                                {gpsTestResult.dryRun && (
+                                  <span className="px-2 py-0.5 rounded-full bg-brand-primary/20 text-brand-primary border border-brand-primary/40 text-[9px] font-black uppercase">
+                                    Modo Simulação (Não gravou)
+                                  </span>
+                                )}
+                                {typeof gpsTestResult.distanceMeters === 'number' && (
+                                  <span className="text-[10px] font-mono font-black text-white/80">
+                                    📏 Distância: {gpsTestResult.distanceMeters}m / Limite: {gpsTestResult.maxRadius || savedGeofenceRadius}m
+                                  </span>
+                                )}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setGpsTestResult(null)}
+                                className="text-white/40 hover:text-white text-xs font-black uppercase"
+                              >
+                                Fechar
+                              </button>
+                            </div>
+
+                            <div className="space-y-0.5 text-[10px] font-mono text-white/60">
+                              {gpsTestResult.coordsLabel && (
+                                <p>📍 Origem testada: {gpsTestResult.coordsLabel}</p>
+                              )}
+                              {gpsTestResult.courtLocation && (
+                                <p>
+                                  🏟️ Quadra alvo no servidor: ({gpsTestResult.courtLocation.lat.toFixed(6)},{' '}
+                                  {gpsTestResult.courtLocation.lng.toFixed(6)})
+                                </p>
+                              )}
+                            </div>
+
+                            {typeof gpsTestResult.accuracyMeters === 'number' && gpsTestResult.accuracyMeters > 150 && (
+                              <p className="text-[10px] font-bold text-amber-300 bg-amber-950/50 border border-amber-500/40 rounded-xl px-3 py-2">
+                                ⚠️ Atenção: seu navegador informou baixa precisão de localização (±{gpsTestResult.accuracyMeters}m), comum em computador/Wi-Fi sem chip GPS. Para testar com precisão real, use no celular com o GPS ligado.
+                              </p>
+                            )}
+
+                            <pre className="whitespace-pre-wrap font-sans text-xs text-white/90 bg-black/50 p-3 rounded-xl border border-white/10 leading-relaxed">
+                              {gpsTestResult.message}
+                            </pre>
+                          </div>
+                        )}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            )}
             {/* FAIXA DESTACADA: CONFIRMADOS NA LISTA DE QUINTA (FALTAM CHEGAR) */}
             {isAdmin && confirmedPendingCheckIn.length > 0 && (
               <div className="bg-zinc-900/95 p-6 rounded-[2.5rem] border-2 border-emerald-500/40 shadow-2xl space-y-4">
@@ -976,18 +1646,21 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                       disabled={addingPlayerId === player.id}
                       className="flex items-center justify-between p-2.5 rounded-xl bg-black/70 border border-emerald-500/30 hover:border-emerald-400 text-left transition-all active:scale-95 group cursor-pointer"
                     >
-                      <div className="min-w-0 pr-1">
-                        <div className="flex items-center gap-1">
-                          <span className="text-[9px] font-mono font-black text-emerald-400">
-                            {idx + 1}º
+                      <div className="flex items-center gap-2 min-w-0 pr-1">
+                        <PlayerAvatar player={player} size="xs" />
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1">
+                            <span className="text-[9px] font-mono font-black text-emerald-400 shrink-0">
+                              {idx + 1}º
+                            </span>
+                            <p className="text-xs font-black text-white uppercase truncate">
+                              {capitalizeName(player.name)}
+                            </p>
+                          </div>
+                          <span className="text-[8px] font-bold text-white/40 uppercase">
+                            {player.isOfficialSetter ? 'Levantador (L)' : `IC ${Math.round(calculateCompositePerformanceRating(player))}`}
                           </span>
-                          <p className="text-xs font-black text-white uppercase truncate">
-                            {capitalizeName(player.name)}
-                          </p>
                         </div>
-                        <span className="text-[8px] font-bold text-white/40 uppercase">
-                          {player.isOfficialSetter ? 'Levantador (L)' : `IC ${Math.round(calculateCompositePerformanceRating(player))}`}
-                        </span>
                       </div>
                       <span className="p-1.5 bg-emerald-500/20 text-emerald-400 group-hover:bg-emerald-500 group-hover:text-black rounded-lg transition-all shrink-0">
                         <Plus className="w-3.5 h-3.5" />
@@ -1049,13 +1722,16 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                         addingPlayerId === player.id ? 'opacity-50' : ''
                       }`}
                     >
-                      <div className="min-w-0 pr-1">
-                        <p className={`text-xs font-black uppercase truncate ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
-                          {capitalizeName(player.name || "Sócio")}
-                        </p>
-                        <span className="text-[8px] font-bold text-white/40 uppercase">
-                          {player.isOfficialSetter ? 'Levantador (L)' : `IC ${Math.round(calculateCompositePerformanceRating(player))}`}
-                        </span>
+                      <div className="flex items-center gap-2 min-w-0 pr-1">
+                        <PlayerAvatar player={player} size="xs" />
+                        <div className="min-w-0">
+                          <p className={`text-xs font-black uppercase truncate ${player.isOfficialSetter ? 'text-brand-primary' : 'text-white'}`}>
+                            {capitalizeName(player.name || "Sócio")}
+                          </p>
+                          <span className="text-[8px] font-bold text-white/40 uppercase">
+                            {player.isOfficialSetter ? 'Levantador (L)' : `IC ${Math.round(calculateCompositePerformanceRating(player))}`}
+                          </span>
+                        </div>
                       </div>
                       <span className="p-1.5 bg-brand-primary/10 text-brand-primary group-hover:bg-brand-primary group-hover:text-black rounded-lg transition-all border border-brand-primary/30 shrink-0">
                         <Plus className="w-3.5 h-3.5" />

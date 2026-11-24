@@ -74,7 +74,7 @@ export const PlayerAvatar = React.memo<PlayerAvatarProps>(({
   title,
 }) => {
   const name = player?.name || propName || 'Sócio';
-  const rawPhotoUrl = player?.photoUrl || propPhotoUrl;
+  const rawPhotoUrl = player?.photoUrl || player?.whatsappPhotoUrl || propPhotoUrl;
   const rawGender = player?.gender || propGender;
   const id = player?.id || propId || name;
 
@@ -181,6 +181,7 @@ export const PlayerAvatar = React.memo<PlayerAvatarProps>(({
   return prevProps.player?.id === nextProps.player?.id &&
     prevProps.player?.name === nextProps.player?.name &&
     prevProps.player?.photoUrl === nextProps.player?.photoUrl &&
+    prevProps.player?.whatsappPhotoUrl === nextProps.player?.whatsappPhotoUrl &&
     prevProps.player?.gender === nextProps.player?.gender &&
     prevProps.name === nextProps.name &&
     prevProps.gender === nextProps.gender &&

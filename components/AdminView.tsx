@@ -58,6 +58,7 @@ import { useWebAuthn } from '../src/hooks/useWebAuthn';
 import { BirthdayAdminCard } from '../src/components/BirthdayAdminCard';
 import { HelpTooltip } from '../src/components/HelpTooltip';
 import { TeamBalancingSimulatorCard } from '../src/components/TeamBalancingSimulatorCard';
+import { AIRouterPanel } from '../src/components/AIRouterPanel';
 import { AdminEloAuditView } from '../src/components/AdminEloAuditView';
 import { AthleteTimeAuditReport } from '../src/components/AthleteTimeAuditReport';
 
@@ -714,6 +715,20 @@ export const AdminView: React.FC<AdminViewProps> = ({
                           </div>
                         ))}
                       </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveTab('system');
+                          setTimeout(() => {
+                            document.getElementById('admin-ai-router-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                          }, 120);
+                        }}
+                        className="w-full mt-2 py-3 px-4 bg-white/5 hover:bg-brand-primary/15 border border-white/10 hover:border-brand-primary/40 rounded-xl text-[10px] font-black uppercase tracking-widest text-brand-primary flex items-center justify-center gap-2 transition-all"
+                      >
+                        <Cpu className="w-4 h-4" />
+                        Configurar Roteador Multi-Modelo IA
+                      </button>
                     </section>
 
                     {/* Configuração do Bônus Diário */}
@@ -1123,6 +1138,9 @@ export const AdminView: React.FC<AdminViewProps> = ({
                     </div>
                   </div>
                 </section>
+
+                {/* Roteador Multi-Modelo de IA (Alocação, Disjuntor e Métricas) */}
+                <AIRouterPanel showNotification={showNotification} />
 
                 {/* Backup CSV & Snapshots */}
                 <section className="bg-black backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/5 border-l-[8px] border-l-brand-primary text-white space-y-6">

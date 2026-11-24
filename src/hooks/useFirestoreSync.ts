@@ -391,24 +391,14 @@ export const useFirestoreSync = () => {
     }
 
     if (syncMode === 'realtime') {
+      let isCancelled = false;
       let unsubscribePlayers: (() => void) | undefined;
       let unsubscribeAttendance: (() => void) | undefined;
-      let unsubscribePending: (() => void) | undefined;
       let unsubscribeMatches: (() => void) | undefined;
       let unsubscribeSystem: (() => void) | undefined;
       let unsubscribeCurrentMatch: (() => void) | undefined;
       let unsubscribeNextMatchPreview: (() => void) | undefined;
-      let unsubscribeUsage: (() => void) | undefined;
-      let unsubscribeMonthlyUsage: (() => void) | undefined;
       let unsubscribePreConfirmations: (() => void) | undefined;
-      let unsubscribeSynergy: (() => void) | undefined;
-      let unsubscribeNegativeSynergy: (() => void) | undefined;
-      let unsubscribeRivalry: (() => void) | undefined;
-      let unsubscribeTournaments: (() => void) | undefined;
-      let unsubscribeActiveTournament: (() => void) | undefined;
-      let unsubscribePayments: (() => void) | undefined;
-      let unsubscribeExpenses: (() => void) | undefined;
-      let unsubscribeIntentions: (() => void) | undefined;
 
       const handleListenerError = (label: string, critical = false) => (err: any) => {
         if (isFirestoreQuotaError(err)) {
@@ -433,7 +423,7 @@ export const useFirestoreSync = () => {
 
         const setupPreConfirmations = (target: string) => {
           if (unsubscribePreConfirmations) unsubscribePreConfirmations();
-          if (isQuotaExceeded) return;
+          if (isQuotaExceeded || isCancelled) return;
           unsubscribePreConfirmations = onSnapshot(
             collection(db, 'preConfirmations', target, 'players'),
             snapshot => {
@@ -451,23 +441,21 @@ export const useFirestoreSync = () => {
           );
         };
 
+        // 1) Resolve targetDate uma única vez (sem duplicar onSnapshot de metadata/intentions já mantido pelo useIntentions)
         setupPreConfirmations(currentTargetDate);
-
-        unsubscribeIntentions = onSnapshot(
-          doc(db, 'metadata', 'intentions'),
-          snapshot => {
-            if (snapshot.exists()) {
-              const data = snapshot.data();
-              const newTarget = data.targetDate || getNextThursday();
-              if (newTarget !== currentTargetDate) {
-                currentTargetDate = newTarget;
-                setupPreConfirmations(newTarget);
-              }
+        getDoc(doc(db, 'metadata', 'intentions'))
+          .then(snapshot => {
+            if (isCancelled || !snapshot.exists()) return;
+            const data = snapshot.data();
+            const newTarget = data.targetDate || getNextThursday();
+            if (newTarget !== currentTargetDate) {
+              currentTargetDate = newTarget;
+              setupPreConfirmations(newTarget);
             }
-          },
-          handleListenerError('metadata/intentions')
-        );
+          })
+          .catch(() => {});
 
+        // 2) Core Live Listeners (7 streams essenciais em tempo real)
         unsubscribePlayers = onSnapshot(
           collection(db, 'players'),
           snapshot => {
@@ -508,23 +496,6 @@ export const useFirestoreSync = () => {
             setNextMatchPreview(snapshot.exists() ? (snapshot.data() as GenerationResult) : null);
           },
           handleListenerError('metadata/nextMatchPreview')
-        );
-
-        unsubscribeUsage = onSnapshot(
-          doc(db, 'metadata', 'usage'),
-          snapshot => {
-            if (snapshot.exists()) setUsageStats(snapshot.data() as UsageStats);
-          },
-          handleListenerError('metadata/usage')
-        );
-
-        const monthKey = dateKey.slice(0, 7);
-        unsubscribeMonthlyUsage = onSnapshot(
-          doc(db, 'metadata', `usage_${monthKey}`),
-          snapshot => {
-            if (snapshot.exists()) useStore.getState().setMonthlyUsageStats(snapshot.data() as UsageStats);
-          },
-          handleListenerError(`metadata/usage_${monthKey}`)
         );
 
         unsubscribeAttendance = onSnapshot(
@@ -571,80 +542,63 @@ export const useFirestoreSync = () => {
           handleListenerError('matches')
         );
 
-        unsubscribeSynergy = onSnapshot(
-          doc(db, 'metadata', 'synergy'),
-          s => {
-            if (s.exists()) setSynergy(s.data());
-          },
-          handleListenerError('metadata/synergy')
-        );
-        unsubscribeNegativeSynergy = onSnapshot(
-          doc(db, 'metadata', 'negative_synergy'),
-          s => {
-            if (s.exists()) setNegativeSynergy(s.data());
-          },
-          handleListenerError('metadata/negative_synergy')
-        );
-        unsubscribeRivalry = onSnapshot(
-          doc(db, 'metadata', 'rivalry'),
-          s => {
-            if (s.exists()) setRivalry(s.data());
-          },
-          handleListenerError('metadata/rivalry')
-        );
+        // 3) Coleções secundárias e administrativas: leitura pontual (getDoc/getDocs) em vez de 11 listeners permanentes
+        financialTimer = setTimeout(async () => {
+          if (isQuotaExceeded || isCancelled) return;
+          const monthKey = dateKey.slice(0, 7);
 
-        unsubscribeTournaments = onSnapshot(
-          collection(db, 'tournaments'),
-          snapshot => {
-            const list: Tournament[] = [];
-            snapshot.forEach(d => list.push({ ...d.data(), id: d.id } as Tournament));
-            setTournaments(list.sort((a, b) => b.date.localeCompare(a.date)));
-          },
-          handleListenerError('tournaments')
-        );
-
-        unsubscribeActiveTournament = onSnapshot(
-          doc(db, 'metadata', 'activeTournament'),
-          s => {
-            setActiveTournament(s.exists() ? (s.data() as Tournament) : null);
-          },
-          handleListenerError('metadata/activeTournament')
-        );
-
-        financialTimer = setTimeout(() => {
-          if (isQuotaExceeded) return;
-          unsubscribePayments = onSnapshot(
-            collection(db, 'payments'),
-            snapshot => {
+          const secondaryFetches: Promise<any>[] = [
+            getDoc(doc(db, 'metadata', 'synergy')).then(s => {
+              if (!isCancelled && s.exists()) setSynergy(s.data());
+            }),
+            getDoc(doc(db, 'metadata', 'negative_synergy')).then(s => {
+              if (!isCancelled && s.exists()) setNegativeSynergy(s.data());
+            }),
+            getDoc(doc(db, 'metadata', 'rivalry')).then(s => {
+              if (!isCancelled && s.exists()) setRivalry(s.data());
+            }),
+            getDocs(collection(db, 'tournaments')).then(snapshot => {
+              if (isCancelled) return;
+              const list: Tournament[] = [];
+              snapshot.forEach(d => list.push({ ...d.data(), id: d.id } as Tournament));
+              setTournaments(list.sort((a, b) => b.date.localeCompare(a.date)));
+            }),
+            getDoc(doc(db, 'metadata', 'activeTournament')).then(s => {
+              if (!isCancelled) setActiveTournament(s.exists() ? (s.data() as Tournament) : null);
+            }),
+            getDocs(collection(db, 'payments')).then(snapshot => {
+              if (isCancelled) return;
               const list: Payment[] = [];
               snapshot.forEach(d => list.push({ ...d.data(), id: d.id } as Payment));
               setPayments(list);
-            },
-            handleListenerError('payments')
-          );
-
-          unsubscribeExpenses = onSnapshot(
-            collection(db, 'expenses'),
-            snapshot => {
+            }),
+            getDocs(collection(db, 'expenses')).then(snapshot => {
+              if (isCancelled) return;
               const list: Expense[] = [];
               snapshot.forEach(d => list.push({ ...d.data(), id: d.id } as Expense));
               useStore.setState({ expenses: list });
-            },
-            handleListenerError('expenses')
-          );
+            })
+          ];
 
           if (userRole === 'ADMIN' && auth.currentUser) {
-            unsubscribePending = onSnapshot(
-              collection(db, 'pendingRequests'),
-              snapshot => {
+            secondaryFetches.push(
+              getDoc(doc(db, 'metadata', 'usage')).then(s => {
+                if (!isCancelled && s.exists()) setUsageStats(s.data() as UsageStats);
+              }),
+              getDoc(doc(db, 'metadata', `usage_${monthKey}`)).then(s => {
+                if (!isCancelled && s.exists()) useStore.getState().setMonthlyUsageStats(s.data() as UsageStats);
+              }),
+              getDocs(collection(db, 'pendingRequests')).then(snapshot => {
+                if (isCancelled) return;
                 const list: any[] = [];
                 snapshot.forEach(d => list.push({ id: d.id, ...d.data() }));
                 setPendingRequests(list);
-              },
-              handleListenerError('pendingRequests')
+              })
             );
           }
-        }, 800);
+
+          await Promise.allSettled(secondaryFetches);
+        }, 600);
       } catch (e) {}
 
       const syncTimer = setTimeout(() => {
@@ -653,6 +607,7 @@ export const useFirestoreSync = () => {
       }, 2000);
 
       return () => {
+        isCancelled = true;
         clearTimeout(syncTimer);
         if (financialTimer) clearTimeout(financialTimer);
         if (attendanceDebounceRef.current) clearTimeout(attendanceDebounceRef.current);
@@ -660,22 +615,11 @@ export const useFirestoreSync = () => {
         if (matchesDebounceRef.current) clearTimeout(matchesDebounceRef.current);
         if (unsubscribePlayers) unsubscribePlayers();
         if (unsubscribeAttendance) unsubscribeAttendance();
-        if (unsubscribePending) unsubscribePending();
         if (unsubscribeMatches) unsubscribeMatches();
         if (unsubscribeSystem) unsubscribeSystem();
         if (unsubscribeCurrentMatch) unsubscribeCurrentMatch();
         if (unsubscribeNextMatchPreview) unsubscribeNextMatchPreview();
-        if (unsubscribeUsage) unsubscribeUsage();
-        if (unsubscribeMonthlyUsage) unsubscribeMonthlyUsage();
         if (unsubscribePreConfirmations) unsubscribePreConfirmations();
-        if (unsubscribeIntentions) unsubscribeIntentions();
-        if (unsubscribeSynergy) unsubscribeSynergy();
-        if (unsubscribeNegativeSynergy) unsubscribeNegativeSynergy();
-        if (unsubscribeRivalry) unsubscribeRivalry();
-        if (unsubscribeTournaments) unsubscribeTournaments();
-        if (unsubscribeActiveTournament) unsubscribeActiveTournament();
-        if (unsubscribePayments) unsubscribePayments();
-        if (unsubscribeExpenses) unsubscribeExpenses();
       };
     }
 

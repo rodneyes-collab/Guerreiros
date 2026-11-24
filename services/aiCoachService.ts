@@ -1,6 +1,6 @@
-
 import type { Player, Match } from "../types.ts";
-import { getAI, recordServerAIError } from "./serverGemini.ts";
+import { recordServerAIError } from "./serverGemini.ts";
+import { routedGenerateContent } from "./aiRouter.ts";
 
 export interface CoachAnalysisData {
   player: Player;
@@ -12,8 +12,6 @@ export interface CoachAnalysisData {
  * AI Coach Service to provide personalized feedback to players.
  */
 export const runAICoachAnalysis = async (_apiKey: string, data: CoachAnalysisData): Promise<string> => {
-  const ai = getAI();
-
   const { player, allPlayers, recentMatches } = data;
 
   // Prepare context
@@ -68,11 +66,11 @@ export const runAICoachAnalysis = async (_apiKey: string, data: CoachAnalysisDat
     Mantenha a resposta curta, em português, e focada em melhorar o desempenho no próximo jogo do Guerreiros Club.`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-4-hydrogen",
-      contents: prompt,
+    const { text } = await routedGenerateContent({
+      task: "ai_coach",
+      contents: prompt
     });
-    return response.text || "O Treinador IA está sem fôlego no momento. Tente novamente mais tarde.";
+    return text || "O Treinador IA está sem fôlego no momento. Tente novamente mais tarde.";
   } catch (error: any) {
     console.error("[AI Coach] Analysis failed:", error);
     recordServerAIError(error);

@@ -15,12 +15,26 @@ import {
   Loader2,
   Award,
   Zap,
-  Shield
+  Shield,
+  Image as ImageIcon,
+  FileText,
+  Copy,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Maximize2,
+  X,
+  Search
 } from 'lucide-react';
 import {
   ResponsiveContainer,
   AreaChart,
   Area,
+  ComposedChart,
+  Bar,
+  Line,
+  Cell,
+  ReferenceLine,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -39,6 +53,17 @@ interface TimelineMatchItem {
   durationLabel: string;
   durationSeconds: number;
   teammates: string[];
+}
+
+interface DailyPointsPoint {
+  index: number;
+  label: string;
+  status: 'WIN' | 'LOSS';
+  scoreText: string;
+  matchDiff: number;
+  cumDiff: number;
+  groupAvgCumDiff: number;
+  groupMatchMargin: number;
 }
 
 interface IndividualData {
@@ -60,6 +85,12 @@ interface IndividualData {
   nightTotalPlayers: number;
   courtTimeLabel: string;
   timeline: TimelineMatchItem[];
+  pointsSeries?: DailyPointsPoint[];
+  groupAvgPointsDiff?: number;
+  groupAvgMatchMargin?: number;
+  distinctTeammatesCount?: number;
+  mostFrequentTeammate?: { name: string; games: number } | null;
+  aiHumorComment?: string;
 }
 
 interface SpotlightAthlete {
@@ -168,6 +199,124 @@ export const LiquidGlassCardsStudio: React.FC<LiquidGlassCardsStudioProps> = ({
   const [imageNonce, setImageNonce] = useState<number>(Date.now());
   const [sendingTarget, setSendingTarget] = useState<string | null>(null);
 
+  // Admin: Configuração do Card HD no Bot WhatsApp (VM Google nativa — sem links e sem Evolution API)
+  const [cardDeliveryMode, setCardDeliveryMode] = useState<'disabled' | 'vm_image_only'>('vm_image_only');
+  const [savingDeliveryConfig, setSavingDeliveryConfig] = useState<boolean>(false);
+  const [showBridgeSnippet, setShowBridgeSnippet] = useState<boolean>(false);
+  const [copiedBridgeSnippet, setCopiedBridgeSnippet] = useState<boolean>(false);
+  const [zoomModalOpen, setZoomModalOpen] = useState<boolean>(false);
+  const [accSearch, setAccSearch] = useState<string>('');
+
+  const vmBridgeSnippet = `// =========================================================================
+// HELPER UNIVERSAL PARA VM GOOGLE (Baileys ou whatsapp-web.js — SEM LINKS)
+// Suporta tanto /api/whatsapp/webhook quanto /api/whatsapp/cron-tasks!
+// =========================================================================
+async function resolvePngBuffer(item) {
+  if (item.mediaBase64) return Buffer.from(item.mediaBase64, 'base64');
+  if (item.mediaFetchUrl) {
+    const r = await fetch(item.mediaFetchUrl);
+    if (r.ok) return Buffer.from(await r.arrayBuffer());
+  }
+  return null;
+}
+
+// 1) Função única para enviar resposta (PNG nativo OU texto limpo)
+async function deliverItem(targetJid, item) {
+  const pngBuffer = item.mediaType === 'image' ? await resolvePngBuffer(item) : null;
+  if (pngBuffer) {
+    // --- SE SUA VM USA BAILEYS: ---
+    await sock.sendMessage(targetJid, {
+      image: pngBuffer,
+      mimetype: 'image/png',
+      caption: item.caption || ''
+    });
+    // --- SE SUA VM USA WHATSAPP-WEB.JS (troque o bloco acima por este): ---
+    // const media = new MessageMedia('image/png', pngBuffer.toString('base64'), item.fileName || 'guerreiros.png');
+    // await client.sendMessage(targetJid, media, { caption: item.caption || '' });
+    return;
+  }
+  if (item.text) {
+    await sock.sendMessage(targetJid, { text: item.text }); // ou client.sendMessage(targetJid, item.text)
+  }
+}
+
+// 2) No WEBHOOK (comandos gv ranking / gv dia / gv resumo):
+// Adicione supportsMedia: true no JSON enviado ao /api/whatsapp/webhook
+const whRes = await fetch(WEBHOOK_URL, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ ...payload, supportsMedia: true })
+}).then(r => r.json());
+if (whRes.success && whRes.chatId) await deliverItem(whRes.chatId, whRes);
+
+// 3) No CRON (quinta 22:00 grupo + 22:10 privado):
+// Adicione supportsMedia: true no JSON enviado ao /api/whatsapp/cron-tasks
+const cronRes = await fetch(CRON_URL, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ groupJid: GROUP_JID, supportsMedia: true })
+}).then(r => r.json());
+for (const msg of (cronRes.messages || [])) {
+  if (msg.delayMs > 0) await new Promise(r => setTimeout(r, msg.delayMs));
+  await deliverItem(msg.to, msg);
+}`;
+
+  const loadDeliveryConfig = useCallback(async () => {
+    try {
+      const resp = await fetch('/api/whatsapp/card-delivery-config');
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.mode === 'disabled' || data.mode === 'vm_image_only') {
+          setCardDeliveryMode(data.mode);
+        }
+      }
+    } catch {
+      // mantém estado local
+    }
+  }, []);
+
+  useEffect(() => {
+    loadDeliveryConfig();
+  }, [loadDeliveryConfig]);
+
+  const handleSaveDeliveryMode = async (nextMode: 'disabled' | 'vm_image_only') => {
+    setSavingDeliveryConfig(true);
+    try {
+      const resp = await fetch('/api/whatsapp/card-delivery-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: nextMode })
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.success) {
+        showNotification(data.error || 'Erro ao salvar configuração do bot.', 'error');
+        return;
+      }
+      setCardDeliveryMode(data.mode);
+      showNotification(
+        data.mode === 'vm_image_only'
+          ? 'Envio nativo de imagem PNG pela VM Google ativado (sem links).'
+          : 'Card HD desabilitado no WhatsApp — o bot enviará somente texto completo, sem links.',
+        'success'
+      );
+    } catch {
+      showNotification('Falha de rede ao salvar configuração do bot.', 'error');
+    } finally {
+      setSavingDeliveryConfig(false);
+    }
+  };
+
+  const handleCopyBridgeSnippet = async () => {
+    try {
+      await navigator.clipboard.writeText(vmBridgeSnippet);
+      setCopiedBridgeSnippet(true);
+      showNotification('Trecho da VM Google copiado para a área de transferência!', 'success');
+      setTimeout(() => setCopiedBridgeSnippet(false), 2500);
+    } catch {
+      showNotification('Não foi possível copiar automaticamente. Selecione e copie o código.', 'warning');
+    }
+  };
+
   useEffect(() => {
     if (!selectedPlayerId && sortedPlayers[0]?.id) {
       setSelectedPlayerId(sortedPlayers[0].id);
@@ -265,19 +414,15 @@ export const LiquidGlassCardsStudio: React.FC<LiquidGlassCardsStudioProps> = ({
       });
       const data = await resp.json();
       if (!resp.ok || !data.success) {
-        showNotification(data.error || 'Erro ao disparar o card no WhatsApp.', 'error');
+        showNotification(data.error || 'Envio de card pelo WhatsApp está desabilitado.', 'warning');
         return;
       }
-      if (data.deliveredDirectly) {
-        showNotification(`Card PNG enviado no WhatsApp para ${data.recipientLabel}!`, 'success');
-      } else {
-        showNotification(
-          `Card PNG enfileirado para entrega automática para ${data.recipientLabel}.`,
-          'info'
-        );
-      }
+      showNotification(
+        `Imagem PNG enfileirada para a VM Google enviar para ${data.recipientLabel} (sem links).`,
+        'success'
+      );
     } catch {
-      showNotification('Falha de rede ao enviar o card no WhatsApp.', 'error');
+      showNotification('Falha de rede ao enviar o card.', 'error');
     } finally {
       setSendingTarget(null);
     }
@@ -614,7 +759,7 @@ export const LiquidGlassCardsStudio: React.FC<LiquidGlassCardsStudioProps> = ({
               Baixar PNG
             </button>
 
-            {cardTab === 'individual' && (
+            {cardDeliveryMode === 'vm_image_only' && cardTab === 'individual' && (
               <button
                 type="button"
                 disabled={sendingTarget !== null}
@@ -626,11 +771,11 @@ export const LiquidGlassCardsStudio: React.FC<LiquidGlassCardsStudioProps> = ({
                 ) : (
                   <Send className="h-4 w-4" />
                 )}
-                Enviar no Privado
+                Enviar PNG via VM
               </button>
             )}
 
-            {userRole === 'ADMIN' && (
+            {cardDeliveryMode === 'vm_image_only' && userRole === 'ADMIN' && (
               <button
                 type="button"
                 disabled={sendingTarget !== null}
@@ -642,7 +787,7 @@ export const LiquidGlassCardsStudio: React.FC<LiquidGlassCardsStudioProps> = ({
                 ) : (
                   <Send className="h-4 w-4" />
                 )}
-                Enviar no Grupo
+                Enviar PNG no Grupo
               </button>
             )}
           </div>
@@ -650,86 +795,262 @@ export const LiquidGlassCardsStudio: React.FC<LiquidGlassCardsStudioProps> = ({
 
         {/* Grade: Preview PNG Real à esquerda + Painel Contextual Interativo à direita */}
         <div className="mt-5 grid grid-cols-1 gap-6 lg:grid-cols-12 items-start">
-          {/* Preview PNG oficial 1080x1440 */}
+          {/* Preview PNG oficial responsivo (adapta-se automaticamente a todos os 28 sócios) */}
           <div className="lg:col-span-6 flex flex-col items-center">
-            <div className="relative w-full max-w-[440px] aspect-[3/4] overflow-hidden rounded-3xl border border-white/15 bg-[#050912] shadow-[0_20px_60px_rgba(0,0,0,0.65)]">
+            <div className="group relative w-full max-w-[540px] min-h-[360px] overflow-hidden rounded-3xl border border-white/15 bg-[#050912] shadow-[0_20px_60px_rgba(0,0,0,0.65)]">
               {imageLoading && (
                 <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-[#060A12]/80 backdrop-blur-sm">
                   <Loader2 className="h-8 w-8 animate-spin text-cyan-400" />
                   <span className="text-xs font-bold text-slate-300">
-                    Renderizando card Liquid Glass PNG...
+                    Renderizando card Liquid Glass HD...
                   </span>
                 </div>
               )}
-              <img
-                src={cardImageUrl}
-                alt={`Card Liquid Glass ${cardTab}`}
-                onLoad={() => setImageLoading(false)}
-                onError={() => setImageLoading(false)}
-                className="h-full w-full object-contain"
-              />
+              <button
+                type="button"
+                onClick={() => setZoomModalOpen(true)}
+                className="block w-full cursor-zoom-in focus:outline-none"
+                title="Clique para ampliar o Card Visual HD em tela cheia"
+              >
+                <img
+                  src={cardImageUrl}
+                  alt={`Card Liquid Glass ${cardTab}`}
+                  onLoad={() => setImageLoading(false)}
+                  onError={() => setImageLoading(false)}
+                  className="block w-full h-auto"
+                />
+              </button>
+              <button
+                type="button"
+                onClick={() => setZoomModalOpen(true)}
+                className="absolute right-3 top-3 inline-flex items-center gap-1.5 rounded-xl border border-white/20 bg-slate-950/80 px-2.5 py-1.5 text-[11px] font-black text-white backdrop-blur-md opacity-90 hover:opacity-100 hover:bg-slate-900 transition"
+              >
+                <Maximize2 className="h-3.5 w-3.5 text-cyan-300" />
+                Ampliar HD
+              </button>
             </div>
-            <div className="mt-2.5 flex items-center gap-2 text-[11px] font-semibold text-slate-400">
-              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
-              Imagem PNG idêntica à enviada pelo Guerreirinho no WhatsApp (1080×1440px)
+            <div className="mt-2.5 flex items-center gap-2 text-[11px] font-semibold text-slate-400 text-center">
+              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+              <span>
+                {cardTab === 'accumulated'
+                  ? `Card HD completo com todos os ${analytics?.accumulated?.totalActivePlayers || 28} sócios ativos (grade responsiva em 2 colunas)`
+                  : cardTab === 'daily'
+                  ? `Card HD completo da noite (${analytics?.daily?.totalAthletes || 0} atletas participantes)`
+                  : 'Card Individual HD com linha do tempo horizontal (disponível para visualizar e baixar em PNG)'}
+              </span>
             </div>
           </div>
 
           {/* Painel Interativo ao lado do Preview */}
           <div className="lg:col-span-6 space-y-4">
             {cardTab === 'individual' && ind && (
-              <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-4 sm:p-5">
-                <div className="flex items-center justify-between mb-3">
-                  <h4 className="text-sm font-black uppercase tracking-wider text-cyan-300">
-                    Linha do Tempo Horizontal • {ind.firstName}
-                  </h4>
-                  <span className="text-xs font-mono font-bold text-slate-400">
-                    {ind.gamesPlayed}/{ind.totalMatchesNight} jogos
-                  </span>
-                </div>
-                <div className="space-y-2.5">
-                  {ind.timeline.map((m) => {
-                    const isWin = m.status === 'WIN';
-                    const isLoss = m.status === 'LOSS';
-                    const pctWidth = isWin ? 92 : isLoss ? 72 : 42;
-                    return (
-                      <div
-                        key={m.index}
-                        className="rounded-2xl border border-white/10 bg-slate-950/60 p-2.5"
-                      >
-                        <div className="flex items-center gap-3">
-                          <span className="w-9 font-mono text-xs font-black text-slate-300">
-                            {m.label}
-                          </span>
-                          <div className="relative h-7 flex-1 overflow-hidden rounded-full bg-slate-900/90 border border-white/5">
-                            <div
-                              style={{ width: `${pctWidth}%` }}
-                              className={`flex h-full items-center justify-between rounded-full px-3 text-[11px] font-black ${
-                                isWin
-                                  ? 'bg-gradient-to-r from-emerald-600 via-emerald-400 to-cyan-300 text-slate-950'
-                                  : isLoss
-                                  ? 'bg-gradient-to-r from-rose-600 via-rose-500 to-pink-400 text-slate-950'
-                                  : 'bg-slate-700/70 text-slate-200'
+              <div className="space-y-4">
+                {/* 1) LINHA DO TEMPO HORIZONTAL (SEPARADA — APENAS RESULTADO, PLACAR, SALDO E DURAÇÃO) */}
+                <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-4 sm:p-5">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-sm font-black uppercase tracking-wider text-cyan-300">
+                      Linha do Tempo Horizontal • {ind.firstName}
+                    </h4>
+                    <span className="text-xs font-mono font-bold text-slate-400">
+                      {ind.gamesPlayed}/{ind.totalMatchesNight} jogos
+                    </span>
+                  </div>
+                  <div className="space-y-2">
+                    {ind.timeline.map((m) => {
+                      const isWin = m.status === 'WIN';
+                      const isLoss = m.status === 'LOSS';
+                      const pctWidth = isWin ? 92 : isLoss ? 72 : 42;
+                      return (
+                        <div
+                          key={m.index}
+                          className="rounded-2xl border border-white/10 bg-slate-950/60 px-2.5 py-2"
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <span className="w-8 font-mono text-xs font-black text-slate-300">
+                              {m.label}
+                            </span>
+                            <div className="relative h-7 flex-1 overflow-hidden rounded-full bg-slate-900/90 border border-white/5">
+                              <div
+                                style={{ width: `${pctWidth}%` }}
+                                className={`flex h-full items-center justify-between rounded-full px-3 text-[11px] font-black ${
+                                  isWin
+                                    ? 'bg-gradient-to-r from-emerald-600 via-emerald-400 to-cyan-300 text-slate-950'
+                                    : isLoss
+                                    ? 'bg-gradient-to-r from-rose-600 via-rose-500 to-pink-400 text-slate-950'
+                                    : 'bg-slate-700/70 text-slate-200'
+                                }`}
+                              >
+                                <span>{isWin ? 'VITÓRIA' : isLoss ? 'DERROTA' : 'RODÍZIO'}</span>
+                                <span className="font-mono">{m.scoreText}</span>
+                              </div>
+                            </div>
+                            <span
+                              className={`w-10 text-right font-mono text-[11px] font-black ${
+                                isWin ? 'text-emerald-300' : isLoss ? 'text-rose-300' : 'text-slate-500'
                               }`}
                             >
-                              <span>{isWin ? 'VITÓRIA' : isLoss ? 'DERROTA' : 'RODÍZIO'}</span>
-                              <span className="font-mono">{m.scoreText}</span>
-                            </div>
+                              {isWin ? `+${m.diff}` : isLoss ? `${m.diff}` : 'FORA'}
+                            </span>
+                            <span className="w-14 text-right font-mono text-[11px] font-bold text-sky-300">
+                              {m.durationLabel}
+                            </span>
                           </div>
-                          <span className="w-16 text-right font-mono text-[11px] font-bold text-sky-300">
-                            {m.durationLabel}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* 2) GRÁFICO LIQUID GLASS — VARIAÇÃO DOS PONTOS DO DIA (SALDO DAS PARTIDAS × MÉDIA DO GRUPO) */}
+                {ind.pointsSeries && ind.pointsSeries.length > 0 && (
+                  <div className="relative overflow-hidden rounded-3xl border border-cyan-400/20 bg-slate-900/60 p-4 sm:p-5 backdrop-blur-xl">
+                    <div className="pointer-events-none absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/60 to-transparent" />
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                      <div>
+                        <span className="text-[10px] font-black uppercase tracking-widest text-cyan-300">
+                          Variação dos Pontos do Dia
+                        </span>
+                        <h4 className="text-sm font-black text-white">
+                          Saldo das Partidas × Média do Grupo
+                        </h4>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono font-bold">
+                        <span className="rounded-lg border border-cyan-400/30 bg-cyan-500/10 px-2 py-0.5 text-cyan-200">
+                          Saldo: {ind.pointsDiff >= 0 ? `+${ind.pointsDiff}` : ind.pointsDiff}
+                        </span>
+                        <span className="rounded-lg border border-amber-400/30 bg-amber-500/10 px-2 py-0.5 text-amber-300">
+                          Média Grupo: {(ind.groupAvgPointsDiff ?? 0) > 0 ? `+${(ind.groupAvgPointsDiff ?? 0).toFixed(1)}` : (ind.groupAvgPointsDiff ?? 0).toFixed(1)} • ±{(ind.groupAvgMatchMargin ?? 0).toFixed(1)}/j
+                        </span>
+                      </div>
+                    </div>
+                    <div className="h-44 w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <ComposedChart data={ind.pointsSeries} margin={{ top: 8, right: 12, left: -18, bottom: 0 }}>
+                          <defs>
+                            <linearGradient id="dailyPtsAreaV3" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor="#22D3EE" stopOpacity={0.38} />
+                              <stop offset="55%" stopColor="#10B981" stopOpacity={0.14} />
+                              <stop offset="100%" stopColor="#060A12" stopOpacity={0.02} />
+                            </linearGradient>
+                            <linearGradient id="dailyPtsStrokeV3" x1="0" y1="0" x2="1" y2="0">
+                              <stop offset="0%" stopColor="#38BDF8" />
+                              <stop offset="55%" stopColor="#34D399" />
+                              <stop offset="100%" stopColor="#FBBF24" />
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.12)" vertical={false} />
+                          <ReferenceLine y={0} stroke="rgba(148,163,184,0.3)" />
+                          <XAxis
+                            dataKey="label"
+                            stroke="#64748B"
+                            tick={{ fill: '#94A3B8', fontSize: 11, fontWeight: 700 }}
+                            axisLine={false}
+                            tickLine={false}
+                          />
+                          <YAxis
+                            stroke="#64748B"
+                            tick={{ fill: '#94A3B8', fontSize: 11, fontWeight: 700 }}
+                            axisLine={false}
+                            tickLine={false}
+                          />
+                          <Tooltip
+                            contentStyle={{
+                              backgroundColor: 'rgba(10, 18, 34, 0.94)',
+                              border: '1px solid rgba(56, 189, 248, 0.35)',
+                              borderRadius: '14px',
+                              color: '#F8FAFC',
+                              fontSize: '12px'
+                            }}
+                            formatter={(val: any, name: any) => {
+                              const n = Number(val || 0);
+                              const formatted = n > 0 ? `+${n}` : `${n}`;
+                              if (name === 'cumDiff') return [`${formatted} pts`, 'Saldo Acumulado'];
+                              if (name === 'matchDiff') return [`${formatted} pts`, 'Saldo da Partida'];
+                              if (name === 'groupAvgCumDiff') return [`${formatted} pts`, 'Média do Grupo'];
+                              return [formatted, name];
+                            }}
+                          />
+                          <Bar dataKey="matchDiff" barSize={18} radius={[6, 6, 0, 0]}>
+                            {ind.pointsSeries.map((entry, idx) => (
+                              <Cell
+                                key={`cell-${idx}`}
+                                fill={entry.matchDiff >= 0 ? 'rgba(16, 185, 129, 0.32)' : 'rgba(244, 63, 94, 0.32)'}
+                                stroke={entry.matchDiff >= 0 ? '#34D399' : '#FB7185'}
+                                strokeWidth={1}
+                              />
+                            ))}
+                          </Bar>
+                          <Area
+                            type="monotone"
+                            dataKey="cumDiff"
+                            stroke="url(#dailyPtsStrokeV3)"
+                            strokeWidth={3}
+                            fill="url(#dailyPtsAreaV3)"
+                            activeDot={{ r: 5, fill: '#22D3EE', stroke: '#060A12', strokeWidth: 2 }}
+                          />
+                          <Line
+                            type="monotone"
+                            dataKey="groupAvgCumDiff"
+                            stroke="#FBBF24"
+                            strokeWidth={2}
+                            strokeDasharray="6 4"
+                            dot={{ r: 3, fill: '#FBBF24', stroke: '#060A12', strokeWidth: 1 }}
+                          />
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                )}
+
+                {/* 3) RESUMO DOS TIMES (SEPARADO — APENAS PARCEIROS EM QUADRA, SEM REPETIR PLACAR) */}
+                <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-4 sm:p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                    <h4 className="text-sm font-black uppercase tracking-wider text-emerald-300">
+                      Resumo dos Times • Parceiros em Quadra
+                    </h4>
+                    <span className="text-[11px] font-mono font-bold text-slate-400">
+                      {ind.distinctTeammatesCount ?? 0} parceiros distintos
+                      {ind.mostFrequentTeammate && ind.mostFrequentTeammate.games >= 2
+                        ? ` • +Freq.: ${ind.mostFrequentTeammate.name} (${ind.mostFrequentTeammate.games}J)`
+                        : ''}
+                    </span>
+                  </div>
+                  <div className="space-y-2">
+                    {ind.timeline
+                      .filter((m) => m.status !== 'OUT')
+                      .map((m) => (
+                        <div
+                          key={`team-${m.index}`}
+                          className="flex items-center gap-2.5 rounded-2xl border border-white/10 bg-slate-950/60 px-3 py-2"
+                        >
+                          <span className="rounded-full border border-cyan-400/35 bg-cyan-500/15 px-2.5 py-0.5 font-mono text-[11px] font-black text-cyan-200 shrink-0">
+                            {m.label}
+                          </span>
+                          <span className="text-xs font-semibold text-slate-200 leading-snug">
+                            {m.teammates.length > 0 ? m.teammates.join(' • ') : 'Sem parceiros registrados'}
                           </span>
                         </div>
-                        {m.teammates.length > 0 && (
-                          <p className="mt-1.5 pl-12 text-[11px] text-slate-400">
-                            <span className="font-bold text-slate-300">Time:</span>{' '}
-                            {m.teammates.join(', ')}
-                          </p>
-                        )}
-                      </div>
-                    );
-                  })}
+                      ))}
+                  </div>
                 </div>
+
+                {/* 4) RESENHA DO GUERREIRINHO • ANÁLISE CURTA E BEM-HUMORADA (IA) */}
+                {ind.aiHumorComment && (
+                  <div className="rounded-3xl border border-violet-400/30 bg-gradient-to-br from-violet-500/10 via-slate-950/70 to-cyan-500/10 p-4 sm:p-5">
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                      <h4 className="flex items-center gap-2 text-xs sm:text-sm font-black uppercase tracking-wider text-violet-200">
+                        <Sparkles className="h-4 w-4 text-violet-300" />
+                        Resenha do Guerreirinho • Análise IA
+                      </h4>
+                      <span className="rounded-full border border-cyan-400/30 bg-cyan-500/10 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-cyan-200">
+                        Resenha da Noite
+                      </span>
+                    </div>
+                    <p className="text-sm font-medium leading-relaxed text-slate-100">
+                      {ind.aiHumorComment}
+                    </p>
+                  </div>
+                )}
               </div>
             )}
 
@@ -782,72 +1103,230 @@ export const LiquidGlassCardsStudio: React.FC<LiquidGlassCardsStudioProps> = ({
 
             {cardTab === 'accumulated' && analytics?.accumulated && (
               <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <h4 className="text-sm font-black uppercase tracking-wider text-amber-300">
-                    Movimentação no Ranking Acumulado
-                  </h4>
-                  <span className="text-[11px] text-slate-400 font-semibold">
-                    vs última quinta ({analytics.accumulated.referenceDateLabel})
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                  <div>
+                    <h4 className="text-sm font-black uppercase tracking-wider text-amber-300">
+                      Ranking Acumulado Completo ({analytics.accumulated.topRows.length} Sócios)
+                    </h4>
+                    <span className="text-[11px] text-slate-400 font-semibold">
+                      Movimentação vs última quinta ({analytics.accumulated.referenceDateLabel})
+                    </span>
+                  </div>
+                  <div className="relative w-full sm:w-44">
+                    <Search className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                    <input
+                      type="text"
+                      value={accSearch}
+                      onChange={(e) => setAccSearch(e.target.value)}
+                      placeholder="Filtrar atleta..."
+                      className="w-full rounded-xl border border-white/15 bg-slate-950/80 pl-8 pr-2.5 py-1.5 text-xs text-white placeholder:text-slate-500 focus:border-amber-400/60 focus:outline-none"
+                    />
+                  </div>
+                </div>
+                <div className="max-h-[520px] overflow-y-auto pr-1 space-y-2">
+                  {analytics.accumulated.topRows
+                    .filter((row) =>
+                      !accSearch.trim()
+                        ? true
+                        : row.firstName.toLowerCase().includes(accSearch.trim().toLowerCase())
+                    )
+                    .map((row) => {
+                      const isUp = row.rankDelta > 0;
+                      const isDown = row.rankDelta < 0;
+                      return (
+                        <div
+                          key={row.id}
+                          className="flex items-center justify-between rounded-2xl border border-white/10 bg-slate-950/60 px-3 py-2"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <span className="w-6 font-mono text-xs font-black text-slate-400 shrink-0">
+                              {String(row.rank).padStart(2, '0')}
+                            </span>
+                            <span
+                              className={`inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 font-mono text-[11px] font-black shrink-0 ${
+                                isUp
+                                  ? 'bg-emerald-500/15 text-emerald-300'
+                                  : isDown
+                                  ? 'bg-rose-500/15 text-rose-300'
+                                  : 'bg-slate-700/40 text-slate-400'
+                              }`}
+                            >
+                              {isUp ? (
+                                <TrendingUp className="h-3 w-3" />
+                              ) : isDown ? (
+                                <TrendingDown className="h-3 w-3" />
+                              ) : (
+                                <Minus className="h-3 w-3" />
+                              )}
+                              {isUp ? `+${row.rankDelta}` : row.rankDelta}
+                            </span>
+                            <span className="text-sm font-black text-white truncate">{row.firstName}</span>
+                          </div>
+                          <div className="flex items-center gap-3 font-mono text-xs shrink-0">
+                            <span className="font-black text-amber-300">{row.elo} ELO</span>
+                            <span className="text-cyan-300 font-bold">{row.winRate}%</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            )}
+
+            {userRole === 'ADMIN' && (
+              <div className="rounded-3xl border border-amber-400/30 bg-slate-950/75 p-4 sm:p-5 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="text-[11px] font-black uppercase tracking-widest text-amber-300">
+                      Configuração Admin • Bot Guerreirinho (VM Google)
+                    </div>
+                    <h4 className="text-sm sm:text-base font-black text-white">
+                      Cards HD no WhatsApp
+                    </h4>
+                  </div>
+                  <span
+                    className={`rounded-xl px-2.5 py-1 text-[11px] font-black uppercase tracking-wider border ${
+                      cardDeliveryMode === 'vm_image_only'
+                        ? 'border-emerald-400/40 bg-emerald-500/15 text-emerald-300'
+                        : 'border-slate-500/40 bg-slate-800/70 text-slate-300'
+                    }`}
+                  >
+                    {cardDeliveryMode === 'vm_image_only' ? 'Imagem via VM Google' : 'Desabilitado (Só Texto)'}
                   </span>
                 </div>
-                <div className="space-y-2">
-                  {analytics.accumulated.topRows.map((row) => {
-                    const isUp = row.rankDelta > 0;
-                    const isDown = row.rankDelta < 0;
-                    return (
-                      <div
-                        key={row.id}
-                        className="flex items-center justify-between rounded-2xl border border-white/10 bg-slate-950/60 px-3 py-2"
-                      >
-                        <div className="flex items-center gap-2.5">
-                          <span className="w-6 font-mono text-xs font-black text-slate-400">
-                            {String(row.rank).padStart(2, '0')}
-                          </span>
-                          <span
-                            className={`inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 font-mono text-[11px] font-black ${
-                              isUp
-                                ? 'bg-emerald-500/15 text-emerald-300'
-                                : isDown
-                                ? 'bg-rose-500/15 text-rose-300'
-                                : 'bg-slate-700/40 text-slate-400'
-                            }`}
-                          >
-                            {isUp ? (
-                              <TrendingUp className="h-3 w-3" />
-                            ) : isDown ? (
-                              <TrendingDown className="h-3 w-3" />
-                            ) : (
-                              <Minus className="h-3 w-3" />
-                            )}
-                            {isUp ? `+${row.rankDelta}` : row.rankDelta}
-                          </span>
-                          <span className="text-sm font-black text-white">{row.firstName}</span>
-                        </div>
-                        <div className="flex items-center gap-3 font-mono text-xs">
-                          <span className="font-black text-amber-300">{row.elo} ELO</span>
-                          <span className="text-cyan-300 font-bold">{row.winRate}%</span>
-                        </div>
+
+                {/* Seletor de Modo (Sem links externos e sem Evolution API) */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    disabled={savingDeliveryConfig}
+                    onClick={() => handleSaveDeliveryMode('disabled')}
+                    className={`flex items-start gap-3 rounded-2xl border p-3 text-left transition ${
+                      cardDeliveryMode === 'disabled'
+                        ? 'border-cyan-400/60 bg-cyan-500/15 text-white shadow-[0_0_20px_rgba(34,211,238,0.18)]'
+                        : 'border-white/10 bg-white/[0.03] text-slate-300 hover:bg-white/[0.07]'
+                    }`}
+                  >
+                    <FileText className="h-5 w-5 text-cyan-300 shrink-0 mt-0.5" />
+                    <div>
+                      <div className="text-xs font-black">Desabilitado no WhatsApp (Padrão)</div>
+                      <p className="mt-0.5 text-[11px] text-slate-400 leading-snug">
+                        O bot envia apenas os relatórios completos em texto, sem nenhum link. Use &quot;Baixar PNG&quot; aqui no app quando quiser compartilhar a imagem manualmente.
+                      </p>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={savingDeliveryConfig}
+                    onClick={() => handleSaveDeliveryMode('vm_image_only')}
+                    className={`flex items-start gap-3 rounded-2xl border p-3 text-left transition ${
+                      cardDeliveryMode === 'vm_image_only'
+                        ? 'border-emerald-400/60 bg-emerald-500/15 text-white shadow-[0_0_20px_rgba(16,185,129,0.2)]'
+                        : 'border-white/10 bg-white/[0.03] text-slate-300 hover:bg-white/[0.07]'
+                    }`}
+                  >
+                    <ImageIcon className="h-5 w-5 text-emerald-300 shrink-0 mt-0.5" />
+                    <div>
+                      <div className="text-xs font-black">Imagem Nativa via VM Google</div>
+                      <p className="mt-0.5 text-[11px] text-slate-400 leading-snug">
+                        Ative apenas se o script da VM Google já suportar enviar <code className="text-emerald-300">mediaBase64</code> como foto diretamente no WhatsApp (sem links).
+                      </p>
+                    </div>
+                  </button>
+                </div>
+
+                {/* Instruções opcionais para habilitar envio nativo de foto na VM Google */}
+                <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-[11px] text-slate-400">
+                      Envio de links externos foi desabilitado permanentemente para os sócios.
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowBridgeSnippet((v) => !v)}
+                      className="inline-flex items-center gap-1 rounded-xl border border-white/15 bg-white/5 px-3 py-1.5 text-[11px] font-bold text-slate-300 hover:bg-white/10 transition"
+                    >
+                      {showBridgeSnippet ? (
+                        <ChevronUp className="h-3.5 w-3.5" />
+                      ) : (
+                        <ChevronDown className="h-3.5 w-3.5" />
+                      )}
+                      Código para VM Google (Opcional)
+                    </button>
+                  </div>
+
+                  {showBridgeSnippet && (
+                    <div className="space-y-2 pt-1">
+                      <div className="flex items-center justify-between text-[11px] text-slate-400">
+                        <span>
+                          Para a VM Google enviar o PNG direto na conversa (Baileys ou whatsapp-web.js):
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleCopyBridgeSnippet}
+                          className="inline-flex items-center gap-1 rounded-lg border border-cyan-400/35 bg-cyan-500/15 px-2.5 py-1 text-[11px] font-black text-cyan-200 hover:bg-cyan-500/25 shrink-0 ml-2"
+                        >
+                          {copiedBridgeSnippet ? (
+                            <Check className="h-3.5 w-3.5 text-emerald-300" />
+                          ) : (
+                            <Copy className="h-3.5 w-3.5" />
+                          )}
+                          {copiedBridgeSnippet ? 'Copiado' : 'Copiar'}
+                        </button>
                       </div>
-                    );
-                  })}
+                      <pre className="overflow-x-auto rounded-xl border border-white/10 bg-[#050811] p-3 text-[11px] font-mono text-cyan-200 leading-relaxed">
+                        {vmBridgeSnippet}
+                      </pre>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
 
             <div className="rounded-3xl border border-cyan-400/20 bg-cyan-500/[0.06] p-4 text-xs text-slate-300 space-y-1.5">
               <div className="font-black uppercase tracking-wider text-cyan-300">
-                Disparo Automático via Guerreirinho
+                Entrega Nativa em PNG na VM Google (Zero Links)
               </div>
               <p>
-                • <strong>Quinta às 22:10 (Privado):</strong> cada sócio que jogou recebe automaticamente o seu Card Individual Liquid Glass com a linha do tempo horizontal.
+                • <strong>Quinta às 22:00 (Grupo):</strong> envia automaticamente os arquivos PNG do <strong>Ranking do Dia</strong> e do <strong>Ranking Acumulado (28 sócios)</strong> como fotos diretas no grupo.
               </p>
               <p>
-                • <strong>Pós-jogo no Grupo &amp; Comandos:</strong> <code className="text-cyan-200">gv dia</code>, <code className="text-cyan-200">gv resumo</code> e <code className="text-cyan-200">gv ranking</code> já enviam o card PNG oficial com legenda.
+                • <strong>Quinta às 22:10 (Privado):</strong> envia automaticamente o arquivo PNG do <strong>Resumo Individual</strong> no privado de cada sócio que jogou (espaçado a cada 3,5s).
+              </p>
+              <p>
+                • <strong>Trava de Segurança:</strong> enquanto o script da VM não enviar <code className="text-emerald-300">supportsMedia: true</code>, o bot continua entregando o relatório completo em texto limpo (nunca envia links).
               </p>
             </div>
           </div>
         </div>
       </div>
+      {/* Lightbox Fullscreen para inspecionar o Card HD em resolução total */}
+      {zoomModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-3 sm:p-6 backdrop-blur-md"
+          onClick={() => setZoomModalOpen(false)}
+        >
+          <div
+            className="relative max-h-[92vh] max-w-[96vw] overflow-auto rounded-3xl border border-white/20 bg-[#050912] p-2 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setZoomModalOpen(false)}
+              className="sticky top-2 float-right z-10 inline-flex items-center gap-1 rounded-xl border border-white/20 bg-slate-950/90 px-3 py-1.5 text-xs font-black text-white hover:bg-slate-800 transition"
+            >
+              <X className="h-4 w-4 text-rose-300" />
+              Fechar
+            </button>
+            <img
+              src={cardImageUrl}
+              alt="Card Visual HD Ampliado"
+              className="block max-w-full sm:max-w-[760px] h-auto rounded-2xl"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

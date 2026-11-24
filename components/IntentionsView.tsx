@@ -976,14 +976,15 @@ export const IntentionsView: React.FC<IntentionsViewProps> = ({
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {waitlistPlayers.map((p, i) => (
-              <div key={p.id} className="bg-amber-500/5 p-3.5 rounded-2xl border border-amber-500/20 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-7 h-7 rounded-full bg-brand-secondary flex items-center justify-center text-amber-500 font-black text-xs border border-amber-500/30">
+              <div key={p.id} className="bg-amber-500/5 p-3.5 rounded-2xl border border-amber-500/20 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-7 h-7 rounded-full bg-brand-secondary flex items-center justify-center text-amber-500 font-black text-xs border border-amber-500/30 shrink-0">
                     {i + 1}
                   </div>
-                  <span className="text-white text-xs font-black uppercase">{p.name}</span>
+                  <PlayerAvatar player={p} size="xs" />
+                  <span className="text-white text-xs font-black uppercase truncate">{p.name}</span>
                 </div>
-                <span className="text-[9px] font-bold text-amber-500/70 uppercase">Em Espera</span>
+                <span className="text-[9px] font-bold text-amber-500/70 uppercase shrink-0">Em Espera</span>
               </div>
             ))}
           </div>

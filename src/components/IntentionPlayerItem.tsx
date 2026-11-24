@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { UserCheck, UserX, Clock, Trash2, Smartphone, CheckCheck, BellOff } from 'lucide-react';
+import { UserCheck, UserX, Clock, Trash2 } from 'lucide-react';
 import { Player } from '../../types';
 import { PlayerAvatar } from './PlayerAvatar';
 import { capitalizeName } from '../../utils/helpers';
@@ -146,8 +146,6 @@ export const UndecidedPlayerItem = React.memo<UndecidedPlayerItemProps>(({
   isOtherProcessing,
   onConfirm,
   onDecline,
-  reminderSent = false,
-  hasPushToken = false,
   isAlreadyConfirmed = false
 }) => {
   return (
@@ -169,8 +167,9 @@ export const UndecidedPlayerItem = React.memo<UndecidedPlayerItemProps>(({
       } ${isOtherProcessing || isAlreadyConfirmed ? 'opacity-40 grayscale pointer-events-none' : ''}`}
       title={canConfirm && !isAlreadyConfirmed ? 'Clique para confirmar presença' : isAlreadyConfirmed ? 'Já confirmado' : undefined}
     >
-      <div className="flex items-center gap-2 min-w-0 flex-1">
+      <div className="flex items-center gap-2.5 min-w-0 flex-1">
         <span className="text-slate-500 font-black text-xs w-5 shrink-0">{index + 1}.</span>
+        <PlayerAvatar player={player} size="sm" />
         <div className="min-w-0 flex-1 flex flex-col justify-center">
           <span className="text-white text-[13px] font-black uppercase tracking-tighter leading-tight relative py-0.5 flex items-center gap-1.5 min-w-0 flex-wrap">
             <span className="break-words font-black">{capitalizeName(player.name)}</span>
@@ -181,26 +180,6 @@ export const UndecidedPlayerItem = React.memo<UndecidedPlayerItemProps>(({
             )}
             <span className="absolute -bottom-0.5 left-0 h-0.5 bg-brand-primary transition-all duration-300 w-0 group-hover/player:w-full group-active/player:w-full" />
           </span>
-
-          {/* Status do Push Notification para o Sócio */}
-          <div className="flex items-center gap-1.5 mt-1">
-            {reminderSent ? (
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
-                <CheckCheck className="w-2.5 h-2.5 shrink-0 text-emerald-400" />
-                Push Enviado
-              </span>
-            ) : hasPushToken ? (
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-brand-primary/10 text-brand-primary border border-brand-primary/30">
-                <Smartphone className="w-2.5 h-2.5 shrink-0 text-brand-primary" />
-                Push Ativo (Na Fila)
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-semibold uppercase tracking-wider bg-zinc-800/80 text-zinc-400 border border-white/5">
-                <BellOff className="w-2.5 h-2.5 shrink-0 text-zinc-500" />
-                Sem Push Ativo
-              </span>
-            )}
-          </div>
         </div>
       </div>
       {canConfirm && (
@@ -277,8 +256,9 @@ export const NotGoingPlayerItem = React.memo<NotGoingPlayerItemProps>(({
       } ${isOtherProcessing ? 'opacity-40 grayscale pointer-events-none' : ''}`}
       title={canReset ? 'Clique para voltar para a lista de indecisos' : undefined}
     >
-      <div className="flex items-center gap-2 opacity-50 min-w-0 flex-1">
-        <span className="text-red-500/50 font-black text-xs w-5 shrink-0">{index + 1}.</span>
+      <div className="flex items-center gap-2.5 opacity-60 min-w-0 flex-1">
+        <span className="text-red-500/60 font-black text-xs w-5 shrink-0">{index + 1}.</span>
+        <PlayerAvatar player={player} size="sm" className="grayscale" />
         <span className="text-white text-[13px] font-black uppercase tracking-tighter leading-tight relative py-0.5 flex items-center gap-1.5 min-w-0 flex-wrap">
           <span className="break-words font-black">{capitalizeName(player.name)}</span>
           {player.status === 'guest' && (

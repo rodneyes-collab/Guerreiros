@@ -1,6 +1,12 @@
-import { GoogleGenAI, ThinkingLevel } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 import type { GenerationResult, Player, Match } from "../types.ts";
 import { calculateCompositePerformanceRating } from "../utils/teamLogic.ts";
+import {
+  createRouterAI,
+  getAIRouterPolicy,
+  routedGenerateContent,
+  routedGenerateContentStream
+} from "./aiRouter.ts";
 
 let serverAiHealth = {
   isAvailable: true,
@@ -38,24 +44,10 @@ export const getServerAIStatus = () => {
   return serverAiHealth;
 };
 
-export const getAI = () => {
-  const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
-  if (!apiKey) {
-    throw new Error("GEMINI_API_KEY is not configured on the server. Please verify your API key in the Settings > Secrets panel.");
-  }
-  return new GoogleGenAI({
-    apiKey,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      }
-    }
-  });
-};
+export const getAI = (): GoogleGenAI => createRouterAI();
 
 export const serverAnalyzeMatch = async (result: GenerationResult, attendance: Player[]): Promise<string> => {
   const { teamA, teamB, swaps } = result;
-  const ai = getAI();
 
   const formatPlayer = (p: Player) => `${p.name} (IC:${calculateCompositePerformanceRating(p).toFixed(1)}, Impacto:${p.impactLevel || 1})`;
   const playersA = [teamA.setter, ...teamA.players].filter((p): p is Player => p !== null).map(formatPlayer).join(', ');
@@ -88,13 +80,12 @@ export const serverAnalyzeMatch = async (result: GenerationResult, attendance: P
     ESTILO: Analítico, direto e profissional. Max 100 palavras.`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-4-hydrogen',
-      contents: prompt,
-      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+    const { text } = await routedGenerateContent({
+      task: "match_analysis",
+      contents: prompt
     });
 
-    return response.text || "Análise indisponível no momento.";
+    return text || "Análise indisponível no momento.";
   } catch (err) {
     recordServerAIError(err);
     throw err;
@@ -107,8 +98,6 @@ export const serverVerifyRules = async (
   balanceLevel: string,
   lastMatch: Match | null = null
 ): Promise<string> => {
-  const ai = getAI();
-
   const getNamesFromIds = (ids: string[]) => {
     return ids.map(id => attendanceList.find(p => p.id === id)?.name || id).join(', ');
   };
@@ -150,13 +139,12 @@ export const serverVerifyRules = async (
     ESTILO: Respostas equilibradas, técnicas e diretas. Use emojis. Max 200 palavras.`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-4-hydrogen',
-      contents: prompt,
-      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+    const { text } = await routedGenerateContent({
+      task: "verify_rules",
+      contents: prompt
     });
 
-    return response.text || `Auditoria Guerreiros Volei: Escalação validada. Equilíbrio ${balanceLevel} garantido.`;
+    return text || `Auditoria Guerreiros Volei: Escalação validada. Equilíbrio ${balanceLevel} garantido.`;
   } catch (err) {
     recordServerAIError(err);
     throw err;
@@ -173,7 +161,6 @@ export const serverDailySummary = async (stats: {
   avgMatchTime?: number;
   summaryType?: 'session' | 'career';
 }): Promise<string> => {
-  const ai = getAI();
   const rankingInfo = stats.rankingChanges && stats.rankingChanges.length > 0
     ? `\n- Mudanças no Ranking: ${stats.rankingChanges.join(', ')}`
     : '';
@@ -201,14 +188,17 @@ export const serverDailySummary = async (stats: {
     4. Termos: Use "Equipe" em vez de "Time".
     5. Fechamento: Finalize dizendo "Guerreiros Volleyball: onde o racha é de outro nível!".`;
 
+  const cacheKey = `daily_summary:${stats.summaryType || 'session'}:${stats.date || ''}:${stats.matchesCount || 0}:${stats.mvp || ''}:${stats.bestSetter || ''}:${stats.dailyKing || ''}`;
+
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-4-hydrogen',
+    const { text } = await routedGenerateContent({
+      task: "daily_summary",
       contents: prompt,
-      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+      cacheKey,
+      cacheTtlMs: 30 * 60 * 1000
     });
 
-    return response.text || "Racha épico hoje! Parabéns a todos os guerreiros!";
+    return text || "Racha épico hoje! Parabéns a todos os guerreiros!";
   } catch (err) {
     recordServerAIError(err);
     throw err;
@@ -217,15 +207,22 @@ export const serverDailySummary = async (stats: {
 
 export const serverTTS = async (text: string): Promise<string | null> => {
   const ai = getAI();
-  const promptText = `Narre o seguinte texto com empolgação e naturalidade de locutor esportivo, gerando apenas áudio: ${text}`;
-  
+  const ttsModel = getAIRouterPolicy().TTS.primary;
+
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3.8-flash-lite-tts",
+      model: ttsModel,
       contents: [
         {
           role: "user",
-          parts: [{ text: promptText }],
+          parts: [
+            {
+              text,
+              speechMetadata: {
+                style: "Locutor esportivo brasileiro empolgado, claro e natural"
+              }
+            }
+          ],
         },
       ],
       config: {
@@ -247,7 +244,6 @@ export const serverTTS = async (text: string): Promise<string | null> => {
 };
 
 export const serverDetectAnomalies = async (data: { players: Player[], matches: any[], metadata: any }): Promise<string> => {
-  const ai = getAI();
   const currentSystemDate = new Date().toISOString();
 
   const prompt = `Você é um Agente de IA Especialista em Integridade de Dados para o Guerreiros Volleyball Club. 
@@ -279,13 +275,12 @@ export const serverDetectAnomalies = async (data: { players: Player[], matches: 
     Mantenha o tom profissional e técnico. Max 300 palavras.`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-4-hydrogen',
-      contents: prompt,
-      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+    const { text } = await routedGenerateContent({
+      task: "detect_anomalies",
+      contents: prompt
     });
 
-    return response.text || "Varredura concluída sem observações.";
+    return text || "Varredura concluída sem observações.";
   } catch (err) {
     recordServerAIError(err);
     throw err;
@@ -298,8 +293,6 @@ export const serverAnalyzeBillingCosts = async (billingData: {
   services: { name: string, cost: number, savings?: number }[];
   usage: any;
 }): Promise<string> => {
-  const ai = getAI();
-
   const prompt = `Você é um Consultor Sênior de FinOps e Especialista em Google Cloud. 
     Analise o faturamento atual do aplicativo Guerreiros Volleyball e sugira estratégias de otimização de custos.
 
@@ -324,14 +317,17 @@ export const serverAnalyzeBillingCosts = async (billingData: {
 
     ESTILO: Tom executivo, consultivo, direto e útil. Use Markdown e emojis. Max 250 palavras.`;
 
+  const cacheKey = `billing_analysis:${billingData.actual.toFixed(2)}:${billingData.forecast.toFixed(2)}:${billingData.usage?.reads || 0}:${billingData.usage?.aiCalls || 0}`;
+
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-4-hydrogen',
+    const { text } = await routedGenerateContent({
+      task: "billing_analysis",
       contents: prompt,
-      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+      cacheKey,
+      cacheTtlMs: 15 * 60 * 1000
     });
 
-    return response.text || "Análise de faturamento temporariamente indisponível.";
+    return text || "Análise de faturamento temporariamente indisponível.";
   } catch (err) {
     recordServerAIError(err);
     throw err;
@@ -351,7 +347,6 @@ export interface BirthdayPlayerContext {
 export const serverGenerateBirthdayMessage = async (
   playerOrName: string | BirthdayPlayerContext
 ): Promise<string> => {
-  const ai = getAI();
   const ctx: BirthdayPlayerContext =
     typeof playerOrName === "string" ? { name: playerOrName } : playerOrName;
 
@@ -388,14 +383,13 @@ REGRAS OBRIGATÓRIAS:
 4. Não use aspas envolvendo a resposta e não inclua cabeçalho ou assinatura (apenas o corpo da felicitação, máx. 65 palavras).`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-4-hydrogen",
-      contents: prompt,
-      config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+    const { text } = await routedGenerateContent({
+      task: "birthday_message",
+      contents: prompt
     });
 
     return (
-      response.text?.trim() ||
+      text ||
       `Parabéns, ${playerName}! Que seu novo ciclo seja repleto de saúde, alegria, grandes jogos e muitas vitórias dentro e fora de quadra com a família Guerreiros! 🏐🎉`
     );
   } catch (err) {
@@ -405,12 +399,11 @@ REGRAS OBRIGATÓRIAS:
 };
 
 export const serverStreamText = async (prompt: string, systemInstruction?: string) => {
-  const ai = getAI();
   try {
-    return await ai.models.generateContentStream({
-      model: "gemini-4-hydrogen",
+    return await routedGenerateContentStream({
+      task: "stream_text",
       contents: prompt,
-      config: systemInstruction ? { systemInstruction } : undefined,
+      systemInstruction
     });
   } catch (err) {
     recordServerAIError(err);

@@ -9,7 +9,14 @@ async function main() {
     process.exit(1);
   }
 
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = new GoogleGenAI({
+    apiKey,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
+      },
+    },
+  });
   
   // The image is provided by the user in the context. 
   // Since I can't "read" the chat image directly in this script, 

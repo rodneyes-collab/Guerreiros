@@ -453,6 +453,13 @@ export const MembersView: React.FC<MembersViewProps> = ({
       });
       if (resp.ok) {
         const data = await resp.json();
+        if (data.success === false) {
+          showNotification?.(
+            data.error || 'Instância WhatsApp indisponível para sincronizar fotos agora.',
+            'error'
+          );
+          return;
+        }
         let firestoreSavedCount = 0;
         if (Array.isArray(data.players) && data.players.length >= 5) {
           useStore.setState({ players: data.players });
@@ -483,13 +490,55 @@ export const MembersView: React.FC<MembersViewProps> = ({
           }
         }
         await refreshPlayers();
+        if (data.mode === 'vm_baileys_queued') {
+          showNotification?.(
+            data.message ||
+              `Sincronização de ${data.queuedTargetsCount || 0} foto(s) enviada para a VM Google (Baileys)! Importando automaticamente...`,
+            'info'
+          );
+          const queuedJobId = data.jobId;
+          if (queuedJobId) {
+            let attempts = 0;
+            const pollTimer = window.setInterval(async () => {
+              attempts++;
+              if (attempts > 24) {
+                window.clearInterval(pollTimer);
+                return;
+              }
+              try {
+                const stResp = await fetch('/api/whatsapp/sync-photos/status');
+                const stData = await stResp.json();
+                const job = stData?.job;
+                if (job && job.jobId === queuedJobId && job.status === 'completed') {
+                  window.clearInterval(pollTimer);
+                  await refreshPlayers();
+                  const imp = Number(job.updatedCount || 0);
+                  const priv = Number(job.noPhotoPrivacyCount || 0);
+                  showNotification?.(
+                    imp > 0
+                      ? `✅ ${imp} foto(s) importada(s) do WhatsApp com sucesso!${priv > 0 ? ` (${priv} sem foto pública)` : ''}`
+                      : `Sincronização finalizada: nenhuma foto pública nova disponível (${priv} com privacidade no WhatsApp).`,
+                    imp > 0 ? 'success' : 'info'
+                  );
+                }
+              } catch {
+                // ignora falha transitória de polling
+              }
+            }, 5000);
+          }
+          return;
+        }
         const phonesMsg = data.phonesUpdated > 0 ? `${data.phonesUpdated} telefone(s), ` : '';
-        const savedMsg = firestoreSavedCount > 0 ? ` (${firestoreSavedCount} cadastros gravados no banco)` : '';
+        const savedMsg = firestoreSavedCount > 0 ? ` (${firestoreSavedCount} salvos no banco)` : '';
+        const privacyNote =
+          data.noPhotoPrivacyCount > 0
+            ? ` · ${data.noPhotoPrivacyCount} sem foto pública no WhatsApp (privacidade)`
+            : '';
         showNotification?.(
           data.updatedCount > 0 || data.phonesUpdated > 0 || firestoreSavedCount > 0
-            ? `${phonesMsg}${data.updatedCount} foto(s) sincronizados do WhatsApp${savedMsg}!`
-            : 'Dados sincronizados! Verifique se a instância WhatsApp está conectada para puxar novas fotos.',
-          'success'
+            ? `${phonesMsg}${data.updatedCount} foto(s) baixada(s) do WhatsApp${savedMsg}${privacyNote}!`
+            : `Nenhuma foto pública nova liberada pelo WhatsApp (${data.checked || 0} verificados${privacyNote}). Sócios com privacidade ativa podem enviar uma foto direto pro Guerreirinho ou usar o link de foto.`,
+          data.updatedCount > 0 || firestoreSavedCount > 0 ? 'success' : 'info'
         );
       } else {
         showNotification?.('Não foi possível sincronizar as fotos agora.', 'error');

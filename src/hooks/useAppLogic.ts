@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { 
   auth, 
   signInWithPopup, 
@@ -57,6 +57,14 @@ import { parseBirthMonthDay } from './useBirthdayAutomation';
 
 let activeBirthdaysSyncId: string | null = null;
 let activeGuardianId: string | null = null;
+let activeGeoMonitorId: string | null = null;
+
+const DEFAULT_COURT_LAT = -8.131531;
+const DEFAULT_COURT_LNG = -34.907323;
+const AUTO_GEO_CHECKIN_RADIUS_METERS = 150;
+const AUTO_GEO_MAX_ACCURACY_METERS = 150;
+const AUTO_GEO_START_HOUR = 19;
+const AUTO_GEO_END_HOUR = 22;
 
 const dateCache = new Intl.DateTimeFormat('en-CA', {
   timeZone: 'America/Sao_Paulo',
@@ -64,6 +72,71 @@ const dateCache = new Intl.DateTimeFormat('en-CA', {
   month: '2-digit',
   day: '2-digit',
 });
+
+const brazilScheduleFormatter = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/Sao_Paulo',
+  weekday: 'short',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+});
+
+function calculateHaversineMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371000;
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return Math.round(R * c);
+}
+
+function getBrazilThursdayGeoWindowState(): { isWindowOpen: boolean; dateKey: string } {
+  const now = new Date();
+  const dateKey = dateCache.format(now);
+  const parts = brazilScheduleFormatter.formatToParts(now);
+  const weekday = parts.find(p => p.type === 'weekday')?.value || '';
+  const rawHour = Number(parts.find(p => p.type === 'hour')?.value ?? '0');
+  const hour = rawHour === 24 ? 0 : rawHour;
+  return {
+    isWindowOpen: weekday === 'Thu' && hour >= AUTO_GEO_START_HOUR && hour < AUTO_GEO_END_HOUR,
+    dateKey,
+  };
+}
+
+async function triggerPwaGeoNotification(title: string, body: string, tag: string): Promise<boolean> {
+  if (typeof window === 'undefined' || !('Notification' in window)) return false;
+  if (Notification.permission !== 'granted') return false;
+
+  const options: NotificationOptions = {
+    body,
+    icon: '/logo.png',
+    badge: '/logo.png',
+    tag,
+    data: { type: 'court_auto_checkin' },
+  };
+
+  try {
+    if ('serviceWorker' in navigator) {
+      const registration = await navigator.serviceWorker.ready;
+      if (registration && typeof registration.showNotification === 'function') {
+        await registration.showNotification(title, options);
+        return true;
+      }
+    }
+  } catch {
+    // Fallback para Notification API direta abaixo
+  }
+
+  try {
+    new Notification(title, options);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, size: number) => Promise<void>) => {
   const [instanceId] = useState(() => generateUUID());
@@ -104,6 +177,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
   const setDbStatus = useStore(state => state.setDbStatus);
   const setUser = useStore(state => state.setUser);
   const setUserRole = useStore(state => state.setUserRole);
+  const currentPlayer = useStore(state => state.currentPlayer);
   const setCurrentPlayer = useStore(state => state.setCurrentPlayer);
   const scoreA = useStore(state => state.scoreA);
   const scoreB = useStore(state => state.scoreB);
@@ -143,6 +217,13 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
   const [showSetterPromptModal, setShowSetterPromptModal] = useState(false);
   const [setterPromptData, setSetterPromptData] = useState<{ playersToUse: Player[]; isReshuffle: boolean } | null>(null);
   const [isGuardianLocked, setIsGuardianLocked] = useState(true);
+  const [geoMonitorStatus, setGeoMonitorStatus] = useState<'idle' | 'watching' | 'checked_in' | 'opted_out' | 'unsupported' | 'permission_denied'>('idle');
+  const [geoDistanceMeters, setGeoDistanceMeters] = useState<number | null>(null);
+  const [isThursdayGeoWindow, setIsThursdayGeoWindow] = useState<boolean>(() => getBrazilThursdayGeoWindowState().isWindowOpen);
+  const [geoOptedOutDate, setGeoOptedOutDate] = useState<string | null>(null);
+  const geoCheckInFlightRef = useRef(false);
+  const geoLastAttemptAtRef = useRef(0);
+  const geoWatcherRegisteredDateRef = useRef<string | null>(null);
 
   const triggerDbStatus = useCallback((status: 'reading' | 'writing') => {
     setDbStatus(status);
@@ -238,6 +319,372 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
     const timer = setTimeout(() => setIsGuardianLocked(false), 30000);
     return () => clearTimeout(timer);
   }, []);
+
+  // --- Monitoramento automático de geolocalização (Quintas das 19h às 22h, raio de 150m da quadra) ---
+  useEffect(() => {
+    const syncWindowState = () => {
+      const next = getBrazilThursdayGeoWindowState().isWindowOpen;
+      setIsThursdayGeoWindow(prev => (prev === next ? prev : next));
+    };
+    syncWindowState();
+    const interval = setInterval(syncWindowState, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const normalizedUserEmail = String(user?.email || '').trim().toLowerCase();
+  const geoTargetPlayer =
+    currentPlayer ||
+    players.find(
+      p =>
+        (user?.uid && p.uid === user.uid) ||
+        (normalizedUserEmail && String(p.email || '').trim().toLowerCase() === normalizedUserEmail)
+    ) ||
+    null;
+  const geoTargetPlayerRef = useRef<Player | null>(geoTargetPlayer);
+  geoTargetPlayerRef.current = geoTargetPlayer;
+
+  const geoTargetPlayerId = geoTargetPlayer?.id || null;
+  const geoTargetPlayerEligible = Boolean(
+    geoTargetPlayer && geoTargetPlayer.status === 'active' && !geoTargetPlayer.isDM
+  );
+  const geoTargetEmail = String(geoTargetPlayer?.email || '').trim().toLowerCase();
+  const isGeoTargetAlreadyPresent = Boolean(
+    geoTargetPlayer &&
+      attendance.some(
+        a =>
+          a &&
+          a.status !== 'left' &&
+          !a.isDM &&
+          (a.id === geoTargetPlayer.id ||
+            (geoTargetPlayer.uid && a.uid === geoTargetPlayer.uid) ||
+            (geoTargetEmail && String(a.email || '').trim().toLowerCase() === geoTargetEmail))
+      )
+  );
+
+  const disableGeoMonitoring = useCallback(async () => {
+    const { dateKey } = getBrazilThursdayGeoWindowState();
+    const pid = geoTargetPlayerRef.current?.id;
+    setGeoOptedOutDate(dateKey);
+    setGeoMonitorStatus('opted_out');
+    if (pid) {
+      try {
+        localStorage.setItem(`guerreiros_auto_geo_optout_${dateKey}_${pid}`, String(Date.now()));
+      } catch {}
+      try {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        const idToken = await auth.currentUser?.getIdToken?.().catch(() => null);
+        if (idToken) headers.Authorization = `Bearer ${idToken}`;
+        await fetch('/api/presence/geo-watch-status', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ playerId: pid, action: 'opt_out' }),
+        });
+      } catch {}
+    }
+    showNotification('Monitoramento de GPS desligado para hoje.', 'info');
+  }, [showNotification]);
+
+  useEffect(() => {
+    if (activeGeoMonitorId === null) activeGeoMonitorId = instanceId;
+    if (activeGeoMonitorId !== instanceId) return;
+
+    const releaseSingleton = () => {
+      if (activeGeoMonitorId === instanceId) activeGeoMonitorId = null;
+    };
+
+    const isAutoGeoEnabled = systemMetadata?.autoGeoCheckInEnabled === true;
+
+    if (!isAutoGeoEnabled || !isThursdayGeoWindow || !geoTargetPlayerId || !geoTargetPlayerEligible) {
+      setGeoMonitorStatus('idle');
+      return releaseSingleton;
+    }
+
+    const { dateKey } = getBrazilThursdayGeoWindowState();
+    const dailyStorageKey = `guerreiros_auto_geo_checkin_${dateKey}_${geoTargetPlayerId}`;
+    const dailyOptOutKey = `guerreiros_auto_geo_optout_${dateKey}_${geoTargetPlayerId}`;
+    let hasLocalCheckInToday = false;
+    let hasLocalOptOutToday = geoOptedOutDate === dateKey;
+    try {
+      hasLocalCheckInToday = Boolean(localStorage.getItem(dailyStorageKey));
+      if (!hasLocalOptOutToday) {
+        hasLocalOptOutToday = Boolean(localStorage.getItem(dailyOptOutKey));
+      }
+    } catch {
+      hasLocalCheckInToday = false;
+    }
+
+    if (hasLocalOptOutToday) {
+      setGeoMonitorStatus('opted_out');
+      return releaseSingleton;
+    }
+
+    if (isGeoTargetAlreadyPresent || hasLocalCheckInToday) {
+      setGeoMonitorStatus('checked_in');
+      return releaseSingleton;
+    }
+
+    if (typeof navigator === 'undefined' || !('geolocation' in navigator)) {
+      setGeoMonitorStatus('unsupported');
+      return releaseSingleton;
+    }
+
+    const courtLat = Number(systemMetadata?.courtLocation?.lat ?? DEFAULT_COURT_LAT);
+    const courtLng = Number(systemMetadata?.courtLocation?.lng ?? DEFAULT_COURT_LNG);
+    const effectiveRadiusMeters = Number(systemMetadata?.geofenceRadius || AUTO_GEO_CHECKIN_RADIUS_METERS);
+
+    let isDisposed = false;
+    let isWatchStopped = false;
+    let watchId: number | null = null;
+    let optOutCheckTimeout: ReturnType<typeof setTimeout> | null = null;
+    setGeoMonitorStatus('watching');
+
+    const stopWatchOnly = () => {
+      if (watchId !== null && typeof navigator !== 'undefined' && navigator.geolocation) {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+      }
+    };
+
+    const clearGeoWatch = () => {
+      isWatchStopped = true;
+      stopWatchOnly();
+      if (optOutCheckTimeout !== null) {
+        clearTimeout(optOutCheckTimeout);
+        optOutCheckTimeout = null;
+      }
+    };
+
+    const syncRemoteWatchStatus = async (action: 'status' | 'register', distMeters?: number) => {
+      if (isDisposed || isWatchStopped || !geoTargetPlayerId) return;
+      try {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        const idToken = await auth.currentUser?.getIdToken?.().catch(() => null);
+        if (idToken) headers.Authorization = `Bearer ${idToken}`;
+        const resp = await fetch('/api/presence/geo-watch-status', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            playerId: geoTargetPlayerId,
+            action,
+            distanceMeters: distMeters,
+          }),
+        });
+        const raw = await resp.text();
+        const data = raw ? JSON.parse(raw) : null;
+        if (isDisposed || !data?.success) return;
+        if (data.optedOut || data.isDeclinedToday) {
+          clearGeoWatch();
+          setGeoOptedOutDate(dateKey);
+          setGeoMonitorStatus('opted_out');
+          try {
+            localStorage.setItem(dailyOptOutKey, String(Date.now()));
+          } catch {}
+        } else if (data.arrived) {
+          clearGeoWatch();
+          setGeoMonitorStatus('checked_in');
+        }
+      } catch {
+        // Silencioso em falhas transitórias de rede
+      }
+    };
+
+    // Polling adaptativo econômico: 2 min antes das 20h45; 1 min a partir das 20h45 (quando chega o aviso de desistência)
+    const scheduleNextOptOutPoll = () => {
+      if (isDisposed || isWatchStopped) return;
+      const parts = brazilScheduleFormatter.formatToParts(new Date());
+      const rawH = Number(parts.find(p => p.type === 'hour')?.value ?? '0');
+      const h = rawH === 24 ? 0 : rawH;
+      const m = Number(parts.find(p => p.type === 'minute')?.value ?? '0');
+      const delayMs = h * 60 + m >= 20 * 60 + 45 ? 60000 : 120000;
+      optOutCheckTimeout = setTimeout(async () => {
+        if (isDisposed || isWatchStopped) return;
+        if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+          await syncRemoteWatchStatus('status');
+        }
+        scheduleNextOptOutPoll();
+      }, delayMs);
+    };
+
+    syncRemoteWatchStatus('status');
+    scheduleNextOptOutPoll();
+
+    const handlePosition = async (position: GeolocationPosition) => {
+      if (isDisposed) return;
+      const targetPlayer = geoTargetPlayerRef.current;
+      if (!targetPlayer) return;
+
+      const { latitude, longitude, accuracy } = position.coords;
+      const distanceMeters = calculateHaversineMeters(latitude, longitude, courtLat, courtLng);
+      setGeoDistanceMeters(distanceMeters);
+
+      if (Number.isFinite(accuracy) && accuracy > AUTO_GEO_MAX_ACCURACY_METERS) {
+        return;
+      }
+
+      if (distanceMeters > effectiveRadiusMeters) {
+        if (geoWatcherRegisteredDateRef.current !== dateKey) {
+          geoWatcherRegisteredDateRef.current = dateKey;
+          syncRemoteWatchStatus('register', distanceMeters);
+        }
+        return;
+      }
+
+      const now = Date.now();
+      if (geoCheckInFlightRef.current || now - geoLastAttemptAtRef.current < 15000) {
+        return;
+      }
+
+      geoCheckInFlightRef.current = true;
+      geoLastAttemptAtRef.current = now;
+
+      try {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        try {
+          const idToken = await auth.currentUser?.getIdToken?.();
+          if (idToken) headers.Authorization = `Bearer ${idToken}`;
+        } catch {
+          // Segue com identificação pelo playerId cadastrado
+        }
+
+        const resp = await fetch('/api/presence/gps-checkin', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            playerId: targetPlayer.id,
+            lat: latitude,
+            lng: longitude,
+            accuracy: Number.isFinite(accuracy) ? Math.round(accuracy) : undefined,
+            isLive: true,
+            source: 'APP_AUTO_GEO_150M',
+            maxRadiusMeters: effectiveRadiusMeters,
+            notifyWhatsApp: true,
+          }),
+        });
+
+        const rawText = await resp.text();
+        let data: any = null;
+        try {
+          data = rawText ? JSON.parse(rawText) : null;
+        } catch {
+          data = null;
+        }
+
+        if (isDisposed) return;
+
+        if (resp.ok && data?.success && data?.allowed) {
+          clearGeoWatch();
+          setGeoMonitorStatus('checked_in');
+          try {
+            localStorage.setItem(
+              dailyStorageKey,
+              JSON.stringify({
+                checkedInAt: Date.now(),
+                arrivalOrder: data.arrivalOrder,
+                distanceMeters: data.distanceMeters ?? distanceMeters,
+              })
+            );
+          } catch {
+            // Ignora falhas de storage privado
+          }
+
+          const arrivalOrder = Number(data.arrivalOrder || 1);
+          const validatedDistance = Number(data.distanceMeters ?? distanceMeters);
+          const firstName = String(targetPlayer.name || 'Guerreiro').trim().split(/\s+/)[0] || 'Guerreiro';
+          const channelSuffix = data.whatsappNotified
+            ? 'Confirmação enviada também no seu WhatsApp.'
+            : 'Você já está confirmado na fila do jogo!';
+
+          const notificationTitle = 'Presença Confirmada na Quadra! 🏐';
+          const notificationBody = `${firstName}, sua chegada foi detectada (${validatedDistance}m da quadra). Posição na fila: #${arrivalOrder}. ${channelSuffix}`;
+
+          const currentAtt = useStore.getState().attendance;
+          const alreadyListed = currentAtt.some(p => p.id === targetPlayer.id && p.status !== 'left');
+          if (!alreadyListed) {
+            setAttendance([
+              ...currentAtt.filter(p => p.id !== targetPlayer.id),
+              {
+                ...targetPlayer,
+                status: 'active',
+                arrivalOrder,
+                isPresent: true,
+                checkInMethod: 'QR',
+                timestamp: Date.now(),
+              },
+            ]);
+          }
+
+          triggerHaptic('success');
+          playFeedbackSound('success');
+          showNotification(notificationBody, 'success');
+          await triggerPwaGeoNotification(
+            notificationTitle,
+            notificationBody,
+            `court-auto-checkin-${dateKey}-${targetPlayer.id}`
+          );
+        }
+      } catch (err) {
+        console.warn('[AutoGeoCheckIn] Falha ao confirmar check-in automático por geolocalização:', err);
+      } finally {
+        geoCheckInFlightRef.current = false;
+      }
+    };
+
+    const handleGeoError = (err: GeolocationPositionError) => {
+      if (isDisposed) return;
+      if (err.code === err.PERMISSION_DENIED) {
+        clearGeoWatch();
+        setGeoMonitorStatus('permission_denied');
+      }
+    };
+
+    const startGeoWatch = () => {
+      if (isDisposed || isWatchStopped || watchId !== null) return;
+      watchId = navigator.geolocation.watchPosition(handlePosition, handleGeoError, {
+        enableHighAccuracy: true,
+        maximumAge: 10000,
+        timeout: 15000,
+      });
+    };
+
+    const handleVisibilityChange = () => {
+      if (isDisposed || isWatchStopped) return;
+      if (document.visibilityState === 'hidden') {
+        stopWatchOnly();
+      } else {
+        startGeoWatch();
+        syncRemoteWatchStatus('status');
+      }
+    };
+
+    if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+      startGeoWatch();
+    }
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+
+    return () => {
+      isDisposed = true;
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
+      clearGeoWatch();
+      releaseSingleton();
+    };
+  }, [
+    isThursdayGeoWindow,
+    geoTargetPlayerId,
+    geoTargetPlayerEligible,
+    isGeoTargetAlreadyPresent,
+    geoOptedOutDate,
+    systemMetadata?.autoGeoCheckInEnabled,
+    systemMetadata?.geofenceRadius,
+    systemMetadata?.courtLocation?.lat,
+    systemMetadata?.courtLocation?.lng,
+    instanceId,
+    setAttendance,
+    showNotification,
+  ]);
 
   useEffect(() => {
     if (userRole !== 'ADMIN' || isSyncing || players.length === 0 || matches.length === 0 || isGuardianLocked) return;
@@ -494,7 +941,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
         updates.playedLastMatch = true;
         updates.consecutivePlayed = consecutivePlayedCount;
         updates.consecutiveBenched = 0;
-        updates.eloHistory = updatedHistory.slice(-200);
+        updates.eloHistory = updatedHistory.slice(-40);
         
         const trueskillUpdate = tsMap.get(p.id);
         if (trueskillUpdate) updates.trueSkill = trueskillUpdate;
@@ -1083,7 +1530,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
               dailyWins: isToday ? (isWinner ? Math.max(0, (latestPlayer.dailyWins || 0) - 1) : (latestPlayer.dailyWins || 0)) : (latestPlayer.dailyWins || 0),
               dailyLosses: isToday ? (!isWinner ? Math.max(0, (latestPlayer.dailyLosses || 0) - 1) : (latestPlayer.dailyLosses || 0)) : (latestPlayer.dailyLosses || 0),
               dailyEloGain: isToday ? (latestPlayer.dailyEloGain || 0) - eloChange : (latestPlayer.dailyEloGain || 0),
-              eloHistory: updatedHistory,
+              eloHistory: updatedHistory.slice(-40),
               playedLastMatch: false
             };
             batch.set(doc(db, 'players', latestPlayer.id), updates, { merge: true });
@@ -1392,7 +1839,7 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
       const recalculatedPlayers = recalculateAllStatsFromMatches(players, matches, getFirestoreDateKey(), dailyBonus);
       const batch = writeBatch(db);
       recalculatedPlayers.forEach(p => {
-        batch.set(doc(db, 'players', p.id), cleanObject({ ...p, eloHistory: (p.eloHistory || []).slice(-200) }), { merge: true });
+        batch.set(doc(db, 'players', p.id), cleanObject({ ...p, eloHistory: (p.eloHistory || []).slice(-40) }), { merge: true });
       });
       await batch.commit();
       showNotification('Recálculo de ELO concluído!', 'success');
@@ -2191,6 +2638,10 @@ export const useAppLogic = (commitBatchWithLog?: (batch: any, label: string, siz
     exportPaymentsCSV,
     handleRecoverFinancials,
     handleFinancialIntegrityAudit,
-    recreateOctober15Matches
+    recreateOctober15Matches,
+    geoMonitorStatus,
+    geoDistanceMeters,
+    isThursdayGeoWindow,
+    disableGeoMonitoring
   };
 };

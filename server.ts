@@ -4,7 +4,14 @@ import cors from "cors";
 import compression from "compression";
 import path from "path";
 import fs from "fs";
-import { GoogleGenAI } from "@google/genai";
+import {
+  routedGenerateContent,
+  getAIRouterStatus,
+  setAIRouterPolicy,
+  resetAIRouterPolicy,
+  clearAIRouterCache
+} from "./services/aiRouter.ts";
+import { setupGeminiLiveWebSocket } from "./services/serverLiveApi.ts";
 import { APP_VERSION } from "./constants.ts";
 import {
   getRegistrationOptions,
@@ -15,12 +22,14 @@ import {
 import { runDeepAnalyticsChat, buildPlayerDeepStatsReport } from "./serverDeepAnalysis.ts";
 import {
   computeIndividualNightData,
+  enrichIndividualNightDataWithHumor,
   computeDailyRankingData,
   computeAccumulatedRankingData,
   computePlayerEloCurve,
   renderIndividualNightCardPng,
   renderDailyRankingCardPng,
-  renderAccumulatedRankingCardPng
+  renderAccumulatedRankingCardPng,
+  getLoadedCardFontsCount
 } from "./services/liquidGlassCards.ts";
 
 const __dirname = process.cwd();
@@ -303,17 +312,126 @@ function saveLocalIntentionsBackup(doc: any) {
   } catch {}
 }
 
+function isPlainObject(value: unknown): value is Record<string, any> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * Valida se uma string aparenta ser um JSON estruturado ({...} ou [...]) antes de chamar JSON.parse,
+ * bloqueando respostas de texto puro de proxy/gateway como "upstream request timeout" ou HTML 502/504.
+ */
+function looksLikeJsonPayload(raw: string): boolean {
+  const trimmed = raw.trim();
+  if (!trimmed) return false;
+  const first = trimmed[0];
+  const last = trimmed[trimmed.length - 1];
+  return (first === "{" && last === "}") || (first === "[" && last === "]");
+}
+
+function safeJsonParse<T>(raw: unknown, contextLabel: string, fallback: T): T {
+  try {
+    if (raw === null || raw === undefined) return fallback;
+    if (typeof raw !== "string") {
+      if (typeof raw === "object") return raw as T;
+      return fallback;
+    }
+    const trimmed = raw.trim();
+    if (!looksLikeJsonPayload(trimmed)) {
+      const preview = trimmed.slice(0, 80).replace(/\s+/g, " ");
+      console.warn(`[JSON Guard:${contextLabel}] Payload não-JSON descartado com segurança: "${preview}"`);
+      return fallback;
+    }
+    return JSON.parse(trimmed) as T;
+  } catch (err: any) {
+    const preview = typeof raw === "string" ? raw.trim().slice(0, 80).replace(/\s+/g, " ") : typeof raw;
+    console.warn(`[JSON Guard:${contextLabel}] Falha ao fazer parse de JSON (${err?.message || "SyntaxError"}) | preview="${preview}"`);
+    return fallback;
+  }
+}
+
+async function safeReadResponseJson<T>(
+  resp: Response,
+  contextLabel: string,
+  fallback: T
+): Promise<{ ok: boolean; status: number; data: T; rawText: string; isValidJson: boolean }> {
+  try {
+    const rawText = await resp.text().catch(() => "");
+    const trimmed = rawText.trim();
+    if (!looksLikeJsonPayload(trimmed)) {
+      if (trimmed) {
+        const preview = trimmed.slice(0, 90).replace(/\s+/g, " ");
+        console.warn(`[HTTP JSON Guard:${contextLabel}] Resposta HTTP ${resp.status} não-JSON ignorada: "${preview}"`);
+      }
+      return { ok: resp.ok, status: resp.status, data: fallback, rawText, isValidJson: false };
+    }
+    try {
+      const parsed = JSON.parse(trimmed) as T;
+      return { ok: resp.ok, status: resp.status, data: parsed, rawText, isValidJson: true };
+    } catch (parseErr: any) {
+      console.warn(`[HTTP JSON Guard:${contextLabel}] JSON malformado (HTTP ${resp.status}): ${parseErr?.message}`);
+      return { ok: resp.ok, status: resp.status, data: fallback, rawText, isValidJson: false };
+    }
+  } catch (err: any) {
+    console.warn(`[HTTP JSON Guard:${contextLabel}] Erro ao ler corpo da resposta: ${err?.message || err}`);
+    return { ok: false, status: resp?.status || 0, data: fallback, rawText: "", isValidJson: false };
+  }
+}
+
+function validateIncomingJsonPayload(
+  body: unknown,
+  contextLabel: string
+): { valid: boolean; data: Record<string, any>; reason?: string } {
+  try {
+    if (isPlainObject(body)) {
+      return { valid: true, data: body };
+    }
+    if (typeof body === "string") {
+      const parsed = safeJsonParse<unknown>(body, contextLabel, null);
+      if (isPlainObject(parsed)) {
+        return { valid: true, data: parsed };
+      }
+      return { valid: false, data: {}, reason: "Payload textual malformado ou não-JSON (ex: upstream timeout)." };
+    }
+    if (body === undefined || body === null) {
+      return { valid: true, data: {} };
+    }
+    return { valid: false, data: {}, reason: "Formato de payload JSON inválido (esperado objeto)." };
+  } catch (err: any) {
+    console.warn(`[Payload Guard:${contextLabel}] Erro ao validar payload recebido:`, err?.message || err);
+    return { valid: false, data: {}, reason: err?.message || "Erro na validação do JSON." };
+  }
+}
+
+function sanitizeFirestorePayload<T>(data: unknown, contextLabel: string, fallback: T): T {
+  try {
+    if (data === null || data === undefined) return fallback;
+    if (typeof data === "string") {
+      return safeJsonParse<T>(data, contextLabel, fallback);
+    }
+    if (typeof data === "object") {
+      // Valida integridade serializável antes de repassar para o bot/Firestore
+      const serialized = JSON.stringify(data);
+      if (!serialized || !looksLikeJsonPayload(serialized)) return fallback;
+      return JSON.parse(serialized) as T;
+    }
+    return fallback;
+  } catch (err: any) {
+    console.warn(`[Firestore JSON Guard:${contextLabel}] Documento/payload malformado ignorado:`, err?.message || err);
+    return fallback;
+  }
+}
+
 async function withFirestoreGuard<T>(fn: () => Promise<T>, fallbackValue: T, timeoutMs = 8000): Promise<T> {
   if (Date.now() < firestoreCircuitOpenUntil) {
     return fallbackValue;
   }
+  let timer: ReturnType<typeof setTimeout> | null = null;
   try {
-    const result = await Promise.race([
-      fn(),
-      new Promise<T>((_, reject) =>
-        setTimeout(() => reject(new Error("FIRESTORE_TIMEOUT")), timeoutMs)
-      )
-    ]);
+    const taskPromise = (async () => await fn())();
+    const timeoutPromise = new Promise<T>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("FIRESTORE_TIMEOUT")), timeoutMs);
+    });
+    const result = await Promise.race([taskPromise, timeoutPromise]);
     return result;
   } catch (err: any) {
     const msg = String(err?.message || err || "");
@@ -322,9 +440,11 @@ async function withFirestoreGuard<T>(fn: () => Promise<T>, fallbackValue: T, tim
       firestoreCircuitOpenUntil = Date.now() + 5 * 60 * 1000;
       console.warn("[Firestore Circuit Breaker] Ativado por 5 min (Quota):", msg.slice(0, 120));
     } else {
-      console.warn("[Firestore Guard] Aviso de leitura:", msg.slice(0, 120));
+      console.warn("[Firestore Guard] Aviso protegido (thread principal preservada):", msg.slice(0, 140));
     }
     return fallbackValue;
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -446,15 +566,6 @@ export async function buildIndividualBirthdayMessage(
 
   if (apiKey) {
     try {
-      const ai = new GoogleGenAI({
-        apiKey,
-        httpOptions: {
-          headers: {
-            "User-Agent": "aistudio-build"
-          }
-        }
-      });
-
       const styleAngles = [
         "tom épico de narração esportiva de final de campeonato, exaltando a raça e liderança em quadra",
         "tom descontraído de resenha entre amigos de clube, com humor leve sobre defesa difícil, saque perfeito e churrasco pós-jogo",
@@ -482,8 +593,8 @@ FORMATO OBRIGATÓRIO DA RESPOSTA (use exatamente estas duas tags):
 GRUPO: <escreva aqui a homenagem de 2 a 3 frases curtas para o grupo oficial do WhatsApp, com *negrito* e emojis de vôlei/festa, celebrando ${firstName} diante da turma>
 PRIVADO: <escreva aqui uma mensagem mais íntima e calorosa de 2 frases para enviar no WhatsApp privado de ${firstName}, agradecendo a parceria no clube e desejando um dia incrível>`;
 
-      const aiResp = await ai.models.generateContent({
-        model: "gemini-4-hydrogen",
+      const aiResp = await routedGenerateContent({
+        task: "birthday_message",
         contents: prompt
       });
       const raw = (aiResp.text || "").trim();
@@ -1580,7 +1691,16 @@ async function getCachedPlayers(forceRefresh = false): Promise<any[]> {
       const db = await getFirestore();
       const playersSnap = await db.collection("players").get();
       const list: any[] = [];
-      playersSnap.forEach((d: any) => list.push({ id: d.id, ...d.data() }));
+      playersSnap.forEach((d: any) => {
+        try {
+          const rawDoc = d.data();
+          if (isPlainObject(rawDoc)) {
+            list.push({ id: d.id, ...rawDoc });
+          }
+        } catch (docErr: any) {
+          console.warn(`[Firestore Players] Documento ${d?.id} ignorado por formato inválido:`, docErr?.message);
+        }
+      });
       if (list.length >= 5) {
         cachedPlayers = list;
         cachedPlayersLastFetch = now;
@@ -1606,7 +1726,16 @@ async function getCachedMatches(forceRefresh = false): Promise<any[]> {
       const db = await getFirestore();
       const matchesSnap = await db.collection("matches").get();
       const list: any[] = [];
-      matchesSnap.forEach((d: any) => list.push({ id: d.id, ...d.data() }));
+      matchesSnap.forEach((d: any) => {
+        try {
+          const rawDoc = d.data();
+          if (isPlainObject(rawDoc)) {
+            list.push({ id: d.id, ...rawDoc });
+          }
+        } catch (docErr: any) {
+          console.warn(`[Firestore Matches] Documento ${d?.id} ignorado por formato inválido:`, docErr?.message);
+        }
+      });
       if (list.length > 0) {
         cachedMatches = list;
         cachedMatchesLastFetch = now;
@@ -1621,9 +1750,9 @@ async function getCachedMatches(forceRefresh = false): Promise<any[]> {
 async function getCachedSystemConfig(forceRefresh = false): Promise<Record<string, any>> {
   const now = Date.now();
   if (
-    !forceRefresh &&
     cachedSystemConfig &&
-    now - cachedSystemConfigLastFetch < SYSTEM_CONFIG_CACHE_TTL_MS
+    ((!forceRefresh && now - cachedSystemConfigLastFetch < SYSTEM_CONFIG_CACHE_TTL_MS) ||
+      (forceRefresh && now - cachedSystemConfigLastFetch < 2500))
   ) {
     return cachedSystemConfig;
   }
@@ -1632,11 +1761,13 @@ async function getCachedSystemConfig(forceRefresh = false): Promise<Record<strin
     async () => {
       const db = await getFirestore();
       const sysSnap = await db.collection("metadata").doc("system").get();
-      cachedSystemConfig = sysSnap.exists ? sysSnap.data() || {} : {};
-      cachedSystemConfigLastFetch = now;
+      const rawData = sysSnap.exists ? sysSnap.data() : {};
+      cachedSystemConfig = sanitizeFirestorePayload<Record<string, any>>(rawData, "metadata/system", {});
+      cachedSystemConfigLastFetch = Date.now();
       return cachedSystemConfig;
     },
-    cachedSystemConfig || {}
+    cachedSystemConfig || {},
+    4500
   );
 }
 
@@ -1656,10 +1787,15 @@ async function verifyCallerIdentity(req: express.Request): Promise<{
     if (token && token !== "null" && token !== "undefined") {
       try {
         const auth = await getAdminAuth();
-        const decoded = await auth.verifyIdToken(token);
-        uid = decoded.uid || uid;
-        if (decoded.email) {
-          email = decoded.email.trim().toLowerCase();
+        const decoded = await Promise.race([
+          auth.verifyIdToken(token),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500))
+        ]);
+        if (decoded) {
+          uid = decoded.uid || uid;
+          if (decoded.email) {
+            email = decoded.email.trim().toLowerCase();
+          }
         }
       } catch (e) {}
     }
@@ -1923,7 +2059,252 @@ async function syncPlayerPreConfirmationDoc(
 // ============================================================================
 const DEFAULT_COURT_LAT = -8.131531;
 const DEFAULT_COURT_LNG = -34.907323;
-const DEFAULT_GEOFENCE_RADIUS_METERS = 300; // 300m para compensar telhado metálico/cobertura da quadra
+const DEFAULT_GEOFENCE_RADIUS_METERS = 150; // 150m para compensar cobertura/telhado metálico e área externa da quadra
+const COURT_CHECKIN_END_MINUTES = 22 * 60; // Limite de check-in na quadra até às 22h00
+
+interface PendingCourtGeoWatcher {
+  playerId: string;
+  name: string;
+  sharedAt: number;
+  lastUpdatedAt: number;
+  lastDistanceMeters: number;
+  lastLat?: number;
+  lastLng?: number;
+  arrivalOrder?: number;
+  source: string;
+  optedOut?: boolean;
+  arrived?: boolean;
+  remindedAt2045?: boolean;
+  lastOutOfRangeReplyAt?: number;
+}
+
+// Mutex serializado em memória: garante posições #1, #2, #3... 100% únicas mesmo se vários sócios cruzarem os 150m no mesmo milissegundo
+let attendanceCheckInQueue: Promise<any> = Promise.resolve();
+function withAttendanceCheckInLock<T>(task: () => Promise<T>): Promise<T> {
+  const next = attendanceCheckInQueue.then(task, task);
+  attendanceCheckInQueue = next.then(
+    () => undefined,
+    () => undefined
+  );
+  return next;
+}
+
+// Cache leve em memória de quem já confirmou chegada hoje (evita leituras extras no Firestore para liveLocation residual)
+let presentIdsCacheDateKey = "";
+const presentIdsCacheSet = new Set<string>();
+
+function markPresentInMemoryCache(dateKey: string, playerId: string) {
+  if (presentIdsCacheDateKey !== dateKey) {
+    presentIdsCacheDateKey = dateKey;
+    presentIdsCacheSet.clear();
+  }
+  presentIdsCacheSet.add(playerId);
+}
+
+function isPresentInMemoryCache(dateKey: string, playerId: string): boolean {
+  return presentIdsCacheDateKey === dateKey && presentIdsCacheSet.has(playerId);
+}
+
+// Anti-spoofing (anti-teletransporte): detecta saltos irreais de GPS (>2km em <10s = >720 km/h)
+const lastGeoPointByPlayer = new Map<string, { lat: number; lng: number; ts: number }>();
+
+function checkImpossibleGpsJump(playerId: string, lat: number, lng: number): { suspicious: boolean; jumpMeters: number; elapsedSec: number } {
+  const now = Date.now();
+  const prev = lastGeoPointByPlayer.get(playerId);
+  lastGeoPointByPlayer.set(playerId, { lat, lng, ts: now });
+  if (!prev) return { suspicious: false, jumpMeters: 0, elapsedSec: 0 };
+  const elapsedMs = now - prev.ts;
+  if (elapsedMs <= 0 || elapsedMs > 12000) return { suspicious: false, jumpMeters: 0, elapsedSec: Math.round(elapsedMs / 1000) };
+  const jumpMeters = calculateDistanceMeters(prev.lat, prev.lng, lat, lng);
+  // Mais de 2.000m em até 12 segundos equivale a >600 km/h (teletransporte / Fake GPS)
+  return {
+    suspicious: jumpMeters > 2000,
+    jumpMeters,
+    elapsedSec: Math.max(1, Math.round(elapsedMs / 1000))
+  };
+}
+
+// Debounce de escrita no Firestore para courtLocationWatchersByDate (agrupa até 28 sócios simultâneos em 1 única escrita)
+let pendingWatchersFlushTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingWatchersDbRef: any = null;
+let pendingWatchersPayload: Record<string, Record<string, PendingCourtGeoWatcher>> | null = null;
+
+function scheduleCourtWatchersFirestoreFlush(
+  db: any,
+  prunedByDate: Record<string, Record<string, PendingCourtGeoWatcher>>,
+  immediate = false
+) {
+  pendingWatchersDbRef = db;
+  pendingWatchersPayload = prunedByDate;
+
+  const doFlush = () => {
+    pendingWatchersFlushTimer = null;
+    const targetDb = pendingWatchersDbRef;
+    const targetPayload = pendingWatchersPayload;
+    pendingWatchersPayload = null;
+    if (!targetDb || !targetPayload) return;
+    withFirestoreGuard(
+      () =>
+        targetDb
+          .collection("metadata")
+          .doc("whatsapp_scheduler")
+          .set({ courtLocationWatchersByDate: targetPayload }, { merge: true }),
+      undefined
+    ).catch(() => {});
+  };
+
+  if (immediate) {
+    if (pendingWatchersFlushTimer) {
+      clearTimeout(pendingWatchersFlushTimer);
+      pendingWatchersFlushTimer = null;
+    }
+    doFlush();
+    return;
+  }
+
+  if (!pendingWatchersFlushTimer) {
+    pendingWatchersFlushTimer = setTimeout(doFlush, 15000);
+  }
+}
+
+function getCourtWatchersStoreForDate(dateKey: string): Record<string, PendingCourtGeoWatcher> {
+  if (!cachedScheduler) {
+    cachedScheduler = loadLocalSchedulerBackup();
+  }
+  const byDate = (cachedScheduler?.courtLocationWatchersByDate || {}) as Record<
+    string,
+    Record<string, PendingCourtGeoWatcher>
+  >;
+  return { ...(byDate[dateKey] || {}) };
+}
+
+async function persistCourtWatchersForDate(
+  db: any,
+  dateKey: string,
+  dateWatchers: Record<string, PendingCourtGeoWatcher>,
+  options?: { skipFirestore?: boolean; immediateFirestore?: boolean }
+) {
+  if (!cachedScheduler) {
+    cachedScheduler = loadLocalSchedulerBackup();
+  }
+  // Mantém apenas os últimos 3 dias para não inflar o documento
+  const prevByDate = (cachedScheduler?.courtLocationWatchersByDate || {}) as Record<
+    string,
+    Record<string, PendingCourtGeoWatcher>
+  >;
+  const sortedKeys = Object.keys(prevByDate)
+    .filter((k) => k !== dateKey)
+    .sort()
+    .slice(-2);
+  const prunedByDate: Record<string, Record<string, PendingCourtGeoWatcher>> = {};
+  sortedKeys.forEach((k) => {
+    prunedByDate[k] = prevByDate[k];
+  });
+  prunedByDate[dateKey] = dateWatchers;
+
+  cachedScheduler = {
+    ...(cachedScheduler || {}),
+    courtLocationWatchersByDate: prunedByDate
+  };
+  saveLocalSchedulerBackup(cachedScheduler);
+
+  if (db && !options?.skipFirestore) {
+    scheduleCourtWatchersFirestoreFlush(db, prunedByDate, Boolean(options?.immediateFirestore));
+  }
+}
+
+async function upsertPendingCourtGeoWatcher(
+  db: any,
+  dateKey: string,
+  player: any,
+  info: {
+    lastDistanceMeters: number;
+    lastLat?: number;
+    lastLng?: number;
+    source: string;
+    markRepliedNow?: boolean;
+  }
+): Promise<{ isFirstTime: boolean; prevOutOfRangeReplyAt: number }> {
+  if (!player?.id) return { isFirstTime: true, prevOutOfRangeReplyAt: 0 };
+  const dateWatchers = getCourtWatchersStoreForDate(dateKey);
+  const existing = dateWatchers[player.id];
+  const isFirstTime = !existing || Boolean(existing.optedOut) || Boolean(existing.arrived);
+  const prevOutOfRangeReplyAt = Number(existing?.lastOutOfRangeReplyAt || 0);
+  const now = Date.now();
+  dateWatchers[player.id] = {
+    playerId: player.id,
+    name: player.name || "Sócio",
+    sharedAt: existing?.sharedAt || now,
+    lastUpdatedAt: now,
+    lastDistanceMeters: info.lastDistanceMeters,
+    lastLat: Number.isFinite(info.lastLat) ? Number(info.lastLat) : existing?.lastLat,
+    lastLng: Number.isFinite(info.lastLng) ? Number(info.lastLng) : existing?.lastLng,
+    source: info.source,
+    optedOut: false,
+    arrived: false,
+    remindedAt2045: existing?.remindedAt2045 || false,
+    lastOutOfRangeReplyAt: info.markRepliedNow ? now : prevOutOfRangeReplyAt
+  };
+  // Só agenda escrita no Firestore quando entra pela 1ª vez (ou reativa após opt-out); atualizações intermediárias ficam apenas em memória!
+  await persistCourtWatchersForDate(db, dateKey, dateWatchers, {
+    skipFirestore: !isFirstTime
+  });
+  return { isFirstTime, prevOutOfRangeReplyAt };
+}
+
+async function markCourtGeoWatcherArrived(
+  db: any,
+  dateKey: string,
+  playerId: string,
+  extra?: { lastLat?: number; lastLng?: number; lastDistanceMeters?: number; arrivalOrder?: number; name?: string }
+) {
+  if (!playerId) return;
+  markPresentInMemoryCache(dateKey, playerId);
+  const dateWatchers = getCourtWatchersStoreForDate(dateKey);
+  const existing = dateWatchers[playerId];
+  const now = Date.now();
+  dateWatchers[playerId] = {
+    ...(existing || {
+      playerId,
+      name: extra?.name || "Sócio",
+      sharedAt: now,
+      lastDistanceMeters: extra?.lastDistanceMeters ?? 0,
+      source: "WHATSAPP_GPS"
+    }),
+    arrived: true,
+    lastUpdatedAt: now,
+    lastDistanceMeters:
+      typeof extra?.lastDistanceMeters === "number"
+        ? extra.lastDistanceMeters
+        : existing?.lastDistanceMeters ?? 0,
+    lastLat: Number.isFinite(extra?.lastLat) ? Number(extra?.lastLat) : existing?.lastLat,
+    lastLng: Number.isFinite(extra?.lastLng) ? Number(extra?.lastLng) : existing?.lastLng,
+    arrivalOrder:
+      typeof extra?.arrivalOrder === "number" ? extra.arrivalOrder : existing?.arrivalOrder
+  };
+  await persistCourtWatchersForDate(db, dateKey, dateWatchers);
+}
+
+async function markCourtGeoWatcherOptedOut(db: any, dateKey: string, playerId: string): Promise<boolean> {
+  if (!playerId) return false;
+  const dateWatchers = getCourtWatchersStoreForDate(dateKey);
+  const hadActiveWatch = Boolean(
+    dateWatchers[playerId] && !dateWatchers[playerId].arrived && !dateWatchers[playerId].optedOut
+  );
+  dateWatchers[playerId] = {
+    ...(dateWatchers[playerId] || {
+      playerId,
+      name: "Sócio",
+      sharedAt: Date.now(),
+      lastDistanceMeters: 0,
+      source: "OPT_OUT"
+    }),
+    optedOut: true,
+    lastUpdatedAt: Date.now()
+  };
+  await persistCourtWatchersForDate(db, dateKey, dateWatchers);
+  return hadActiveWatch;
+}
 
 function calculateDistanceMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371000; // Raio da Terra em metros
@@ -1935,6 +2316,228 @@ function calculateDistanceMeters(lat1: number, lng1: number, lat2: number, lng2:
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return Math.round(R * c);
+}
+
+interface CourtWeatherForecast {
+  temperatureC: number;
+  feelsLikeC: number;
+  humidityPct: number;
+  windKmh: number;
+  weatherCode: number;
+  conditionLabel: string;
+  conditionEmoji: string;
+  gameNightTempC: number;
+  gameNightRainProbPct: number;
+  gameNightWindKmh: number;
+  gameNightConditionLabel: string;
+  gameNightEmoji: string;
+  gameNightDateLabel: string;
+  courtPlayabilityAdvice: string;
+  wazeNavigateUrl: string;
+  googleMapsNavigateUrl: string;
+  whatsappBlock: string;
+  fullBroadcastMessage: string;
+  updatedAt: number;
+}
+
+let cachedCourtWeather: { key: string; expiresAt: number; data: CourtWeatherForecast } | null = null;
+
+function describeWmoWeatherCode(code: number): { label: string; emoji: string } {
+  if (code === 0) return { label: "Céu limpo", emoji: "☀️" };
+  if (code === 1 || code === 2) return { label: "Poucas nuvens", emoji: "🌤️" };
+  if (code === 3) return { label: "Parcialmente nublado", emoji: "⛅" };
+  if (code === 45 || code === 48) return { label: "Neblina leve", emoji: "🌫️" };
+  if (code >= 51 && code <= 57) return { label: "Garoa leve", emoji: "🌦️" };
+  if (code >= 61 && code <= 67) return { label: "Chuva moderada", emoji: "🌧️" };
+  if (code >= 80 && code <= 82) return { label: "Pancadas de chuva", emoji: "🌦️" };
+  if (code >= 95) return { label: "Chuva forte / trovoadas", emoji: "⛈️" };
+  return { label: "Tempo firme", emoji: "🌤️" };
+}
+
+async function fetchCourtWeatherForecast(
+  lat = DEFAULT_COURT_LAT,
+  lng = DEFAULT_COURT_LNG,
+  forceRefresh = false
+): Promise<CourtWeatherForecast> {
+  const safeLat = Number.isFinite(Number(lat)) ? Number(lat) : DEFAULT_COURT_LAT;
+  const safeLng = Number.isFinite(Number(lng)) ? Number(lng) : DEFAULT_COURT_LNG;
+  const cacheKey = `${safeLat.toFixed(4)},${safeLng.toFixed(4)}`;
+  const now = Date.now();
+
+  if (!forceRefresh && cachedCourtWeather && cachedCourtWeather.key === cacheKey && cachedCourtWeather.expiresAt > now) {
+    return cachedCourtWeather.data;
+  }
+
+  const wazeNavigateUrl = `https://waze.com/ul?ll=${safeLat.toFixed(6)},${safeLng.toFixed(6)}&navigate=yes`;
+  const googleMapsNavigateUrl = `https://www.google.com/maps/dir/?api=1&destination=${safeLat.toFixed(6)},${safeLng.toFixed(6)}&travelmode=driving`;
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4000);
+    const url =
+      `https://api.open-meteo.com/v1/forecast?latitude=${safeLat.toFixed(6)}&longitude=${safeLng.toFixed(6)}` +
+      `&current=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,wind_speed_10m` +
+      `&hourly=temperature_2m,precipitation_probability,weather_code,wind_speed_10m` +
+      `&timezone=America%2FRecife&forecast_days=7`;
+    const resp = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
+    const json: any = resp.ok ? await resp.json() : null;
+
+    const cur = json?.current || {};
+    const temperatureC = Math.round(Number(cur.temperature_2m ?? 28));
+    const feelsLikeC = Math.round(Number(cur.apparent_temperature ?? 30));
+    const humidityPct = Math.round(Number(cur.relative_humidity_2m ?? 72));
+    const windKmh = Math.round(Number(cur.wind_speed_10m ?? 14));
+    const weatherCode = Number(cur.weather_code ?? 1);
+    const curDesc = describeWmoWeatherCode(weatherCode);
+
+    // Procura a janela das 19h–21h de hoje (se quinta) ou da próxima quinta-feira
+    const hourlyTimes: string[] = Array.isArray(json?.hourly?.time) ? json.hourly.time : [];
+    const hourlyTemps: number[] = Array.isArray(json?.hourly?.temperature_2m) ? json.hourly.temperature_2m : [];
+    const hourlyRainProb: number[] = Array.isArray(json?.hourly?.precipitation_probability)
+      ? json.hourly.precipitation_probability
+      : [];
+    const hourlyCodes: number[] = Array.isArray(json?.hourly?.weather_code) ? json.hourly.weather_code : [];
+    const hourlyWind: number[] = Array.isArray(json?.hourly?.wind_speed_10m) ? json.hourly.wind_speed_10m : [];
+
+    const br = getBrazilTimeParts();
+    let targetEveningIdx = -1;
+    let gameNightDateLabel = "Hoje (19h às 22h)";
+
+    for (let i = 0; i < hourlyTimes.length; i++) {
+      const tStr = String(hourlyTimes[i] || "");
+      if (!tStr.endsWith("T19:00") && !tStr.endsWith("T20:00")) continue;
+      const dPart = tStr.slice(0, 10);
+      if (br.dayOfWeek === 4 && dPart === br.dateKey && tStr.endsWith("T19:00")) {
+        targetEveningIdx = i;
+        gameNightDateLabel = `Quinta (${dPart.split("-").reverse().slice(0, 2).join("/")} • 19h às 22h)`;
+        break;
+      }
+      const dt = new Date(`${dPart}T12:00:00-03:00`);
+      if (dt.getUTCDay() === 4 && tStr.endsWith("T19:00")) {
+        targetEveningIdx = i;
+        gameNightDateLabel = `Quinta (${dPart.split("-").reverse().slice(0, 2).join("/")} • 19h às 22h)`;
+        break;
+      }
+    }
+
+    if (targetEveningIdx < 0) {
+      targetEveningIdx = hourlyTimes.findIndex((t) => String(t).endsWith("T19:00"));
+    }
+
+    const sliceIdxs =
+      targetEveningIdx >= 0
+        ? [targetEveningIdx, Math.min(hourlyTimes.length - 1, targetEveningIdx + 1), Math.min(hourlyTimes.length - 1, targetEveningIdx + 2)]
+        : [];
+
+    const gameNightTempC =
+      sliceIdxs.length > 0
+        ? Math.round(sliceIdxs.reduce((acc, idx) => acc + Number(hourlyTemps[idx] ?? temperatureC), 0) / sliceIdxs.length)
+        : temperatureC;
+    const gameNightRainProbPct =
+      sliceIdxs.length > 0
+        ? Math.round(Math.max(...sliceIdxs.map((idx) => Number(hourlyRainProb[idx] ?? 10))))
+        : 10;
+    const gameNightWindKmh =
+      sliceIdxs.length > 0
+        ? Math.round(Math.max(...sliceIdxs.map((idx) => Number(hourlyWind[idx] ?? windKmh))))
+        : windKmh;
+    const gameNightCode =
+      sliceIdxs.length > 0 ? Number(hourlyCodes[sliceIdxs[0]] ?? weatherCode) : weatherCode;
+    const nightDesc = describeWmoWeatherCode(gameNightCode);
+
+    let courtPlayabilityAdvice = "Quadra seca e clima excelente para o vôlei!";
+    if (gameNightRainProbPct >= 65) {
+      courtPlayabilityAdvice = "Chance alta de chuva no horário do jogo — atenção ao trânsito no deslocamento!";
+    } else if (gameNightRainProbPct >= 35) {
+      courtPlayabilityAdvice = "Possibilidade de chuva passageira — saia alguns minutos antes para evitar trânsito.";
+    } else if (gameNightWindKmh >= 28) {
+      courtPlayabilityAdvice = "Vento moderado/forte previsto — noite boa para saque flutuante!";
+    }
+
+    const whatsappBlock =
+      `🌦️ *CLIMA NA QUADRA (${gameNightDateLabel}):*\n` +
+      `${nightDesc.emoji} *${nightDesc.label}* • 🌡️ *${gameNightTempC}°C* (Sensação ${feelsLikeC}°C)\n` +
+      `🌧️ *Chance de chuva:* ${gameNightRainProbPct}% • 💨 *Vento:* ${gameNightWindKmh} km/h\n` +
+      `💡 _${courtPlayabilityAdvice}_\n\n` +
+      `🗺️ *ROTAS 1-TOQUE PARA A QUADRA (COM TRÂNSITO AO VIVO):*\n` +
+      `🚗 *Abrir no Waze:* ${wazeNavigateUrl}\n` +
+      `📍 *Abrir no Google Maps:* ${googleMapsNavigateUrl}`;
+
+    const fullBroadcastMessage =
+      `🏐🌦️ *BOLETIM DO DIA DE JOGO — CLIMA & TRÂNSITO NA QUADRA!* 🔥\n\n` +
+      `Fala, Guerreiros! Confira as condições da nossa quadra para o jogo de *${gameNightDateLabel}*:\n\n` +
+      `${nightDesc.emoji} *Previsão às 19h–22h:* *${nightDesc.label}*\n` +
+      `🌡️ *Temperatura:* *${gameNightTempC}°C* (Agora: ${temperatureC}°C / Sensação ${feelsLikeC}°C)\n` +
+      `🌧️ *Probabilidade de chuva:* *${gameNightRainProbPct}%*\n` +
+      `💨 *Vento na quadra:* *${gameNightWindKmh} km/h* • 💧 *Umidade:* ${humidityPct}%\n` +
+      `💡 *Status:* _${courtPlayabilityAdvice}_\n\n` +
+      `───────────────────\n` +
+      `🚗 *VAI SAIR PRO VÔLEI? DESVIE DO TRÂNSITO EM 1 TOQUE:*\n` +
+      `🟦 *Navegar pelo Waze:* ${wazeNavigateUrl}\n` +
+      `🟩 *Navegar pelo Google Maps:* ${googleMapsNavigateUrl}\n\n` +
+      `📍 *Ao sair de casa (a partir das 19h):* compartilhe sua *Localização em Tempo Real (1 hora)* no meu privado ou use o check-in do app para garantir sua posição automática na fila (#1, #2...)!\n\n` +
+      `— Guerreirinho, o robô do clube 🤖`;
+
+    const result: CourtWeatherForecast = {
+      temperatureC,
+      feelsLikeC,
+      humidityPct,
+      windKmh,
+      weatherCode,
+      conditionLabel: curDesc.label,
+      conditionEmoji: curDesc.emoji,
+      gameNightTempC,
+      gameNightRainProbPct,
+      gameNightWindKmh,
+      gameNightConditionLabel: nightDesc.label,
+      gameNightEmoji: nightDesc.emoji,
+      gameNightDateLabel,
+      courtPlayabilityAdvice,
+      wazeNavigateUrl,
+      googleMapsNavigateUrl,
+      whatsappBlock,
+      fullBroadcastMessage,
+      updatedAt: now
+    };
+
+    cachedCourtWeather = {
+      key: cacheKey,
+      expiresAt: now + 15 * 60 * 1000,
+      data: result
+    };
+    return result;
+  } catch {
+    const fallbackBlock =
+      `🌦️ *CLIMA NA QUADRA (19h às 22h):*\n` +
+      `🌤️ *Tempo firme* • 🌡️ *27°C* (Sensação 29°C)\n` +
+      `🌧️ *Chance de chuva:* 10% • 💨 *Vento:* 14 km/h\n\n` +
+      `🗺️ *ROTAS 1-TOQUE PARA A QUADRA:*\n` +
+      `🚗 *Abrir no Waze:* ${wazeNavigateUrl}\n` +
+      `📍 *Abrir no Google Maps:* ${googleMapsNavigateUrl}`;
+
+    return {
+      temperatureC: 27,
+      feelsLikeC: 29,
+      humidityPct: 72,
+      windKmh: 14,
+      weatherCode: 1,
+      conditionLabel: "Poucas nuvens",
+      conditionEmoji: "🌤️",
+      gameNightTempC: 27,
+      gameNightRainProbPct: 10,
+      gameNightWindKmh: 14,
+      gameNightConditionLabel: "Tempo firme",
+      gameNightEmoji: "🌤️",
+      gameNightDateLabel: "Hoje (19h às 22h)",
+      courtPlayabilityAdvice: "Quadra seca e clima excelente para o vôlei!",
+      wazeNavigateUrl,
+      googleMapsNavigateUrl,
+      whatsappBlock: fallbackBlock,
+      fullBroadcastMessage: fallbackBlock,
+      updatedAt: now
+    };
+  }
 }
 
 async function executeCourtLocationCheckIn(
@@ -1953,19 +2556,30 @@ async function executeCourtLocationCheckIn(
   }
 
   const br = getBrazilTimeParts();
+  const dateKey = br.dateKey;
   const isAdminUser =
     Boolean(player?.isAdmin) ||
     String(player?.email || "").trim().toLowerCase() === "rodneyes@gmail.com" ||
     String(player?.phone || "").includes("97330924");
 
-  // Janela permitida na quinta-feira: das 17:30 às 23:30 (ou liberado em qualquer dia para Admin testar o GPS)
+  // Se o sócio já fez check-in hoje e o WhatsApp continua mandando pings residuais de liveLocation, ignora silenciosamente (zero spam e zero leitura no banco!)
+  if (locationPayload.isLive && isPresentInMemoryCache(dateKey, player.id)) {
+    return "";
+  }
+
+  // Janela permitida na quinta-feira: das 17:30 às 22:00 (ou liberado em qualquer dia para Admin testar o GPS)
   const isThursdayWindow =
     isAdminUser ||
-    (br.dayOfWeek === 4 && br.totalMinutes >= 17 * 60 + 30 && br.totalMinutes <= 23 * 60 + 30);
+    (br.dayOfWeek === 4 && br.totalMinutes >= 17 * 60 + 30 && br.totalMinutes <= COURT_CHECKIN_END_MINUTES);
   if (!isThursdayWindow) {
+    if (locationPayload.isLive) {
+      // Silencia atualizações tardias após 22h caso o sócio esqueça o liveLocation ligado
+      const existingWatch = getCourtWatchersStoreForDate(dateKey)[player.id];
+      if (existingWatch && existingWatch.lastOutOfRangeReplyAt) return "";
+    }
     return (
       `⏰ Olá, *${player.name.split(" ")[0]}*!\n\n` +
-      `O check-in presencial na quadra via localização fica liberado nas *Quintas-feiras a partir das 17h30*.\n\n` +
+      `O check-in presencial na quadra via localização fica liberado nas *Quintas-feiras das 17h30 às 22h00*.\n\n` +
       `Se quiser confirmar seu nome na *Lista de Intenção* da semana, toque aqui:\n` +
       `👉 https://wa.me/558197330924?text=gv%20vou`
     );
@@ -1983,18 +2597,19 @@ async function executeCourtLocationCheckIn(
     return (
       `🚫 *Localização pesquisada no mapa não é aceita, ${player.name.split(" ")[0]}!*\n\n` +
       `Para fazer o check-in na quadra, não digite o endereço na busca. Envie o seu GPS real agora:\n\n` +
-      `🍎 *No iPhone:* Toque no *+* → *Localização* → *Enviar sua localização atual*.\n` +
-      `🤖 *No Android:* Toque no *clipe (📎)* → *Localização* → *Enviar sua localização atual*.`
+      `🍎 *No iPhone:* Toque no *+* → *Localização* → *Localização em tempo real (1 hora)* ou *Enviar sua localização atual*.\n` +
+      `🤖 *No Android:* Toque no *clipe (📎)* → *Localização* → *Localização em tempo real (1 hora)* ou *Enviar sua localização atual*.`
     );
   }
 
-  const sysConfig = await getCachedSystemConfig();
+  const sysConfig = await getCachedSystemConfig(Boolean(isAdminUser));
+  if (!isAdminUser && sysConfig?.autoGeoCheckInEnabled !== true) {
+    if (locationPayload.isLive) return "";
+    return `⚙️ Olá, *${player.name.split(" ")[0]}*! O check-in automático por localização GPS ainda está em fase de testes pela diretoria e será liberado em breve para o grupo.`;
+  }
   const courtLat = Number(sysConfig?.courtLocation?.lat ?? DEFAULT_COURT_LAT);
   const courtLng = Number(sysConfig?.courtLocation?.lng ?? DEFAULT_COURT_LNG);
-  const maxRadius = Math.max(
-    DEFAULT_GEOFENCE_RADIUS_METERS,
-    Number(sysConfig?.geofenceRadius || DEFAULT_GEOFENCE_RADIUS_METERS)
-  );
+  const maxRadius = Number(sysConfig?.geofenceRadius || DEFAULT_GEOFENCE_RADIUS_METERS);
 
   const distanceMeters = calculateDistanceMeters(
     locationPayload.lat,
@@ -2003,64 +2618,106 @@ async function executeCourtLocationCheckIn(
     courtLng
   );
 
+  // Anti-teletransporte (proteção contra Fake GPS) para não-admins
+  if (!isAdminUser) {
+    const jumpCheck = checkImpossibleGpsJump(player.id, locationPayload.lat, locationPayload.lng);
+    if (jumpCheck.suspicious && distanceMeters <= maxRadius) {
+      return (
+        `🛡️ *Salto de GPS suspeito detectado, ${player.name.split(" ")[0]}!*\n\n` +
+        `Seu sinal saltou *${jumpCheck.jumpMeters}m* em apenas *${jumpCheck.elapsedSec}s*. Aguarde alguns segundos no local real da quadra e envie sua localização novamente.`
+      );
+    }
+  }
+
   if (distanceMeters > maxRadius) {
+    const firstName = player.name.split(" ")[0];
+    if (br.dayOfWeek === 4 && br.totalMinutes <= COURT_CHECKIN_END_MINUTES) {
+      const existingBefore = getCourtWatchersStoreForDate(dateKey)[player.id];
+      const recentlyReplied =
+        Boolean(locationPayload.isLive) &&
+        Boolean(existingBefore?.lastOutOfRangeReplyAt) &&
+        Date.now() - Number(existingBefore?.lastOutOfRangeReplyAt || 0) < 45 * 60 * 1000;
+
+      await upsertPendingCourtGeoWatcher(db, dateKey, player, {
+        lastDistanceMeters: distanceMeters,
+        lastLat: locationPayload.lat,
+        lastLng: locationPayload.lng,
+        source: locationPayload.isLive ? "WHATSAPP_LIVE" : "WHATSAPP_PIN",
+        markRepliedNow: !recentlyReplied
+      });
+
+      // Anti-spam de trajeto: para Localização em Tempo Real já confirmada, acompanha silenciosamente até entrar nos 150m!
+      if (recentlyReplied) {
+        return "";
+      }
+
+      if (locationPayload.isLive) {
+        return (
+          `📍 *Localização em tempo real recebida, ${firstName}!*\n\n` +
+          `📏 *Distância atual:* ~${distanceMeters} metros (raio oficial: *${maxRadius}m*).\n\n` +
+          `✅ *Acompanhamento silencioso ativado:* não precisa mandar mais nada! Assim que você entrar na área da quadra (até às *22h00*), eu confirmo sua vaga automaticamente e te aviso aqui com sua posição na fila! 🏐🚗`
+        );
+      }
+    }
     return (
-      `📍 *Você ainda está longe da quadra, ${player.name.split(" ")[0]}!*\n\n` +
-      `📏 *Distância medida:* ~${distanceMeters} metros (limite da quadra: ${maxRadius}m).\n\n` +
-      `Assim que chegar na quadra dos Guerreiros, envie novamente sua *Localização Atual* aqui no privado para entrar na fila do jogo! 🏐🏃‍♂️`
+      `📍 *Você ainda está longe da quadra, ${firstName}!*\n\n` +
+      `📏 *Distância medida:* ~${distanceMeters} metros (limite da quadra: *${maxRadius}m*).\n\n` +
+      `Se estiver a caminho, compartilhe sua *Localização em Tempo Real por 1 hora* aqui no privado (ou envie sua localização atual ao chegar até às *22h00*) que eu confirmo sua vaga automaticamente na fila! 🏐🏃‍♂️`
     );
   }
 
-  const dateKey = br.dateKey;
   const now = Date.now();
   let arrivalOrder = 1;
   let alreadyPresent = false;
 
-  await withFirestoreGuard(async () => {
-    const attColRef = db.collection("attendance").doc(dateKey).collection("players");
-    const snap = await attColRef.get();
-    const currentPresent: any[] = [];
-    snap.forEach((d: any) => {
-      const data = d.data();
-      if (data && data.status !== "left" && !data.isDM) {
-        currentPresent.push({ id: d.id, ...data });
+  await withAttendanceCheckInLock(async () => {
+    await withFirestoreGuard(async () => {
+      const attColRef = db.collection("attendance").doc(dateKey).collection("players");
+      const snap = await attColRef.get();
+      const currentPresent: any[] = [];
+      snap.forEach((d: any) => {
+        const data = d.data();
+        if (data && data.status !== "left" && !data.isDM) {
+          currentPresent.push({ id: d.id, ...data });
+        }
+      });
+
+      const existing = currentPresent.find((p) => p.id === player.id);
+      if (existing) {
+        alreadyPresent = true;
+        arrivalOrder = Number(existing.arrivalOrder || 1);
+        return;
       }
-    });
 
-    const existing = currentPresent.find((p) => p.id === player.id);
-    if (existing) {
-      alreadyPresent = true;
-      arrivalOrder = Number(existing.arrivalOrder || 1);
-      return;
-    }
+      const maxOrder = currentPresent.reduce((max, p) => Math.max(max, Number(p.arrivalOrder || 0)), 0);
+      arrivalOrder = maxOrder + 1;
 
-    const maxOrder = currentPresent.reduce((max, p) => Math.max(max, Number(p.arrivalOrder || 0)), 0);
-    arrivalOrder = maxOrder + 1;
+      await db.collection("attendance").doc(dateKey).set(
+        { date: dateKey, lastUpdate: now },
+        { merge: true }
+      );
 
-    await db.collection("attendance").doc(dateKey).set(
-      { date: dateKey, lastUpdate: now },
-      { merge: true }
-    );
+      await attColRef.doc(player.id).set(
+        {
+          ...player,
+          id: player.id,
+          name: player.name || "Sócio",
+          status: "active",
+          arrivalOrder,
+          isPresent: true,
+          checkInMethod: "QR",
+          checkInSource: "WHATSAPP_GPS",
+          distanceFromCourtMeters: distanceMeters,
+          timestamp: now
+        },
+        { merge: true }
+      );
+    }, undefined);
+  });
 
-    await attColRef.doc(player.id).set(
-      {
-        ...player,
-        id: player.id,
-        name: player.name || "Sócio",
-        status: "active",
-        arrivalOrder,
-        isPresent: true,
-        checkInMethod: "QR",
-        checkInSource: "WHATSAPP_GPS",
-        distanceFromCourtMeters: distanceMeters,
-        timestamp: now
-      },
-      { merge: true }
-    );
-  }, undefined);
-
-  // Também garante que o sócio conste como GOING na lista de intenção do dia
+  // Também garante que o sócio conste como GOING na lista de intenção do dia e limpa pendência de chegada
   await syncPlayerPreConfirmationDoc(db, dateKey, player, "GOING", now);
+  await markCourtGeoWatcherArrived(db, dateKey, player.id);
 
   if (alreadyPresent) {
     return (
@@ -2119,8 +2776,11 @@ interface OutboxWhatsAppMessage {
   fallbackTargets?: string[];
   text: string;
   mediaBase64?: string;
+  mediaFetchUrl?: string;
   mediaType?: "image";
   fileName?: string;
+  caption?: string;
+  imageOnly?: boolean;
   delayMs?: number;
   type?: string;
   recipientLabel?: string;
@@ -2141,11 +2801,167 @@ interface WhatsAppCommLogEntry {
   errorDetail?: string;
 }
 
+interface VmPhotoSyncTarget {
+  playerId: string;
+  name: string;
+  phone?: string;
+  whatsappLid?: string;
+}
+
+interface VmPhotoSyncJob {
+  jobId: string;
+  requestedAt: number;
+  forceAll: boolean;
+  playerId?: string | null;
+  status: "queued" | "dispatched" | "completed";
+  dispatchedAt?: number;
+  completedAt?: number;
+  updatedCount?: number;
+  noPhotoPrivacyCount?: number;
+  checkedCount?: number;
+  targets?: VmPhotoSyncTarget[];
+}
+
+const WHATSAPP_PHOTO_SYNC_JOB_PATH = path.join(process.cwd(), "whatsapp_photo_sync_job_local.json");
+
+function loadLocalVmPhotoSyncJob(): VmPhotoSyncJob | null {
+  try {
+    if (fs.existsSync(WHATSAPP_PHOTO_SYNC_JOB_PATH)) {
+      const raw = fs.readFileSync(WHATSAPP_PHOTO_SYNC_JOB_PATH, "utf-8");
+      const parsed = safeJsonParse<any>(raw, "loadLocalVmPhotoSyncJob", null);
+      if (isPlainObject(parsed) && parsed.jobId) {
+        return parsed as VmPhotoSyncJob;
+      }
+    }
+  } catch {}
+  return null;
+}
+
+function saveLocalVmPhotoSyncJob(job: VmPhotoSyncJob | null) {
+  try {
+    if (!job) {
+      if (fs.existsSync(WHATSAPP_PHOTO_SYNC_JOB_PATH)) fs.unlinkSync(WHATSAPP_PHOTO_SYNC_JOB_PATH);
+      return;
+    }
+    fs.writeFileSync(WHATSAPP_PHOTO_SYNC_JOB_PATH, JSON.stringify(job, null, 2), "utf-8");
+  } catch {}
+}
+
+let currentVmPhotoSyncJob: VmPhotoSyncJob | null = loadLocalVmPhotoSyncJob();
+let lastVmPhotoSyncHeartbeatAt = 0;
+let lastVmHeartbeatPersistedAt = 0;
+let lastVmHeartbeatFetchedAt = 0;
+const VM_PHOTO_SYNC_ONLINE_WINDOW_MS = 10 * 60 * 1000;
+
+async function recordVmPhotoSyncHeartbeat(now: number = Date.now()) {
+  lastVmPhotoSyncHeartbeatAt = Math.max(lastVmPhotoSyncHeartbeatAt, now);
+  if (now - lastVmHeartbeatPersistedAt < 50_000) return;
+  lastVmHeartbeatPersistedAt = now;
+  try {
+    const db = await getFirestore();
+    await withFirestoreGuard(
+      () =>
+        db.collection("metadata").doc("whatsapp_vm_heartbeat").set(
+          { lastPhotoSyncHeartbeatAt: now, updatedAt: now },
+          { merge: true }
+        ),
+      undefined
+    );
+  } catch {}
+}
+
+async function getEffectiveVmPhotoSyncHeartbeatAt(job?: VmPhotoSyncJob | null): Promise<number> {
+  const now = Date.now();
+  if (now - lastVmHeartbeatFetchedAt > 15_000) {
+    lastVmHeartbeatFetchedAt = now;
+    try {
+      const db = await getFirestore();
+      const remoteTs = await withFirestoreGuard(async () => {
+        const snap = await db.collection("metadata").doc("whatsapp_vm_heartbeat").get();
+        if (!snap.exists) return 0;
+        const data = sanitizeFirestorePayload<any>(snap.data(), "vmHeartbeat", null);
+        return Number(data?.lastPhotoSyncHeartbeatAt || 0);
+      }, 0);
+      if (remoteTs > lastVmPhotoSyncHeartbeatAt) {
+        lastVmPhotoSyncHeartbeatAt = remoteTs;
+      }
+    } catch {}
+  }
+  const jobProofTs = Math.max(Number(job?.dispatchedAt || 0), Number(job?.completedAt || 0));
+  return Math.max(lastVmPhotoSyncHeartbeatAt, jobProofTs);
+}
+
+async function persistVmPhotoSyncJobToFirestore(job: VmPhotoSyncJob) {
+  try {
+    const safeJob = sanitizeFirestorePayload<VmPhotoSyncJob | null>(job, "persistVmPhotoSyncJob", null);
+    if (!safeJob || !safeJob.jobId) return;
+    const db = await getFirestore();
+    await withFirestoreGuard(
+      () => db.collection("metadata").doc("whatsapp_photo_sync_job").set(safeJob),
+      undefined
+    );
+  } catch (err: any) {
+    console.warn("[Firestore PhotoSync] Falha controlada ao persistir job:", err?.message || err);
+  }
+}
+
+async function hydrateVmPhotoSyncJobFromFirestore(): Promise<VmPhotoSyncJob | null> {
+  try {
+    const db = await getFirestore();
+    const remote = await withFirestoreGuard(async () => {
+      const snap = await db.collection("metadata").doc("whatsapp_photo_sync_job").get();
+      if (!snap.exists) return null;
+      const data = sanitizeFirestorePayload<any>(snap.data(), "hydrateVmPhotoSyncJob", null);
+      return isPlainObject(data) && data.jobId ? (data as VmPhotoSyncJob) : null;
+    }, null as VmPhotoSyncJob | null);
+    if (remote) {
+      const localTs = currentVmPhotoSyncJob?.requestedAt || 0;
+      if (!currentVmPhotoSyncJob || remote.requestedAt > localTs || remote.jobId === currentVmPhotoSyncJob.jobId) {
+        // Se for o mesmo jobId, prefere o status mais avançado (completed > dispatched > queued)
+        const rank = (s?: string) => (s === "completed" ? 3 : s === "dispatched" ? 2 : 1);
+        if (
+          !currentVmPhotoSyncJob ||
+          remote.requestedAt > localTs ||
+          rank(remote.status) >= rank(currentVmPhotoSyncJob.status)
+        ) {
+          currentVmPhotoSyncJob = remote;
+          saveLocalVmPhotoSyncJob(remote);
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn("[Firestore PhotoSync] Falha controlada ao hidratar job:", err?.message || err);
+  }
+  return currentVmPhotoSyncJob;
+}
+
+function buildVmPhotoSyncTargets(
+  allPlayers: any[],
+  forceAll: boolean,
+  playerId?: string | null
+): VmPhotoSyncTarget[] {
+  const filtered = playerId
+    ? allPlayers.filter((p) => p.id === playerId)
+    : allPlayers.filter(
+        (p) =>
+          p.status !== "inactive" &&
+          (Boolean(p.phone) || Boolean(p.whatsappLid)) &&
+          (forceAll || isMissingOrDefaultAvatar(p.photoUrl))
+      );
+  return filtered.map((p) => ({
+    playerId: String(p.id),
+    name: String(p.name || ""),
+    ...(p.phone ? { phone: autoNormalizeBrazilianPhone(p.phone) || String(p.phone) } : {}),
+    ...(p.whatsappLid ? { whatsappLid: String(p.whatsappLid) } : {})
+  }));
+}
+
 function loadLocalWhatsAppOutbox(): OutboxWhatsAppMessage[] {
   try {
     if (fs.existsSync(WHATSAPP_OUTBOX_PATH)) {
-      const parsed = JSON.parse(fs.readFileSync(WHATSAPP_OUTBOX_PATH, "utf-8"));
-      if (Array.isArray(parsed)) return parsed;
+      const raw = fs.readFileSync(WHATSAPP_OUTBOX_PATH, "utf-8");
+      const parsed = safeJsonParse<unknown>(raw, "loadLocalWhatsAppOutbox", []);
+      if (Array.isArray(parsed)) return parsed.filter((x) => isPlainObject(x) && Boolean(x.outboxId)) as OutboxWhatsAppMessage[];
     }
   } catch {}
   return [];
@@ -2160,9 +2976,10 @@ function saveLocalWhatsAppOutbox(items: OutboxWhatsAppMessage[]) {
 function loadLocalWhatsAppCommLogs(): WhatsAppCommLogEntry[] {
   try {
     if (fs.existsSync(WHATSAPP_COMM_LOGS_PATH)) {
-      const parsed = JSON.parse(fs.readFileSync(WHATSAPP_COMM_LOGS_PATH, "utf-8"));
+      const raw = fs.readFileSync(WHATSAPP_COMM_LOGS_PATH, "utf-8");
+      const parsed = safeJsonParse<unknown>(raw, "loadLocalWhatsAppCommLogs", []);
       if (Array.isArray(parsed)) {
-        return parsed.slice(0, 100).map((entry: any) => ({
+        return parsed.filter((x) => isPlainObject(x)).slice(0, 100).map((entry: any) => ({
           id: String(entry.id || `wa_log_${Date.now()}`),
           timestamp: Number(entry.timestamp || Date.now()),
           type: String(entry.type || "GENERAL"),
@@ -2200,16 +3017,19 @@ function recordWhatsAppCommLog(entry: Omit<WhatsAppCommLogEntry, "id" | "timesta
 
 async function persistOutboxToFirestore(items: OutboxWhatsAppMessage[]) {
   try {
+    const safeItems = sanitizeFirestorePayload<OutboxWhatsAppMessage[]>(items.slice(-100), "persistOutboxToFirestore", []);
     const db = await getFirestore();
     await withFirestoreGuard(
       () =>
         db.collection("metadata").doc("whatsapp_outbox").set({
-          items: items.slice(-100),
+          items: Array.isArray(safeItems) ? safeItems : [],
           updatedAt: Date.now()
         }),
       undefined
     );
-  } catch {}
+  } catch (err: any) {
+    console.warn("[Firestore Outbox] Falha controlada ao persistir fila:", err?.message || err);
+  }
 }
 
 async function hydrateOutboxFromFirestore(): Promise<void> {
@@ -2218,8 +3038,10 @@ async function hydrateOutboxFromFirestore(): Promise<void> {
     const remoteItems = await withFirestoreGuard(async () => {
       const snap = await db.collection("metadata").doc("whatsapp_outbox").get();
       if (!snap.exists) return [];
-      const data = snap.data() || {};
-      return Array.isArray(data.items) ? (data.items as OutboxWhatsAppMessage[]) : [];
+      const data = sanitizeFirestorePayload<Record<string, any>>(snap.data(), "hydrateOutboxFromFirestore", {});
+      return Array.isArray(data.items)
+        ? (data.items.filter((x: any) => isPlainObject(x) && Boolean(x.outboxId)) as OutboxWhatsAppMessage[])
+        : [];
     }, [] as OutboxWhatsAppMessage[]);
 
     if (remoteItems.length > 0) {
@@ -2242,7 +3064,67 @@ async function hydrateOutboxFromFirestore(): Promise<void> {
   } catch {}
 }
 
+type WhatsAppCardDeliveryMode = "disabled" | "vm_image_only";
+
 let memoryBotActiveOverride: boolean | null = null;
+let memoryCardDeliveryModeOverride: WhatsAppCardDeliveryMode | null = null;
+let memoryWaApiUrlOverride: string | null = null;
+let memoryWaInstanceOverride: string | null = null;
+
+function normalizeCardDeliveryMode(val: unknown): WhatsAppCardDeliveryMode {
+  return val === "disabled" ? "disabled" : "vm_image_only";
+}
+
+function getWhatsAppCardDeliveryMode(): WhatsAppCardDeliveryMode {
+  if (memoryCardDeliveryModeOverride) return memoryCardDeliveryModeOverride;
+  if (
+    cachedSystemConfig?.whatsappCardDeliveryMode === "vm_image_only" ||
+    cachedSystemConfig?.whatsappCardDeliveryMode === "disabled"
+  ) {
+    return cachedSystemConfig.whatsappCardDeliveryMode;
+  }
+  try {
+    if (fs.existsSync(WHATSAPP_CONFIG_PATH)) {
+      const localCfg = JSON.parse(fs.readFileSync(WHATSAPP_CONFIG_PATH, "utf-8"));
+      if (localCfg?.cardDeliveryMode === "vm_image_only" || localCfg?.cardDeliveryMode === "disabled") {
+        return localCfg.cardDeliveryMode;
+      }
+    }
+  } catch {}
+  return "vm_image_only";
+}
+
+function setWhatsAppCardDeliveryModeState(
+  mode: WhatsAppCardDeliveryMode,
+  opts?: { apiUrl?: string; instanceName?: string }
+) {
+  const cleanMode = normalizeCardDeliveryMode(mode);
+  memoryCardDeliveryModeOverride = cleanMode;
+  const cleanApiUrl = opts?.apiUrl ? String(opts.apiUrl).trim().replace(/\/$/, "") : undefined;
+  const cleanInstance = opts?.instanceName ? String(opts.instanceName).trim() : undefined;
+  if (cleanApiUrl) memoryWaApiUrlOverride = cleanApiUrl;
+  if (cleanInstance) memoryWaInstanceOverride = cleanInstance;
+
+  try {
+    let localCfg: any = {};
+    if (fs.existsSync(WHATSAPP_CONFIG_PATH)) {
+      localCfg = JSON.parse(fs.readFileSync(WHATSAPP_CONFIG_PATH, "utf-8")) || {};
+    }
+    localCfg.cardDeliveryMode = cleanMode;
+    if (cleanApiUrl) localCfg.apiUrl = cleanApiUrl;
+    if (cleanInstance) localCfg.instanceName = cleanInstance;
+    fs.writeFileSync(WHATSAPP_CONFIG_PATH, JSON.stringify(localCfg, null, 2), "utf-8");
+  } catch {}
+
+  if (cachedSystemConfig) {
+    cachedSystemConfig = {
+      ...cachedSystemConfig,
+      whatsappCardDeliveryMode: cleanMode,
+      ...(cleanApiUrl ? { whatsappApiUrl: cleanApiUrl } : {}),
+      ...(cleanInstance ? { whatsappInstance: cleanInstance } : {})
+    };
+  }
+}
 
 function isWhatsAppBotEnabled(): boolean {
   if (typeof memoryBotActiveOverride === "boolean") return memoryBotActiveOverride;
@@ -2279,6 +3161,7 @@ function getWhatsAppConfig(): {
   instanceName: string;
   groupJid: string;
   botActive: boolean;
+  cardDeliveryMode: WhatsAppCardDeliveryMode;
 } {
   let localCfg: any = {};
   try {
@@ -2287,11 +3170,24 @@ function getWhatsAppConfig(): {
     }
   } catch {}
   return {
-    apiUrl: String(process.env.WHATSAPP_API_URL || localCfg.apiUrl || "http://34.133.253.248:8080").replace(/\/$/, ""),
+    apiUrl: String(
+      memoryWaApiUrlOverride ||
+        cachedSystemConfig?.whatsappApiUrl ||
+        process.env.WHATSAPP_API_URL ||
+        localCfg.apiUrl ||
+        "http://34.133.253.248:8080"
+    ).replace(/\/$/, ""),
     apiKey: String(process.env.WHATSAPP_API_KEY || localCfg.apiKey || "esperanca"),
-    instanceName: String(process.env.WHATSAPP_INSTANCE || localCfg.instanceName || "Guerreiros"),
+    instanceName: String(
+      memoryWaInstanceOverride ||
+        cachedSystemConfig?.whatsappInstance ||
+        process.env.WHATSAPP_INSTANCE ||
+        localCfg.instanceName ||
+        "Guerreiros"
+    ),
     groupJid: String(process.env.WHATSAPP_GROUP_JID || localCfg.groupJid || "120363401268459791@g.us"),
-    botActive: isWhatsAppBotEnabled()
+    botActive: isWhatsAppBotEnabled(),
+    cardDeliveryMode: getWhatsAppCardDeliveryMode()
   };
 }
 
@@ -2370,7 +3266,7 @@ export async function dispatchWhatsAppMessage(
   for (const targetJid of candidates) {
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 8000);
+      const timer = setTimeout(() => controller.abort(), 3000);
       const resp = await fetch(url, {
         method: "POST",
         headers: {
@@ -2386,14 +3282,13 @@ export async function dispatchWhatsAppMessage(
       });
       clearTimeout(timer);
 
-      const rawRespText = await resp.text().catch(() => "");
-      let parsedResp: any = null;
-      try {
-        parsedResp = rawRespText ? JSON.parse(rawRespText) : null;
-      } catch {}
+      const parsedResult = await safeReadResponseJson<any>(resp, "dispatchWhatsAppMessage", null);
+      const rawRespText = parsedResult.rawText;
+      const parsedResp = parsedResult.data;
 
       const apiRejected =
         !resp.ok ||
+        !parsedResult.isValidJson ||
         parsedResp?.error === true ||
         (typeof parsedResp?.status === "number" && parsedResp.status >= 400) ||
         parsedResp?.response?.message?.[0]?.exists === false;
@@ -2413,6 +3308,8 @@ export async function dispatchWhatsAppMessage(
       errors.push(`${targetJid} -> HTTP ${resp.status} ${rawRespText.slice(0, 140)}`);
     } catch (err: any) {
       errors.push(`${targetJid} -> ${err?.name || "Error"}: ${err?.message || String(err)}`);
+      // Se o endpoint Evolution API está inacessível/timeout, não bloqueia tentando os demais variantes
+      break;
     }
   }
 
@@ -2472,6 +3369,7 @@ export async function dispatchWhatsAppMedia(
     recipientLabel?: string;
     fallbackTargets?: string[];
     fileName?: string;
+    mediaUrl?: string;
     skipOutboxOnFail?: boolean;
   }
 ): Promise<boolean> {
@@ -2502,7 +3400,8 @@ export async function dispatchWhatsAppMedia(
   const label = meta?.recipientLabel || (to.endsWith("@g.us") ? "Grupo Guerreiros VC" : to);
 
   for (const targetJid of candidates) {
-    const payloads = [
+    const payloads: any[] = [
+      // Evolution API v2 (base64 direto)
       {
         number: targetJid,
         mediatype: "image",
@@ -2511,9 +3410,23 @@ export async function dispatchWhatsAppMedia(
         media: cleanBase64,
         fileName
       },
+      // Evolution API v2 (URL pública HD — fallback caso proxy rejeite payload base64 grande)
+      ...(meta?.mediaUrl
+        ? [
+            {
+              number: targetJid,
+              mediatype: "image",
+              mimetype: "image/png",
+              caption,
+              media: meta.mediaUrl,
+              fileName
+            }
+          ]
+        : []),
+      // Evolution API v1 (formato legado mediaMessage)
       {
         number: targetJid,
-        options: { delay: 1000, presence: "composing" },
+        options: { delay: 600, presence: "composing" },
         mediaMessage: {
           mediatype: "image",
           caption,
@@ -2538,14 +3451,13 @@ export async function dispatchWhatsAppMedia(
         });
         clearTimeout(timer);
 
-        const rawRespText = await resp.text().catch(() => "");
-        let parsedResp: any = null;
-        try {
-          parsedResp = rawRespText ? JSON.parse(rawRespText) : null;
-        } catch {}
+        const parsedResult = await safeReadResponseJson<any>(resp, "dispatchWhatsAppMedia", null);
+        const rawRespText = parsedResult.rawText;
+        const parsedResp = parsedResult.data;
 
         const apiRejected =
           !resp.ok ||
+          !parsedResult.isValidJson ||
           parsedResp?.error === true ||
           (typeof parsedResp?.status === "number" && parsedResp.status >= 400) ||
           parsedResp?.response?.message?.[0]?.exists === false;
@@ -2563,7 +3475,7 @@ export async function dispatchWhatsAppMedia(
         }
 
         errors.push(`${targetJid} -> HTTP ${resp.status} ${rawRespText.slice(0, 140)}`);
-        if (resp.status !== 400) break;
+        if (![400, 413, 415, 422].includes(resp.status)) break;
       } catch (err: any) {
         errors.push(`${targetJid} -> ${err?.name || "Error"}: ${err?.message || String(err)}`);
         break;
@@ -2681,19 +3593,25 @@ export async function downloadImageAsDataUri(imageUrl: string): Promise<string |
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8000);
     const resp = await fetch(imageUrl, {
+      redirect: "follow",
       headers: {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8"
       },
       signal: controller.signal
     });
     clearTimeout(timer);
     if (!resp.ok) return null;
     const contentType = resp.headers.get("content-type") || "image/jpeg";
+    if (!contentType.toLowerCase().includes("image") && !contentType.toLowerCase().includes("octet-stream")) {
+      return null;
+    }
     const arrayBuf = await resp.arrayBuffer();
     const buf = Buffer.from(arrayBuf);
-    // Garante que é uma imagem válida e menor que 750KB para caber com folga no documento Firestore
-    if (buf.length < 100 || buf.length > 750 * 1024) return null;
-    return `data:${contentType.split(";")[0]};base64,${buf.toString("base64")}`;
+    // Garante imagem válida e compacta (<= 260KB) para caber com folga no Firestore sem inflar egress
+    if (buf.length < 100 || buf.length > 260 * 1024) return null;
+    const cleanMime = contentType.toLowerCase().includes("image") ? contentType.split(";")[0] : "image/jpeg";
+    return `data:${cleanMime};base64,${buf.toString("base64")}`;
   } catch {
     return null;
   }
@@ -2704,66 +3622,81 @@ export async function fetchWhatsAppProfilePictureFromApi(
   whatsappLid?: string | null
 ): Promise<string | null> {
   const cfg = getWhatsAppConfig();
-  const candidates: string[] = [];
+  const candidates = new Set<string>();
 
   if (phoneOrJid) {
     const cleanDigits = String(phoneOrJid).replace(/\D/g, "");
     if (cleanDigits.length >= 10) {
       const with55 = cleanDigits.startsWith("55") ? cleanDigits : `55${cleanDigits}`;
-      candidates.push(with55);
-      candidates.push(`${with55}@s.whatsapp.net`);
-      // Caso o número tenha ou não o 9º dígito após o DDD
+      candidates.add(with55);
+      // Variante brasileira com e sem o 9º dígito após o DDD
       if (with55.length === 13 && with55[4] === "9") {
-        const without9 = with55.slice(0, 4) + with55.slice(5);
-        candidates.push(without9);
+        candidates.add(with55.slice(0, 4) + with55.slice(5));
       } else if (with55.length === 12) {
-        const with9 = with55.slice(0, 4) + "9" + with55.slice(4);
-        candidates.push(with9);
+        candidates.add(with55.slice(0, 4) + "9" + with55.slice(4));
       }
     }
   }
-  if (whatsappLid) {
-    candidates.push(String(whatsappLid).trim());
+  if (whatsappLid && candidates.size === 0) {
+    candidates.add(String(whatsappLid).trim());
   }
 
-  const endpoints = [
-    `/chat/fetchProfilePictureUrl/${encodeURIComponent(cfg.instanceName)}`,
-    `/chat/fetchProfile/${encodeURIComponent(cfg.instanceName)}`
-  ];
+  const candidateList = Array.from(candidates);
+  if (candidateList.length === 0) return null;
 
-  for (const num of candidates) {
-    for (const ep of endpoints) {
-      try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 6000);
-        const resp = await fetch(`${cfg.apiUrl}${ep}`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            apikey: cfg.apiKey
-          },
-          body: JSON.stringify({ number: num }),
-          signal: controller.signal
-        });
-        clearTimeout(timer);
-        if (!resp.ok) continue;
-        const data: any = await resp.json();
-        const rawPicUrl =
-          data?.profilePictureUrl ||
-          data?.picture ||
-          data?.imgUrl ||
-          data?.url ||
-          data?.wuid?.profilePictureUrl ||
-          data?.data?.profilePictureUrl ||
-          null;
+  const extractPicUrl = (data: any): string | null => {
+    const raw =
+      data?.profilePictureUrl ||
+      data?.profilePicUrl ||
+      data?.picture ||
+      data?.imgUrl ||
+      data?.url ||
+      data?.wuid?.profilePictureUrl ||
+      data?.data?.profilePictureUrl ||
+      data?.data?.profilePicUrl ||
+      null;
+    return raw && typeof raw === "string" && raw.startsWith("http") ? raw : null;
+  };
 
-        if (rawPicUrl && typeof rawPicUrl === "string" && rawPicUrl.startsWith("http")) {
-          const dataUri = await downloadImageAsDataUri(rawPicUrl);
-          return dataUri || rawPicUrl;
-        }
-      } catch {}
+  const queryEndpoint = async (ep: string, num: string): Promise<string | null> => {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 4500);
+      const resp = await fetch(`${cfg.apiUrl}${ep}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: cfg.apiKey
+        },
+        body: JSON.stringify({ number: num }),
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+      if (!resp.ok) return null;
+      const parsed = await safeReadResponseJson<any>(resp, `fetchProfilePic:${ep}`, null);
+      if (!parsed.isValidJson || !parsed.data) return null;
+      return extractPicUrl(parsed.data);
+    } catch {
+      return null;
     }
+  };
+
+  // Dispara variantes de número em paralelo no endpoint principal (<= 4.5s total por jogador)
+  const primaryEp = `/chat/fetchProfilePictureUrl/${encodeURIComponent(cfg.instanceName)}`;
+  const primaryResults = await Promise.all(candidateList.map((num) => queryEndpoint(primaryEp, num)));
+  let rawPicUrl = primaryResults.find((u): u is string => Boolean(u)) || null;
+
+  // Fallback rápido no /chat/fetchProfile apenas se o endpoint principal não retornou
+  if (!rawPicUrl) {
+    const fallbackEp = `/chat/fetchProfile/${encodeURIComponent(cfg.instanceName)}`;
+    rawPicUrl = await queryEndpoint(fallbackEp, candidateList[0]);
   }
+
+  if (rawPicUrl) {
+    const dataUri = await downloadImageAsDataUri(rawPicUrl);
+    if (dataUri) return dataUri;
+  }
+
   return null;
 }
 
@@ -2935,61 +3868,65 @@ export async function syncWhatsAppGroupContactsAndPhones(
     }
   };
 
-  // 1) Busca participantes do grupo oficial dos Guerreiros na Evolution API
+  // 1 e 2) Busca participantes do grupo, contatos e conversas em PARALELO (máx. 6s no total)
   const groupEndpoints = [
     `/group/participants/${encodeURIComponent(cfg.instanceName)}?groupJid=${encodeURIComponent(cfg.groupJid)}`,
     `/group/findGroupInfos/${encodeURIComponent(cfg.instanceName)}?groupJid=${encodeURIComponent(cfg.groupJid)}`
   ];
-  for (const ep of groupEndpoints) {
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 7000);
-      const resp = await fetch(`${cfg.apiUrl}${ep}`, {
-        method: "GET",
-        headers: { apikey: cfg.apiKey },
-        signal: controller.signal
-      });
-      clearTimeout(timer);
-      if (resp.ok) {
-        const data: any = await resp.json();
-        const participants = Array.isArray(data)
-          ? data
-          : Array.isArray(data?.participants)
-          ? data.participants
-          : [];
-        participants.forEach(extractContactEntry);
-      }
-    } catch {}
-  }
+  const chatEndpoints = ["/chat/findContacts", "/chat/findChats"];
 
-  // 2) Busca agenda de contatos salvos e conversas da instância Evolution API
-  for (const chatEp of ["/chat/findContacts", "/chat/findChats"]) {
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 8000);
-      const resp = await fetch(
-        `${cfg.apiUrl}${chatEp}/${encodeURIComponent(cfg.instanceName)}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json", apikey: cfg.apiKey },
-          body: JSON.stringify({ where: {} }),
+  await Promise.allSettled([
+    ...groupEndpoints.map(async (ep) => {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 6000);
+        const resp = await fetch(`${cfg.apiUrl}${ep}`, {
+          method: "GET",
+          headers: { apikey: cfg.apiKey },
           signal: controller.signal
+        });
+        clearTimeout(timer);
+        if (resp.ok) {
+          const parsed = await safeReadResponseJson<any>(resp, `groupContacts:${ep}`, null);
+          const data = parsed.isValidJson ? parsed.data : null;
+          const participants = Array.isArray(data)
+            ? data
+            : Array.isArray(data?.participants)
+            ? data.participants
+            : [];
+          participants.forEach(extractContactEntry);
         }
-      );
-      clearTimeout(timer);
-      if (resp.ok) {
-        const data: any = await resp.json();
-        const list = Array.isArray(data)
-          ? data
-          : Array.isArray(data?.contacts)
-          ? data.contacts
-          : Array.isArray(data?.chats)
-          ? data.chats
-          : [];
-        list.forEach(extractContactEntry);
-      }
-    } catch {}
-  }
+      } catch {}
+    }),
+    ...chatEndpoints.map(async (chatEp) => {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 6000);
+        const resp = await fetch(
+          `${cfg.apiUrl}${chatEp}/${encodeURIComponent(cfg.instanceName)}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json", apikey: cfg.apiKey },
+            body: JSON.stringify({ where: {} }),
+            signal: controller.signal
+          }
+        );
+        clearTimeout(timer);
+        if (resp.ok) {
+          const parsed = await safeReadResponseJson<any>(resp, `chatContacts:${chatEp}`, null);
+          const data = parsed.isValidJson ? parsed.data : null;
+          const list = Array.isArray(data)
+            ? data
+            : Array.isArray(data?.contacts)
+            ? data.contacts
+            : Array.isArray(data?.chats)
+            ? data.chats
+            : [];
+          list.forEach(extractContactEntry);
+        }
+      } catch {}
+    })
+  ]);
 
   // 3) Cruza contatos do WhatsApp + diretório do clube com os sócios para preencher telefones, LIDs e fotos ausentes
   for (const player of allPlayers) {
@@ -3314,6 +4251,27 @@ async function startServer() {
   app.use(express.json({ limit: "10mb" }));
   app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
+  // Middleware de proteção contra JSON malformado (ex: "upstream r...", corpo truncado ou texto puro)
+  app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (err && (err.type === "entity.parse.failed" || err instanceof SyntaxError)) {
+      const preview = typeof err.body === "string" ? err.body.slice(0, 80).replace(/\s+/g, " ") : "";
+      console.warn(`[Express JSON Guard] Payload malformado bloqueado em ${req.method} ${req.path}: ${err.message} | preview="${preview}"`);
+      if (req.path.startsWith("/api/whatsapp/")) {
+        return res.status(200).json({
+          success: false,
+          ignored: true,
+          messages: [],
+          error: "Payload JSON malformado ignorado com segurança."
+        });
+      }
+      return res.status(400).json({
+        success: false,
+        error: "Formato JSON inválido na requisição."
+      });
+    }
+    return next(err);
+  });
+
   app.use((_req, res, next) => {
     res.setHeader(
       "Permissions-Policy",
@@ -3353,6 +4311,8 @@ async function startServer() {
   app.get("/api/health", (_req, res) => {
     res.json({
       status: "ok",
+      version: APP_VERSION,
+      loadedCardFonts: getLoadedCardFontsCount(),
       circuitBreakerActive: Date.now() < firestoreCircuitOpenUntil,
       cachedPlayersCount: cachedPlayers.length,
       cachedMatchesCount: cachedMatches.length,
@@ -3365,9 +4325,65 @@ async function startServer() {
   app.get("/api/ai/status", async (_req, res) => {
     try {
       const { getServerAIStatus } = await import("./services/serverGemini.ts");
-      res.json(getServerAIStatus());
+      res.json({
+        ...getServerAIStatus(),
+        router: getAIRouterStatus()
+      });
     } catch (err) {
       res.status(500).json({ error: "Failed to get AI status" });
+    }
+  });
+
+  // 🧠 Política Dinâmica do Roteador Multi-Modelo de IA (inspeção + realocação segura em runtime)
+  app.get("/api/ai/router-policy", (_req, res) => {
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.json(getAIRouterStatus());
+  });
+
+  app.post("/api/ai/router-policy", async (req, res) => {
+    try {
+      const { policy, reset, clearCache } = req.body || {};
+      if (clearCache) {
+        const cleared = clearAIRouterCache();
+        if (!policy && !reset) {
+          return res.json({ ok: true, clearedCacheEntries: cleared, status: getAIRouterStatus() });
+        }
+      }
+
+      if (reset) {
+        const defaultPolicy = resetAIRouterPolicy();
+        try {
+          const db = await getFirestore();
+          await db.collection("metadata").doc("ai_router_policy").set(
+            { policy: defaultPolicy, updatedAt: new Date().toISOString(), resetToDefault: true },
+            { merge: true }
+          );
+        } catch {}
+        return res.json({ ok: true, status: getAIRouterStatus() });
+      }
+
+      if (!policy || typeof policy !== "object") {
+        return res.status(400).json({ error: "Envie { policy: { ULTRA_LIGHT?: { primary, fallbacks, thinkingLevel }, ... } } ou { reset: true }." });
+      }
+
+      const result = setAIRouterPolicy(policy, "runtime_api");
+      if (result.errors.length > 0) {
+        return res.status(400).json({ error: "Política rejeitada por segurança.", details: result.errors });
+      }
+
+      try {
+        const db = await getFirestore();
+        await db.collection("metadata").doc("ai_router_policy").set(
+          { policy: result.policy, updatedAt: new Date().toISOString(), resetToDefault: false },
+          { merge: true }
+        );
+      } catch (persistErr) {
+        console.warn("[AIRouter] Aviso ao persistir política no Firestore:", persistErr);
+      }
+
+      return res.json({ ok: true, status: getAIRouterStatus() });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || "Falha ao atualizar política de IA." });
     }
   });
 
@@ -3425,6 +4441,13 @@ async function startServer() {
     <p id="desc">Olá, <strong>${name.split("<").join("").split(">").join("").split('"').join("").split("'").join("")}</strong>! Aguarde 1 segundo enquanto confirmamos sua localização na quadra...</p>
     <button id="retryBtn" class="btn" style="display:none;" onclick="startCheckIn()">📍 Validar Minha Localização</button>
     <div id="resultBox" class="status-box"></div>
+    <div style="margin-top: 18px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.1); display: flex; flex-direction: column; gap: 10px;">
+      <span style="font-size: 11px; font-weight: 800; color: #a1a1aa; text-transform: uppercase; letter-spacing: 1px;">🚗 Ainda a caminho? Abra a rota com trânsito:</span>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+        <a href="https://waze.com/ul?ll=${DEFAULT_COURT_LAT},${DEFAULT_COURT_LNG}&navigate=yes" target="_blank" rel="noopener noreferrer" style="text-decoration: none; background: rgba(56,189,248,0.15); color: #38bdf8; border: 1px solid rgba(56,189,248,0.35); padding: 11px 10px; border-radius: 12px; font-size: 12px; font-weight: 800;">🟦 Ir com Waze</a>
+        <a href="https://www.google.com/maps/dir/?api=1&destination=${DEFAULT_COURT_LAT},${DEFAULT_COURT_LNG}&travelmode=driving" target="_blank" rel="noopener noreferrer" style="text-decoration: none; background: rgba(16,185,129,0.15); color: #34d399; border: 1px solid rgba(16,185,129,0.35); padding: 11px 10px; border-radius: 12px; font-size: 12px; font-weight: 800;">🟩 Google Maps</a>
+      </div>
+    </div>
   </div>
   <script>
     const pid = ${JSON.stringify(pid)};
@@ -3486,7 +4509,9 @@ async function startServer() {
   app.post("/api/checkin/gps", async (req, res) => {
     try {
       const { pid, phone, name, lat, lng } = req.body || {};
-      if (typeof lat !== "number" || typeof lng !== "number") {
+      const numLat = Number(lat);
+      const numLng = Number(lng);
+      if (!Number.isFinite(numLat) || !Number.isFinite(numLng)) {
         return res.status(400).json({ success: false, message: "Coordenadas inválidas." });
       }
       const db = await getFirestore();
@@ -3510,20 +4535,1022 @@ async function startServer() {
       }
 
       const replyMessage = await executeCourtLocationCheckIn(db, player, {
-        lat: Number(lat),
-        lng: Number(lng),
-        isLive: true
+        lat: numLat,
+        lng: numLng,
+        isLive: false
       });
 
-      const jid = normalizePhoneToJid(player.phone || phone);
-      if (jid) {
-        dispatchWhatsAppMessage(jid, `${replyMessage}\n\n— Guerreirinho, o robô do clube 🤖`).catch(() => {});
+      const targets = resolvePlayerWhatsAppTargets(player);
+      const jid = targets[0] || normalizePhoneToJid(player.phone || phone);
+      if (jid && replyMessage) {
+        dispatchWhatsAppMessage(jid, `${replyMessage}\n\n— Guerreirinho, o robô do clube 🤖`, {
+          type: "WHATSAPP_LINK_GPS_CHECKIN",
+          recipientLabel: player.name,
+          fallbackTargets: targets.slice(1)
+        }).catch(() => {});
       }
 
-      const withinRange = replyMessage.includes("CHECK-IN NA QUADRA CONFIRMADO") || replyMessage.includes("já está na lista");
-      res.json({ success: true, withinRange, message: replyMessage });
+      const withinRange =
+        replyMessage.includes("CHECK-IN NA QUADRA CONFIRMADO") || replyMessage.includes("já está na lista");
+      res.json({
+        success: true,
+        withinRange,
+        message: replyMessage || "Check-in processado com sucesso."
+      });
     } catch (e: any) {
       res.status(500).json({ success: false, message: e.message });
+    }
+  });
+
+  app.post("/api/presence/gps-checkin", async (req, res) => {
+    try {
+      const {
+        playerId,
+        lat,
+        lng,
+        accuracy,
+        name,
+        address,
+        isLive = true,
+        bypassTimeWindow = false,
+        dryRun = false,
+        source = "APP_GPS",
+        maxRadiusMeters,
+        notifyWhatsApp = false
+      } = req.body || {};
+
+      const numLat = Number(lat);
+      const numLng = Number(lng);
+      if (!Number.isFinite(numLat) || !Number.isFinite(numLng)) {
+        return res.status(400).json({
+          success: false,
+          allowed: false,
+          error: "Coordenadas GPS inválidas."
+        });
+      }
+
+      const db = await getFirestore();
+      const allPlayers = await getCachedPlayers(cachedPlayers.length === 0);
+      const caller = await verifyCallerIdentity(req);
+      let player = allPlayers.find(
+        (p) =>
+          (playerId && (p.id === playerId || p.uid === playerId)) ||
+          (caller.email && String(p.email || "").trim().toLowerCase() === caller.email)
+      );
+
+      if (!player) {
+        return res.status(404).json({
+          success: false,
+          allowed: false,
+          error: "Sócio não encontrado no cadastro do clube."
+        });
+      }
+
+      const firstName = String(player.name || "Guerreiro").trim().split(/\s+/)[0] || "Guerreiro";
+      if (player.status !== "active" || player.isDM) {
+        return res.json({
+          success: true,
+          allowed: false,
+          reason: "INACTIVE_OR_DM",
+          dryRun: Boolean(dryRun),
+          player: { id: player.id, name: player.name },
+          message: `⚠️ Olá, ${firstName}! Apenas sócios Ativos e fora do DM podem fazer check-in na lista de presença da quadra.`
+        });
+      }
+
+      const br = getBrazilTimeParts();
+      const isAdminCaller =
+        Boolean(caller.isAdmin) ||
+        Boolean(player?.isAdmin) ||
+        String(player?.email || "").trim().toLowerCase() === "rodneyes@gmail.com";
+
+      const isAutoGeoSource =
+        String(source || "") === "APP_AUTO_GEO_150M" || String(source || "") === "APP_AUTO_GEO_50M";
+      const isThursdayWindow =
+        Boolean(bypassTimeWindow) ||
+        (isAdminCaller && !isAutoGeoSource) ||
+        (br.dayOfWeek === 4 &&
+          br.totalMinutes >= (isAutoGeoSource ? 19 * 60 : 17 * 60 + 30) &&
+          br.totalMinutes <= COURT_CHECKIN_END_MINUTES);
+
+      if (!isThursdayWindow) {
+        return res.json({
+          success: true,
+          allowed: false,
+          reason: "OUTSIDE_WINDOW",
+          dryRun: Boolean(dryRun),
+          player: { id: player.id, name: player.name },
+          message: isAutoGeoSource
+            ? `⏰ Olá, ${firstName}! O check-in automático por proximidade (150m) fica ativo nas Quintas-feiras das 19h00 às 22h00.`
+            : `⏰ Olá, ${firstName}!\n\nO check-in presencial na quadra via GPS fica liberado nas Quintas-feiras das 17h30 às 22h00.`
+        });
+      }
+
+      const numAccuracy = accuracy !== undefined && accuracy !== null ? Number(accuracy) : NaN;
+      if (isAutoGeoSource && Number.isFinite(numAccuracy) && numAccuracy > 150) {
+        return res.json({
+          success: true,
+          allowed: false,
+          reason: "LOW_GPS_ACCURACY",
+          accuracy: Math.round(numAccuracy),
+          dryRun: Boolean(dryRun),
+          player: { id: player.id, name: player.name },
+          message: `📡 Sinal GPS ainda impreciso (±${Math.round(numAccuracy)}m). Aguardando estabilização do satélite.`
+        });
+      }
+
+      // Bloqueio anti-fraude: localização pesquisada no mapa em vez de GPS real
+      const hasSearchedPlaceLabel =
+        !isLive &&
+        Boolean(
+          (name && String(name).trim().length > 0) ||
+            (address && String(address).trim().length > 0)
+        );
+
+      const sysConfig = await getCachedSystemConfig(Boolean(isAdminCaller || dryRun));
+      const isAutoGeoEnabledForClub = sysConfig?.autoGeoCheckInEnabled === true;
+      if (isAutoGeoSource && !isAdminCaller && !isAutoGeoEnabledForClub) {
+        return res.json({
+          success: true,
+          allowed: false,
+          reason: "FEATURE_DISABLED",
+          dryRun: Boolean(dryRun),
+          player: { id: player.id, name: player.name },
+          message: "⚙️ O check-in automático por GPS ainda está em fase de testes pelo administrador."
+        });
+      }
+
+      const courtLat = Number(sysConfig?.courtLocation?.lat ?? DEFAULT_COURT_LAT);
+      const courtLng = Number(sysConfig?.courtLocation?.lng ?? DEFAULT_COURT_LNG);
+      const resolvedCourtLocation = { lat: courtLat, lng: courtLng };
+      const defaultMaxRadius = Number(sysConfig?.geofenceRadius || DEFAULT_GEOFENCE_RADIUS_METERS);
+      const requestedRadius = Number(maxRadiusMeters);
+      const maxRadius =
+        Number.isFinite(requestedRadius) && requestedRadius >= 20
+          ? Math.min(Math.round(requestedRadius), Math.max(defaultMaxRadius, DEFAULT_GEOFENCE_RADIUS_METERS))
+          : defaultMaxRadius;
+      const distanceMeters = calculateDistanceMeters(numLat, numLng, courtLat, courtLng);
+
+      if (hasSearchedPlaceLabel) {
+        return res.json({
+          success: true,
+          allowed: false,
+          reason: "SEARCHED_LOCATION_BLOCKED",
+          distanceMeters,
+          maxRadius,
+          courtLocation: resolvedCourtLocation,
+          dryRun: Boolean(dryRun),
+          player: { id: player.id, name: player.name },
+          message:
+            `🚫 Localização pesquisada no mapa não é aceita, ${firstName}!\n\n` +
+            `Para validar presença, utilize o sinal de GPS real do aparelho no local da quadra (endereços digitados na busca são bloqueados pelo sistema antifraude).`
+        });
+      }
+
+      if (!dryRun && !bypassTimeWindow && !isAdminCaller && distanceMeters <= maxRadius) {
+        const jumpCheck = checkImpossibleGpsJump(player.id, numLat, numLng);
+        if (jumpCheck.suspicious) {
+          return res.json({
+            success: true,
+            allowed: false,
+            reason: "SUSPICIOUS_GPS_JUMP",
+            distanceMeters,
+            maxRadius,
+            courtLocation: resolvedCourtLocation,
+            dryRun: false,
+            player: { id: player.id, name: player.name },
+            message: `🛡️ Salto de GPS suspeito detectado (${jumpCheck.jumpMeters}m em ${jumpCheck.elapsedSec}s). Aguarde o sinal estabilizar na quadra.`
+          });
+        }
+      }
+
+      if (distanceMeters > maxRadius) {
+        if (!dryRun && (isAdminCaller || (br.dayOfWeek === 4 && br.totalMinutes <= COURT_CHECKIN_END_MINUTES))) {
+          await upsertPendingCourtGeoWatcher(db, br.dateKey, player, {
+            lastDistanceMeters: distanceMeters,
+            lastLat: numLat,
+            lastLng: numLng,
+            source: String(source || "APP_GPS")
+          });
+        }
+        return res.json({
+          success: true,
+          allowed: false,
+          reason: "OUT_OF_RANGE",
+          distanceMeters,
+          maxRadius,
+          courtLocation: resolvedCourtLocation,
+          dryRun: Boolean(dryRun),
+          player: { id: player.id, name: player.name },
+          message:
+            `📍 Você ainda está longe da quadra, ${firstName}!\n\n` +
+            `📏 Distância medida: ~${distanceMeters}m (limite permitido: ${maxRadius}m).\n` +
+            `Aproxime-se da quadra oficial dos Guerreiros e valide o GPS novamente até às 22h00 para entrar na fila.`
+        });
+      }
+
+      const dateKey = br.dateKey;
+      const now = Date.now();
+      let arrivalOrder = 1;
+      let alreadyPresent = false;
+
+      if (dryRun) {
+        await withFirestoreGuard(async () => {
+          const snap = await db.collection("attendance").doc(dateKey).collection("players").get();
+          const currentPresent: any[] = [];
+          snap.forEach((d: any) => {
+            const dData = d.data();
+            if (dData && dData.status !== "left" && !dData.isDM) {
+              currentPresent.push({ id: d.id, ...dData });
+            }
+          });
+          const existing = currentPresent.find((p) => p.id === player.id);
+          if (existing) {
+            alreadyPresent = true;
+            arrivalOrder = Number(existing.arrivalOrder || 1);
+          } else {
+            const maxOrder = currentPresent.reduce((max, p) => Math.max(max, Number(p.arrivalOrder || 0)), 0);
+            arrivalOrder = maxOrder + 1;
+          }
+        }, undefined);
+
+        return res.json({
+          success: true,
+          allowed: true,
+          reason: alreadyPresent ? "ALREADY_PRESENT" : "SIMULATION_OK",
+          distanceMeters,
+          maxRadius,
+          courtLocation: resolvedCourtLocation,
+          arrivalOrder,
+          alreadyPresent,
+          dryRun: true,
+          whatsappNotified: false,
+          player: { id: player.id, name: player.name },
+          message:
+            `✅ SIMULAÇÃO APROVADA PARA ${firstName.toUpperCase()}!\n\n` +
+            `📏 Distância da quadra: ${distanceMeters}m (dentro da cerca virtual de ${maxRadius}m).\n` +
+            `📍 Posição prevista na fila: #${arrivalOrder}${alreadyPresent ? " (já em quadra)" : ""}.\n` +
+            `ℹ️ Modo Simulação ativo — nenhum registro foi gravado na lista.`
+        });
+      }
+
+      await withAttendanceCheckInLock(async () => {
+        await withFirestoreGuard(async () => {
+          const attColRef = db.collection("attendance").doc(dateKey).collection("players");
+          const snap = await attColRef.get();
+          const currentPresent: any[] = [];
+          snap.forEach((d: any) => {
+            const dData = d.data();
+            if (dData && dData.status !== "left" && !dData.isDM) {
+              currentPresent.push({ id: d.id, ...dData });
+            }
+          });
+
+          const existing = currentPresent.find((p) => p.id === player.id);
+          if (existing) {
+            alreadyPresent = true;
+            arrivalOrder = Number(existing.arrivalOrder || 1);
+            return;
+          }
+
+          const maxOrder = currentPresent.reduce((max, p) => Math.max(max, Number(p.arrivalOrder || 0)), 0);
+          arrivalOrder = maxOrder + 1;
+
+          await db.collection("attendance").doc(dateKey).set(
+            { date: dateKey, lastUpdate: now },
+            { merge: true }
+          );
+
+          await attColRef.doc(player.id).set(
+            {
+              ...player,
+              id: player.id,
+              name: player.name || "Sócio",
+              status: "active",
+              arrivalOrder,
+              isPresent: true,
+              checkInMethod: "QR",
+              checkInSource: String(source || "APP_GPS"),
+              distanceFromCourtMeters: distanceMeters,
+              timestamp: now
+            },
+            { merge: true }
+          );
+        }, undefined);
+      });
+
+      await Promise.all([
+        syncPlayerPreConfirmationDoc(db, dateKey, player, "GOING", now).catch(() => {}),
+        markCourtGeoWatcherArrived(db, dateKey, player.id, {
+          lastLat: numLat,
+          lastLng: numLng,
+          lastDistanceMeters: distanceMeters,
+          arrivalOrder,
+          name: player.name
+        }).catch(() => {})
+      ]);
+
+      let whatsappNotified = false;
+      if (Boolean(notifyWhatsApp) && !alreadyPresent) {
+        const playerTargets = resolvePlayerWhatsAppTargets(player);
+        if (playerTargets.length > 0) {
+          const timeLabel = `${String(br.hour).padStart(2, "0")}:${String(br.minute).padStart(2, "0")}`;
+          const waText =
+            `✅🏐 *PRESENÇA NA FILA CONFIRMADA, ${firstName.toUpperCase()}!*\n\n` +
+            `Detectamos sua entrada na área da quadra oficial dos Guerreiros.\n` +
+            `📍 *Posição na fila:* #${arrivalOrder}\n` +
+            `📏 *Distância validada:* ${distanceMeters}m da quadra\n` +
+            `🕒 *Horário:* ${timeLabel}\n\n` +
+            `Bom jogo! 🔥\n— Guerreirinho, o robô do clube 🤖`;
+
+          whatsappNotified = await Promise.race([
+            dispatchWhatsAppMessage(playerTargets[0], waText, {
+              type: "COURT_AUTO_GEO_CHECKIN",
+              recipientLabel: player.name,
+              fallbackTargets: playerTargets.slice(1)
+            }).catch(() => false),
+            new Promise<boolean>((resolve) => setTimeout(() => resolve(true), 2200))
+          ]);
+        }
+      }
+
+      return res.json({
+        success: true,
+        allowed: true,
+        reason: alreadyPresent ? "ALREADY_PRESENT" : "OK",
+        distanceMeters,
+        maxRadius,
+        courtLocation: resolvedCourtLocation,
+        arrivalOrder,
+        alreadyPresent,
+        dryRun: false,
+        whatsappNotified,
+        player: { id: player.id, name: player.name },
+        message: alreadyPresent
+          ? `✅🏐 ${firstName}, você já está na lista de presença da quadra hoje! Ordem de chegada: #${arrivalOrder} (${distanceMeters}m da quadra).`
+          : `✅🏐 CHECK-IN NA QUADRA CONFIRMADO, ${firstName.toUpperCase()}!\n\n📍 Posição na fila: #${arrivalOrder}\n📏 Distância validada: ${distanceMeters}m da quadra\n🕒 Horário: ${String(br.hour).padStart(2, "0")}:${String(br.minute).padStart(2, "0")}`
+      });
+    } catch (e: any) {
+      res.status(500).json({
+        success: false,
+        allowed: false,
+        error: e?.message || "Erro interno ao validar sinal GPS."
+      });
+    }
+  });
+
+  app.post("/api/presence/geo-watch-status", async (req, res) => {
+    try {
+      const { playerId, action = "status", distanceMeters } = req.body || {};
+      const db = await getFirestore();
+      const allPlayers = await getCachedPlayers(cachedPlayers.length === 0);
+      const caller = await verifyCallerIdentity(req);
+      const player = allPlayers.find(
+        (p) =>
+          (playerId && (p.id === playerId || p.uid === playerId)) ||
+          (caller.email && String(p.email || "").trim().toLowerCase() === caller.email)
+      );
+
+      if (!player) {
+        return res.status(404).json({ success: false, error: "Sócio não encontrado." });
+      }
+
+      const br = getBrazilTimeParts();
+      const dateKey = br.dateKey;
+
+      if (action === "register" && br.dayOfWeek === 4 && br.totalMinutes <= COURT_CHECKIN_END_MINUTES) {
+        await upsertPendingCourtGeoWatcher(db, dateKey, player, {
+          lastDistanceMeters: Number.isFinite(Number(distanceMeters)) ? Math.round(Number(distanceMeters)) : 0,
+          source: "APP_AUTO_GEO_150M"
+        });
+      } else if (action === "opt_out") {
+        await markCourtGeoWatcherOptedOut(db, dateKey, player.id);
+      }
+
+      const dateWatchers = getCourtWatchersStoreForDate(dateKey);
+      const entry = dateWatchers[player.id];
+
+      const currentInt = await ensureFreshIntentionsDocument(false);
+      const responses = currentInt?.responses || {};
+      const timestamps = currentInt?.confirmationTimestamps || {};
+      const intentEntry = resolvePlayerIntentEntry(player, responses, timestamps);
+      const isDeclinedToday = currentInt?.targetDate === dateKey && intentEntry.status === "NOT_GOING";
+
+      return res.json({
+        success: true,
+        optedOut: Boolean(entry?.optedOut || isDeclinedToday),
+        isDeclinedToday,
+        arrived: Boolean(entry?.arrived)
+      });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e?.message || "Erro ao consultar status de monitoramento GPS." });
+    }
+  });
+
+  app.post("/api/presence/geo-journey-sim", async (req, res) => {
+    try {
+      const caller = await verifyCallerIdentity(req);
+      const allPlayers = await getCachedPlayers(cachedPlayers.length === 0);
+      const reqPlayerId = String(req.body?.playerId || "").trim();
+      const callerPlayer = allPlayers.find(
+        (p) =>
+          (caller.email && String(p.email || "").trim().toLowerCase() === caller.email) ||
+          (caller.uid && (p.uid === caller.uid || p.id === caller.uid)) ||
+          (reqPlayerId && (p.id === reqPlayerId || p.uid === reqPlayerId))
+      );
+      const isAdminCaller =
+        Boolean(caller.isAdmin) ||
+        Boolean(callerPlayer?.isAdmin) ||
+        String(callerPlayer?.email || "").trim().toLowerCase() === "rodneyes@gmail.com" ||
+        String(req.body?.userEmail || "").trim().toLowerCase() === "rodneyes@gmail.com";
+
+      if (!isAdminCaller) {
+        return res.status(403).json({
+          success: false,
+          error: "Apenas administradores podem executar o simulador completo da jornada GPS + WhatsApp."
+        });
+      }
+
+      const step = String(req.body?.step || "").trim();
+      const dryRun = req.body?.dryRun !== false;
+      const sendRealWhatsApp = req.body?.sendRealWhatsApp === true;
+
+      const targetPlayer =
+        allPlayers.find((p) => reqPlayerId && (p.id === reqPlayerId || p.uid === reqPlayerId)) ||
+        callerPlayer ||
+        allPlayers.find((p) => String(p.email || "").trim().toLowerCase() === "rodneyes@gmail.com");
+
+      if (!targetPlayer) {
+        return res.status(404).json({ success: false, error: "Sócio para simulação não encontrado." });
+      }
+
+      const firstName = String(targetPlayer.name || "Guerreiro").trim().split(/\s+/)[0] || "Guerreiro";
+      const sysConfig = await getCachedSystemConfig(true);
+      const courtLat = Number(sysConfig?.courtLocation?.lat ?? DEFAULT_COURT_LAT);
+      const courtLng = Number(sysConfig?.courtLocation?.lng ?? DEFAULT_COURT_LNG);
+      const maxRadius = Number(sysConfig?.geofenceRadius || DEFAULT_GEOFENCE_RADIUS_METERS);
+      const courtLocation = { lat: courtLat, lng: courtLng };
+
+      const reqHost = String(req.headers.host || "").trim();
+      const publicBaseUrl =
+        reqHost && !reqHost.includes("localhost") && !reqHost.startsWith("127.")
+          ? `https://${reqHost}`
+          : "https://guerreiros-volleyball-club-238897290870.us-west1.run.app";
+
+      const br = getBrazilTimeParts();
+      const dateKey = br.dateKey;
+      const timeLabel = `${String(br.hour).padStart(2, "0")}:${String(br.minute).padStart(2, "0")}`;
+
+      const enqueueSimWhatsApp = async (text: string, stepTag: string): Promise<{ queued: boolean; target: string | null; reason?: string }> => {
+        if (!sendRealWhatsApp || !text) {
+          return { queued: false, target: null };
+        }
+        const targets = resolvePlayerWhatsAppTargets(targetPlayer);
+        if (targets.length === 0) {
+          return { queued: false, target: null, reason: "Sócio sem telefone/JID de WhatsApp cadastrado." };
+        }
+        const outboxItem: OutboxWhatsAppMessage = {
+          outboxId: `obx_sim_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          to: targets[0],
+          fallbackTargets: targets.slice(1),
+          text,
+          delayMs: 0,
+          type: `ADMIN_GEO_SIM_${stepTag.toUpperCase()}`,
+          recipientLabel: targetPlayer.name || firstName,
+          queuedAt: Date.now(),
+          attempts: 0
+        };
+        pendingWhatsAppOutbox.push(outboxItem);
+        if (pendingWhatsAppOutbox.length > 100) {
+          pendingWhatsAppOutbox = pendingWhatsAppOutbox.slice(-100);
+        }
+        saveLocalWhatsAppOutbox(pendingWhatsAppOutbox);
+        await Promise.race([
+          persistOutboxToFirestore(pendingWhatsAppOutbox).catch(() => {}),
+          new Promise<void>((resolve) => setTimeout(resolve, 2000))
+        ]);
+        recordWhatsAppCommLog({
+          type: `ADMIN_GEO_SIM_${stepTag.toUpperCase()}`,
+          recipient: targets[0],
+          recipientLabel: targetPlayer.name || firstName,
+          status: "QUEUED_RETRY",
+          summary: `Simulação Admin (${stepTag}) enfileirada para entrega real no WhatsApp de ${firstName}`,
+          messagePreview: text.slice(0, 180)
+        });
+        return { queued: true, target: targets[0] };
+      };
+
+      const checkInUrl = `${publicBaseUrl}/checkin?pid=${encodeURIComponent(targetPlayer.id || "")}&phone=${encodeURIComponent(targetPlayer.phone || "")}&name=${encodeURIComponent(firstName)}`;
+
+      if (step === "invite") {
+        const weather = await fetchCourtWeatherForecast(courtLat, courtLng);
+        const botMessage =
+          `📍🏐 *CHECK-IN AUTOMÁTICO NA QUADRA LIBERADO! (19h às 22h)* 🔥\n\n` +
+          `Fala, ${firstName}! Já está valendo a fila de chegada automática para o vôlei de hoje (raio de *${maxRadius}m* da quadra, até às *22h00*).\n\n` +
+          `${weather.whatsappBlock}\n\n` +
+          `1️⃣ *Pelo WhatsApp (funciona com o celular no bolso):*\n` +
+          `Toque em *📎 (Android)* ou *+ (iPhone)* → *Localização* → *Localização em tempo real* e selecione *1 HORA*!\n\n` +
+          `2️⃣ *Ou toque direto no link 1-Clique ao chegar na quadra:*\n` +
+          `👉 ${checkInUrl}\n\n` +
+          `Assim que você entrar no raio de *${maxRadius}m*, eu confirmo sua presença na lista e te aviso sua posição na fila!\n\n` +
+          `— Guerreirinho, o robô do clube 🤖`;
+
+        const delivery = await enqueueSimWhatsApp(botMessage, "invite");
+        return res.json({
+          success: true,
+          step: "invite",
+          botMessage,
+          checkInUrl,
+          courtLocation,
+          maxRadius,
+          weather,
+          whatsappDelivery: delivery,
+          player: { id: targetPlayer.id, name: targetPlayer.name, phone: targetPlayer.phone || "" }
+        });
+      }
+
+      if (step === "gv_cheguei") {
+        const weather = await fetchCourtWeatherForecast(courtLat, courtLng);
+        const botMessage =
+          `📍🏐 *Bora fazer seu Check-in na Quadra, ${firstName}!*\n\n` +
+          `🟢 *OPÇÃO 1 (Mais rápida — 1 Toque):*\n` +
+          `Toque no link abaixo para o celular validar seu GPS automaticamente e já enviar sua posição na fila aqui no WhatsApp:\n` +
+          `👉 ${checkInUrl}\n\n` +
+          `📍 *OPÇÃO 2 (Pelo Mapa do WhatsApp — sem precisar digitar nada):*\n` +
+          `🍎 *iPhone:* Toque em *+* → *Localização* → *Localização em tempo real (1 hora)* ou *Enviar sua localização atual*.\n` +
+          `🤖 *Android:* Toque em *📎* → *Localização* → *Localização em tempo real (1 hora)* ou *Enviar sua localização atual*.\n\n` +
+          `${weather.whatsappBlock}\n\n` +
+          `— Guerreirinho, o robô do clube 🤖`;
+
+        const delivery = await enqueueSimWhatsApp(botMessage, "gv_cheguei");
+        return res.json({
+          success: true,
+          step: "gv_cheguei",
+          userMessage: "gv cheguei",
+          botMessage,
+          checkInUrl,
+          courtLocation,
+          maxRadius,
+          weather,
+          whatsappDelivery: delivery,
+          player: { id: targetPlayer.id, name: targetPlayer.name, phone: targetPlayer.phone || "" }
+        });
+      }
+
+      if (step === "location_far" || step === "monitoring_ping") {
+        const simLat = Number.isFinite(Number(req.body?.lat))
+          ? Number(req.body.lat)
+          : Number((courtLat + (step === "location_far" ? 0.0102 : 0.0042)).toFixed(6));
+        const simLng = Number.isFinite(Number(req.body?.lng))
+          ? Number(req.body.lng)
+          : Number((courtLng + (step === "location_far" ? 0.0048 : 0.0021)).toFixed(6));
+        const distanceMeters = calculateDistanceMeters(simLat, simLng, courtLat, courtLng);
+        const metersToBorder = Math.max(0, distanceMeters - maxRadius);
+
+        await upsertPendingCourtGeoWatcher(null, dateKey, targetPlayer, {
+          lastDistanceMeters: distanceMeters,
+          lastLat: simLat,
+          lastLng: simLng,
+          source: "WHATSAPP_LIVE"
+        }).catch(() => {});
+
+        if (step === "location_far") {
+          const botMessage =
+            `📍 *Localização em tempo real recebida, ${firstName}!*\n\n` +
+            `📏 *Distância atual:* ~${distanceMeters} metros (raio oficial: *${maxRadius}m*).\n\n` +
+            `✅ *Acompanhamento silencioso ativado:* não precisa mandar mais nada! Assim que você entrar na área da quadra (até às *22h00*), eu confirmo sua vaga automaticamente e te aviso aqui com sua posição na fila! 🏐🚗\n\n` +
+            `— Guerreirinho, o robô do clube 🤖`;
+
+          const delivery = await enqueueSimWhatsApp(botMessage, "location_far");
+          return res.json({
+            success: true,
+            step: "location_far",
+            allowed: false,
+            silent: false,
+            lat: simLat,
+            lng: simLng,
+            distanceMeters,
+            metersToBorder,
+            maxRadius,
+            courtLocation,
+            botMessage,
+            whatsappDelivery: delivery,
+            player: { id: targetPlayer.id, name: targetPlayer.name }
+          });
+        }
+
+        // monitoring_ping: demonstra acompanhamento silencioso sem spam
+        return res.json({
+          success: true,
+          step: "monitoring_ping",
+          allowed: false,
+          silent: true,
+          lat: simLat,
+          lng: simLng,
+          distanceMeters,
+          metersToBorder,
+          maxRadius,
+          courtLocation,
+          botMessage: "",
+          statusNote: `Sinal GPS atualizado em silêncio: ${firstName} está a ${distanceMeters}m da quadra (faltam ~${metersToBorder}m para cruzar a cerca de ${maxRadius}m). Zero spam no WhatsApp e zero leitura extra no banco.`,
+          whatsappDelivery: { queued: false, target: null },
+          player: { id: targetPlayer.id, name: targetPlayer.name }
+        });
+      }
+
+      if (step === "arrived") {
+        const simLat = Number.isFinite(Number(req.body?.lat))
+          ? Number(req.body.lat)
+          : Number((courtLat + 0.00018).toFixed(6));
+        const simLng = Number.isFinite(Number(req.body?.lng))
+          ? Number(req.body.lng)
+          : Number((courtLng + 0.00014).toFixed(6));
+        const distanceMeters = calculateDistanceMeters(simLat, simLng, courtLat, courtLng);
+        const withinRange = distanceMeters <= maxRadius;
+
+        if (!withinRange) {
+          return res.json({
+            success: true,
+            step: "arrived",
+            allowed: false,
+            lat: simLat,
+            lng: simLng,
+            distanceMeters,
+            maxRadius,
+            courtLocation,
+            dryRun,
+            botMessage: `📍 Ponto ainda fora do raio configurado (${distanceMeters}m > ${maxRadius}m).`,
+            whatsappDelivery: { queued: false, target: null },
+            player: { id: targetPlayer.id, name: targetPlayer.name }
+          });
+        }
+
+        const db = await getFirestore();
+        const now = Date.now();
+        let arrivalOrder = 1;
+        let alreadyPresent = false;
+
+        if (dryRun) {
+          await withFirestoreGuard(async () => {
+            const snap = await db.collection("attendance").doc(dateKey).collection("players").get();
+            const currentPresent: any[] = [];
+            snap.forEach((d: any) => {
+              const dData = d.data();
+              if (dData && dData.status !== "left" && !dData.isDM) {
+                currentPresent.push({ id: d.id, ...dData });
+              }
+            });
+            const existing = currentPresent.find((p) => p.id === targetPlayer.id);
+            if (existing) {
+              alreadyPresent = true;
+              arrivalOrder = Number(existing.arrivalOrder || 1);
+            } else {
+              const maxOrder = currentPresent.reduce((max, p) => Math.max(max, Number(p.arrivalOrder || 0)), 0);
+              arrivalOrder = maxOrder + 1;
+            }
+          }, undefined, 4500);
+        } else {
+          await withAttendanceCheckInLock(async () => {
+            await withFirestoreGuard(async () => {
+              const attColRef = db.collection("attendance").doc(dateKey).collection("players");
+              const snap = await attColRef.get();
+              const currentPresent: any[] = [];
+              snap.forEach((d: any) => {
+                const dData = d.data();
+                if (dData && dData.status !== "left" && !dData.isDM) {
+                  currentPresent.push({ id: d.id, ...dData });
+                }
+              });
+              const existing = currentPresent.find((p) => p.id === targetPlayer.id);
+              if (existing) {
+                alreadyPresent = true;
+                arrivalOrder = Number(existing.arrivalOrder || 1);
+                return;
+              }
+              const maxOrder = currentPresent.reduce((max, p) => Math.max(max, Number(p.arrivalOrder || 0)), 0);
+              arrivalOrder = maxOrder + 1;
+              await db.collection("attendance").doc(dateKey).set({ date: dateKey, lastUpdate: now }, { merge: true });
+              await attColRef.doc(targetPlayer.id).set(
+                {
+                  ...targetPlayer,
+                  id: targetPlayer.id,
+                  name: targetPlayer.name || "Sócio",
+                  status: "active",
+                  arrivalOrder,
+                  isPresent: true,
+                  checkInMethod: "QR",
+                  checkInSource: "WHATSAPP_GPS",
+                  distanceFromCourtMeters: distanceMeters,
+                  timestamp: now
+                },
+                { merge: true }
+              );
+            }, undefined, 6000);
+          });
+          await Promise.all([
+            syncPlayerPreConfirmationDoc(db, dateKey, targetPlayer, "GOING", now).catch(() => {}),
+            markCourtGeoWatcherArrived(db, dateKey, targetPlayer.id).catch(() => {})
+          ]);
+        }
+
+        const botMessage = alreadyPresent
+          ? `✅🏐 *${firstName}, você já está na lista de presença da quadra hoje!*\n\n` +
+            `📍 *Sua Ordem de Chegada:* *#${arrivalOrder}*\n` +
+            `📏 *Distância da quadra:* ${distanceMeters}m\n\n` +
+            `Bom jogo e bora pra cima! 🔥\n\n— Guerreirinho, o robô do clube 🤖`
+          : `✅🏐 *CHECK-IN NA QUADRA CONFIRMADO, ${firstName.toUpperCase()}!* 🔥\n\n` +
+            `📍 *Posição na Fila de Chegada:* *#${arrivalOrder}*\n` +
+            `📏 *Localização validada:* a ${distanceMeters}m da quadra (raio: ${maxRadius}m)\n` +
+            `🕒 *Horário de chegada:* ${timeLabel}\n\n` +
+            `_Seu nome já entrou automaticamente na tela de Presença e Escalação de hoje! Você já pode parar o compartilhamento de localização. Bom aquecimento!_\n\n` +
+            `— Guerreirinho, o robô do clube 🤖`;
+
+        await markCourtGeoWatcherArrived(null, dateKey, targetPlayer.id, {
+          lastLat: simLat,
+          lastLng: simLng,
+          lastDistanceMeters: distanceMeters,
+          arrivalOrder,
+          name: targetPlayer.name
+        }).catch(() => {});
+
+        const delivery = await enqueueSimWhatsApp(botMessage, "arrived");
+        return res.json({
+          success: true,
+          step: "arrived",
+          allowed: true,
+          lat: simLat,
+          lng: simLng,
+          distanceMeters,
+          maxRadius,
+          courtLocation,
+          arrivalOrder,
+          alreadyPresent,
+          dryRun,
+          botMessage,
+          whatsappDelivery: delivery,
+          player: { id: targetPlayer.id, name: targetPlayer.name }
+        });
+      }
+
+      return res.status(400).json({ success: false, error: `Etapa de simulação inválida: "${step}".` });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e?.message || "Erro ao executar simulação de jornada." });
+    }
+  });
+
+  app.get("/api/presence/geo-config", async (_req, res) => {
+    try {
+      const sys = await getCachedSystemConfig(true);
+      res.setHeader("Cache-Control", "no-store");
+      return res.json({
+        success: true,
+        config: {
+          autoGeoCheckInEnabled: sys?.autoGeoCheckInEnabled === true,
+          courtLocation: {
+            lat: Number(sys?.courtLocation?.lat ?? DEFAULT_COURT_LAT),
+            lng: Number(sys?.courtLocation?.lng ?? DEFAULT_COURT_LNG)
+          },
+          geofenceRadius: Number(sys?.geofenceRadius || DEFAULT_GEOFENCE_RADIUS_METERS)
+        }
+      });
+    } catch (e: any) {
+      res.status(500).json({
+        success: false,
+        error: e?.message || "Erro ao consultar configuração de geolocalização."
+      });
+    }
+  });
+
+  app.get("/api/presence/active-geo-watchers", async (_req, res) => {
+    try {
+      const br = getBrazilTimeParts();
+      const dateKey = br.dateKey;
+      const dateWatchers = getCourtWatchersStoreForDate(dateKey);
+      const list = Object.values(dateWatchers)
+        .filter((w) => w && !w.optedOut)
+        .sort((a, b) => (b.lastUpdatedAt || 0) - (a.lastUpdatedAt || 0));
+      res.setHeader("Cache-Control", "no-store");
+      return res.json({
+        success: true,
+        dateKey,
+        watchers: list
+      });
+    } catch (e: any) {
+      res.status(500).json({
+        success: false,
+        error: e?.message || "Erro ao consultar sócios em deslocamento."
+      });
+    }
+  });
+
+  app.get("/api/presence/court-weather", async (req, res) => {
+    try {
+      const sys = await getCachedSystemConfig(false);
+      const qLat = Number(req.query.lat ?? sys?.courtLocation?.lat ?? DEFAULT_COURT_LAT);
+      const qLng = Number(req.query.lng ?? sys?.courtLocation?.lng ?? DEFAULT_COURT_LNG);
+      const force = req.query.force === "1";
+      const weather = await fetchCourtWeatherForecast(qLat, qLng, force);
+      res.setHeader("Cache-Control", "no-store");
+      return res.json({
+        success: true,
+        weather
+      });
+    } catch (e: any) {
+      res.status(500).json({
+        success: false,
+        error: e?.message || "Erro ao consultar previsão do tempo da quadra."
+      });
+    }
+  });
+
+  app.post("/api/presence/send-weather-broadcast", async (req, res) => {
+    try {
+      const caller = await verifyCallerIdentity(req);
+      const allPlayers = await getCachedPlayers(cachedPlayers.length === 0);
+      const reqPlayerId = String(req.body?.playerId || "").trim();
+      const callerPlayer = allPlayers.find(
+        (p) =>
+          (caller.email && String(p.email || "").trim().toLowerCase() === caller.email) ||
+          (caller.uid && (p.uid === caller.uid || p.id === caller.uid)) ||
+          (reqPlayerId && (p.id === reqPlayerId || p.uid === reqPlayerId))
+      );
+      const isAdminCaller =
+        Boolean(caller.isAdmin) ||
+        Boolean(callerPlayer?.isAdmin) ||
+        String(callerPlayer?.email || "").trim().toLowerCase() === "rodneyes@gmail.com" ||
+        String(req.body?.userEmail || "").trim().toLowerCase() === "rodneyes@gmail.com";
+
+      if (!isAdminCaller) {
+        return res.status(403).json({
+          success: false,
+          error: "Apenas administradores podem disparar o boletim de clima e trânsito."
+        });
+      }
+
+      const sys = await getCachedSystemConfig(false);
+      const cLat = Number(sys?.courtLocation?.lat ?? DEFAULT_COURT_LAT);
+      const cLng = Number(sys?.courtLocation?.lng ?? DEFAULT_COURT_LNG);
+      const weather = await fetchCourtWeatherForecast(cLat, cLng, true);
+
+      const targetScope = String(req.body?.targetScope || "private").trim(); // "private" | "group"
+      const targetPlayer =
+        allPlayers.find((p) => reqPlayerId && (p.id === reqPlayerId || p.uid === reqPlayerId)) ||
+        callerPlayer ||
+        allPlayers.find((p) => String(p.email || "").trim().toLowerCase() === "rodneyes@gmail.com");
+
+      let destinationJid = "";
+      let fallbackTargets: string[] = [];
+      let recipientLabel = "Grupo Oficial Guerreiros";
+
+      if (targetScope === "group") {
+        const schedDoc = await ensureFreshSchedulerConfig(false);
+        destinationJid = String(schedDoc?.groupId || process.env.WHATSAPP_GROUP_ID || "").trim();
+        if (!destinationJid) {
+          return res.status(400).json({
+            success: false,
+            error: "Grupo oficial do WhatsApp não configurado no agendador."
+          });
+        }
+      } else {
+        if (!targetPlayer) {
+          return res.status(404).json({ success: false, error: "Sócio destinatário não encontrado." });
+        }
+        const targets = resolvePlayerWhatsAppTargets(targetPlayer);
+        if (targets.length === 0) {
+          return res.status(400).json({
+            success: false,
+            error: "Sócio selecionado não possui telefone/WhatsApp cadastrado."
+          });
+        }
+        destinationJid = targets[0];
+        fallbackTargets = targets.slice(1);
+        recipientLabel = targetPlayer.name || "Sócio";
+      }
+
+      const outboxItem: OutboxWhatsAppMessage = {
+        outboxId: `obx_weather_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        to: destinationJid,
+        fallbackTargets,
+        text: weather.fullBroadcastMessage,
+        delayMs: 0,
+        type: "GAME_DAY_WEATHER_TRAFFIC_BULLETIN",
+        recipientLabel,
+        queuedAt: Date.now(),
+        attempts: 0
+      };
+      pendingWhatsAppOutbox.push(outboxItem);
+      if (pendingWhatsAppOutbox.length > 100) {
+        pendingWhatsAppOutbox = pendingWhatsAppOutbox.slice(-100);
+      }
+      saveLocalWhatsAppOutbox(pendingWhatsAppOutbox);
+      await Promise.race([
+        persistOutboxToFirestore(pendingWhatsAppOutbox).catch(() => {}),
+        new Promise<void>((resolve) => setTimeout(resolve, 2000))
+      ]);
+
+      return res.json({
+        success: true,
+        queued: true,
+        targetScope,
+        recipientLabel,
+        weather,
+        message: weather.fullBroadcastMessage
+      });
+    } catch (e: any) {
+      res.status(500).json({
+        success: false,
+        error: e?.message || "Erro ao enfileirar boletim de clima."
+      });
+    }
+  });
+
+  app.post("/api/presence/geo-config", async (req, res) => {
+    try {
+      const caller = await verifyCallerIdentity(req);
+      const allPlayers = await getCachedPlayers(cachedPlayers.length === 0);
+      const reqPlayerId = String(req.body?.playerId || "").trim();
+      const callerPlayer = allPlayers.find(
+        (p) =>
+          (caller.email && String(p.email || "").trim().toLowerCase() === caller.email) ||
+          (caller.uid && (p.uid === caller.uid || p.id === caller.uid)) ||
+          (reqPlayerId && (p.id === reqPlayerId || p.uid === reqPlayerId))
+      );
+      const isAdminCaller =
+        Boolean(caller.isAdmin) ||
+        Boolean(callerPlayer?.isAdmin) ||
+        String(callerPlayer?.email || "").trim().toLowerCase() === "rodneyes@gmail.com";
+
+      if (!isAdminCaller) {
+        return res.status(403).json({
+          success: false,
+          error: "Apenas administradores podem alterar a configuração de geolocalização da quadra."
+        });
+      }
+
+      const { autoGeoCheckInEnabled, courtLocation, geofenceRadius } = req.body || {};
+      const patch: Record<string, any> = {};
+
+      if (typeof autoGeoCheckInEnabled === "boolean") {
+        patch.autoGeoCheckInEnabled = autoGeoCheckInEnabled;
+      }
+
+      if (courtLocation !== undefined) {
+        const lat = Number(courtLocation?.lat);
+        const lng = Number(courtLocation?.lng);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+          return res.status(400).json({
+            success: false,
+            error: "Coordenadas inválidas. Informe latitude (-90 a 90) e longitude (-180 a 180)."
+          });
+        }
+        patch.courtLocation = {
+          lat: Number(lat.toFixed(6)),
+          lng: Number(lng.toFixed(6))
+        };
+      }
+
+      if (geofenceRadius !== undefined) {
+        const radiusNum = Math.round(Number(geofenceRadius));
+        if (!Number.isFinite(radiusNum) || radiusNum < 20 || radiusNum > 2000) {
+          return res.status(400).json({
+            success: false,
+            error: "Raio inválido. Use um valor entre 20m e 2000m."
+          });
+        }
+        patch.geofenceRadius = radiusNum;
+      }
+
+      if (Object.keys(patch).length === 0) {
+        return res.status(400).json({ success: false, error: "Nenhum parâmetro de configuração enviado." });
+      }
+
+      const db = await getFirestore();
+      await withFirestoreGuard(
+        () => db.collection("metadata").doc("system").set(patch, { merge: true }),
+        undefined
+      );
+
+      // Atualiza imediatamente o cache em memória do servidor para testes instantâneos sem esperar TTL
+      const currentSys = await getCachedSystemConfig(false);
+      cachedSystemConfig = {
+        ...(currentSys || {}),
+        ...patch
+      };
+      cachedSystemConfigLastFetch = Date.now();
+
+      return res.json({
+        success: true,
+        config: {
+          autoGeoCheckInEnabled: cachedSystemConfig.autoGeoCheckInEnabled === true,
+          courtLocation: cachedSystemConfig.courtLocation || { lat: DEFAULT_COURT_LAT, lng: DEFAULT_COURT_LNG },
+          geofenceRadius: Number(cachedSystemConfig.geofenceRadius || DEFAULT_GEOFENCE_RADIUS_METERS)
+        }
+      });
+    } catch (e: any) {
+      res.status(500).json({
+        success: false,
+        error: e?.message || "Erro ao salvar configuração de geolocalização."
+      });
     }
   });
 
@@ -4068,7 +6095,22 @@ function isEligibleClubMemberForPrivateAutomations(player: any): boolean {
         }
       }
       if (clientSys && typeof clientSys === "object") {
-        cachedSystemConfig = clientSys;
+        // Preserva as configurações autoritativas de GPS/quadra já presentes no servidor para evitar sobrescrita por cache antigo do navegador
+        const prevGeoFields: Record<string, any> = {};
+        if (cachedSystemConfig) {
+          if (cachedSystemConfig.courtLocation) prevGeoFields.courtLocation = cachedSystemConfig.courtLocation;
+          if (typeof cachedSystemConfig.geofenceRadius === "number") {
+            prevGeoFields.geofenceRadius = cachedSystemConfig.geofenceRadius;
+          }
+          if (typeof cachedSystemConfig.autoGeoCheckInEnabled === "boolean") {
+            prevGeoFields.autoGeoCheckInEnabled = cachedSystemConfig.autoGeoCheckInEnabled;
+          }
+        }
+        cachedSystemConfig = {
+          ...(cachedSystemConfig || {}),
+          ...clientSys,
+          ...prevGeoFields
+        };
         cachedSystemConfigLastFetch = Date.now();
       }
       res.json({
@@ -4237,6 +6279,69 @@ function isEligibleClubMemberForPrivateAutomations(player: any): boolean {
       res.json({ success: true, enabled, botActive: enabled });
     } catch (e: any) {
       res.status(200).json({ success: true, enabled: isWhatsAppBotEnabled(), botActive: isWhatsAppBotEnabled() });
+    }
+  });
+
+  // 🎨 Configuração Admin: Cards HD no WhatsApp (Desabilitado por padrão — sem links e sem Evolution API)
+  app.get("/api/whatsapp/card-delivery-config", async (_req, res) => {
+    try {
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      const sys = await getCachedSystemConfig(false);
+      if (!memoryCardDeliveryModeOverride && sys?.whatsappCardDeliveryMode) {
+        memoryCardDeliveryModeOverride = normalizeCardDeliveryMode(sys.whatsappCardDeliveryMode);
+      }
+      const cfg = getWhatsAppConfig();
+      res.json({
+        success: true,
+        mode: cfg.cardDeliveryMode,
+        enabled: cfg.cardDeliveryMode === "vm_image_only"
+      });
+    } catch {
+      const cfg = getWhatsAppConfig();
+      res.json({
+        success: true,
+        mode: cfg.cardDeliveryMode,
+        enabled: cfg.cardDeliveryMode === "vm_image_only"
+      });
+    }
+  });
+
+  app.post("/api/whatsapp/card-delivery-config", async (req, res) => {
+    try {
+      const rawMode = req.body?.mode;
+      if (rawMode !== "disabled" && rawMode !== "vm_image_only") {
+        return res.status(400).json({
+          success: false,
+          error: "Modo inválido. Utilize 'disabled' (sem Card HD no WhatsApp) ou 'vm_image_only' (envio nativo via VM Google)."
+        });
+      }
+
+      setWhatsAppCardDeliveryModeState(rawMode);
+
+      const db = await getFirestore();
+      await withFirestoreGuard(
+        () =>
+          db
+            .collection("metadata")
+            .doc("system")
+            .set(
+              {
+                whatsappCardDeliveryMode: rawMode,
+                updatedAt: Date.now()
+              },
+              { merge: true }
+            ),
+        undefined
+      );
+
+      const cfg = getWhatsAppConfig();
+      res.json({
+        success: true,
+        mode: cfg.cardDeliveryMode,
+        enabled: cfg.cardDeliveryMode === "vm_image_only"
+      });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e?.message || "Erro ao salvar configuração." });
     }
   });
 
@@ -4416,14 +6521,14 @@ function isEligibleClubMemberForPrivateAutomations(player: any): boolean {
         const img = new Image();
         img.onload = function() {
           const canvas = document.createElement('canvas');
-          const maxSide = 320;
+          const maxSide = 160;
           let w = img.width, h = img.height;
           if (w > h) { if (w > maxSide) { h = Math.round(h * maxSide / w); w = maxSide; } }
           else { if (h > maxSide) { w = Math.round(w * maxSide / h); h = maxSide; } }
           canvas.width = w; canvas.height = h;
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, w, h);
-          compressedDataUri = canvas.toDataURL('image/jpeg', 0.82);
+          compressedDataUri = canvas.toDataURL('image/jpeg', 0.75);
           document.getElementById('previewBox').innerHTML = '<img src="' + compressedDataUri + '" />';
           document.getElementById('saveBtn').style.display = 'block';
         };
@@ -4468,23 +6573,48 @@ function isEligibleClubMemberForPrivateAutomations(player: any): boolean {
 
   app.post("/api/whatsapp/push-member-photo", async (req, res) => {
     try {
-      const { playerId, playerName, phone, photoUrl, base64, mimeType = "image/jpeg", source = "baileys_vm" } = req.body || {};
+      const validated = validateIncomingJsonPayload(req.body, "whatsapp/push-member-photo");
+      if (!validated.valid) {
+        return res.status(200).json({ success: false, error: validated.reason });
+      }
+      const {
+        playerId,
+        playerName,
+        phone,
+        whatsappLid,
+        photoUrl,
+        base64,
+        photoBase64,
+        dataUri,
+        imageBase64,
+        mimeType = "image/jpeg",
+        source = "baileys_vm"
+      } = validated.data;
       const db = await getFirestore();
       const allPlayers = await getCachedPlayers(cachedPlayers.length === 0);
 
       const norm = (s: string) =>
         String(s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
 
-      let targetPlayer = allPlayers.find(
-        (p) =>
-          (playerId && p.id === playerId) ||
-          (phone && matchBrazilianPhone(String(phone), p.phone)) ||
-          (playerName && norm(p.name) === norm(playerName))
-      );
+      let targetPlayer =
+        (playerId ? allPlayers.find((p) => p.id === playerId) : undefined) ||
+        allPlayers.find(
+          (p) =>
+            (whatsappLid && p.whatsappLid && String(p.whatsappLid).trim() === String(whatsappLid).trim()) ||
+            (phone && matchBrazilianPhone(String(phone), p.phone)) ||
+            (playerName && norm(p.name) === norm(playerName))
+        );
+
+      const rawBase64Input = [base64, photoBase64, dataUri, imageBase64].find(
+        (v) => typeof v === "string" && v.trim().length > 20
+      ) as string | undefined;
 
       let resolvedPhoto: string | null = null;
-      if (base64 && typeof base64 === "string") {
-        resolvedPhoto = base64.startsWith("data:") ? base64 : `data:${mimeType};base64,${base64}`;
+      if (rawBase64Input) {
+        const trimmedB64 = rawBase64Input.trim();
+        resolvedPhoto = trimmedB64.startsWith("data:")
+          ? trimmedB64
+          : `data:${mimeType};base64,${trimmedB64}`;
       } else if (photoUrl && typeof photoUrl === "string") {
         resolvedPhoto = photoUrl.startsWith("http")
           ? (await downloadImageAsDataUri(photoUrl)) || photoUrl
@@ -4493,6 +6623,11 @@ function isEligibleClubMemberForPrivateAutomations(player: any): boolean {
 
       if (!resolvedPhoto || isMissingOrDefaultAvatar(resolvedPhoto)) {
         return res.status(400).json({ success: false, error: "Imagem inválida ou ausente." });
+      }
+
+      // Garante que o Data URI caiba com folga no limite de 1MB por documento do Firestore
+      if (resolvedPhoto.length > 850_000) {
+        return res.status(400).json({ success: false, error: "Imagem muito grande para persistência direta." });
       }
 
       const effectivePhone = autoNormalizeBrazilianPhone(phone || targetPlayer?.phone || "");
@@ -4508,7 +6643,14 @@ function isEligibleClubMemberForPrivateAutomations(player: any): boolean {
         });
       }
 
-      const targetId = targetPlayer?.id || playerId;
+      // Prioriza sempre o ID real do Firestore (evitando gravar em IDs seed_* em cold start)
+      const explicitRealId =
+        playerId && typeof playerId === "string" && !playerId.startsWith("seed_") ? playerId : null;
+      const matchedRealId =
+        targetPlayer?.id && !String(targetPlayer.id).startsWith("seed_") ? String(targetPlayer.id) : null;
+      const targetId = explicitRealId || matchedRealId || targetPlayer?.id || playerId;
+
+      let firestoreSaved = false;
       if (targetId) {
         const updateFields: Record<string, any> = {
           photoUrl: resolvedPhoto,
@@ -4516,14 +6658,15 @@ function isEligibleClubMemberForPrivateAutomations(player: any): boolean {
           photoUpdatedAt: now
         };
         if (effectivePhone) updateFields.phone = effectivePhone;
+        if (whatsappLid && typeof whatsappLid === "string") updateFields.whatsappLid = whatsappLid.trim();
         if (targetPlayer) {
           Object.assign(targetPlayer, updateFields);
           saveLocalPlayersBackup(allPlayers);
         }
-        await withFirestoreGuard(
-          () => db.collection("players").doc(targetId).set(updateFields, { merge: true }),
-          undefined
-        );
+        firestoreSaved = await withFirestoreGuard(async () => {
+          await db.collection("players").doc(targetId).set(updateFields, { merge: true });
+          return true;
+        }, false);
         await withFirestoreGuard(
           () => db.collection("metadata").doc("system").set({ lastUpdate: now }, { merge: true }),
           undefined
@@ -4532,6 +6675,7 @@ function isEligibleClubMemberForPrivateAutomations(player: any): boolean {
 
       res.json({
         success: true,
+        firestoreSaved,
         playerId: targetId || null,
         playerName: targetPlayer?.name || playerName || null,
         photoUrl: resolvedPhoto
@@ -4541,16 +6685,20 @@ function isEligibleClubMemberForPrivateAutomations(player: any): boolean {
     }
   });
 
-  // 6. Sincronização Automática e Manual de Telefones, LIDs e Fotos de Perfil do WhatsApp dos Sócios
+  // 6. Sincronização de Fotos de Perfil do WhatsApp via VM Google (Baileys — sem Evolution API)
   app.post("/api/whatsapp/sync-photos", async (req, res) => {
     try {
+      const validated = validateIncomingJsonPayload(req.body, "whatsapp/sync-photos");
+      if (!validated.valid) {
+        return res.status(200).json({ success: false, error: validated.reason, players: cachedPlayers });
+      }
       const {
-        playerId,
+        playerId = null,
         forceAll = false,
         players: clientPlayers,
         matches: clientMatches,
         intentions: clientIntentions
-      } = req.body || {};
+      } = validated.data;
       const db = await getFirestore();
 
       if (Array.isArray(clientPlayers) && clientPlayers.length >= 5) {
@@ -4577,69 +6725,86 @@ function isEligibleClubMemberForPrivateAutomations(player: any): boolean {
       const allPlayers =
         cachedPlayers.length >= 5 ? cachedPlayers : await getCachedPlayers(true);
 
-      // Passo 1: Varre o grupo do WhatsApp, os contatos da instância e o diretório do clube para preencher telefones ausentes
-      const contactStats = await syncWhatsAppGroupContactsAndPhones(db, allPlayers);
+      // Passo 1: Aplica imediatamente fotos já salvas no diretório Foto <-> WhatsApp (local + Firestore)
+      const photoDir: Record<string, any> = { ...loadLocalWhatsAppPhotoDir() };
+      const remoteDir = await withFirestoreGuard(async () => {
+        const snap = await db.collection("metadata").doc("whatsapp_photo_directory").get();
+        return snap.exists ? snap.data()?.entries || {} : {};
+      }, {} as Record<string, any>);
+      Object.assign(photoDir, remoteDir);
 
-      // Passo 2: Baixa e converte para Base64 permanente as fotos de perfil em lotes paralelos (com teto de 12s para nunca dar 504 Timeout)
-      const targets = playerId
-        ? allPlayers.filter((p) => p.id === playerId)
-        : allPlayers.filter(
-            (p) =>
-              p.status !== "inactive" &&
-              (Boolean(p.phone) || Boolean(p.whatsappLid)) &&
-              (forceAll || isMissingOrDefaultAvatar(p.photoUrl))
+      let directorySyncedCount = 0;
+      const now = Date.now();
+      for (const p of allPlayers) {
+        if (!p.phone || !isMissingOrDefaultAvatar(p.photoUrl)) continue;
+        const keys = getPhoneIndexKeys(p.phone);
+        const found = keys.map((k) => photoDir[k]).find((entry) => entry?.photoUrl && !isMissingOrDefaultAvatar(entry.photoUrl));
+        if (found?.photoUrl) {
+          p.photoUrl = found.photoUrl;
+          p.whatsappPhotoUrl = found.photoUrl;
+          p.photoUpdatedAt = now;
+          directorySyncedCount++;
+          await withFirestoreGuard(
+            () =>
+              db.collection("players").doc(p.id).set(
+                { photoUrl: found.photoUrl, whatsappPhotoUrl: found.photoUrl, photoUpdatedAt: now },
+                { merge: true }
+              ),
+            undefined
           );
-
-      let updatedCount = contactStats.photosFromContacts;
-      const updatedPlayers: Array<{ id: string; name: string }> = [];
-      const startTime = Date.now();
-
-      for (let i = 0; i < targets.length; i += 6) {
-        if (Date.now() - startTime > 12000) {
-          // Continua o restante em background sem travar a requisição HTTP do navegador
-          const remaining = targets.slice(i);
-          setTimeout(async () => {
-            for (const remPlayer of remaining) {
-              await syncSinglePlayerWhatsAppPhoto(db, remPlayer, null, Boolean(forceAll || playerId)).catch(() => {});
-            }
-            saveLocalPlayersBackup(cachedPlayers);
-          }, 100);
-          break;
         }
-        const batch = targets.slice(i, i + 6);
-        await Promise.all(
-          batch.map(async (p) => {
-            const newPhoto = await syncSinglePlayerWhatsAppPhoto(
-              db,
-              p,
-              null,
-              Boolean(forceAll || playerId)
-            ).catch(() => null);
-            if (newPhoto) {
-              updatedCount++;
-              updatedPlayers.push({ id: p.id, name: p.name });
-            }
-          })
-        );
       }
 
-      saveLocalPlayersBackup(allPlayers);
-
-      if (updatedCount > 0 || contactStats.phonesUpdated > 0 || contactStats.lidsUpdated > 0) {
-        cachedPlayersLastFetch = Date.now();
+      if (directorySyncedCount > 0) {
+        saveLocalPlayersBackup(allPlayers);
+        cachedPlayersLastFetch = now;
         await withFirestoreGuard(
-          () => db.collection("metadata").doc("system").set({ lastUpdate: Date.now() }, { merge: true }),
+          () => db.collection("metadata").doc("system").set({ lastUpdate: now }, { merge: true }),
           undefined
         );
       }
 
+      // Passo 2: Enfileira tarefa de importação de fotos para a VM Google (Baileys) coletar via /api/whatsapp/cron-tasks
+      const previousJob = await hydrateVmPhotoSyncJobFromFirestore();
+      const targets = buildVmPhotoSyncTargets(allPlayers, Boolean(forceAll || playerId), playerId);
+      const job: VmPhotoSyncJob = {
+        jobId: `photosync_${now}_${Math.random().toString(36).slice(2, 7)}`,
+        requestedAt: now,
+        forceAll: Boolean(forceAll || playerId),
+        playerId: playerId || null,
+        status: "queued",
+        checkedCount: targets.length,
+        targets
+      };
+      currentVmPhotoSyncJob = job;
+      saveLocalVmPhotoSyncJob(job);
+      await persistVmPhotoSyncJobToFirestore(job);
+
+      const effectiveHeartbeat = await getEffectiveVmPhotoSyncHeartbeatAt(previousJob);
+      const vmPhotoSyncConnected =
+        effectiveHeartbeat > 0 &&
+        Date.now() - effectiveHeartbeat <= VM_PHOTO_SYNC_ONLINE_WINDOW_MS;
+
       res.json({
         success: true,
+        mode: "vm_baileys_queued",
+        jobId: job.jobId,
+        vmPhotoSyncConnected,
+        lastVmPhotoSyncHeartbeatAt: effectiveHeartbeat || null,
+        queuedTargetsCount: targets.length,
         checked: targets.length,
-        updatedCount,
-        phonesUpdated: contactStats.phonesUpdated,
-        lidsUpdated: contactStats.lidsUpdated,
-        updatedPlayers,
+        updatedCount: directorySyncedCount,
+        directorySyncedCount,
+        noPhotoPrivacyCount: 0,
+        phonesUpdated: 0,
+        lidsUpdated: 0,
+        message: !vmPhotoSyncConnected
+          ? directorySyncedCount > 0
+            ? `${directorySyncedCount} foto(s) restaurada(s) do diretório local e tarefa para ${targets.length} sócio(s) enfileirada. Aguardando próximo ciclo da VM Google (Baileys).`
+            : `Sincronização de ${targets.length} sócio(s) enfileirada! Aguardando a VM Google (Baileys) processar no próximo ciclo (até 60s).`
+          : directorySyncedCount > 0
+          ? `${directorySyncedCount} foto(s) restaurada(s) do diretório local e sincronização de ${targets.length} sócio(s) enfileirada para a VM Google (Baileys)!`
+          : `Sincronização de fotos de ${targets.length} sócio(s) enfileirada para a VM Google (Baileys)! Importando automaticamente em até 60 segundos...`,
         players: allPlayers
       });
     } catch (err: any) {
@@ -4648,6 +6813,51 @@ function isEligibleClubMemberForPrivateAutomations(player: any): boolean {
         error: err.message,
         players: cachedPlayers
       });
+    }
+  });
+
+  app.get("/api/whatsapp/sync-photos/status", async (_req, res) => {
+    try {
+      const job = await hydrateVmPhotoSyncJobFromFirestore();
+      const effectiveHeartbeat = await getEffectiveVmPhotoSyncHeartbeatAt(job);
+      const vmPhotoSyncConnected =
+        effectiveHeartbeat > 0 &&
+        Date.now() - effectiveHeartbeat <= VM_PHOTO_SYNC_ONLINE_WINDOW_MS;
+      res.json({
+        success: true,
+        vmPhotoSyncConnected,
+        lastVmPhotoSyncHeartbeatAt: effectiveHeartbeat || null,
+        job
+      });
+    } catch (err: any) {
+      res.json({ success: false, job: currentVmPhotoSyncJob, error: err?.message });
+    }
+  });
+
+  app.post("/api/whatsapp/sync-photos/complete", async (req, res) => {
+    try {
+      const { jobId, updatedCount = 0, noPhotoPrivacyCount = 0, checkedCount = 0 } = req.body || {};
+      await hydrateVmPhotoSyncJobFromFirestore();
+      const now = Date.now();
+      const updatedJob: VmPhotoSyncJob = {
+        ...(currentVmPhotoSyncJob || {
+          jobId: jobId || `photosync_${now}`,
+          requestedAt: now,
+          forceAll: true
+        }),
+        jobId: jobId || currentVmPhotoSyncJob?.jobId || `photosync_${now}`,
+        status: "completed",
+        completedAt: now,
+        updatedCount: Number(updatedCount) || 0,
+        noPhotoPrivacyCount: Number(noPhotoPrivacyCount) || 0,
+        checkedCount: Number(checkedCount) || 0
+      };
+      currentVmPhotoSyncJob = updatedJob;
+      saveLocalVmPhotoSyncJob(updatedJob);
+      await persistVmPhotoSyncJobToFirestore(updatedJob);
+      res.json({ success: true, job: updatedJob });
+    } catch (err: any) {
+      res.status(200).json({ success: false, error: err?.message });
     }
   });
 
@@ -4805,45 +7015,135 @@ function isEligibleClubMemberForPrivateAutomations(player: any): boolean {
   // ============================================================================
   app.post("/api/whatsapp/cron-tasks", async (req, res) => {
     try {
-      const groupJid = req.body?.groupJid || "120363401268459791@g.us";
-      const dryRun = req.body?.dryRun === true;
+      const validated = validateIncomingJsonPayload(req.body, "whatsapp/cron-tasks");
+      if (!validated.valid) {
+        return res.status(200).json({ success: false, messages: [], error: validated.reason });
+      }
+      const reqBody = validated.data;
+      const groupJid = reqBody.groupJid || "120363401268459791@g.us";
+      const dryRun = reqBody.dryRun === true;
+      const bridgeSupportsMedia =
+        reqBody.supportsMedia === true ||
+        req.query?.supportsMedia === "1" ||
+        reqBody.includeMediaBase64 === true;
+      const reqHost = String(req.headers.host || "").trim();
+      const publicBaseUrl =
+        reqHost && !reqHost.includes("localhost") && !reqHost.startsWith("127.")
+          ? `https://${reqHost}`
+          : "https://guerreiros-volleyball-club-238897290870.us-west1.run.app";
       const br = getBrazilTimeParts();
 
-      // Drena a fila pendente (mensagens privadas/grupo que falharam no envio direto) ANTES da janela de silêncio
+      // Drena a fila pendente (mensagens privadas/grupo e PNGs enfileirados para a VM Google) ANTES da janela de silêncio
       await hydrateOutboxFromFirestore();
       const drainedOutbox: Array<{
         to: string;
         fallbackTargets?: string[];
         text: string;
         mediaBase64?: string;
+        mediaFetchUrl?: string;
         mediaType?: "image";
+        mimetype?: string;
         fileName?: string;
+        caption?: string;
+        imageOnly?: boolean;
         delayMs?: number;
         outboxId?: string;
         isOutbox?: boolean;
       }> = [];
       if (!dryRun && pendingWhatsAppOutbox.length > 0) {
-        const drained = pendingWhatsAppOutbox.splice(0, pendingWhatsAppOutbox.length);
-        saveLocalWhatsAppOutbox(pendingWhatsAppOutbox);
-        persistOutboxToFirestore(pendingWhatsAppOutbox).catch(() => {});
-        drained.forEach((item, idx) => {
-          drainedOutbox.push({
-            to: item.to,
-            fallbackTargets: item.fallbackTargets,
-            text: item.text,
-            ...(item.mediaBase64 ? { mediaBase64: item.mediaBase64, mediaType: item.mediaType || "image", fileName: item.fileName } : {}),
-            delayMs: typeof item.delayMs === "number" ? item.delayMs : idx * 1500,
-            outboxId: item.outboxId,
-            isOutbox: true
+        const remainingOutbox: OutboxWhatsAppMessage[] = [];
+        const drained: OutboxWhatsAppMessage[] = [];
+        for (const item of pendingWhatsAppOutbox) {
+          const isImageOnlyItem = Boolean((item.mediaBase64 || item.mediaFetchUrl) && !item.text);
+          if (isImageOnlyItem && !bridgeSupportsMedia) {
+            // Mantém PNGs na fila até a VM Google atualizar para supportsMedia: true
+            remainingOutbox.push(item);
+          } else {
+            drained.push(item);
+          }
+        }
+        if (drained.length > 0) {
+          pendingWhatsAppOutbox = remainingOutbox;
+          saveLocalWhatsAppOutbox(pendingWhatsAppOutbox);
+          persistOutboxToFirestore(pendingWhatsAppOutbox).catch(() => {});
+          drained.forEach((item, idx) => {
+            drainedOutbox.push({
+              to: item.to,
+              fallbackTargets: item.fallbackTargets,
+              text: item.text,
+              ...(item.mediaBase64 ? { mediaBase64: item.mediaBase64 } : {}),
+              ...(item.mediaFetchUrl ? { mediaFetchUrl: item.mediaFetchUrl } : {}),
+              ...(item.mediaBase64 || item.mediaFetchUrl
+                ? {
+                    mediaType: item.mediaType || "image",
+                    mimetype: "image/png",
+                    fileName: item.fileName,
+                    caption: item.caption,
+                    imageOnly: item.imageOnly ?? Boolean(!item.text)
+                  }
+                : {}),
+              delayMs: typeof item.delayMs === "number" ? item.delayMs : idx * 1500,
+              outboxId: item.outboxId,
+              isOutbox: true
+            });
           });
-        });
+        }
+      }
+
+      // Apenas VMs explicitamente atualizadas com supportsPhotoSync: true podem consumir a tarefa de fotos
+      const bridgeSupportsPhotoSync =
+        req.body?.supportsPhotoSync === true ||
+        req.query?.supportsPhotoSync === "1";
+
+      if (bridgeSupportsPhotoSync) {
+        recordVmPhotoSyncHeartbeat(Date.now()).catch(() => {});
+      }
+
+      // Despacha tarefa pendente de importação de fotos de perfil para a VM Google (funciona 24h, mesmo na janela de silêncio)
+      let photoSyncTask: {
+        jobId: string;
+        groupJid: string;
+        forceAll: boolean;
+        targets: VmPhotoSyncTarget[];
+      } | null = null;
+      if (!dryRun && bridgeSupportsPhotoSync) {
+        const job = await hydrateVmPhotoSyncJobFromFirestore();
+        if (job && job.status === "queued") {
+          const targets =
+            Array.isArray(job.targets) && job.targets.length > 0
+              ? job.targets
+              : buildVmPhotoSyncTargets(
+                  await getCachedPlayers(cachedPlayers.length === 0),
+                  job.forceAll,
+                  job.playerId
+                );
+          const dispatchedJob: VmPhotoSyncJob = {
+            ...job,
+            status: "dispatched",
+            dispatchedAt: Date.now(),
+            checkedCount: targets.length
+          };
+          currentVmPhotoSyncJob = dispatchedJob;
+          saveLocalVmPhotoSyncJob(dispatchedJob);
+          persistVmPhotoSyncJobToFirestore(dispatchedJob).catch(() => {});
+          photoSyncTask = {
+            jobId: job.jobId,
+            groupJid,
+            forceAll: job.forceAll,
+            targets
+          };
+        }
       }
 
       const isLatePostGameWindow =
         (br.dayOfWeek === 4 && br.totalMinutes > 23 * 60 + 35) ||
         (br.dayOfWeek === 5 && br.totalMinutes <= 60);
       if (!isLatePostGameWindow && (br.totalMinutes < 8 * 60 || br.totalMinutes > 23 * 60 + 35)) {
-        return res.json({ success: true, messages: drainedOutbox });
+        return res.json({
+          success: true,
+          messages: drainedOutbox,
+          ...(photoSyncTask ? { photoSyncTask } : {})
+        });
       }
 
       const db = await getFirestore();
@@ -4878,8 +7178,12 @@ function isEligibleClubMemberForPrivateAutomations(player: any): boolean {
         fallbackTargets?: string[];
         text: string;
         mediaBase64?: string;
+        mediaFetchUrl?: string;
         mediaType?: "image";
+        mimetype?: string;
         fileName?: string;
+        caption?: string;
+        imageOnly?: boolean;
         delayMs?: number;
         outboxId?: string;
         isOutbox?: boolean;
@@ -5134,14 +7438,6 @@ function isEligibleClubMemberForPrivateAutomations(player: any): boolean {
 
         if (apiKey) {
           try {
-            const ai = new GoogleGenAI({
-              apiKey,
-              httpOptions: {
-                headers: {
-                  "User-Agent": "aistudio-build"
-                }
-              }
-            });
             const prompt = `Você é o Guerreirinho, o mascote digital e Agente de IA oficial do clube de vôlei "Guerreiros VC".
 Escreva uma pílula diária curta, envolvente e muito bem formatada para o WhatsApp (use *negrito* e emojis de vôlei/saúde) para enviar hoje (${br.dateKey}) no grupo dos sócios.
 
@@ -5154,8 +7450,8 @@ REGRAS DE FORMATO:
 1. Na primeira linha, escreva APENAS: RESUMO_TEMA: <resumo de 4 palavras do assunto específico escolhido>
 2. A partir da segunda linha, escreva a mensagem pronta para o WhatsApp (máximo de 2 parágrafos curtos + 1 frase final convidando os sócios a conversarem com o Guerreirinho no privado por texto ou áudio, ou digitarem *gv meusjogos* para ver seu histórico completo).`;
 
-            const aiResp = await ai.models.generateContent({
-              model: "gemini-4-hydrogen",
+            const aiResp = await routedGenerateContent({
+              task: "daily_pill",
               contents: prompt
             });
 
@@ -5278,10 +7574,6 @@ REGRAS DE FORMATO:
 
               if (apiKey) {
                 try {
-                  const ai = new GoogleGenAI({
-                    apiKey,
-                    httpOptions: { headers: { "User-Agent": "aistudio-build" } }
-                  });
                   const motPrompt = `Você é o Guerreirinho, o robô mascote do clube de vôlei "Guerreiros VC".
 Analise o ritmo atual da lista de quinta-feira (${formattedDate}) e escreva uma convocação curta, bem-humorada e empolgante para o grupo do WhatsApp motivando os sócios indecisos a confirmarem presença agora!
 
@@ -5295,8 +7587,8 @@ REGRAS:
 2. Mencione de forma natural os números reais acima (quantos já confirmaram e quantos faltam para fechar mais um time ou igualar o ritmo habitual da turma).
 3. Não coloque os links na sua resposta (eles serão anexados automaticamente no rodapé).`;
 
-                  const aiResp = await ai.models.generateContent({
-                    model: "gemini-4-hydrogen",
+                  const aiResp = await routedGenerateContent({
+                    task: "motivation",
                     contents: motPrompt
                   });
                   aiMotivationText = (aiResp.text || "").trim();
@@ -5396,6 +7688,111 @@ REGRAS:
         }
       }
 
+      // 📍 CONVITE NO GRUPO ÀS 19:00 DE QUINTA PARA COMPARTILHAR LOCALIZAÇÃO (1 HORA / RAIO 150M / LIMITE 22H) + CLIMA & ROTAS WAZE/MAPS
+      // Só dispara quando o Admin habilitar a função para o clube (autoGeoCheckInEnabled === true)
+      const isAutoGeoEnabledForClub = systemConfig?.autoGeoCheckInEnabled === true;
+      const activeGeofenceRadius = Number(systemConfig?.geofenceRadius || DEFAULT_GEOFENCE_RADIUS_METERS);
+      const activeCourtLat = Number(systemConfig?.courtLocation?.lat ?? DEFAULT_COURT_LAT);
+      const activeCourtLng = Number(systemConfig?.courtLocation?.lng ?? DEFAULT_COURT_LNG);
+
+      const isThu19hGeoInviteWindow = isAutoGeoEnabledForClub && isThursday && br.hour === 19 && br.minute < 30;
+      const thu19hGeoSlotKey = `${br.dateKey}_thu_19h_geo_invite`;
+      if (isThu19hGeoInviteWindow && schedData.lastThu19hGeoInviteSlot !== thu19hGeoSlotKey) {
+        updates.lastThu19hGeoInviteSlot = thu19hGeoSlotKey;
+        const thuWeather = await fetchCourtWeatherForecast(activeCourtLat, activeCourtLng);
+        messagesToSend.push({
+          to: groupJid,
+          text:
+            `📍🏐 *CHECK-IN AUTOMÁTICO NA QUADRA LIBERADO! (19h às 22h)* 🔥\n\n` +
+            `Fala, Guerreiros! Já está valendo a fila de chegada automática para o vôlei de hoje (raio de *${activeGeofenceRadius}m* da quadra, até às *22h00*).\n\n` +
+            `${thuWeather.whatsappBlock}\n\n` +
+            `1️⃣ *Pelo WhatsApp (no meu privado — funciona com o celular no bolso):*\n` +
+            `Ao sair para a quadra, abra meu privado 👉 https://wa.me/558197330924\n` +
+            `Toque em *📎 (ou + no iPhone) → Localização → Localização em tempo real* e selecione *1 HORA*!\n\n` +
+            `⚠️ *IMPORTANTE:* escolha sempre *1 HORA* (e não 15 minutos), para evitar que o sinal expire no trajeto se você levar 20 minutos ou mais até a quadra! Assim que entrar no raio de ${activeGeofenceRadius}m, eu confirmo sua presença, envio sua posição na fila e você já pode parar o compartilhamento.\n\n` +
+            `2️⃣ *Pelo App dos Guerreiros:*\n` +
+            `Com o app aberto ao se aproximar da quadra (entre *19h e 22h*), sua presença também é confirmada automaticamente com aviso no WhatsApp e no celular!\n\n` +
+            `⏰ _Quem compartilhar a localização e não chegar até às *20h45* receberá uma mensagem no privado perguntando se ainda vem — em caso de desistência, é só avisar que o sinal de GPS é desligado automaticamente._\n\n` +
+            `Bora pra quadra! 🏐⚡\n— Guerreirinho, o robô do clube 🤖`
+        });
+      }
+
+      // ⏰ FOLLOW-UP PRIVADO ÀS 20:45 DE QUINTA PARA QUEM COMPARTILHOU LOCALIZAÇÃO E AINDA NÃO CHEGOU
+      const isThu2045FollowupWindow =
+        isAutoGeoEnabledForClub &&
+        isThursday &&
+        br.totalMinutes >= 20 * 60 + 45 &&
+        br.totalMinutes < 21 * 60 + 30;
+      const thu2045SlotKey = `${br.dateKey}_thu_2045_geo_followup`;
+      if (isThu2045FollowupWindow && schedData.lastThu2045GeoFollowupSlot !== thu2045SlotKey) {
+        const watchersByDate = (schedData.courtLocationWatchersByDate || {}) as Record<
+          string,
+          Record<string, PendingCourtGeoWatcher>
+        >;
+        const todayWatchers: Record<string, PendingCourtGeoWatcher> = {
+          ...(watchersByDate[br.dateKey] || {})
+        };
+        const pendingWatcherIds = Object.keys(todayWatchers).filter((pid) => {
+          const w = todayWatchers[pid];
+          return w && !w.arrived && !w.optedOut && !w.remindedAt2045;
+        });
+
+        updates.lastThu2045GeoFollowupSlot = thu2045SlotKey;
+
+        if (pendingWatcherIds.length > 0) {
+          const presentIdsToday = new Set<string>();
+          await withFirestoreGuard(async () => {
+            const attSnap = await db.collection("attendance").doc(br.dateKey).collection("players").get();
+            attSnap.forEach((d: any) => {
+              const dData = d.data();
+              if (dData && dData.status !== "left" && !dData.isDM) {
+                presentIdsToday.add(d.id);
+              }
+            });
+          }, undefined);
+
+          let delayIdx = 0;
+          pendingWatcherIds.forEach((pid) => {
+            if (presentIdsToday.has(pid)) {
+              todayWatchers[pid] = { ...todayWatchers[pid], arrived: true };
+              return;
+            }
+            const player = activePlayers.find((p) => p.id === pid);
+            if (!player || !isEligibleClubMemberForPrivateAutomations(player)) return;
+            const targets = resolvePlayerWhatsAppTargets(player);
+            if (targets.length === 0) return;
+
+            const firstName = String(player.name || "Guerreiro").trim().split(/\s+/)[0] || "Guerreiro";
+            todayWatchers[pid] = {
+              ...todayWatchers[pid],
+              remindedAt2045: true,
+              lastUpdatedAt: Date.now()
+            };
+
+            messagesToSend.push({
+              to: targets[0],
+              fallbackTargets: targets.slice(1),
+              delayMs: delayIdx * 8000,
+              text:
+                `⏰📍 *Fala, ${firstName}! Você ainda vem pro vôlei hoje?* 🏐\n\n` +
+                `Vi que você compartilhou sua localização mais cedo, mas ainda não detectamos sua chegada na quadra (o limite para check-in automático vai até às *22h00*).\n\n` +
+                `🚗 *Ainda estou indo:*\n` +
+                `https://wa.me/558197330924?text=gv%20toindo\n\n` +
+                `❌ *Não vou mais (Desligar GPS):*\n` +
+                `https://wa.me/558197330924?text=gv%20naovou\n\n` +
+                `_Se não puder ir hoje, toque na opção acima que eu desligo o sinal de GPS do app automaticamente — e você já pode tocar em "Parar de compartilhar" aqui no WhatsApp para economizar bateria._\n\n` +
+                `— Guerreirinho, o robô do clube 🤖`
+            });
+            delayIdx++;
+          });
+
+          updates.courtLocationWatchersByDate = {
+            ...watchersByDate,
+            [br.dateKey]: todayWatchers
+          };
+        }
+      }
+
       // 🏆 DISPARO AUTOMÁTICO PÓS-JOGO NO GRUPO + RESUMO INDIVIDUAL NO PRIVADO ÀS 22:10 DE QUINTA
       const isAfter10PMWindow =
         (br.dayOfWeek === 4 && br.totalMinutes >= 22 * 60) ||
@@ -5455,47 +7852,63 @@ REGRAS:
             if (dayRankingMsg) {
               updates.lastPostGameRankingSignature = matchSessionSignature;
               updates.lastPostGameSummaryDate = todayOrYesterdayKey;
+              const cronVmImageOnly =
+                bridgeSupportsMedia && getWhatsAppCardDeliveryMode() === "vm_image_only";
 
-              let dailyCardB64: string | undefined;
-              try {
-                const dailyCardData = computeDailyRankingData(matchesToday, freshPlayers, todayOrYesterdayKey);
-                if (dailyCardData) {
-                  dailyCardB64 = renderDailyRankingCardPng(dailyCardData).toString("base64");
+              let dailyCardUrl: string | undefined;
+              let dailyCardCaption = `🔥 *RANKING DO DIA — ${todayOrYesterdayKey}* • Guerreiros VC`;
+              if (cronVmImageOnly) {
+                try {
+                  const dailyCardData = computeDailyRankingData(matchesToday, freshPlayers, todayOrYesterdayKey);
+                  if (dailyCardData) {
+                    dailyCardUrl = `${publicBaseUrl}/api/cards/daily-ranking.png?date=${encodeURIComponent(todayOrYesterdayKey)}`;
+                    dailyCardCaption = `🔥 *RANKING DO DIA — ${dailyCardData.dateLabel}* (${dailyCardData.totalMatches} jogos • ${dailyCardData.totalAthletes} atletas) • MVP: *${dailyCardData.mvp?.firstName || "-"}*`;
+                  }
+                } catch (cardErr) {
+                  console.warn("[Cron] Falha ao montar metadados do PNG do Ranking do Dia:", cardErr);
                 }
-              } catch (cardErr) {
-                console.warn("[Cron] Falha ao renderizar PNG do Ranking do Dia:", cardErr);
               }
 
               messagesToSend.push({
                 to: groupJid,
-                text: dayRankingMsg,
-                ...(dailyCardB64
+                text: cronVmImageOnly && dailyCardUrl ? "" : dayRankingMsg,
+                ...(cronVmImageOnly && dailyCardUrl
                   ? {
-                      mediaBase64: dailyCardB64,
+                      mediaFetchUrl: dailyCardUrl,
                       mediaType: "image" as const,
-                      fileName: `ranking_dia_${todayOrYesterdayKey}.png`
+                      mimetype: "image/png",
+                      fileName: `guerreiros_ranking_dia_${todayOrYesterdayKey}.png`,
+                      caption: dailyCardCaption,
+                      imageOnly: true
                     }
                   : {})
               });
 
               if (allActiveSorted.length > 0) {
-                let accCardB64: string | undefined;
-                try {
-                  const accCardData = computeAccumulatedRankingData(allMatchesNow, freshPlayers);
-                  accCardB64 = renderAccumulatedRankingCardPng(accCardData).toString("base64");
-                } catch (cardErr) {
-                  console.warn("[Cron] Falha ao renderizar PNG do Ranking Acumulado:", cardErr);
+                let accCardUrl: string | undefined;
+                let accCardCaption = `🏆 *RANKING GERAL ACUMULADO (${allActiveSorted.length} SÓCIOS)* • Guerreiros VC`;
+                if (cronVmImageOnly) {
+                  try {
+                    const accCardData = computeAccumulatedRankingData(allMatchesNow, freshPlayers);
+                    accCardUrl = `${publicBaseUrl}/api/cards/accumulated-ranking.png`;
+                    accCardCaption = `🏆 *RANKING GERAL ACUMULADO (${accCardData.topRows.length} SÓCIOS)* • Atualizado em ${accCardData.referenceDateLabel}`;
+                  } catch (cardErr) {
+                    console.warn("[Cron] Falha ao montar metadados do PNG do Ranking Acumulado:", cardErr);
+                  }
                 }
 
                 messagesToSend.push({
                   to: groupJid,
                   delayMs: 5000,
-                  text: generalRankingMsg,
-                  ...(accCardB64
+                  text: cronVmImageOnly && accCardUrl ? "" : generalRankingMsg,
+                  ...(cronVmImageOnly && accCardUrl
                     ? {
-                        mediaBase64: accCardB64,
+                        mediaFetchUrl: accCardUrl,
                         mediaType: "image" as const,
-                        fileName: `ranking_acumulado_${todayOrYesterdayKey}.png`
+                        mimetype: "image/png",
+                        fileName: `guerreiros_ranking_acumulado_${todayOrYesterdayKey}.png`,
+                        caption: accCardCaption,
+                        imageOnly: true
                       }
                     : {})
                 });
@@ -5529,6 +7942,8 @@ REGRAS:
             );
 
             let scheduledPrivateCount = 0;
+            const cronPrivVmImageOnly =
+              bridgeSupportsMedia && getWhatsAppCardDeliveryMode() === "vm_image_only";
             participatingPlayers.forEach((p) => {
               const targets = resolvePlayerWhatsAppTargets(p);
               if (targets.length === 0) {
@@ -5545,26 +7960,33 @@ REGRAS:
               );
               const finalPersonalText = `${personalReport}\n\n— Guerreirinho, o robô do clube 🤖`;
 
-              let personalCardB64: string | undefined;
-              try {
-                const indData = computeIndividualNightData(p, matchesToday, freshPlayers, todayOrYesterdayKey);
-                if (indData) {
-                  personalCardB64 = renderIndividualNightCardPng(indData).toString("base64");
+              let personalCardUrl: string | undefined;
+              let personalCardCaption = `🏐 *RESUMO INDIVIDUAL — ${p.name.split(" ")[0]}* (${todayOrYesterdayKey})`;
+              if (cronPrivVmImageOnly) {
+                try {
+                  const indData = computeIndividualNightData(p, matchesToday, freshPlayers, todayOrYesterdayKey);
+                  if (indData) {
+                    personalCardUrl = `${publicBaseUrl}/api/cards/individual.png?playerId=${encodeURIComponent(p.id)}&date=${encodeURIComponent(todayOrYesterdayKey)}`;
+                    personalCardCaption = `🏐 *RESUMO INDIVIDUAL — ${indData.firstName}* (${indData.dateLabel}) • ${indData.wins}V/${indData.losses}D (${indData.winRate}%) • ${indData.eloDelta >= 0 ? "+" : ""}${indData.eloDelta} ELO`;
+                  }
+                } catch (cardErr) {
+                  console.warn(`[Cron 22:10] Falha ao montar metadados do PNG individual de ${p.name}:`, cardErr);
                 }
-              } catch (cardErr) {
-                console.warn(`[Cron 22:10] Falha ao renderizar PNG individual de ${p.name}:`, cardErr);
               }
 
               messagesToSend.push({
                 to: targets[0],
                 fallbackTargets: targets.slice(1),
                 delayMs: scheduledPrivateCount * 3500,
-                text: finalPersonalText,
-                ...(personalCardB64
+                text: cronPrivVmImageOnly && personalCardUrl ? "" : finalPersonalText,
+                ...(cronPrivVmImageOnly && personalCardUrl
                   ? {
-                      mediaBase64: personalCardB64,
+                      mediaFetchUrl: personalCardUrl,
                       mediaType: "image" as const,
-                      fileName: `guerreiros_noite_${todayOrYesterdayKey}_${p.id}.png`
+                      mimetype: "image/png",
+                      fileName: `guerreiros_noite_${todayOrYesterdayKey}_${p.id}.png`,
+                      caption: personalCardCaption,
+                      imageOnly: true
                     }
                   : {})
               });
@@ -5605,7 +8027,7 @@ REGRAS:
         // Mensagens drenadas da fila de retentativa (outbox) nunca devem ser bloqueadas por assinatura diária
         if (m.isOutbox) return true;
 
-        const cleanHeader = String(m.text || "").trim().slice(0, 120);
+        const cleanHeader = String(m.text || (m as any).caption || m.fileName || "").trim().slice(0, 120);
         const sig = `${m.to}|${cleanHeader}`;
         // Bloqueia qualquer repetição de Pílula/Curiosidade no mesmo dia ou mesma assinatura exata de mensagem
         const isDailyPillOrCuriosity =
@@ -5638,31 +8060,14 @@ REGRAS:
         await withFirestoreGuard(() => schedRef.set(updates, { merge: true }), undefined);
       }
 
-      if (!dryRun) {
-        // Dispara também os cards PNG diretamente via Evolution API (para garantir entrega de imagem mesmo se a ponte VM só ler m.text)
-        deduplicatedMessages.forEach((m, idx) => {
-          if (m.mediaBase64 && !m.isOutbox) {
-            const wait = typeof m.delayMs === "number" ? m.delayMs : idx * 2500;
-            setTimeout(() => {
-              dispatchWhatsAppMedia(m.to, m.mediaBase64!, `🏐 Card Liquid Glass V3 • Guerreiros VC`, {
-                type: "CRON_CARD_IMAGE",
-                recipientLabel: m.to,
-                fallbackTargets: m.fallbackTargets,
-                fileName: m.fileName,
-                skipOutboxOnFail: true
-              }).catch(() => {});
-            }, wait);
-          }
-        });
-      }
-
-      // Economia de tráfego Cloud Run: só inclui mediaBase64 (~600KB) no JSON do cron se a ponte VM pedir explicitamente
-      const includeMediaBase64 = req.body?.includeMediaBase64 === true;
-      const responseMessages = includeMediaBase64
-        ? deduplicatedMessages
-        : deduplicatedMessages.map(({ mediaBase64: _strip, ...rest }) => rest);
-
-      res.json({ success: true, messages: responseMessages, ...(dryRun ? { dryRun: true } : {}) });
+      // Não tenta Evolution API (o clube opera via bot na VM Google).
+      // Retorna as mensagens prontas diretamente para a VM Google entregar no WhatsApp.
+      res.json({
+        success: true,
+        messages: deduplicatedMessages,
+        ...(photoSyncTask ? { photoSyncTask } : {}),
+        ...(dryRun ? { dryRun: true } : {})
+      });
     } catch (err: any) {
       res.status(200).json({ success: false, messages: [], error: err.message });
     }
@@ -5674,8 +8079,22 @@ REGRAS:
         return res.status(200).json({ ignored: true, reason: "bot_disabled" });
       }
 
-      const body = req.body || {};
-      const payload = body.payload || body.data || body;
+      const validated = validateIncomingJsonPayload(req.body, "whatsapp/webhook");
+      if (!validated.valid) {
+        return res.status(200).json({ ignored: true, reason: "invalid_json_payload", error: validated.reason });
+      }
+      const body = validated.data;
+      const rawPayload = body.payload ?? body.data ?? body;
+      const parsedRawPayload = isPlainObject(rawPayload)
+        ? rawPayload
+        : typeof rawPayload === "string"
+        ? safeJsonParse<Record<string, any>>(rawPayload, "whatsapp/webhook:payload", {})
+        : body;
+      const payload = Array.isArray(parsedRawPayload?.messages) && isPlainObject(parsedRawPayload.messages[0])
+        ? parsedRawPayload.messages[0]
+        : Array.isArray(body?.messages) && isPlainObject(body.messages[0])
+        ? body.messages[0]
+        : parsedRawPayload;
 
       const unwrapMessageRoot = (m: any): any => {
         let cur = m;
@@ -5878,24 +8297,33 @@ REGRAS:
         text.startsWith("📍 *Você ainda está longe") ||
         text.startsWith("🚫 *Localização") ||
         text.startsWith("⏰ Olá") ||
+        text.startsWith("📩 ") ||
         text.startsWith("🤖");
 
       if (isBotGeneratedOutput && !audioBuffer && !incomingLocation) {
         return res.status(200).json({ ignored: true, reason: "bot_output" });
       }
 
+      const stripDeviceSuffixFromJid = (jid: string): string => {
+        const clean = String(jid || "").trim();
+        if (!clean.includes("@")) return clean;
+        const [userPart, domainPart] = clean.split("@");
+        return `${userPart.split(":")[0]}@${domainPart}`;
+      };
+
       const isFromMe = Boolean(payload.fromMe || payload?.key?.fromMe);
-      const chatId: string =
+      const rawChatId: string =
         payload.from ||
         payload?.key?.remoteJid ||
         payload.chatId ||
         payload.remoteJid ||
         body.from ||
         "";
+      const chatId: string = stripDeviceSuffixFromJid(rawChatId);
       const isGroup = chatId.endsWith("@g.us");
       const lower = text.toLowerCase().trim();
 
-      const isAliasTrigger = /^@?(gv|bot|botgv|guerreirinho)($|[\s,!?:])/i.test(lower);
+      const isAliasTrigger = /^@?(gv|bot|botgv|guerreirinho)($|[\s,!?:.\-])/i.test(lower);
 
       // CORREÇÃO CRÍTICA: Permite incomingLocation mesmo quando isFromMe === true (quando você testa do seu próprio WhatsApp!)
       if (isFromMe && !isAliasTrigger && !audioBuffer && !incomingLocation) {
@@ -6002,25 +8430,26 @@ REGRAS:
         return res.status(200).json({ ignored: true, reason: "not_a_command" });
       }
 
-      const senderJid: string =
+      const rawSenderJid: string =
         payload.participant ||
         payload.author ||
         payload?.key?.participant ||
         chatId;
+      const senderJid: string = stripDeviceSuffixFromJid(rawSenderJid);
       const isLidSender = String(senderJid).endsWith("@lid");
       const senderLid: string =
-        payload.participantLid || (isLidSender ? String(senderJid) : "");
+        stripDeviceSuffixFromJid(payload.participantLid || (isLidSender ? String(senderJid) : ""));
       const pushName: string = String(payload.pushName || payload?.verifiedBizName || "").trim();
 
-      // Extrai o número real de telefone mesmo quando o WhatsApp envia @lid
+      // Extrai o número real de telefone mesmo quando o WhatsApp envia @lid ou JID multi-dispositivo (:xx@s.whatsapp.net)
       const altPhoneRaw: string =
         payload.senderPn ||
         payload?.key?.senderPn ||
         payload?.key?.participantAlt ||
         payload?.key?.remoteJidAlt ||
         payload.participantAlt ||
-        (!isLidSender ? String(senderJid).split("@")[0] : "");
-      const senderPhone = String(altPhoneRaw || "").split("@")[0].replace(/\D/g, "");
+        (!isLidSender ? String(senderJid).split("@")[0].split(":")[0] : "");
+      const senderPhone = String(altPhoneRaw || "").split("@")[0].split(":")[0].replace(/\D/g, "");
 
       const db = await getFirestore();
       const allPlayers = await getCachedPlayers(cachedPlayers.length === 0);
@@ -6118,7 +8547,7 @@ REGRAS:
         payload.participantAlt ||
         (!isGroup && chatId.endsWith("@s.whatsapp.net") ? chatId : "") ||
         (isGroup && senderJid && senderJid.endsWith("@s.whatsapp.net") ? senderJid : "");
-      const verifiedSenderPnDigits = String(verifiedSenderPnRaw || "").split("@")[0].replace(/\D/g, "");
+      const verifiedSenderPnDigits = String(verifiedSenderPnRaw || "").split("@")[0].split(":")[0].replace(/\D/g, "");
       const verifiedSenderPnJid =
         verifiedSenderPnDigits.length >= 10 && verifiedSenderPnDigits.length <= 13
           ? `${verifiedSenderPnDigits}@s.whatsapp.net`
@@ -6199,22 +8628,14 @@ REGRAS:
 
       if (audioBuffer && apiKey) {
         try {
-          const ai = new GoogleGenAI({
-            apiKey,
-            httpOptions: {
-              headers: {
-                "User-Agent": "aistudio-build"
-              }
-            }
-          });
           const audioPart = {
             inlineData: {
               data: audioBuffer.toString("base64"),
               mimeType: audioMimeType
             }
           };
-          const transcriptionResp = await ai.models.generateContent({
-            model: "gemini-4-hydrogen",
+          const transcriptionResp = await routedGenerateContent({
+            task: "audio_transcribe",
             contents: [
               audioPart,
               "Transcreva exatamente em português do Brasil o que o sócio disse neste áudio enviado para o robô do clube de vôlei Guerreiros VC."
@@ -6348,9 +8769,14 @@ REGRAS:
           undefined
         );
         await syncPlayerPreConfirmationDoc(db, targetDate, senderPlayer, "NOT_GOING", now);
+        const hadActiveGeoWatch = await markCourtGeoWatcherOptedOut(db, getBrazilTimeParts().dateKey, senderPlayer.id);
+
+        const gpsStopNote = hadActiveGeoWatch
+          ? `\n\n📡 *Sinal de GPS desligado:* encerramos o monitoramento automático de chegada no app. Se você estava compartilhando a *Localização em Tempo Real* aqui no WhatsApp, já pode tocar em *"Parar de compartilhar"*.`
+          : "";
 
         // Regra do clube: NÃO dispara nem atualiza a lista no grupo quando o sócio informa ausência (NOT_GOING)
-        return `📝 Registrado, *${senderPlayer.name}*. Sua ausência foi atualizada na lista. Fica para a próxima!\n\n_Mudei de ideia, quero ir:_ 👉 https://wa.me/558197330924?text=gv%20vou`;
+        return `📝 Registrado, *${senderPlayer.name}*. Sua ausência foi atualizada na lista. Fica para a próxima!${gpsStopNote}\n\n_Mudei de ideia, quero ir:_ 👉 https://wa.me/558197330924?text=gv%20vou`;
       };
 
       const executeGetAttendanceList = async (): Promise<string> => {
@@ -6461,29 +8887,48 @@ REGRAS:
       };
 
       const cleanAfterAlias = finalMessageToProcess
-        .replace(/^(@?gv|@?bot|@?botgv|@?guerreirinho|@guerreiros|guerreiros|!|\/)[,:\s]*/i, "")
+        .replace(/^(@?gv|@?bot|@?botgv|@?guerreirinho|@guerreiros|guerreiros|!|\/)[,:\-\s]*/i, "")
         .toLowerCase()
         .normalize("NFD")
         .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[\s.!?,;:]+$/g, "")
         .trim();
 
       let replyBody = "";
-      let replyMedia: {
-        mediaType: "image";
-        mediaBase64: string;
-        fileName: string;
-        mediaUrl?: string;
-        caption?: string;
-      } | null = null;
+      let imageOnlyReply = false;
+      const defaultCardMode = getWhatsAppCardDeliveryMode();
+      const bridgeSupportsMedia =
+        req.body?.supportsMedia === true || req.body?.includeMediaBase64 === true;
       const reqHost = String(req.headers.host || "").trim();
       const publicBaseUrl =
         reqHost && !reqHost.includes("localhost") && !reqHost.startsWith("127.")
           ? `https://${reqHost}`
           : "https://guerreiros-volleyball-club-238897290870.us-west1.run.app";
+      const safeOriginHeader =
+        req.headers.origin &&
+        !String(req.headers.origin).includes("localhost") &&
+        !String(req.headers.origin).includes("127.0.0.1")
+          ? String(req.headers.origin).replace(/\/$/, "")
+          : "";
+      const effectivePublicBaseUrl = safeOriginHeader || publicBaseUrl;
+      let effectiveCardDeliveryMode: WhatsAppCardDeliveryMode = defaultCardMode;
+      let replyMedia: {
+        mediaType: "image";
+        mimetype?: string;
+        mediaBase64: string;
+        mediaFetchUrl?: string;
+        fileName: string;
+        caption?: string;
+        imageOnly?: boolean;
+      } | null = null;
       let attendanceMutatedInWebhook = false;
+      let isIndividualPrivateCommand = false;
+      let privateCommandLabel = "Resumo Individual";
       const textCoordMatch = cleanAfterAlias.match(/(-?\d{1,2}\.\d{4,})\s*[,;\s]\s*(-?\d{1,3}\.\d{4,})/);
 
       if (imageMessage && (!isGroup || isPhotoCaptionTrigger)) {
+        isIndividualPrivateCommand = true;
+        privateCommandLabel = "Atualização de Foto de Perfil";
         let uploadedDataUri: string | null = null;
         try {
           if (imageMessage.base64) {
@@ -6525,63 +8970,122 @@ REGRAS:
           replyBody = `📸✅ *Foto de perfil atualizada com sucesso, ${senderPlayer.name.split(" ")[0]}!*\n\nSua foto já foi salva permanentemente no cadastro oficial do *Guerreiros VC*! 🏐🔥`;
         } else {
           const firstName = String(senderPlayer?.name || "Guerreiro").split(" ")[0];
-          const hostUrl =
-            req.headers.origin ||
-            (req.headers.host ? `https://${req.headers.host}` : "https://guerreiros-volleyball-club-238897290870.us-west1.run.app");
-          const fotoUrl = `${hostUrl}/foto?pid=${encodeURIComponent(senderPlayer?.id || "")}&phone=${encodeURIComponent(senderPlayer?.phone || senderPhone || "")}&name=${encodeURIComponent(firstName)}`;
+          const fotoUrl = `${effectivePublicBaseUrl}/foto?pid=${encodeURIComponent(senderPlayer?.id || "")}&phone=${encodeURIComponent(senderPlayer?.phone || senderPhone || "")}&name=${encodeURIComponent(firstName)}`;
           replyBody = `📸 *Para atualizar sua foto no cadastro, ${firstName}:*\n\nToque no link abaixo e selecione uma foto da sua galeria:\n👉 ${fotoUrl}`;
         }
       } else if (incomingLocation) {
+        isIndividualPrivateCommand = true;
+        privateCommandLabel = "Check-in na Quadra";
         replyBody = await executeCourtLocationCheckIn(db, senderPlayer, incomingLocation);
       } else if (textCoordMatch) {
+        isIndividualPrivateCommand = true;
+        privateCommandLabel = "Check-in na Quadra";
         replyBody = await executeCourtLocationCheckIn(db, senderPlayer, {
           lat: Number(textCoordMatch[1]),
           lng: Number(textCoordMatch[2]),
-          isLive: true
+          isLive: false
         });
       } else if (
-        ["cheguei", "estou na quadra", "to na quadra", "checkin", "check-in", "presente na quadra"].includes(
-          cleanAfterAlias
-        )
+        [
+          "cheguei",
+          "ja cheguei",
+          "cheguei na quadra",
+          "estou na quadra",
+          "to na quadra",
+          "estou aqui",
+          "checkin",
+          "check-in",
+          "check in",
+          "presente na quadra"
+        ].includes(cleanAfterAlias)
       ) {
+        isIndividualPrivateCommand = true;
+        privateCommandLabel = "Link de Check-in na Quadra";
         const firstName = String(senderPlayer.name || "Guerreiro").split(" ")[0];
-        const hostUrl =
-          req.headers.origin ||
-          (req.headers.host ? `https://${req.headers.host}` : "https://guerreiros-volleyball-club-238897290870.us-west1.run.app");
-        const checkInUrl = `${hostUrl}/checkin?pid=${encodeURIComponent(senderPlayer.id || "")}&phone=${encodeURIComponent(senderPlayer.phone || senderPhone || "")}&name=${encodeURIComponent(firstName)}`;
+        const checkInUrl = `${effectivePublicBaseUrl}/checkin?pid=${encodeURIComponent(senderPlayer.id || "")}&phone=${encodeURIComponent(senderPlayer.phone || senderPhone || "")}&name=${encodeURIComponent(firstName)}`;
+        const liveSys = await getCachedSystemConfig();
+        const cLat = Number(liveSys?.courtLocation?.lat ?? DEFAULT_COURT_LAT);
+        const cLng = Number(liveSys?.courtLocation?.lng ?? DEFAULT_COURT_LNG);
+        const weather = await fetchCourtWeatherForecast(cLat, cLng);
 
         replyBody =
           `📍🏐 *Bora fazer seu Check-in na Quadra, ${firstName}!*\n\n` +
           `🟢 *OPÇÃO 1 (Mais rápida — 1 Toque):*\n` +
-          `Toque no link abaixo para validar seu GPS automaticamente e já receber a resposta aqui no WhatsApp:\n` +
+          `Toque no link abaixo para o celular validar seu GPS automaticamente e já enviar sua posição na fila aqui no WhatsApp:\n` +
           `👉 ${checkInUrl}\n\n` +
-          `📍 *OPÇÃO 2 (Pelo Mapa do WhatsApp):*\n` +
-          `Envie sua *Localização Atual* aqui na conversa (ou digite *gv cheguei lat, lng*).`;
+          `📍 *OPÇÃO 2 (Pelo Mapa do WhatsApp — sem precisar digitar nada):*\n` +
+          `🍎 *iPhone:* Toque em *+* → *Localização* → *Localização em tempo real (1 hora)* ou *Enviar sua localização atual*.\n` +
+          `🤖 *Android:* Toque em *📎* → *Localização* → *Localização em tempo real (1 hora)* ou *Enviar sua localização atual*.\n\n` +
+          `${weather.whatsappBlock}`;
+      } else if (
+        ["clima", "tempo", "previsao", "chuva", "waze", "rota", "transito", "como chegar", "quadra"].includes(
+          cleanAfterAlias
+        )
+      ) {
+        isIndividualPrivateCommand = true;
+        privateCommandLabel = "Clima & Rota Waze/Maps da Quadra";
+        const liveSys = await getCachedSystemConfig();
+        const cLat = Number(liveSys?.courtLocation?.lat ?? DEFAULT_COURT_LAT);
+        const cLng = Number(liveSys?.courtLocation?.lng ?? DEFAULT_COURT_LNG);
+        const weather = await fetchCourtWeatherForecast(cLat, cLng);
+        replyBody = weather.fullBroadcastMessage;
       } else if (["1", "vou", "eu vou", "confirmar", "presenca"].includes(cleanAfterAlias)) {
         replyBody = await executeConfirmAttendance();
         attendanceMutatedInWebhook = true;
-      } else if (["2", "naovou", "nao vou", "ausente"].includes(cleanAfterAlias)) {
+      } else if (
+        ["toindo", "to indo", "estou indo", "ainda vou", "a caminho", "chegando"].includes(cleanAfterAlias)
+      ) {
+        const firstName = String(senderPlayer.name || "Guerreiro").trim().split(/\s+/)[0] || "Guerreiro";
+        const liveSys = await getCachedSystemConfig();
+        const activeRadius = Number(liveSys?.geofenceRadius || DEFAULT_GEOFENCE_RADIUS_METERS);
+        replyBody =
+          `🚗🏐 *Show, ${firstName}! Te esperamos na quadra!*\n\n` +
+          `Continuo monitorando sua chegada até às *22h00*. Assim que entrar no raio de *${activeRadius}m* da quadra, confirmo automaticamente sua presença na fila!\n\n` +
+          `_Dica: se estiver usando a Localização em Tempo Real do WhatsApp, verifique se ela ainda está ativa (recomendamos 1 hora)._`;
+      } else if (
+        ["2", "naovou", "nao vou", "ausente", "desisti", "nao vou mais", "desligar gps", "parar gps"].includes(
+          cleanAfterAlias
+        )
+      ) {
         replyBody = await executeDeclineAttendance();
         // NÃO aciona atualização/envio da lista no grupo quando o sócio informa que não vai
         attendanceMutatedInWebhook = false;
       } else if (["lista", "confirmados", "quem vai"].includes(cleanAfterAlias)) {
         replyBody = await executeGetAttendanceList();
-      } else if (cleanAfterAlias === "ranking") {
-        replyBody = await executeGetRanking();
-        try {
-          const allMatches = await getCachedMatches(cachedMatches.length === 0);
-          const accData = computeAccumulatedRankingData(allMatches, allPlayers);
-          const cardUrl = `${publicBaseUrl}/api/cards/accumulated-ranking.png`;
-          replyMedia = {
-            mediaType: "image",
-            mediaBase64: renderAccumulatedRankingCardPng(accData).toString("base64"),
-            fileName: `guerreiros_ranking_acumulado.png`,
-            mediaUrl: cardUrl,
-            caption: `🏆 *RANKING GERAL ACUMULADO* (Atualizado em ${accData.referenceDateLabel}) — Liquid Glass V3`
-          };
-          replyBody += `\n\n🎨 *Card Visual Liquid Glass V3 (HD):*\n${cardUrl}`;
-        } catch (cardErr) {
-          console.warn("[Webhook] Falha ao renderizar PNG do gv ranking:", cardErr);
+      } else if (
+        ["ranking", "ranking img", "ranking imagem", "ranking card", "ranking foto", "ranking texto", "ranking txt"].includes(
+          cleanAfterAlias
+        )
+      ) {
+        const forceImg = /^ranking\s+(img|imagem|card|foto)$/.test(cleanAfterAlias);
+        const forceTxt = /^ranking\s+(texto|txt)$/.test(cleanAfterAlias);
+        const shouldSendVmImage =
+          bridgeSupportsMedia && !forceTxt && (forceImg || defaultCardMode === "vm_image_only");
+        effectiveCardDeliveryMode = shouldSendVmImage ? "vm_image_only" : "disabled";
+
+        if (shouldSendVmImage) {
+          try {
+            const allMatches = await getCachedMatches(cachedMatches.length === 0);
+            const accData = computeAccumulatedRankingData(allMatches, allPlayers);
+            replyMedia = {
+              mediaType: "image",
+              mimetype: "image/png",
+              mediaBase64: renderAccumulatedRankingCardPng(accData).toString("base64"),
+              mediaFetchUrl: `${publicBaseUrl}/api/cards/accumulated-ranking.png`,
+              fileName: `guerreiros_ranking_acumulado.png`,
+              caption: `🏆 *RANKING GERAL ACUMULADO (${accData.topRows.length} SÓCIOS)* • Atualizado em ${accData.referenceDateLabel}`,
+              imageOnly: true
+            };
+            imageOnlyReply = true;
+          } catch (cardErr) {
+            console.warn("[Webhook] Falha ao renderizar PNG do gv ranking:", cardErr);
+            replyBody = await executeGetRanking();
+          }
+        } else {
+          replyBody = await executeGetRanking();
+          if (forceImg) {
+            replyBody += `\n\nℹ️ _Envio de Card HD em imagem está desabilitado no WhatsApp — exibindo o ranking completo em texto._`;
+          }
         }
       } else if (["pix", "mensalidade", "financeiro", "tesouraria"].includes(cleanAfterAlias)) {
         replyBody = await executeGetPixInfo();
@@ -6605,12 +9109,27 @@ REGRAS:
           "minhas partidas",
           "minhas partidas da noite",
           "matriz",
-          "linha do tempo"
+          "linha do tempo",
+          "dia img",
+          "dia imagem",
+          "dia card",
+          "dia foto",
+          "dia texto",
+          "dia txt",
+          "minha noite texto"
         ].includes(cleanAfterAlias) ||
-        /(como\s+(foi|foram)\s+(as\s+)?minhas\s+partidas|minhas\s+partidas\s+(da\s+noite|de\s+hoje|do\s+dia|ontem)|ganhei\s+ou\s+perdi\s+hoje)/i.test(
+        /(como\s+(foi|foram|fui)\s+((as\s+)?minhas\s+partidas|ontem|hoje|na\s+quinta|na\s+ultima\s+quinta|no\s+jogo)|minhas\s+partidas\s+(da\s+noite|de\s+hoje|do\s+dia|ontem|de\s+quinta)|ganhei\s+ou\s+perdi\s+(hoje|ontem|quinta)|(me\s+)?manda(r)?\s+(o\s+)?meu\s+(card|resumo)|meu\s+card\s+(do\s+dia|da\s+noite|de\s+quinta|individual)|card\s+de\s+quinta|resumo\s+individual)/i.test(
           cleanAfterAlias
         )
       ) {
+        isIndividualPrivateCommand = true;
+        privateCommandLabel = "Resumo Individual do Dia";
+        const forceImg = /^dia\s+(img|imagem|card|foto)$/.test(cleanAfterAlias);
+        const forceTxt = /^(dia\s+(texto|txt)|minha noite texto)$/.test(cleanAfterAlias);
+        const shouldSendVmImage =
+          bridgeSupportsMedia && !forceTxt && (forceImg || defaultCardMode === "vm_image_only");
+        effectiveCardDeliveryMode = shouldSendVmImage ? "vm_image_only" : "disabled";
+
         const shouldRefreshMatches = cachedMatches.length === 0 || Date.now() - cachedMatchesLastFetch > 60 * 1000;
         const allMatches = shouldRefreshMatches
           ? await Promise.race([
@@ -6618,28 +9137,59 @@ REGRAS:
               new Promise<any[]>((resolve) => setTimeout(() => resolve(cachedMatches), 3500))
             ])
           : cachedMatches;
-        replyBody = buildPlayerNightTimelineReport(senderPlayer, allMatches, allPlayers);
-        try {
-          const indData = computeIndividualNightData(senderPlayer, allMatches, allPlayers);
+
+        if (shouldSendVmImage) {
+          const rawIndData = computeIndividualNightData(senderPlayer, allMatches, allPlayers);
+          const indData = rawIndData ? await enrichIndividualNightDataWithHumor(rawIndData) : null;
           if (indData) {
-            const cardUrl = `${publicBaseUrl}/api/cards/individual.png?playerId=${encodeURIComponent(senderPlayer.id)}&date=${encodeURIComponent(indData.dateKey)}`;
-            replyMedia = {
-              mediaType: "image",
-              mediaBase64: renderIndividualNightCardPng(indData).toString("base64"),
-              fileName: `guerreiros_noite_${indData.dateKey}.png`,
-              mediaUrl: cardUrl,
-              caption: `🏐 *RESUMO INDIVIDUAL — ${indData.firstName}* (${indData.dateLabel}) • ${indData.wins}V/${indData.losses}D (${indData.winRate}%) • ${indData.eloDelta >= 0 ? "+" : ""}${indData.eloDelta} ELO`
-            };
-            replyBody += `\n\n🎨 *Card Visual Liquid Glass V3 (Linha do Tempo Horizontal):*\n${cardUrl}`;
+            try {
+              replyMedia = {
+                mediaType: "image",
+                mimetype: "image/png",
+                mediaBase64: renderIndividualNightCardPng(indData).toString("base64"),
+                mediaFetchUrl: `${publicBaseUrl}/api/cards/individual.png?playerId=${encodeURIComponent(senderPlayer.id)}&date=${encodeURIComponent(indData.dateKey)}`,
+                fileName: `guerreiros_noite_${indData.dateKey}.png`,
+                caption: `🏐 *RESUMO INDIVIDUAL — ${indData.firstName}* (${indData.dateLabel}) • ${indData.wins}V/${indData.losses}D (${indData.winRate}%) • ${indData.eloDelta >= 0 ? "+" : ""}${indData.eloDelta} ELO`,
+                imageOnly: true
+              };
+              imageOnlyReply = true;
+            } catch (cardErr) {
+              console.warn("[Webhook] Falha ao renderizar PNG do gv dia:", cardErr);
+              replyBody = buildPlayerNightTimelineReport(senderPlayer, allMatches, allPlayers);
+            }
+          } else {
+            replyBody = buildPlayerNightTimelineReport(senderPlayer, allMatches, allPlayers);
           }
-        } catch (cardErr) {
-          console.warn("[Webhook] Falha ao renderizar PNG do gv dia:", cardErr);
+        } else {
+          replyBody = buildPlayerNightTimelineReport(senderPlayer, allMatches, allPlayers);
+          if (forceImg) {
+            replyBody += `\n\nℹ️ _Envio de Card HD em imagem está desabilitado no WhatsApp — exibindo o resumo completo em texto._`;
+          }
         }
       } else if (
-        ["ranking do dia", "ranking da noite", "resumo", "resumo da noite", "sumula", "placares"].includes(
-          cleanAfterAlias
-        )
+        [
+          "ranking do dia",
+          "ranking da noite",
+          "resumo",
+          "resumo da noite",
+          "sumula",
+          "placares",
+          "resumo img",
+          "resumo imagem",
+          "resumo card",
+          "resumo foto",
+          "ranking do dia img",
+          "resumo texto",
+          "resumo txt",
+          "ranking do dia texto"
+        ].includes(cleanAfterAlias)
       ) {
+        const forceImg = /\b(img|imagem|card|foto)$/.test(cleanAfterAlias);
+        const forceTxt = /\b(texto|txt)$/.test(cleanAfterAlias);
+        const shouldSendVmImage =
+          bridgeSupportsMedia && !forceTxt && (forceImg || defaultCardMode === "vm_image_only");
+        effectiveCardDeliveryMode = shouldSendVmImage ? "vm_image_only" : "disabled";
+
         const shouldRefreshMatches = cachedMatches.length === 0 || Date.now() - cachedMatchesLastFetch > 60 * 1000;
         const allMatches = shouldRefreshMatches
           ? await Promise.race([
@@ -6660,39 +9210,59 @@ REGRAS:
             m.date || (m.timestamp ? getFirestoreDateKey(new Date(Number(m.timestamp))) : "");
           return mDate === lastDate;
         });
-        replyBody =
-          buildPostGameSummaryAndDayRanking(matchesOfLastNight, allPlayers, lastDate) ||
-          "⚠️ Nenhuma partida encontrada na última sessão.";
-        try {
+
+        if (shouldSendVmImage) {
           const dailyData = computeDailyRankingData(matchesOfLastNight, allPlayers, lastDate);
           if (dailyData) {
-            const cardUrl = `${publicBaseUrl}/api/cards/daily-ranking.png?date=${encodeURIComponent(lastDate)}`;
-            replyMedia = {
-              mediaType: "image",
-              mediaBase64: renderDailyRankingCardPng(dailyData).toString("base64"),
-              fileName: `guerreiros_ranking_dia_${lastDate}.png`,
-              mediaUrl: cardUrl,
-              caption: `🔥 *RANKING DO DIA — ${dailyData.dateLabel}* • MVP: *${dailyData.mvp?.firstName || "-"}* • Levantador: *${dailyData.bestSetter?.firstName || "-"}* • Eficiente: *${dailyData.mostEfficient?.firstName || "-"}*`
-            };
-            replyBody += `\n\n🎨 *Card Visual Liquid Glass V3 (Ranking do Dia):*\n${cardUrl}`;
+            try {
+              replyMedia = {
+                mediaType: "image",
+                mimetype: "image/png",
+                mediaBase64: renderDailyRankingCardPng(dailyData).toString("base64"),
+                mediaFetchUrl: `${publicBaseUrl}/api/cards/daily-ranking.png?date=${encodeURIComponent(lastDate)}`,
+                fileName: `guerreiros_ranking_dia_${lastDate}.png`,
+                caption: `🔥 *RANKING DO DIA — ${dailyData.dateLabel}* (${dailyData.totalAthletes} atletas) • MVP: *${dailyData.mvp?.firstName || "-"}*`,
+                imageOnly: true
+              };
+              imageOnlyReply = true;
+            } catch (cardErr) {
+              console.warn("[Webhook] Falha ao renderizar PNG do gv resumo:", cardErr);
+              replyBody =
+                buildPostGameSummaryAndDayRanking(matchesOfLastNight, allPlayers, lastDate) ||
+                "⚠️ Nenhuma partida encontrada na última sessão.";
+            }
+          } else {
+            replyBody =
+              buildPostGameSummaryAndDayRanking(matchesOfLastNight, allPlayers, lastDate) ||
+              "⚠️ Nenhuma partida encontrada na última sessão.";
           }
-        } catch (cardErr) {
-          console.warn("[Webhook] Falha ao renderizar PNG do gv resumo:", cardErr);
+        } else {
+          replyBody =
+            buildPostGameSummaryAndDayRanking(matchesOfLastNight, allPlayers, lastDate) ||
+            "⚠️ Nenhuma partida encontrada na última sessão.";
+          if (forceImg) {
+            replyBody += `\n\nℹ️ _Envio de Card HD em imagem está desabilitado no WhatsApp — exibindo o resumo completo em texto._`;
+          }
         }
       } else if (
         ["meusjogos", "meus jogos", "historico", "meu historico", "estatisticas", "minhas estatisticas", "raiox", "raio-x"].includes(
           cleanAfterAlias
         )
       ) {
+        isIndividualPrivateCommand = true;
+        privateCommandLabel = "Raio-X & Estatísticas Individuais";
         const allMatches = await getCachedMatches(cachedMatches.length === 0);
         const report = buildPlayerDeepStatsReport(senderPlayer, allPlayers, allMatches, "geral");
         replyBody = `${report}\n\n💬 _Quer que eu filtre essa análise apenas pelos seus últimos 15 jogos ou confirme sua presença para quinta-feira?_`;
       } else {
+        isIndividualPrivateCommand = true;
+        privateCommandLabel = "Análise Individual";
         const allMatches = await getCachedMatches(cachedMatches.length === 0);
         if (!apiKey) {
           const report = buildPlayerDeepStatsReport(senderPlayer, allPlayers, allMatches, "geral");
           replyBody = `${report}\n\n🤖 _Atalhos rápidos: *gv vou*, *gv lista*, *gv ranking*, *gv meusjogos* ou *gv pix*._`;
         } else {
+          const liveSysConfig = await getCachedSystemConfig();
           replyBody = await runDeepAnalyticsChat(
             apiKey,
             finalMessageToProcess,
@@ -6705,34 +9275,58 @@ REGRAS:
               getAttendanceList: executeGetAttendanceList,
               getRanking: executeGetRanking,
               getPixInfo: executeGetPixInfo
+            },
+            {
+              monthlyFee: Number(liveSysConfig?.monthlyFee || 50),
+              pixKey: liveSysConfig?.pixKey || "",
+              pixReceiverName: liveSysConfig?.pixReceiverName || liveSysConfig?.clubName || "Guerreiros VC",
+              courtName: liveSysConfig?.courtName || "Quadra Oficial Guerreiros VC (Recife/PE)",
+              courtAddress: liveSysConfig?.courtAddress || "",
+              maxPlayersPerSession: Number(liveSysConfig?.maxPlayersPerSession || 29),
+              activePlayersCount: allPlayers.filter((p) => p.status === "active").length
             }
           );
         }
       }
 
-      const replyText = `${replyBody}\n\n— Guerreirinho, o robô do clube 🤖`;
+      if (!replyBody && !replyMedia) {
+        return res.json({ success: true, ignored: true, reason: "SILENT_GEO_UPDATE" });
+      }
+
+      const replyText =
+        imageOnlyReply && replyMedia ? "" : `${replyBody}\n\n— Guerreirinho, o robô do clube 🤖`;
+
+      const privateTargetsSet = new Set<string>();
+      const addPrivateTarget = (jid?: string | null) => {
+        const cleaned = String(jid || "").trim();
+        if (
+          cleaned &&
+          !cleaned.endsWith("@g.us") &&
+          !cleaned.endsWith("@broadcast") &&
+          cleaned !== "status@broadcast"
+        ) {
+          privateTargetsSet.add(cleaned);
+        }
+      };
+
+      // PRIORIDADE MÁXIMA: JID real verificado vindo diretamente do evento do WhatsApp
+      // (evita telefone com 9º dígito divergente e garante entrega no privado de sócios @lid como Caluca e Flavinha)
+      addPrivateTarget(verifiedSenderPnJid);
+      addPrivateTarget(senderJid);
+      addPrivateTarget(senderLid);
+      addPrivateTarget(senderPlayer?.whatsappJid);
+      addPrivateTarget(senderPlayer?.whatsappLid);
+      if (senderPlayer) {
+        resolvePlayerWhatsAppTargets(senderPlayer).forEach((t) => addPrivateTarget(t));
+      }
+      if (senderPlayer?.phone) {
+        addPrivateTarget(normalizePhoneToJid(senderPlayer.phone));
+      }
+      const privateTargets = Array.from(privateTargetsSet);
 
       let targetReplyChatId = chatId;
-      if (isGroup) {
-        // PRIORIDADE MÁXIMA: JID real verificado vindo diretamente do evento do WhatsApp
-        // (evita enviar para telefone com 9º dígito divergente no cadastro, garantindo entrega no privado de sócios @lid como Caluca e Flavinha)
-        if (verifiedSenderPnJid) {
-          targetReplyChatId = verifiedSenderPnJid;
-        } else if (senderJid && !senderJid.endsWith("@g.us")) {
-          targetReplyChatId = senderJid;
-        } else if (senderLid && !senderLid.endsWith("@g.us")) {
-          targetReplyChatId = senderLid;
-        } else if (senderPlayer?.whatsappJid && !String(senderPlayer.whatsappJid).endsWith("@g.us")) {
-          targetReplyChatId = String(senderPlayer.whatsappJid);
-        } else if (senderPlayer?.whatsappLid && !String(senderPlayer.whatsappLid).endsWith("@g.us")) {
-          targetReplyChatId = String(senderPlayer.whatsappLid);
-        } else if (senderPlayer?.phone) {
-          const fallbackJid = normalizePhoneToJid(senderPlayer.phone);
-          if (fallbackJid) targetReplyChatId = fallbackJid;
-        }
-      } else if (chatId.endsWith("@lid")) {
-        // No privado via @lid, prefere o JID @s.whatsapp.net real (remoteJidAlt/senderPn) quando disponível,
-        // mantendo o @lid original como fallback garantido para o conector da VM.
+      if (!isGroup && chatId.endsWith("@lid")) {
+        // No privado via @lid, prefere o JID @s.whatsapp.net real quando disponível, mantendo o @lid como fallback.
         if (verifiedSenderPnJid) {
           targetReplyChatId = verifiedSenderPnJid;
         } else if (senderPlayer?.whatsappJid && !String(senderPlayer.whatsappJid).endsWith("@g.us")) {
@@ -6777,40 +9371,94 @@ REGRAS:
         }
       }
 
-      // Dispara o card PNG diretamente via Evolution API (em paralelo) para que a imagem chegue no WhatsApp mesmo que a ponte VM só leia `text`
-      if (replyMedia && targetReplyChatId && req.body?.skipDirectMedia !== true) {
-        const mediaFallbackTargets = resolvePlayerWhatsAppTargets(senderPlayer);
-        dispatchWhatsAppMedia(
-          targetReplyChatId,
-          replyMedia.mediaBase64,
-          replyMedia.caption || "🏐 Card Liquid Glass V3 • Guerreiros VC",
-          {
-            type: "WEBHOOK_CARD_IMAGE",
-            recipientLabel: senderPlayer?.name || targetReplyChatId,
-            fallbackTargets: mediaFallbackTargets,
-            fileName: replyMedia.fileName,
-            skipOutboxOnFail: true
-          }
-        ).catch(() => {});
+      // 🔒 ROTEAMENTO PRIVADO PARA COMANDOS INDIVIDUAIS PEDIDOS NO GRUPO:
+      // Quando um sócio digita comandos individuais (ex.: gv dia, gv meusjogos, gv raiox, gv cheguei) no GRUPO,
+      // enfileira a entrega completa (PNG HD ou texto) diretamente no PRIVADO do sócio via ponte VM (/api/whatsapp/cron-tasks)
+      // e responde apenas uma confirmação discreta de 1 linha no grupo (sem expor o card individual nem poluir o grupo).
+      if (isGroup && isIndividualPrivateCommand && privateTargets.length > 0) {
+        const firstName =
+          String(senderPlayer?.name || pushName || "Guerreiro(a)").trim().split(/\s+/)[0] ||
+          "Guerreiro(a)";
+
+        const outboxItem: OutboxWhatsAppMessage = {
+          outboxId: `obx_priv_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          to: privateTargets[0],
+          fallbackTargets: privateTargets.slice(1),
+          text: imageOnlyReply && replyMedia ? "" : replyText,
+          ...(replyMedia
+            ? {
+                ...(replyMedia.mediaFetchUrl
+                  ? { mediaFetchUrl: replyMedia.mediaFetchUrl }
+                  : { mediaBase64: replyMedia.mediaBase64 }),
+                mediaType: "image" as const,
+                fileName: replyMedia.fileName,
+                caption: replyMedia.caption,
+                imageOnly: Boolean(imageOnlyReply)
+              }
+            : {}),
+          delayMs: 0,
+          type: "GROUP_TO_PRIVATE_COMMAND",
+          recipientLabel: senderPlayer?.name || pushName || "Sócio",
+          queuedAt: Date.now(),
+          attempts: 0
+        };
+
+        pendingWhatsAppOutbox.push(outboxItem);
+        if (pendingWhatsAppOutbox.length > 100) {
+          pendingWhatsAppOutbox = pendingWhatsAppOutbox.slice(-100);
+        }
+        saveLocalWhatsAppOutbox(pendingWhatsAppOutbox);
+        await Promise.race([
+          persistOutboxToFirestore(pendingWhatsAppOutbox).catch(() => {}),
+          new Promise<void>((resolve) => setTimeout(resolve, 1500))
+        ]);
+
+        recordWhatsAppCommLog({
+          type: "GROUP_TO_PRIVATE_COMMAND",
+          recipient: privateTargets[0],
+          recipientLabel: senderPlayer?.name || pushName || "Sócio",
+          status: "QUEUED_RETRY",
+          summary: `${privateCommandLabel} pedido no grupo → encaminhado para o privado de ${firstName}`,
+          messagePreview: replyMedia?.caption || replyBody.slice(0, 180)
+        });
+
+        const groupAckText = `📩 *${firstName}*, enviei seu *${privateCommandLabel}* no seu privado! 🔒🏐`;
+
+        return res.status(200).json({
+          success: true,
+          chatId,
+          groupChatId: chatId,
+          privateDelivered: true,
+          privateTargetChatId: privateTargets[0],
+          privateFallbackTargets: privateTargets.slice(1),
+          text: groupAckText,
+          deliveryMode: effectiveCardDeliveryMode,
+          imageOnly: false,
+          ...(groupBroadcast ? { groupBroadcast } : {})
+        });
       }
 
-      const includeMediaBase64 = req.body?.includeMediaBase64 === true;
-      const responseMedia = replyMedia
-        ? includeMediaBase64
-          ? replyMedia
-          : {
-              mediaType: replyMedia.mediaType,
-              fileName: replyMedia.fileName,
-              ...(replyMedia.mediaUrl ? { mediaUrl: replyMedia.mediaUrl } : {})
-            }
-        : null;
+      // Não tenta Evolution API e NUNCA envia links de Card HD no WhatsApp.
+      // Só retorna mediaBase64 quando a VM Google explicitamente envia supportsMedia: true.
+      const finalReplyText = imageOnlyReply && replyMedia ? "" : replyText;
+
+      recordWhatsAppCommLog({
+        type: isGroup ? "WEBHOOK_GROUP_REPLY" : "WEBHOOK_PRIVATE_REPLY",
+        recipient: targetReplyChatId || chatId,
+        recipientLabel: isGroup ? "Grupo Guerreiros VC" : senderPlayer?.name || pushName || "Sócio",
+        status: "SENT",
+        summary: `Comando "${cleanAfterAlias || "mídia"}" respondido via webhook`,
+        messagePreview: replyMedia?.caption || finalReplyText.slice(0, 180)
+      });
 
       return res.status(200).json({
         success: true,
         chatId: targetReplyChatId,
         groupChatId: isGroup ? chatId : null,
-        text: replyText,
-        ...(responseMedia ? responseMedia : {}),
+        text: finalReplyText,
+        deliveryMode: effectiveCardDeliveryMode,
+        imageOnly: Boolean(imageOnlyReply && replyMedia),
+        ...(replyMedia ? replyMedia : {}),
         ...(groupBroadcast ? { groupBroadcast } : {})
       });
     } catch (err: any) {
@@ -6837,8 +9485,11 @@ REGRAS:
         activePlayers.find((p) => p.id === requestedPlayerId || p.uid === requestedPlayerId) ||
         activePlayers.sort((a, b) => (b.elo || 1200) - (a.elo || 1200))[0];
 
-      const individual = targetPlayer
+      const rawIndividual = targetPlayer
         ? computeIndividualNightData(targetPlayer, allMatches, allPlayers, requestedDate)
+        : null;
+      const individual = rawIndividual
+        ? await enrichIndividualNightDataWithHumor(rawIndividual)
         : null;
       const daily = computeDailyRankingData(allMatches, allPlayers, requestedDate);
       const accumulated = computeAccumulatedRankingData(allMatches, allPlayers);
@@ -6876,14 +9527,16 @@ REGRAS:
         return res.status(404).json({ error: "Atleta não encontrado" });
       }
 
-      const data = computeIndividualNightData(targetPlayer, allMatches, allPlayers, requestedDate);
-      if (!data) {
+      const rawData = computeIndividualNightData(targetPlayer, allMatches, allPlayers, requestedDate);
+      if (!rawData) {
         return res.status(404).json({ error: "Nenhuma sessão encontrada para gerar o card" });
       }
 
+      const data = await enrichIndividualNightDataWithHumor(rawData);
       const png = renderIndividualNightCardPng(data);
       res.setHeader("Content-Type", "image/png");
       res.setHeader("Cache-Control", "public, max-age=60");
+      res.setHeader("X-Card-Fonts-Loaded", String(getLoadedCardFontsCount()));
       res.setHeader(
         "Content-Disposition",
         `inline; filename="guerreiros_individual_${data.dateKey}_${data.firstName.toLowerCase()}.png"`
@@ -6911,6 +9564,7 @@ REGRAS:
       const png = renderDailyRankingCardPng(data);
       res.setHeader("Content-Type", "image/png");
       res.setHeader("Cache-Control", "public, max-age=60");
+      res.setHeader("X-Card-Fonts-Loaded", String(getLoadedCardFontsCount()));
       res.setHeader(
         "Content-Disposition",
         `inline; filename="guerreiros_ranking_dia_${data.dateKey}.png"`
@@ -6933,6 +9587,7 @@ REGRAS:
       const png = renderAccumulatedRankingCardPng(data);
       res.setHeader("Content-Type", "image/png");
       res.setHeader("Cache-Control", "public, max-age=60");
+      res.setHeader("X-Card-Fonts-Loaded", String(getLoadedCardFontsCount()));
       res.setHeader(
         "Content-Disposition",
         `inline; filename="guerreiros_ranking_acumulado.png"`
@@ -6946,14 +9601,29 @@ REGRAS:
 
   app.post("/api/whatsapp/send-card", async (req, res) => {
     try {
+      const effectiveMode = getWhatsAppCardDeliveryMode();
+      if (effectiveMode !== "vm_image_only") {
+        return res.status(400).json({
+          success: false,
+          disabled: true,
+          error:
+            "Envio de Cards HD pelo WhatsApp está desabilitado. Ative 'Imagem Nativa via VM Google' ou use 'Baixar PNG' para compartilhar manualmente."
+        });
+      }
+
       const { cardType, playerId, date, target = "group" } = req.body || {};
       const [allPlayers, allMatches] = await Promise.all([
         getCachedPlayers(cachedPlayers.length === 0),
         getCachedMatches(cachedMatches.length === 0)
       ]);
       const cfg = getWhatsAppConfig();
+      const reqHost = String(req.headers.host || "").trim();
+      const publicBaseUrl =
+        reqHost && !reqHost.includes("localhost") && !reqHost.startsWith("127.")
+          ? `https://${reqHost}`
+          : "https://guerreiros-volleyball-club-238897290870.us-west1.run.app";
 
-      let pngBuffer: Buffer | null = null;
+      let mediaFetchUrl = "";
       let caption = "";
       let fileName = "guerreiros_card.png";
       let destination = cfg.groupJid;
@@ -6967,8 +9637,8 @@ REGRAS:
         if (!indData) {
           return res.status(404).json({ success: false, error: "Sem partidas registradas para essa data." });
         }
-        pngBuffer = renderIndividualNightCardPng(indData);
-        caption = `🏐 *RESUMO INDIVIDUAL — ${indData.firstName}* (${indData.dateLabel})\n${indData.wins}V/${indData.losses}D (${indData.winRate}%) • ${indData.eloDelta >= 0 ? "+" : ""}${indData.eloDelta} ELO • #${indData.nightRank} na Noite\n\n— Guerreirinho, o robô do clube 🤖`;
+        mediaFetchUrl = `${publicBaseUrl}/api/cards/individual.png?playerId=${encodeURIComponent(player.id)}&date=${encodeURIComponent(indData.dateKey)}`;
+        caption = `🏐 *RESUMO INDIVIDUAL — ${indData.firstName}* (${indData.dateLabel})\n${indData.wins}V/${indData.losses}D (${indData.winRate}%) • ${indData.eloDelta >= 0 ? "+" : ""}${indData.eloDelta} ELO • #${indData.nightRank} na Noite`;
         fileName = `guerreiros_individual_${indData.dateKey}_${indData.firstName.toLowerCase()}.png`;
         if (target === "private") {
           const targets = resolvePlayerWhatsAppTargets(player);
@@ -6987,39 +9657,50 @@ REGRAS:
         if (!dailyData) {
           return res.status(404).json({ success: false, error: "Sem partidas registradas para essa data." });
         }
-        pngBuffer = renderDailyRankingCardPng(dailyData);
-        caption = `🔥 *RANKING DO DIA — ${dailyData.dateLabel}* (${dailyData.totalMatches} partidas • ${dailyData.totalAthletes} atletas)\n🏆 MVP: *${dailyData.mvp?.firstName || "-"}* • 🎯 Levantador: *${dailyData.bestSetter?.firstName || "-"}* • ⚡ Eficiente: *${dailyData.mostEfficient?.firstName || "-"}*\n\n— Guerreirinho, o robô do clube 🤖`;
+        mediaFetchUrl = `${publicBaseUrl}/api/cards/daily-ranking.png?date=${encodeURIComponent(dailyData.dateKey)}`;
+        caption = `🔥 *RANKING DO DIA — ${dailyData.dateLabel}* (${dailyData.totalMatches} partidas • ${dailyData.totalAthletes} atletas)\n🏆 MVP: *${dailyData.mvp?.firstName || "-"}* • 🎯 Levantador: *${dailyData.bestSetter?.firstName || "-"}* • ⚡ Eficiente: *${dailyData.mostEfficient?.firstName || "-"}*`;
         fileName = `guerreiros_ranking_dia_${dailyData.dateKey}.png`;
       } else if (cardType === "accumulated") {
         const accData = computeAccumulatedRankingData(allMatches, allPlayers);
-        pngBuffer = renderAccumulatedRankingCardPng(accData);
-        caption = `🏆 *RANKING GERAL ACUMULADO* (Atualizado em ${accData.referenceDateLabel})\nLíder: *${accData.topRows[0]?.firstName || "-"}* (${accData.topRows[0]?.elo || 1200} ELO)\n\n— Guerreirinho, o robô do clube 🤖`;
+        mediaFetchUrl = `${publicBaseUrl}/api/cards/accumulated-ranking.png`;
+        caption = `🏆 *RANKING GERAL ACUMULADO* (${accData.totalActivePlayers} sócios • Atualizado em ${accData.referenceDateLabel})\nLíder: *${accData.topRows[0]?.firstName || "-"}* (${accData.topRows[0]?.elo || 1200} ELO)`;
         fileName = `guerreiros_ranking_acumulado.png`;
       } else {
         return res.status(400).json({ success: false, error: "Tipo de card inválido." });
       }
 
-      const delivered = await dispatchWhatsAppMedia(
-        destination,
-        pngBuffer.toString("base64"),
+      // Enfileira metadados leves (mediaFetchUrl) para a VM Google baixar o PNG binário e enviar nativamente (sem links na mensagem!)
+      const outboxItem: OutboxWhatsAppMessage = {
+        outboxId: `obx_img_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        to: destination,
+        fallbackTargets,
+        text: "",
+        mediaFetchUrl,
+        mediaType: "image",
+        fileName,
         caption,
-        {
-          type: `MANUAL_CARD_${String(cardType).toUpperCase()}`,
-          recipientLabel,
-          fallbackTargets,
-          fileName
-        }
-      );
+        imageOnly: true,
+        type: `MANUAL_CARD_${String(cardType).toUpperCase()}`,
+        recipientLabel,
+        queuedAt: Date.now(),
+        attempts: 0
+      };
+      pendingWhatsAppOutbox.push(outboxItem);
+      if (pendingWhatsAppOutbox.length > 100) {
+        pendingWhatsAppOutbox = pendingWhatsAppOutbox.slice(-100);
+      }
+      saveLocalWhatsAppOutbox(pendingWhatsAppOutbox);
+      persistOutboxToFirestore(pendingWhatsAppOutbox).catch(() => {});
 
       return res.json({
         success: true,
-        deliveredDirectly: delivered,
-        queuedForBridge: !delivered,
+        deliveryMode: effectiveMode,
+        queuedForBridge: true,
         recipientLabel
       });
     } catch (err: any) {
       console.error("[Cards API] Erro em /api/whatsapp/send-card:", err);
-      return res.status(500).json({ success: false, error: err?.message || "Erro ao enviar card" });
+      return res.status(500).json({ success: false, error: err?.message || "Erro ao enfileirar card" });
     }
   });
 
@@ -7679,15 +10360,8 @@ REGRAS:
     }
   });
 
-  if (process.env.NODE_ENV !== "production") {
-    const { createServer: createViteServer } = await import("vite");
-    const vite = await createViteServer({
-      server: { middlewareMode: true, ws: false },
-      appType: "spa"
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), "dist");
+  const distPath = path.join(process.cwd(), "dist");
+  const attachStaticDist = () => {
     app.use(
       express.static(distPath, {
         etag: true,
@@ -7712,40 +10386,76 @@ REGRAS:
         res.status(503).send("Rebuilding...");
       }
     });
+  };
+
+  const isDevMode =
+    process.env.NODE_ENV === "development" || process.env.npm_lifecycle_event === "dev";
+
+  if (isDevMode) {
+    try {
+      const { createServer: createViteServer } = await import("vite");
+      const vite = await createViteServer({
+        server: { middlewareMode: true, ws: false },
+        appType: "spa"
+      });
+      app.use(vite.middlewares);
+    } catch (viteErr) {
+      console.warn("[Server] Falha ao iniciar Vite dev middleware; usando dist/ estático:", viteErr);
+      attachStaticDist();
+    }
+  } else {
+    attachStaticDist();
   }
 
   const server = http.createServer(app);
+  setupGeminiLiveWebSocket(server);
 
   // 🚀 Abre a porta 3000 imediatamente para passar no Health Check do Cloud Run
   server.listen(PORT, "0.0.0.0", () => {
     console.log(`[Guerreiros] Servidor Ativado na porta ${PORT}`);
 
-    import("./services/serverLiveApi.ts")
-      .then(({ setupGeminiLiveWebSocket }) => {
-        setupGeminiLiveWebSocket(server);
-      })
-      .catch((e) => console.warn("[LiveAPI] Aviso ao inicializar WebSocket:", e));
-
+    // 🪶 Cold-start leve: aquece apenas cache em memória e hidrata política do roteador de IA
+    // (Sincronização em massa de contatos/fotos WhatsApp agora roda apenas sob demanda em /api/whatsapp/sync-photos)
     setTimeout(async () => {
       try {
         await ensureFreshIntentionsDocument();
-        const players = await getCachedPlayers(true);
+        await getCachedPlayers(true);
         await getCachedMatches(true);
         const db = await getFirestore();
-        await syncWhatsAppGroupContactsAndPhones(db, players || []).catch(() => {});
-        const missingPhotoPlayers = (players || []).filter(
-          (p) =>
-            p.status !== "inactive" &&
-            (Boolean(p.phone) || Boolean(p.whatsappLid)) &&
-            isMissingOrDefaultAvatar(p.photoUrl)
-        );
-        for (const p of missingPhotoPlayers) {
-          await syncSinglePlayerWhatsAppPhoto(db, p, null, false).catch(() => {});
+        const [policyDoc, sysDoc] = await Promise.all([
+          db.collection("metadata").doc("ai_router_policy").get().catch(() => null),
+          db.collection("metadata").doc("system").get().catch(() => null)
+        ]);
+        if (policyDoc && policyDoc.exists) {
+          const data = policyDoc.data();
+          if (data?.policy && !data?.resetToDefault) {
+            setAIRouterPolicy(data.policy, "firestore");
+          }
+        }
+        if (sysDoc && sysDoc.exists) {
+          const sdata = sysDoc.data() || {};
+          if (sdata.whatsappCardDeliveryMode === "disabled" || sdata.whatsappCardDeliveryMode === "vm_image_only") {
+            memoryCardDeliveryModeOverride = sdata.whatsappCardDeliveryMode;
+          }
+          if (typeof sdata.whatsappApiUrl === "string" && sdata.whatsappApiUrl.trim()) {
+            memoryWaApiUrlOverride = sdata.whatsappApiUrl.trim().replace(/\/$/, "");
+          }
+          if (typeof sdata.whatsappInstance === "string" && sdata.whatsappInstance.trim()) {
+            memoryWaInstanceOverride = sdata.whatsappInstance.trim();
+          }
         }
       } catch {}
     }, 1500);
   });
 }
+
+process.on("unhandledRejection", (reason: any) => {
+  console.error("[Process Guard] Unhandled Promise Rejection isolado (thread principal preservada):", reason?.message || reason);
+});
+
+process.on("uncaughtException", (err: any) => {
+  console.error("[Process Guard] Uncaught Exception isolado (thread principal preservada):", err?.message || err);
+});
 
 startServer().catch((err) => {
   console.error("Failed to start server:", err);

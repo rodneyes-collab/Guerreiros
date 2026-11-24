@@ -62,7 +62,7 @@ import { LiquidGlassCardsStudio } from '../src/components/LiquidGlassCardsStudio
 import { translateGender, capitalizeName } from '../utils/helpers';
 import { detectAnomalies } from '../services/geminiService';
 import { calculateCompositePerformanceRating } from '../utils/teamLogic';
-import { calculateMvpEfficiencyScore } from '../utils/statsLogic';
+import { calculateMvpEfficiencyScore, calculateDailyAvgPointDiff } from '../utils/statsLogic';
 import { calculateSetterStats, calculateSetterScore } from '../utils/setterStats';
 
 import { GlobalStats } from './DashboardView';
@@ -791,7 +791,8 @@ export const RankingView: React.FC<RankingViewProps> = ({
       mostEfficientTechnical: null,
       dailyEfficientTechnical: null,
       totalDurations: careerTotalDurations,
-      dailyStats: {} as Record<string, any>
+      dailyStats: {} as Record<string, any>,
+      getDailyAvgPointDiff: (_p: any) => 0
     };
     
     const MIN_MATCHES = 12;
@@ -877,6 +878,12 @@ export const RankingView: React.FC<RankingViewProps> = ({
       return (stats?.matches || 0) > 0 ? (stats.wins || 0) / stats.matches : 0;
     };
 
+    const getDailyAvgPointDiff = (p: any) => {
+      if (!p) return 0;
+      const stats = dailyStats[p.id];
+      return calculateDailyAvgPointDiff(stats?.pointsFor || 0, stats?.pointsAgainst || 0, stats?.matches || 0);
+    };
+
     const getDailyMvpEfficiency = (p: any) => {
       if (!p) return 0;
       const stats = dailyStats[p.id];
@@ -951,21 +958,14 @@ export const RankingView: React.FC<RankingViewProps> = ({
       }
     }
 
-    const dailyMvp = [...players]
-      .filter(p => (dailyStats[p.id]?.matches || 0) >= minReqDailyMatches)
-      .sort((a, b) => 
-        getDailyMvpEfficiency(b) - getDailyMvpEfficiency(a) || 
-        (dailyStats[b.id]?.matchEloGain || 0) - (dailyStats[a.id]?.matchEloGain || 0) || 
-        (dailyStats[a.id]?.duration || 0) - (dailyStats[b.id]?.duration || 0)
-      )[0] ||
-      [...players]
-        .filter(p => (dailyStats[p.id]?.matches || 0) > 0)
-        .sort((a, b) => 
-          getDailyMvpEfficiency(b) - getDailyMvpEfficiency(a) || 
-          (dailyStats[b.id]?.matchEloGain || 0) - (dailyStats[a.id]?.matchEloGain || 0) || 
-          (dailyStats[a.id]?.duration || 0) - (dailyStats[b.id]?.duration || 0)
-        )[0];
+    // =========================================================================
+    // DESTAQUES DIÁRIOS — ORDEM B (4 VENCEDORES DISTINTOS, SEM REPETIÇÃO):
+    // 1º Levantador do Dia -> 2º MVP do Dia (100% mérito da noite) ->
+    // 3º Rei do Dia (ELO quadra) -> 4º Mais Eficiente (Saldo Médio pts/jogo)
+    // =========================================================================
+    const usedDailyAwardIds = new Set<string>();
 
+    // 1º Levantador(a) do Dia
     let dailyBestSetter = activePlayers
       .filter(p => (dailySetterStats[p.id]?.matches || 0) >= Math.max(1, Math.min(minReqDailyMatches, 2)))
       .sort((a, b) => 
@@ -992,26 +992,37 @@ export const RankingView: React.FC<RankingViewProps> = ({
           )[0];
       }
     }
+    if (dailyBestSetter?.id) usedDailyAwardIds.add(dailyBestSetter.id);
+
+    // 2º MVP do Dia (100% desempenho em quadra da noite — sem peso fixo de skills, excluindo Levantador do Dia)
+    const sortDailyMvp = (a: Player, b: Player) =>
+      getDailyMvpEfficiency(b) - getDailyMvpEfficiency(a) ||
+      (dailyStats[b.id]?.matchEloGain || 0) - (dailyStats[a.id]?.matchEloGain || 0) ||
+      (dailyStats[a.id]?.duration || 0) - (dailyStats[b.id]?.duration || 0);
+
+    const dailyMvp =
+      [...players].filter(p => (dailyStats[p.id]?.matches || 0) >= minReqDailyMatches && !usedDailyAwardIds.has(p.id)).sort(sortDailyMvp)[0] ||
+      [...players].filter(p => (dailyStats[p.id]?.matches || 0) > 0 && !usedDailyAwardIds.has(p.id)).sort(sortDailyMvp)[0] ||
+      [...players].filter(p => (dailyStats[p.id]?.matches || 0) > 0).sort(sortDailyMvp)[0];
+    if (dailyMvp?.id) usedDailyAwardIds.add(dailyMvp.id);
 
     const topEloCandidates = [...players]
       .filter(p => p.id !== mvp?.id)
       .sort((a, b) => (b.elo || 0) - (a.elo || 0) || (careerTotalDurations[a.id] || 0) - (careerTotalDurations[b.id] || 0));
     const topElo = topEloCandidates.length > 0 ? topEloCandidates[0] : [...players].sort((a, b) => (b.elo || 0) - (a.elo || 0) || (careerTotalDurations[a.id] || 0) - (careerTotalDurations[b.id] || 0))[0];
 
-    const dailyKingCandidates = [...players]
-      .filter(p => (dailyStats[p.id]?.matches || 0) >= minReqDailyMatches && p.id !== dailyMvp?.id)
-      .sort((a, b) => 
-        (dailyStats[b.id]?.matchEloGain || 0) - (dailyStats[a.id]?.matchEloGain || 0) || 
-        (dailyStats[a.id]?.duration || 0) - (dailyStats[b.id]?.duration || 0) ||
-        (dailyStats[b.id]?.wins || 0) - (dailyStats[a.id]?.wins || 0)
-      );
-    const fallbackDailyKingCandidates = [...players]
-      .filter(p => (dailyStats[p.id]?.matches || 0) > 0 && p.id !== dailyMvp?.id)
-      .sort((a, b) => 
-        (dailyStats[b.id]?.matchEloGain || 0) - (dailyStats[a.id]?.matchEloGain || 0) || 
-        (dailyStats[a.id]?.duration || 0) - (dailyStats[b.id]?.duration || 0)
-      );
-    const dailyKing = dailyKingCandidates[0] || fallbackDailyKingCandidates[0] || dailyMvp;
+    // 3º Rei / Rainha do Dia (maior ganho de ELO em quadra, excluindo Levantador e MVP)
+    const sortDailyKing = (a: Player, b: Player) =>
+      (dailyStats[b.id]?.matchEloGain || 0) - (dailyStats[a.id]?.matchEloGain || 0) ||
+      (dailyStats[b.id]?.wins || 0) - (dailyStats[a.id]?.wins || 0) ||
+      (dailyStats[a.id]?.duration || 0) - (dailyStats[b.id]?.duration || 0);
+
+    const dailyKing =
+      [...players].filter(p => (dailyStats[p.id]?.matches || 0) >= minReqDailyMatches && !usedDailyAwardIds.has(p.id)).sort(sortDailyKing)[0] ||
+      [...players].filter(p => (dailyStats[p.id]?.matches || 0) > 0 && !usedDailyAwardIds.has(p.id)).sort(sortDailyKing)[0] ||
+      [...players].filter(p => (dailyStats[p.id]?.matches || 0) > 0 && p.id !== dailyMvp?.id).sort(sortDailyKing)[0] ||
+      dailyMvp;
+    if (dailyKing?.id) usedDailyAwardIds.add(dailyKing.id);
 
     const mostEfficientTechnical = [...players]
       .filter(p => (p.matchesPlayed || 0) >= MIN_MATCHES && (p.elo || 1200) > 1200 && p.id !== mvp?.id && p.id !== topElo?.id)
@@ -1021,12 +1032,17 @@ export const RankingView: React.FC<RankingViewProps> = ({
         .sort((a, b) => getCareerMvpEfficiency(b) - getCareerMvpEfficiency(a))[0] ||
       mvp;
 
-    const dailyEfficientTechnical = [...players]
-      .filter(p => (dailyStats[p.id]?.matches || 0) >= minReqDailyMatches && (dailyStats[p.id]?.matchEloGain || 0) > 0 && p.id !== dailyMvp?.id && p.id !== dailyKing?.id)
-      .sort((a, b) => getDailyMvpEfficiency(b) - getDailyMvpEfficiency(a))[0] ||
-      [...players]
-        .filter(p => (dailyStats[p.id]?.matches || 0) > 0 && p.id !== dailyMvp?.id)
-        .sort((a, b) => getDailyMvpEfficiency(b) - getDailyMvpEfficiency(a))[0] ||
+    // 4º Mais Eficiente do Dia (melhor Saldo Médio de Pontos por Jogo com desempate em % Vitórias, excluindo os 3 anteriores)
+    const sortDailyEfficient = (a: Player, b: Player) =>
+      getDailyAvgPointDiff(b) - getDailyAvgPointDiff(a) ||
+      getDailyWinRate(b.id) - getDailyWinRate(a.id) ||
+      (dailyStats[b.id]?.matches || 0) - (dailyStats[a.id]?.matches || 0) ||
+      (dailyStats[b.id]?.matchEloGain || 0) - (dailyStats[a.id]?.matchEloGain || 0);
+
+    const dailyEfficientTechnical =
+      [...players].filter(p => (dailyStats[p.id]?.matches || 0) >= minReqDailyMatches && !usedDailyAwardIds.has(p.id)).sort(sortDailyEfficient)[0] ||
+      [...players].filter(p => (dailyStats[p.id]?.matches || 0) > 0 && !usedDailyAwardIds.has(p.id)).sort(sortDailyEfficient)[0] ||
+      [...players].filter(p => (dailyStats[p.id]?.matches || 0) > 0 && p.id !== dailyMvp?.id).sort(sortDailyEfficient)[0] ||
       dailyMvp;
 
     const averageMatchDuration = effectiveMatches.length > 0
@@ -1065,6 +1081,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
       dailyEfficientTechnical,
       totalDurations: careerTotalDurations,
       getDailyMvpEfficiency,
+      getDailyAvgPointDiff,
       getCareerMvpEfficiency,
       avgMatchTime: averageMatchDuration,
       sessionLeaderboard,
@@ -1322,11 +1339,13 @@ export const RankingView: React.FC<RankingViewProps> = ({
       text += `• *Sócio Mais Eficiente:* ${topStats.mostEfficientTechnical?.name || 'N/A'}\n\n`;
     } else {
       const mvpScore = topStats.dailyMvp && topStats.getDailyMvpEfficiency ? topStats.getDailyMvpEfficiency(topStats.dailyMvp).toFixed(1) : '0.0';
+      const effAvgDiff = topStats.dailyEfficientTechnical && topStats.getDailyAvgPointDiff ? topStats.getDailyAvgPointDiff(topStats.dailyEfficientTechnical) : 0;
+      const effTag = topStats.dailyEfficientTechnical ? ` (Saldo ${effAvgDiff >= 0 ? '+' : ''}${effAvgDiff.toFixed(1)} pts/j)` : '';
       text += `🌟 *DESTAQUES DO DIA:*\n`;
-      text += `• *MVP do Dia (B-1):* ${topStats.dailyMvp?.name || 'N/A'} (${mvpScore} pts)\n`;
       text += `• *Melhor Levantador:* ${topStats.dailyBestSetter?.name || 'N/A'}\n`;
+      text += `• *MVP do Dia:* ${topStats.dailyMvp?.name || 'N/A'} (${mvpScore} pts)\n`;
       text += `• *Rei do Dia:* ${topStats.dailyKing?.name || 'N/A'}\n`;
-      text += `• *Mais Eficiente do Dia:* ${topStats.dailyEfficientTechnical?.name || 'N/A'}\n\n`;
+      text += `• *Mais Eficiente do Dia:* ${topStats.dailyEfficientTechnical?.name || 'N/A'}${effTag}\n\n`;
     }
 
     if (globalRelationships.synergies.length > 0) {
@@ -1791,7 +1810,7 @@ export const RankingView: React.FC<RankingViewProps> = ({
                         {((rankingPeriod === 'session' && topStats.dailyMvp) || (rankingPeriod !== 'session' && topStats.mvp)) && (
                           <span className="bg-brand-primary/10 text-brand-primary border-brand-primary/40 px-2 py-0.5 rounded-full text-[9px] font-black uppercase border">
                             {rankingPeriod === 'session'
-                              ? `Score B-1: ${topStats.getDailyMvpEfficiency(topStats.dailyMvp).toFixed(1)}`
+                              ? `Score Dia: ${topStats.getDailyMvpEfficiency(topStats.dailyMvp).toFixed(1)}`
                               : `Score B-1: ${topStats.getCareerMvpEfficiency(topStats.mvp).toFixed(1)}`}
                           </span>
                         )}
@@ -1859,7 +1878,14 @@ export const RankingView: React.FC<RankingViewProps> = ({
                       <div className="mt-3 flex items-center gap-2">
                         <span className="bg-white/5 text-brand-primary border-brand-primary/40 px-2 py-0.5 rounded-full text-[9px] font-black uppercase border">
                           {rankingPeriod === 'session'
-                            ? (topStats.dailyEfficientTechnical ? `Score B-1: ${topStats.getDailyMvpEfficiency(topStats.dailyEfficientTechnical).toFixed(1)}` : "Sem partidas")
+                            ? (topStats.dailyEfficientTechnical
+                                ? (() => {
+                                    const avgDiff = topStats.getDailyAvgPointDiff ? topStats.getDailyAvgPointDiff(topStats.dailyEfficientTechnical) : 0;
+                                    const dStats = topStats.dailyStats[topStats.dailyEfficientTechnical.id];
+                                    const wrPct = dStats?.matches ? Math.round((dStats.wins / dStats.matches) * 100) : 0;
+                                    return `Saldo ${avgDiff >= 0 ? '+' : ''}${avgDiff.toFixed(1)} pts/j • ${wrPct}% V`;
+                                  })()
+                                : "Sem partidas")
                             : (topStats.mostEfficientTechnical ? `Score B-1: ${topStats.getCareerMvpEfficiency(topStats.mostEfficientTechnical).toFixed(1)}` : "Sem partidas")}
                         </span>
                       </div>
