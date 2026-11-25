@@ -99,8 +99,8 @@ export const CourtGeofenceMap: React.FC<CourtGeofenceMapProps> = ({
     onSelectCoordsRef.current = onSelectCoords;
   }, [onSelectCoords]);
 
-  const safeLat = Number.isFinite(lat) ? lat : -8.131531;
-  const safeLng = Number.isFinite(lng) ? lng : -34.907323;
+  const safeLat = Number.isFinite(lat) ? lat : -8.131550;
+  const safeLng = Number.isFinite(lng) ? lng : -34.907333;
   const safeRadius = Number.isFinite(radiusMeters)
     ? Math.max(20, Math.min(2000, Math.round(radiusMeters)))
     : 150;

@@ -1,4 +1,4 @@
-import { db, doc, getDoc, setDoc } from '../../firebase';
+import { db, doc, getDoc, setDoc, deleteField } from '../../firebase';
 import { Player } from '../../types';
 import { useStore } from '../../store';
 
@@ -16,6 +16,7 @@ export interface WhatsAppPhotoBinding {
 export type WhatsAppPhotoDirectory = Record<string, WhatsAppPhotoBinding>;
 
 const LOCAL_DIR_STORAGE_KEY = 'guerreiros_whatsapp_photo_directory_v1';
+const TARGET_MAX_DATA_URI_CHARS = 10500; // ~10 KB Data URI (~7.6 KB JPEG binário)
 
 export function autoNormalizeBrazilianPhone(
   rawPhone?: string | null,
@@ -145,18 +146,18 @@ export function resolveEffectivePlayerPhoto(
   directory?: WhatsAppPhotoDirectory
 ): string | undefined {
   if (!player) return undefined;
-  // 1. Prioriza foto vinculada diretamente ao WhatsApp no cadastro do sócio
+  // 1. Prioriza photoUrl oficial do sócio
+  if (isUsablePhotoUrl(player.photoUrl)) {
+    return player.photoUrl;
+  }
+  // 2. Fallback legado caso whatsappPhotoUrl ainda exista em memória antes da migração
   if (isUsablePhotoUrl(player.whatsappPhotoUrl)) {
     return player.whatsappPhotoUrl;
   }
-  // 2. Consulta o diretório de integração pelo número de telefone do WhatsApp
+  // 3. Consulta o diretório de integração pelo número de telefone do WhatsApp
   const byPhone = findPhotoBindingByPhone(player.phone, directory);
   if (byPhone && isUsablePhotoUrl(byPhone.photoUrl)) {
     return byPhone.photoUrl;
-  }
-  // 3. Fallback para photoUrl tradicional se válido
-  if (isUsablePhotoUrl(player.photoUrl)) {
-    return player.photoUrl;
   }
   return player.photoUrl;
 }
@@ -168,11 +169,12 @@ export function enrichPlayersWithWhatsAppPhotos(
   const dir = directory || loadLocalWhatsAppPhotoDirectory();
   return (players || []).map((p) => {
     const resolved = resolveEffectivePlayerPhoto(p, dir);
-    if (resolved && resolved !== p.photoUrl) {
+    const hasLegacyDuplicate = 'whatsappPhotoUrl' in (p as any);
+    if ((resolved && resolved !== p.photoUrl) || hasLegacyDuplicate) {
+      const { whatsappPhotoUrl: _removedDuplicate, ...cleanPlayer } = p as any;
       return {
-        ...p,
-        photoUrl: resolved,
-        whatsappPhotoUrl: resolved
+        ...cleanPlayer,
+        photoUrl: resolved || cleanPlayer.photoUrl
       } as Player;
     }
     return p;
@@ -218,10 +220,10 @@ export async function syncWhatsAppPhotoDirectory(): Promise<WhatsAppPhotoDirecto
   // 3. Também indexa fotos válidas já presentes nos sócios da store pelo telefone deles
   const currentPlayers = useStore.getState().players || [];
   currentPlayers.forEach((p: any) => {
-    const validPhoto = isUsablePhotoUrl(p.whatsappPhotoUrl)
-      ? p.whatsappPhotoUrl
-      : isUsablePhotoUrl(p.photoUrl)
+    const validPhoto = isUsablePhotoUrl(p.photoUrl)
       ? p.photoUrl
+      : isUsablePhotoUrl(p.whatsappPhotoUrl)
+      ? p.whatsappPhotoUrl
       : null;
     if (validPhoto && p.phone) {
       const digits = normalizeBrazilDigits(p.phone);
@@ -247,39 +249,79 @@ export async function syncWhatsAppPhotoDirectory(): Promise<WhatsAppPhotoDirecto
   return merged;
 }
 
+function encodeImageElementTo10KBDataUri(
+  img: HTMLImageElement,
+  initialMaxDimension = 160,
+  targetMaxChars = TARGET_MAX_DATA_URI_CHARS
+): string {
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return img.src;
+
+  const dimensionsToTry = [Math.min(initialMaxDimension, 160), 140, 120, 104];
+  const qualitiesToTry = [0.72, 0.62, 0.52, 0.44, 0.36];
+  let lastResult = '';
+
+  for (const maxDim of dimensionsToTry) {
+    let width = img.width || maxDim;
+    let height = img.height || maxDim;
+    if (width > height) {
+      if (width > maxDim) {
+        height = Math.max(1, Math.round((height * maxDim) / width));
+        width = maxDim;
+      }
+    } else {
+      if (height > maxDim) {
+        width = Math.max(1, Math.round((width * maxDim) / height));
+        height = maxDim;
+      }
+    }
+    canvas.width = width;
+    canvas.height = height;
+    ctx.clearRect(0, 0, width, height);
+    ctx.drawImage(img, 0, 0, width, height);
+
+    for (const q of qualitiesToTry) {
+      lastResult = canvas.toDataURL('image/jpeg', q);
+      if (lastResult.length <= targetMaxChars) {
+        return lastResult;
+      }
+    }
+  }
+
+  return lastResult;
+}
+
+export async function compressDataUriTo10KB(
+  dataUri: string,
+  maxDimension = 160,
+  targetMaxChars = TARGET_MAX_DATA_URI_CHARS
+): Promise<string> {
+  if (!dataUri || !dataUri.startsWith('data:image/') || dataUri.length <= targetMaxChars) {
+    return dataUri;
+  }
+  if (typeof document === 'undefined') return dataUri;
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      resolve(encodeImageElementTo10KBDataUri(img, maxDimension, targetMaxChars));
+    };
+    img.onerror = () => resolve(dataUri);
+    img.src = dataUri;
+  });
+}
+
 export async function compressImageFileToDataUri(
   file: File,
-  maxDimension = 256,
-  quality = 0.82
+  maxDimension = 160,
+  _quality = 0.72
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
       const img = new Image();
       img.onload = () => {
-        const canvas = document.createElement('canvas');
-        let width = img.width;
-        let height = img.height;
-        if (width > height) {
-          if (width > maxDimension) {
-            height = Math.round((height * maxDimension) / width);
-            width = maxDimension;
-          }
-        } else {
-          if (height > maxDimension) {
-            width = Math.round((width * maxDimension) / height);
-            height = maxDimension;
-          }
-        }
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          resolve(String(reader.result));
-          return;
-        }
-        ctx.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/jpeg', quality));
+        resolve(encodeImageElementTo10KBDataUri(img, Math.min(maxDimension, 160), TARGET_MAX_DATA_URI_CHARS));
       };
       img.onerror = () => reject(new Error('Falha ao processar imagem.'));
       img.src = String(reader.result);
@@ -309,6 +351,10 @@ export async function associatePhotoWithWhatsAppPhone(params: {
   const now = Date.now();
   const dir = loadLocalWhatsAppPhotoDirectory();
   let finalPhoto = params.photoUrl && isUsablePhotoUrl(params.photoUrl) ? params.photoUrl : null;
+
+  if (finalPhoto && finalPhoto.startsWith('data:image/') && finalPhoto.length > TARGET_MAX_DATA_URI_CHARS) {
+    finalPhoto = await compressDataUriTo10KB(finalPhoto);
+  }
 
   // Se o usuário informou apenas o número sem enviar novo arquivo, verifica se já existe foto indexada para esse telefone
   if (!finalPhoto) {
@@ -342,6 +388,10 @@ export async function associatePhotoWithWhatsAppPhone(params: {
     }
   } catch {}
 
+  if (finalPhoto && finalPhoto.startsWith('data:image/') && finalPhoto.length > TARGET_MAX_DATA_URI_CHARS) {
+    finalPhoto = await compressDataUriTo10KB(finalPhoto);
+  }
+
   const keys = getPhoneLookupKeys(digits);
   if (finalPhoto) {
     const binding: WhatsAppPhotoBinding = {
@@ -371,26 +421,33 @@ export async function associatePhotoWithWhatsAppPhone(params: {
     ).catch(() => {});
   }
 
-  // Atualiza o documento do sócio no Firestore (players/{id}) e na store local
-  const playerUpdatePayload: Record<string, any> = {
+  // Atualiza o documento do sócio no Firestore (players/{id}) sem duplicar whatsappPhotoUrl
+  const firestorePayload: Record<string, any> = {
     phone: digits,
-    whatsappLinkedAt: now
+    whatsappLinkedAt: now,
+    whatsappPhotoUrl: deleteField()
   };
   if (finalPhoto) {
-    playerUpdatePayload.photoUrl = finalPhoto;
-    playerUpdatePayload.whatsappPhotoUrl = finalPhoto;
-    playerUpdatePayload.photoUpdatedAt = now;
+    firestorePayload.photoUrl = finalPhoto;
+    firestorePayload.photoUpdatedAt = now;
   }
 
   if (params.playerId) {
-    await setDoc(doc(db, 'players', params.playerId), playerUpdatePayload, { merge: true }).catch(
+    await setDoc(doc(db, 'players', params.playerId), firestorePayload, { merge: true }).catch(
       () => {}
     );
 
     const storePlayers = useStore.getState().players || [];
-    const updatedPlayers = storePlayers.map((p) =>
-      p.id === params.playerId ? { ...p, ...playerUpdatePayload } : p
-    );
+    const updatedPlayers = storePlayers.map((p) => {
+      if (p.id !== params.playerId) return p;
+      const { whatsappPhotoUrl: _removed, ...cleanPlayer } = p as any;
+      return {
+        ...cleanPlayer,
+        phone: digits,
+        whatsappLinkedAt: now,
+        ...(finalPhoto ? { photoUrl: finalPhoto, photoUpdatedAt: now } : {})
+      };
+    });
     useStore.setState({ players: updatedPlayers });
   }
 

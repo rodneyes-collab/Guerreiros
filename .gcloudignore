@@ -22,3 +22,5 @@ test-*.cjs
 update_view.cjs
 force_version_update.ts
 *.log
+*_local.json
+*.local.json

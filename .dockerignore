@@ -24,3 +24,5 @@ test-*.ts
 test-*.cjs
 update_view.cjs
 force_version_update.ts
+*_local.json
+*.local.json

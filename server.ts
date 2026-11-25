@@ -4,6 +4,7 @@ import cors from "cors";
 import compression from "compression";
 import path from "path";
 import fs from "fs";
+import sharp from "sharp";
 import {
   routedGenerateContent,
   getAIRouterStatus,
@@ -246,11 +247,30 @@ const SEED_CLUB_PLAYERS: any[] = [
   { id: "seed_wandinha", name: "Wandinha", phone: "5581985536192", gender: "FEMALE", status: "active", isDM: false, isOfficialSetter: false, elo: 1205, matchesPlayed: 5, wins: 2, losses: 3 }
 ];
 
+function sanitizePlayerPhotoFields(p: any): any {
+  if (!p || typeof p !== "object") return p;
+  if (isMissingOrDefaultAvatar(p.photoUrl) && !isMissingOrDefaultAvatar(p.whatsappPhotoUrl)) {
+    p.photoUrl = p.whatsappPhotoUrl;
+  }
+  if ("whatsappPhotoUrl" in p) {
+    delete p.whatsappPhotoUrl;
+  }
+  return p;
+}
+
+function sanitizePlayersListPhotoFields(list: any[]): any[] {
+  if (!Array.isArray(list)) return [];
+  list.forEach((p) => sanitizePlayerPhotoFields(p));
+  return list;
+}
+
 function loadLocalPlayersBackup(): any[] {
   try {
     if (fs.existsSync(LOCAL_PLAYERS_PATH)) {
       const parsed = JSON.parse(fs.readFileSync(LOCAL_PLAYERS_PATH, "utf-8"));
-      if (Array.isArray(parsed) && parsed.length >= 10) return parsed;
+      if (Array.isArray(parsed) && parsed.length >= 10) {
+        return sanitizePlayersListPhotoFields(parsed);
+      }
     }
   } catch {}
   return SEED_CLUB_PLAYERS;
@@ -259,7 +279,8 @@ function loadLocalPlayersBackup(): any[] {
 function saveLocalPlayersBackup(list: any[]) {
   try {
     if (Array.isArray(list) && list.length >= 10) {
-      fs.writeFileSync(LOCAL_PLAYERS_PATH, JSON.stringify(list, null, 2), "utf-8");
+      sanitizePlayersListPhotoFields(list);
+      fs.writeFileSync(LOCAL_PLAYERS_PATH, JSON.stringify(list), "utf-8");
     }
   } catch {}
 }
@@ -277,7 +298,7 @@ function loadLocalMatchesBackup(): any[] {
 function saveLocalMatchesBackup(list: any[]) {
   try {
     if (Array.isArray(list) && list.length > 0) {
-      fs.writeFileSync(LOCAL_MATCHES_PATH, JSON.stringify(list, null, 2), "utf-8");
+      fs.writeFileSync(LOCAL_MATCHES_PATH, JSON.stringify(list), "utf-8");
     }
   } catch {}
 }
@@ -1412,7 +1433,8 @@ async function getClientFirestoreAdapter() {
     getDocs,
     setDoc,
     updateDoc,
-    deleteDoc
+    deleteDoc,
+    deleteField: clientDeleteField
   } = await import("firebase/firestore");
 
   try {
@@ -1433,6 +1455,15 @@ async function getClientFirestoreAdapter() {
     ? getClientFirestore(clientApp, lockedDbId)
     : getClientFirestore(clientApp);
 
+  const replaceClientSentinels = (payload: any): any => {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return payload;
+    const out: Record<string, any> = {};
+    for (const [k, v] of Object.entries(payload)) {
+      out[k] = v === "__FIREBASE_DELETE_FIELD__" ? clientDeleteField() : v;
+    }
+    return out;
+  };
+
   const makeDocRef = (pathSegments: string[]): any => ({
     id: pathSegments[pathSegments.length - 1],
     async get() {
@@ -1444,14 +1475,16 @@ async function getClientFirestoreAdapter() {
       };
     },
     async set(data: any, options?: any) {
+      const cleanData = replaceClientSentinels(data);
       if (options) {
-        await setDoc(doc(rawDb, ...(pathSegments as [string, ...string[]])), data, options);
+        await setDoc(doc(rawDb, ...(pathSegments as [string, ...string[]])), cleanData, options);
       } else {
-        await setDoc(doc(rawDb, ...(pathSegments as [string, ...string[]])), data);
+        await setDoc(doc(rawDb, ...(pathSegments as [string, ...string[]])), cleanData);
       }
     },
     async update(data: any) {
-      await updateDoc(doc(rawDb, ...(pathSegments as [string, ...string[]])), data);
+      const cleanData = replaceClientSentinels(data);
+      await updateDoc(doc(rawDb, ...(pathSegments as [string, ...string[]])), cleanData);
     },
     async delete() {
       await deleteDoc(doc(rawDb, ...(pathSegments as [string, ...string[]])));
@@ -1524,6 +1557,16 @@ async function getFirestore() {
   }
 
   const rawAdmin = await getRawAdminFirestore();
+  const { FieldValue: AdminFieldValue } = await import("firebase-admin/firestore");
+  const replaceAdminSentinels = (payload: any): any => {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return payload;
+    const out: Record<string, any> = {};
+    for (const [k, v] of Object.entries(payload)) {
+      out[k] = v === "__FIREBASE_DELETE_FIELD__" ? AdminFieldValue.delete() : v;
+    }
+    return out;
+  };
+
   if (!firebaseConfig?.apiKey) {
     return rawAdmin;
   }
@@ -1564,7 +1607,8 @@ async function getFirestore() {
         return ref.set(data, options);
       }
       try {
-        return options ? await adminDocRef.set(data, options) : await adminDocRef.set(data);
+        const adminData = replaceAdminSentinels(data);
+        return options ? await adminDocRef.set(adminData, options) : await adminDocRef.set(adminData);
       } catch (err) {
         if (isPermissionDeniedError(err)) {
           useClientFirestoreFallback = true;
@@ -1588,7 +1632,8 @@ async function getFirestore() {
         return ref.update(data);
       }
       try {
-        return await adminDocRef.update(data);
+        const adminData = replaceAdminSentinels(data);
+        return await adminDocRef.update(adminData);
       } catch (err) {
         if (isPermissionDeniedError(err)) {
           useClientFirestoreFallback = true;
@@ -1695,7 +1740,7 @@ async function getCachedPlayers(forceRefresh = false): Promise<any[]> {
         try {
           const rawDoc = d.data();
           if (isPlainObject(rawDoc)) {
-            list.push({ id: d.id, ...rawDoc });
+            list.push(sanitizePlayerPhotoFields({ id: d.id, ...rawDoc }));
           }
         } catch (docErr: any) {
           console.warn(`[Firestore Players] Documento ${d?.id} ignorado por formato inválido:`, docErr?.message);
@@ -2055,10 +2100,11 @@ async function syncPlayerPreConfirmationDoc(
 }
 
 // ============================================================================
-// 📍 CHECK-IN PRESENCIAL NA QUADRA VIA LOCALIZAÇÃO WHATSAPP (-8.131531, -34.907323)
+// 📍 CHECK-IN PRESENCIAL NA QUADRA VIA LOCALIZAÇÃO WHATSAPP (-8.131550, -34.907333)
+// R. Barão de Souza Leão, s/n - Boa Viagem, Recife - PE
 // ============================================================================
-const DEFAULT_COURT_LAT = -8.131531;
-const DEFAULT_COURT_LNG = -34.907323;
+const DEFAULT_COURT_LAT = -8.131550;
+const DEFAULT_COURT_LNG = -34.907333;
 const DEFAULT_GEOFENCE_RADIUS_METERS = 150; // 150m para compensar cobertura/telhado metálico e área externa da quadra
 const COURT_CHECKIN_END_MINUTES = 22 * 60; // Limite de check-in na quadra até às 22h00
 
@@ -3586,9 +3632,72 @@ export function isMissingOrDefaultAvatar(photoUrl?: string | null): boolean {
   return false;
 }
 
+const TARGET_PHOTO_BINARY_MAX_BYTES = 7500; // ~10.0 KB quando codificado em base64 Data URI
+
+export async function compressPhotoTo10KBDataUri(
+  input: Buffer | string | null | undefined,
+  targetBinaryMaxBytes = TARGET_PHOTO_BINARY_MAX_BYTES
+): Promise<string | null> {
+  if (!input) return null;
+  try {
+    let rawBuf: Buffer;
+    if (Buffer.isBuffer(input)) {
+      rawBuf = input;
+    } else if (typeof input === "string") {
+      const trimmed = input.trim();
+      if (!trimmed) return null;
+      if (trimmed.startsWith("data:image/")) {
+        // Se já está comprimido <= ~10.3 KB Data URI, retorna direto sem reprocessar
+        if (trimmed.length <= 10600) return trimmed;
+        const commaIdx = trimmed.indexOf(",");
+        if (commaIdx === -1) return trimmed;
+        rawBuf = Buffer.from(trimmed.slice(commaIdx + 1), "base64");
+      } else if (!trimmed.startsWith("http")) {
+        rawBuf = Buffer.from(trimmed, "base64");
+      } else {
+        return trimmed;
+      }
+    } else {
+      return null;
+    }
+
+    if (rawBuf.length < 60) return null;
+
+    const dimensions = [160, 144, 128, 112, 96];
+    const qualities = [72, 62, 52, 44, 36];
+    let bestBuf: Buffer | null = null;
+
+    for (const dim of dimensions) {
+      for (const q of qualities) {
+        const candidate = await sharp(rawBuf)
+          .rotate()
+          .resize(dim, dim, { fit: "cover", position: "attention", withoutEnlargement: true })
+          .jpeg({ quality: q, mozjpeg: true })
+          .toBuffer();
+        bestBuf = candidate;
+        if (candidate.length <= targetBinaryMaxBytes) {
+          return `data:image/jpeg;base64,${candidate.toString("base64")}`;
+        }
+      }
+    }
+
+    if (bestBuf) {
+      return `data:image/jpeg;base64,${bestBuf.toString("base64")}`;
+    }
+    return `data:image/jpeg;base64,${rawBuf.toString("base64")}`;
+  } catch {
+    if (typeof input === "string" && input.startsWith("data:image/")) {
+      return input;
+    }
+    return null;
+  }
+}
+
 export async function downloadImageAsDataUri(imageUrl: string): Promise<string | null> {
   if (!imageUrl || typeof imageUrl !== "string") return null;
-  if (imageUrl.startsWith("data:image/")) return imageUrl;
+  if (imageUrl.startsWith("data:image/")) {
+    return (await compressPhotoTo10KBDataUri(imageUrl)) || imageUrl;
+  }
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8000);
@@ -3608,8 +3717,9 @@ export async function downloadImageAsDataUri(imageUrl: string): Promise<string |
     }
     const arrayBuf = await resp.arrayBuffer();
     const buf = Buffer.from(arrayBuf);
-    // Garante imagem válida e compacta (<= 260KB) para caber com folga no Firestore sem inflar egress
-    if (buf.length < 100 || buf.length > 260 * 1024) return null;
+    if (buf.length < 100 || buf.length > 5 * 1024 * 1024) return null;
+    const compressed = await compressPhotoTo10KBDataUri(buf);
+    if (compressed) return compressed;
     const cleanMime = contentType.toLowerCase().includes("image") ? contentType.split(";")[0] : "image/jpeg";
     return `data:${cleanMime};base64,${buf.toString("base64")}`;
   } catch {
@@ -3720,9 +3830,13 @@ export async function syncSinglePlayerWhatsAppPhoto(
     finalPhoto = await fetchWhatsAppProfilePictureFromApi(player.phone, player.whatsappLid);
   }
 
+  if (finalPhoto && finalPhoto.startsWith("data:image/")) {
+    finalPhoto = (await compressPhotoTo10KBDataUri(finalPhoto)) || finalPhoto;
+  }
+
   if (finalPhoto) {
     player.photoUrl = finalPhoto;
-    player.whatsappPhotoUrl = finalPhoto;
+    delete player.whatsappPhotoUrl;
     if (player.phone) {
       registerWhatsAppPhotoBinding({
         phone: player.phone,
@@ -3734,7 +3848,7 @@ export async function syncSinglePlayerWhatsAppPhoto(
     }
     await withFirestoreGuard(async () => {
       await db.collection("players").doc(player.id).set(
-        { photoUrl: finalPhoto, whatsappPhotoUrl: finalPhoto, photoUpdatedAt: Date.now() },
+        { photoUrl: finalPhoto, whatsappPhotoUrl: "__FIREBASE_DELETE_FIELD__", photoUpdatedAt: Date.now() },
         { merge: true }
       );
     }, undefined);
@@ -5403,14 +5517,15 @@ async function startServer() {
       let recipientLabel = "Grupo Oficial Guerreiros";
 
       if (targetScope === "group") {
-        const schedDoc = await ensureFreshSchedulerConfig(false);
-        destinationJid = String(schedDoc?.groupId || process.env.WHATSAPP_GROUP_ID || "").trim();
-        if (!destinationJid) {
-          return res.status(400).json({
-            success: false,
-            error: "Grupo oficial do WhatsApp não configurado no agendador."
-          });
+        if (!cachedScheduler) {
+          cachedScheduler = loadLocalSchedulerBackup();
         }
+        destinationJid = String(
+          cachedScheduler?.groupId ||
+            cachedScheduler?.targetGroupJid ||
+            process.env.WHATSAPP_GROUP_ID ||
+            "120363042862552509@g.us"
+        ).trim();
       } else {
         if (!targetPlayer) {
           return res.status(404).json({ success: false, error: "Sócio destinatário não encontrado." });
@@ -6351,10 +6466,10 @@ function isEligibleClubMemberForPrivateAutomations(player: any): boolean {
       const allPlayers = await getCachedPlayers(false);
       let latestUpdatedAt = 0;
       allPlayers.forEach((p: any) => {
-        const photo = !isMissingOrDefaultAvatar(p.whatsappPhotoUrl)
-          ? p.whatsappPhotoUrl
-          : !isMissingOrDefaultAvatar(p.photoUrl)
+        const photo = !isMissingOrDefaultAvatar(p.photoUrl)
           ? p.photoUrl
+          : !isMissingOrDefaultAvatar(p.whatsappPhotoUrl)
+          ? p.whatsappPhotoUrl
           : null;
         if (photo && p.phone) {
           const keys = getPhoneIndexKeys(p.phone);
@@ -6387,6 +6502,84 @@ function isEligibleClubMemberForPrivateAutomations(player: any): boolean {
     }
   });
 
+  app.post("/api/admin/optimize-photos", async (_req, res) => {
+    try {
+      const db = await getFirestore();
+      const playersSnap = await db.collection("players").get();
+      let totalBeforeBytes = 0;
+      let totalAfterBytes = 0;
+      let duplicatesRemoved = 0;
+      let photosCompressed = 0;
+      let docsUpdated = 0;
+      const freshPlayers: any[] = [];
+
+      const docsList: any[] = [];
+      playersSnap.forEach((d: any) => docsList.push(d));
+
+      for (const d of docsList) {
+        const data = d.data() || {};
+        const rawPhotoUrl = typeof data.photoUrl === "string" ? data.photoUrl : "";
+        const rawWaPhotoUrl = typeof data.whatsappPhotoUrl === "string" ? data.whatsappPhotoUrl : "";
+        const hasDuplicate = "whatsappPhotoUrl" in data;
+
+        totalBeforeBytes += Buffer.byteLength(rawPhotoUrl, "utf8") + Buffer.byteLength(rawWaPhotoUrl, "utf8");
+
+        const effectiveSource = rawPhotoUrl.startsWith("data:image/")
+          ? rawPhotoUrl
+          : rawWaPhotoUrl.startsWith("data:image/")
+          ? rawWaPhotoUrl
+          : rawPhotoUrl || rawWaPhotoUrl;
+
+        let optimizedPhoto = effectiveSource;
+        let wasCompressed = false;
+        if (effectiveSource && effectiveSource.startsWith("data:image/")) {
+          const compressed = await compressPhotoTo10KBDataUri(effectiveSource);
+          if (compressed && compressed.length < effectiveSource.length) {
+            optimizedPhoto = compressed;
+            wasCompressed = true;
+            photosCompressed++;
+          }
+        }
+
+        totalAfterBytes += Buffer.byteLength(optimizedPhoto || "", "utf8");
+        if (hasDuplicate) duplicatesRemoved++;
+
+        if (hasDuplicate || wasCompressed || (optimizedPhoto && optimizedPhoto !== rawPhotoUrl)) {
+          const payload: Record<string, any> = {
+            whatsappPhotoUrl: "__FIREBASE_DELETE_FIELD__"
+          };
+          if (optimizedPhoto) payload.photoUrl = optimizedPhoto;
+          await db.collection("players").doc(d.id).set(payload, { merge: true });
+          docsUpdated++;
+        }
+
+        const cleanPlayer = sanitizePlayerPhotoFields({
+          id: d.id,
+          ...data,
+          ...(optimizedPhoto ? { photoUrl: optimizedPhoto } : {})
+        });
+        freshPlayers.push(cleanPlayer);
+      }
+
+      if (freshPlayers.length >= 5) {
+        cachedPlayers = freshPlayers;
+        cachedPlayersLastFetch = Date.now();
+        saveLocalPlayersBackup(freshPlayers);
+      }
+
+      res.json({
+        success: true,
+        docsUpdated,
+        duplicatesRemoved,
+        photosCompressed,
+        beforeKB: Number((totalBeforeBytes / 1024).toFixed(1)),
+        afterKB: Number((totalAfterBytes / 1024).toFixed(1))
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || "Erro ao otimizar fotos." });
+    }
+  });
+
   app.post("/api/whatsapp/photo-directory/associate", async (req, res) => {
     try {
       const { playerId, playerName, phone, photoUrl, source = "manual_upload" } = req.body || {};
@@ -6405,6 +6598,10 @@ function isEligibleClubMemberForPrivateAutomations(player: any): boolean {
 
       if (!resolvedPhoto) {
         resolvedPhoto = await fetchWhatsAppProfilePictureFromApi(phone, null);
+      }
+
+      if (resolvedPhoto && resolvedPhoto.startsWith("data:image/")) {
+        resolvedPhoto = (await compressPhotoTo10KBDataUri(resolvedPhoto)) || resolvedPhoto;
       }
 
       const keys = getPhoneIndexKeys(phone);
@@ -6437,21 +6634,27 @@ function isEligibleClubMemberForPrivateAutomations(player: any): boolean {
       if (playerId) {
         const allPlayers = await getCachedPlayers(false);
         const target = allPlayers.find((p) => p.id === playerId);
-        const updateFields: Record<string, any> = {
+        const firestoreFields: Record<string, any> = {
           phone: normalizedPhone,
-          whatsappLinkedAt: now
+          whatsappLinkedAt: now,
+          whatsappPhotoUrl: "__FIREBASE_DELETE_FIELD__"
         };
         if (resolvedPhoto) {
-          updateFields.photoUrl = resolvedPhoto;
-          updateFields.whatsappPhotoUrl = resolvedPhoto;
-          updateFields.photoUpdatedAt = now;
+          firestoreFields.photoUrl = resolvedPhoto;
+          firestoreFields.photoUpdatedAt = now;
         }
         if (target) {
-          Object.assign(target, updateFields);
+          target.phone = normalizedPhone;
+          target.whatsappLinkedAt = now;
+          if (resolvedPhoto) {
+            target.photoUrl = resolvedPhoto;
+            target.photoUpdatedAt = now;
+          }
+          delete target.whatsappPhotoUrl;
           saveLocalPlayersBackup(allPlayers);
         }
         await withFirestoreGuard(
-          () => db.collection("players").doc(playerId).set(updateFields, { merge: true }),
+          () => db.collection("players").doc(playerId).set(firestoreFields, { merge: true }),
           undefined
         );
       }
@@ -6521,14 +6724,24 @@ function isEligibleClubMemberForPrivateAutomations(player: any): boolean {
         const img = new Image();
         img.onload = function() {
           const canvas = document.createElement('canvas');
-          const maxSide = 160;
-          let w = img.width, h = img.height;
-          if (w > h) { if (w > maxSide) { h = Math.round(h * maxSide / w); w = maxSide; } }
-          else { if (h > maxSide) { w = Math.round(w * maxSide / h); h = maxSide; } }
-          canvas.width = w; canvas.height = h;
           const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, 0, w, h);
-          compressedDataUri = canvas.toDataURL('image/jpeg', 0.75);
+          const dims = [160, 140, 120, 104];
+          const quals = [0.72, 0.62, 0.52, 0.44, 0.36];
+          let candidate = '';
+          outer: for (let di = 0; di < dims.length; di++) {
+            const maxSide = dims[di];
+            let w = img.width, h = img.height;
+            if (w > h) { if (w > maxSide) { h = Math.round(h * maxSide / w); w = maxSide; } }
+            else { if (h > maxSide) { w = Math.round(w * maxSide / h); h = maxSide; } }
+            canvas.width = w; canvas.height = h;
+            ctx.clearRect(0, 0, w, h);
+            ctx.drawImage(img, 0, 0, w, h);
+            for (let qi = 0; qi < quals.length; qi++) {
+              candidate = canvas.toDataURL('image/jpeg', quals[qi]);
+              if (candidate.length <= 10500) break outer;
+            }
+          }
+          compressedDataUri = candidate;
           document.getElementById('previewBox').innerHTML = '<img src="' + compressedDataUri + '" />';
           document.getElementById('saveBtn').style.display = 'block';
         };
@@ -6625,6 +6838,10 @@ function isEligibleClubMemberForPrivateAutomations(player: any): boolean {
         return res.status(400).json({ success: false, error: "Imagem inválida ou ausente." });
       }
 
+      if (resolvedPhoto.startsWith("data:image/")) {
+        resolvedPhoto = (await compressPhotoTo10KBDataUri(resolvedPhoto)) || resolvedPhoto;
+      }
+
       // Garante que o Data URI caiba com folga no limite de 1MB por documento do Firestore
       if (resolvedPhoto.length > 850_000) {
         return res.status(400).json({ success: false, error: "Imagem muito grande para persistência direta." });
@@ -6652,19 +6869,23 @@ function isEligibleClubMemberForPrivateAutomations(player: any): boolean {
 
       let firestoreSaved = false;
       if (targetId) {
-        const updateFields: Record<string, any> = {
+        const firestoreFields: Record<string, any> = {
           photoUrl: resolvedPhoto,
-          whatsappPhotoUrl: resolvedPhoto,
+          whatsappPhotoUrl: "__FIREBASE_DELETE_FIELD__",
           photoUpdatedAt: now
         };
-        if (effectivePhone) updateFields.phone = effectivePhone;
-        if (whatsappLid && typeof whatsappLid === "string") updateFields.whatsappLid = whatsappLid.trim();
+        if (effectivePhone) firestoreFields.phone = effectivePhone;
+        if (whatsappLid && typeof whatsappLid === "string") firestoreFields.whatsappLid = whatsappLid.trim();
         if (targetPlayer) {
-          Object.assign(targetPlayer, updateFields);
+          targetPlayer.photoUrl = resolvedPhoto;
+          targetPlayer.photoUpdatedAt = now;
+          if (effectivePhone) targetPlayer.phone = effectivePhone;
+          if (whatsappLid && typeof whatsappLid === "string") targetPlayer.whatsappLid = whatsappLid.trim();
+          delete targetPlayer.whatsappPhotoUrl;
           saveLocalPlayersBackup(allPlayers);
         }
         firestoreSaved = await withFirestoreGuard(async () => {
-          await db.collection("players").doc(targetId).set(updateFields, { merge: true });
+          await db.collection("players").doc(targetId).set(firestoreFields, { merge: true });
           return true;
         }, false);
         await withFirestoreGuard(
@@ -6740,14 +6961,17 @@ function isEligibleClubMemberForPrivateAutomations(player: any): boolean {
         const keys = getPhoneIndexKeys(p.phone);
         const found = keys.map((k) => photoDir[k]).find((entry) => entry?.photoUrl && !isMissingOrDefaultAvatar(entry.photoUrl));
         if (found?.photoUrl) {
-          p.photoUrl = found.photoUrl;
-          p.whatsappPhotoUrl = found.photoUrl;
+          const compactPhoto = found.photoUrl.startsWith("data:image/")
+            ? (await compressPhotoTo10KBDataUri(found.photoUrl)) || found.photoUrl
+            : found.photoUrl;
+          p.photoUrl = compactPhoto;
+          delete p.whatsappPhotoUrl;
           p.photoUpdatedAt = now;
           directorySyncedCount++;
           await withFirestoreGuard(
             () =>
               db.collection("players").doc(p.id).set(
-                { photoUrl: found.photoUrl, whatsappPhotoUrl: found.photoUrl, photoUpdatedAt: now },
+                { photoUrl: compactPhoto, whatsappPhotoUrl: "__FIREBASE_DELETE_FIELD__", photoUpdatedAt: now },
                 { merge: true }
               ),
             undefined
@@ -8933,9 +9157,10 @@ REGRAS:
         try {
           if (imageMessage.base64) {
             const mime = imageMessage.mimetype || "image/jpeg";
-            uploadedDataUri = String(imageMessage.base64).startsWith("data:")
+            const rawUri = String(imageMessage.base64).startsWith("data:")
               ? String(imageMessage.base64)
               : `data:${mime};base64,${imageMessage.base64}`;
+            uploadedDataUri = (await compressPhotoTo10KBDataUri(rawUri)) || rawUri;
           } else if (imageMessage.url) {
             uploadedDataUri = await downloadImageAsDataUri(imageMessage.url);
           }
@@ -8944,7 +9169,7 @@ REGRAS:
         if (uploadedDataUri && senderPlayer && !String(senderPlayer.id).startsWith("wa_")) {
           const nowTs = Date.now();
           senderPlayer.photoUrl = uploadedDataUri;
-          senderPlayer.whatsappPhotoUrl = uploadedDataUri;
+          delete senderPlayer.whatsappPhotoUrl;
           if (senderPlayer.phone) {
             registerWhatsAppPhotoBinding({
               phone: senderPlayer.phone,
@@ -8960,7 +9185,7 @@ REGRAS:
               db.collection("players").doc(senderPlayer.id).set(
                 {
                   photoUrl: uploadedDataUri,
-                  whatsappPhotoUrl: uploadedDataUri,
+                  whatsappPhotoUrl: "__FIREBASE_DELETE_FIELD__",
                   photoUpdatedAt: nowTs
                 },
                 { merge: true }

@@ -3,6 +3,7 @@ import { Player, Gender } from '../types';
 import { getPlayerTier } from '../utils/tierUtils';
 import { X, Target, Upload, Cake } from 'lucide-react';
 import { PlayerAvatar } from '../src/components/PlayerAvatar';
+import { compressImageFileToDataUri } from '../src/services/whatsappPhotoIntegration';
 
 interface PlayerFormProps {
   isOpen: boolean;
@@ -89,40 +90,13 @@ export const PlayerForm: React.FC<PlayerFormProps> = ({
                     type="file"
                     accept="image/*"
                     className="hidden"
-                    onChange={(e) => {
+                    onChange={async (e) => {
                       const file = e.target.files?.[0];
                       if (file) {
-                        const reader = new FileReader();
-                        reader.onload = (evt) => {
-                          const img = new Image();
-                          img.onload = () => {
-                            const canvas = document.createElement('canvas');
-                            const MAX_WIDTH = 160;
-                            const MAX_HEIGHT = 160;
-                            let width = img.width;
-                            let height = img.height;
-
-                            if (width > height) {
-                              if (width > MAX_WIDTH) {
-                                height *= MAX_WIDTH / width;
-                                width = MAX_WIDTH;
-                              }
-                            } else {
-                              if (height > MAX_HEIGHT) {
-                                width *= MAX_HEIGHT / height;
-                                height = MAX_HEIGHT;
-                              }
-                            }
-                            canvas.width = Math.round(width);
-                            canvas.height = Math.round(height);
-                            const ctx = canvas.getContext('2d');
-                            ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
-                            const resizedDataUrl = canvas.toDataURL('image/jpeg', 0.75);
-                            setFormData({ ...formData, photoUrl: resizedDataUrl });
-                          };
-                          img.src = evt.target?.result as string;
-                        };
-                        reader.readAsDataURL(file);
+                        try {
+                          const resizedDataUrl = await compressImageFileToDataUri(file, 160, 0.72);
+                          setFormData({ ...formData, photoUrl: resizedDataUrl });
+                        } catch {}
                       }
                     }}
                   />

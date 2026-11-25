@@ -4,6 +4,7 @@ import { useBirthdays } from '../src/hooks/useBirthdays';
 import { PlayerAvatar } from '../src/components/PlayerAvatar';
 import { AthleteTimeAuditReport } from '../src/components/AthleteTimeAuditReport';
 import { AdminEloSummaryTableCard } from '../src/components/AdminEloSummaryTableCard';
+import { CourtWeatherAlertWidget } from '../src/components/CourtWeatherAlertWidget';
 // No active local types from types.ts needed here now
 import { 
   Users,
@@ -297,6 +298,9 @@ export const GlobalStats: React.FC<DashboardViewProps> = ({
 
   return (
     <div className="space-y-8 animate-in fade-in duration-700">
+      {/* Widget de Meteorologia da Quadra, Alerta de Chuva Push & Como Chegar (Waze / Google Maps) */}
+      <CourtWeatherAlertWidget />
+
       {/* Quick Stats Grid */}
       <div className="grid grid-cols-2 lg:grid-cols-6 gap-4 sm:gap-6">
         {[

@@ -59,8 +59,8 @@ let activeBirthdaysSyncId: string | null = null;
 let activeGuardianId: string | null = null;
 let activeGeoMonitorId: string | null = null;
 
-const DEFAULT_COURT_LAT = -8.131531;
-const DEFAULT_COURT_LNG = -34.907323;
+const DEFAULT_COURT_LAT = -8.131550;
+const DEFAULT_COURT_LNG = -34.907333;
 const AUTO_GEO_CHECKIN_RADIUS_METERS = 150;
 const AUTO_GEO_MAX_ACCURACY_METERS = 150;
 const AUTO_GEO_START_HOUR = 19;

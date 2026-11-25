@@ -175,8 +175,8 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
   const [isPulling, setIsPulling] = useState(false);
 
   // Estados para Check-in e Teste de Sinal GPS
-  const DEFAULT_OFFICIAL_COURT_LAT = -8.131531;
-  const DEFAULT_OFFICIAL_COURT_LNG = -34.907323;
+  const DEFAULT_OFFICIAL_COURT_LAT = -8.131550;
+  const DEFAULT_OFFICIAL_COURT_LNG = -34.907333;
   const DEFAULT_OFFICIAL_RADIUS = 150;
 
   const savedCourtLat = Number(systemMetadata?.courtLocation?.lat ?? DEFAULT_OFFICIAL_COURT_LAT);
@@ -505,7 +505,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
         courtLocation: { lat: DEFAULT_OFFICIAL_COURT_LAT, lng: DEFAULT_OFFICIAL_COURT_LNG },
         geofenceRadius: DEFAULT_OFFICIAL_RADIUS
       },
-      'Coordenadas oficiais da quadra (-8.131531, -34.907323 • 150m) restauradas!'
+      'Coordenadas oficiais da quadra (-8.131550, -34.907333 • 150m) restauradas!'
     );
   };
 
@@ -1163,6 +1163,32 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                   </div>
                 </button>
 
+                {/* BARRA FIXA: COMO CHEGAR NA QUADRA (WAZE OU GOOGLE MAPS) */}
+                <div className="px-4 sm:px-5 py-2.5 bg-black/50 border-t border-white/10 flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[10px] font-bold text-white/65 flex items-center gap-1.5">
+                    <Navigation className="w-3.5 h-3.5 text-brand-primary" />
+                    Como chegar na quadra ({savedCourtLat.toFixed(6)}, {savedCourtLng.toFixed(6)}):
+                  </span>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <a
+                      href={`https://waze.com/ul?ll=${savedCourtLat.toFixed(6)},${savedCourtLng.toFixed(6)}&navigate=yes`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 py-1 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/40 text-sky-300 text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-all"
+                    >
+                      🚗 Abrir no Waze
+                    </a>
+                    <a
+                      href={`https://www.google.com/maps/dir/?api=1&destination=${savedCourtLat.toFixed(6)},${savedCourtLng.toFixed(6)}&travelmode=driving`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 py-1 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-all"
+                    >
+                      📍 Abrir no Google Maps
+                    </a>
+                  </div>
+                </div>
+
                 <AnimatePresence initial={false}>
                   {isGpsPanelOpen && (
                     <motion.div
@@ -1265,7 +1291,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                                         setCourtLatInput(val);
                                       }
                                     }}
-                                    placeholder="-8.131531"
+                                    placeholder="-8.131550"
                                     className="w-full bg-zinc-950 border border-white/15 focus:border-brand-primary rounded-xl px-3 py-2 text-xs font-mono font-bold text-white outline-none"
                                   />
                                 </div>
@@ -1279,7 +1305,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                                     inputMode="decimal"
                                     value={courtLngInput}
                                     onChange={(e) => setCourtLngInput(e.target.value)}
-                                    placeholder="-34.907323"
+                                    placeholder="-34.907333"
                                     className="w-full bg-zinc-950 border border-white/15 focus:border-brand-primary rounded-xl px-3 py-2 text-xs font-mono font-bold text-white outline-none"
                                   />
                                 </div>

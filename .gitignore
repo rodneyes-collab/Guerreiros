@@ -11,6 +11,8 @@ node_modules
 dist
 build
 *.local
+*_local.json
+*.local.json
 
 # Editor directories and files
 .vscode/*

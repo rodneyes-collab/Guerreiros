@@ -1,3 +1,4 @@
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   CheckCircle2,
   CloudSun,
@@ -15,6 +16,25 @@ import {
 } from 'lucide-react';
 import { auth } from '../../firebase';
 import { ActiveMemberMapMarker, GeofenceTestPoint } from './CourtGeofenceMap';
+
+interface CourtWeatherSummary {
+  temperatureC: number;
+  feelsLikeC: number;
+  humidityPct: number;
+  windKmh: number;
+  conditionLabel: string;
+  conditionEmoji: string;
+  gameNightTempC: number;
+  gameNightRainProbPct: number;
+  gameNightWindKmh: number;
+  gameNightConditionLabel: string;
+  gameNightEmoji: string;
+  gameNightDateLabel: string;
+  courtPlayabilityAdvice: string;
+  wazeNavigateUrl: string;
+  googleMapsNavigateUrl: string;
+  fullBroadcastMessage: string;
+}
 
 export interface JourneySimPlayer {
   id: string;

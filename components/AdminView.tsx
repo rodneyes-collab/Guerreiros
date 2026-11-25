@@ -49,6 +49,7 @@ import { Player } from '../types';
 import { APP_VERSION } from '../constants';
 import { generateUUID } from '../utils/helpers';
 import { DiagnosticDashboard } from '../src/components/DiagnosticDashboard';
+import { CourtWeatherAlertWidget } from '../src/components/CourtWeatherAlertWidget';
 import Markdown from 'react-markdown';
 import { Logo } from '../src/components/Logo';
 import { motion, AnimatePresence } from 'motion/react';
@@ -512,6 +513,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
             {/* ABA 1: VISÃO GERAL */}
             {activeTab === 'dashboard' && (
               <div className="space-y-8">
+                <CourtWeatherAlertWidget />
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                   <div className="lg:col-span-2 space-y-8">
                     {/* Status do Dia */}

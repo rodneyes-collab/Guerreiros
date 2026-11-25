@@ -38,7 +38,7 @@ import { EvasionIcon } from './EvasionIcon';
 import { calculateEvasionLevel } from '../utils/evasion';
 import { calculateTrueSkillUpdate } from '../src/utils/trueSkill';
 import { calculateCompositePerformanceRating } from '../utils/teamLogic';
-import { getFirestoreDateKey, db, doc, setDoc } from '../firebase';
+import { getFirestoreDateKey, db, doc, setDoc, deleteField } from '../firebase';
 import { useIntentions } from '../src/hooks/useIntentions';
 import { useBirthdays } from '../src/hooks/useBirthdays';
 import {
@@ -133,7 +133,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       try {
-        const dataUri = await compressImageFileToDataUri(file, 300, 0.8);
+        const dataUri = await compressImageFileToDataUri(file, 160, 0.72);
         processed.push({
           id: `${Date.now()}_${i}`,
           fileName: file.name,
@@ -184,7 +184,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
           doc(db, 'players', target.id),
           {
             photoUrl: item.dataUri,
-            whatsappPhotoUrl: item.dataUri,
+            whatsappPhotoUrl: deleteField(),
             photoUpdatedAt: Date.now()
           },
           { merge: true }
@@ -192,10 +192,10 @@ export const MembersView: React.FC<MembersViewProps> = ({
 
         const idx = updatedPlayersList.findIndex((p) => p.id === target.id);
         if (idx !== -1) {
+          const { whatsappPhotoUrl: _removed, ...cleanPlayer } = updatedPlayersList[idx] as any;
           updatedPlayersList[idx] = {
-            ...updatedPlayersList[idx],
-            photoUrl: item.dataUri,
-            whatsappPhotoUrl: item.dataUri
+            ...cleanPlayer,
+            photoUrl: item.dataUri
           };
         }
         savedCount++;
@@ -290,7 +290,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      const compressedDataUri = await compressImageFileToDataUri(file, 256, 0.84);
+      const compressedDataUri = await compressImageFileToDataUri(file, 160, 0.72);
       setLinkPhotoPreview(compressedDataUri);
     } catch (err) {
       showNotification?.('Não foi possível processar esta imagem. Tente outra foto.', 'error');
